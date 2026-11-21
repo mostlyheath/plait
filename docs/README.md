@@ -2,7 +2,7 @@
 
 Start with the [project README](../README.md) for the current preview and download.
 Plait currently supports local agent work on Apple Silicon macOS. Remote hosts
-and Linux command execution are not available.
+are not available. Linux hosts can run trusted commands and trusted MCP servers; sandboxed execution is not available.
 
 ## Use Plait
 
