@@ -1366,6 +1366,8 @@ newest release.
 
 ### Headless hosts
 
+For Linux hosts, see [The Linux host](REMOTE.md#the-linux-host).
+
 On a Mac that runs only a host, `plait-host update --check` reports whether a
 newer signed release exists, and `plait-host update` installs its host archive
 with the same checks and the same refusal while runs are active. Linux hosts do
