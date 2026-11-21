@@ -115,7 +115,12 @@ fn run() -> io::Result<()> {
         if !store.is_absolute() {
             return Err(io::Error::other("store path must be absolute"));
         }
-        return bridge::run(io::stdin(), io::stdout(), &store);
+        // Unbuffered descriptors: io::Stdin buffers internally, so a partial-
+        // frame deadline that polls fd 0 would wait on bytes already read.
+        use std::os::fd::AsFd;
+        let input = std::fs::File::from(io::stdin().as_fd().try_clone_to_owned()?);
+        let output = std::fs::File::from(io::stdout().as_fd().try_clone_to_owned()?);
+        return bridge::run(input, output, &store);
     }
     let paths = installation::runtime_paths(&env::current_exe()?)?;
     let service_home = (operation == "run-user")
