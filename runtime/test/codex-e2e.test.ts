@@ -12,7 +12,7 @@ import { threadOf } from '../src/codex/protocol.ts';
 import type { ThreadStartResponse, TurnStartParams, TurnStartResponse } from '../src/codex/protocol.ts';
 import { AppServer } from '../src/codex/server.ts';
 import { CodexTranscript, isTerminalTurn } from '../src/codex/transcript.ts';
-import type { Entry } from '../src/codex/transcript.ts';
+import type { Entry } from '../src/external/entries.ts';
 import { FAKE_CODEX, fakeEnv } from './support/fake-codex-env.ts';
 
 /** A minimal stand-in for the runtime's adapter loop: route by thread, answer approvals, persist entries. */

@@ -42,7 +42,7 @@ import { commandPolicy, commandPolicyOperation, TRUSTED_INSTRUCTIONS } from './c
 import type { TemplateEntry } from './templates.ts';
 import { CODEX_MODES, CODEX_PROVIDER, CodexHarness, PI_ENTRY, codexEffort, codexLevels } from './harness.ts';
 import type { Lease } from './harness.ts';
-import { CodexEntries } from './codex/entries.ts';
+import { ExternalEntries, transcriptPath } from './external/entries.ts';
 import { CodexRun } from './codex/run.ts';
 import { CLAUDE_MODES, CLAUDE_PROVIDER, ClaudeHarness } from './claude/harness.ts';
 import { ClaudeRun } from './claude/run.ts';
@@ -58,9 +58,9 @@ type Session = ToolState & {
   /** The person's prompt templates, found when the run started. */
   templates?: TemplateEntry[];
   /** A Codex thread's turn, its server lease, and its transcript store. */
-  codex?: { run?: CodexRun; lease?: Lease; entries?: CodexEntries };
+  codex?: { run?: CodexRun; lease?: Lease; entries?: ExternalEntries };
   /** A Claude Code thread's run and its transcript store. */
-  claude?: { run?: ClaudeRun; entries?: CodexEntries };
+  claude?: { run?: ClaudeRun; entries?: ExternalEntries };
 };
 type Query = { minEntryId?: number; maxEntryId?: number; order: 'ascending' | 'descending' };
 /** Inputs one thread may hold behind its run. */
@@ -491,14 +491,14 @@ export class Runtime {
       };
       if (session?.root) return work({ ...base, entries: entries(session.root) });
       // A Codex thread's translated transcript is its own store, read the same way.
-      const stored = (codex: CodexEntries) => async (query: Query, limit: number) => codex.entries(query, limit) as unknown as EntryRecord[];
+      const stored = (codex: ExternalEntries) => async (query: Query, limit: number) => codex.entries(query, limit) as unknown as EntryRecord[];
       if (session?.codex?.entries) return work({ ...base, entries: stored(session.codex.entries) });
       const claude = session?.claude?.entries;
       if (claude) return work({ ...base, entries: stored(claude) });
-      for (const kind of ['codex', 'claude']) {
-        const storedPath = join(this.directory, `${id}.${kind}.sqlite`);
+      for (const kind of ['codex', 'claude'] as const) {
+        const storedPath = transcriptPath(this.directory, id, kind);
         if (!existsSync(storedPath)) continue;
-        const file = new CodexEntries(storedPath, { readOnly: true });
+        const file = new ExternalEntries(storedPath, { readOnly: true });
         try { return await work({ ...base, entries: stored(file) }); } finally { file.close(); }
       }
       const path = join(this.directory, `${id}.sqlite`);
@@ -945,7 +945,7 @@ export class Runtime {
     if (!model) fail('model_unavailable', 'This Codex model is no longer offered by your Codex. Choose another.');
     const mode = snapshot.harness?.mode ?? this.codex.defaultMode();
     snapshot.harness = { ...snapshot.harness, id: 'codex', version: lease.install.version ?? null, mode };
-    const entries = await this.gate(id, async () => new CodexEntries(join(this.directory, `${id}.codex.sqlite`)));
+    const entries = await this.gate(id, async () => new ExternalEntries(transcriptPath(this.directory, id, 'codex')));
     session.codex.entries = entries;
     const placed = (requestId: string, entry: number) => {
       this.store.place(id, requestId, entry);
@@ -976,7 +976,7 @@ export class Runtime {
     const launch = await this.claude.launch();
     const mode = snapshot.harness?.mode ?? this.claude.defaultMode();
     snapshot.harness = { ...snapshot.harness, id: 'claude', version: launch.install.version ?? null, mode };
-    const entries = await this.gate(id, async () => new CodexEntries(join(this.directory, `${id}.claude.sqlite`)));
+    const entries = await this.gate(id, async () => new ExternalEntries(transcriptPath(this.directory, id, 'claude')));
     session.claude = { entries };
     const run = new ClaudeRun({
       snapshot, mode, launch, instructions, cleanup: session.lease?.cleanup, model: snapshot.model.model_id, level: snapshot.thinking_level, entries,

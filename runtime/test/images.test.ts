@@ -15,7 +15,7 @@ import { createModels } from '@earendil-works/pi-ai/models';
 import { fauxProvider } from '@earendil-works/pi-ai/providers/faux';
 import { MAX_LINE_BYTES } from '../src/codex/server.ts';
 import { Runtime } from '../src/runtime.ts';
-import { CodexEntries } from '../src/codex/entries.ts';
+import { ExternalEntries, transcriptPath } from '../src/external/entries.ts';
 import { rootIdentity } from '../src/safety.ts';
 
 const png = readFileSync(new URL('./support/images/0.png', import.meta.url));
@@ -257,7 +257,7 @@ for (const typed of [false,true]) test(`image caption escaping keeps history off
   assert.equal(h.runtime.store.inputs(thread.id)[0].text,text);
   for (const placed of [false,true]) {
     if(placed) {
-      const entries=new CodexEntries(join(h.store,`${thread.id}.codex.sqlite`));
+      const entries=new ExternalEntries(transcriptPath(h.store, thread.id, 'codex'));
       entries.append([{id:1,kind:'message',model:[{role:'user',content:text}]}]); entries.close();
       h.runtime.store.place(thread.id,'caption',1);
     }
