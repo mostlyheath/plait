@@ -1,5 +1,5 @@
 //! The application's Settings modal: host status first, then New threads,
-//! Providers, Agents, Keyboard, Editor, Appearance, and About. Only what applies to the
+//! Providers, Linear, Agents, Keyboard, Editor, Appearance, and About. Only what applies to the
 //! whole app or host is here; a project's own settings have their own modal
 //! (settings_project.rs), and a thread's are under its message box.
 
@@ -30,6 +30,8 @@ pub(super) enum SettingsTab {
     #[default]
     NewThreads,
     Providers,
+    /// The host's Linear sign-in.
+    Linear,
     Agents,
     Keyboard,
     /// What Open in Editor and Open Terminal Here run.
@@ -39,9 +41,10 @@ pub(super) enum SettingsTab {
 }
 
 impl SettingsTab {
-    pub(super) const ALL: [Self; 7] = [
+    pub(super) const ALL: [Self; 8] = [
         Self::NewThreads,
         Self::Providers,
+        Self::Linear,
         Self::Agents,
         Self::Keyboard,
         Self::Editor,
@@ -53,6 +56,7 @@ impl SettingsTab {
         match self {
             Self::NewThreads => "New threads",
             Self::Providers => "Providers",
+            Self::Linear => "Linear",
             Self::Agents => "Agents",
             Self::Keyboard => "Keyboard",
             Self::Editor => "Editor",
@@ -463,6 +467,7 @@ impl Plait {
         let body = match self.settings_tab {
             SettingsTab::NewThreads => self.new_thread_settings(cx).into_any_element(),
             SettingsTab::Providers => self.provider_settings(cx).into_any_element(),
+            SettingsTab::Linear => self.linear_settings(cx).into_any_element(),
             SettingsTab::Agents => self.harness_settings(cx).into_any_element(),
             SettingsTab::Keyboard => self.keyboard_settings(cx).into_any_element(),
             SettingsTab::Editor => self.editor_settings(cx).into_any_element(),

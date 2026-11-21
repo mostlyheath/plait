@@ -39,6 +39,7 @@ mod settings_agent;
 mod settings_editor;
 mod settings_isolation;
 mod settings_keyboard;
+mod settings_linear;
 mod settings_modal;
 mod settings_policy;
 mod settings_project;
@@ -163,6 +164,7 @@ pub struct Plait {
     agent: settings_agent::AgentState,
     harnesses: harnesses::HarnessesState,
     providers: settings_providers::ProviderState,
+    linear: settings_linear::LinearState,
     /// A thread was created at once (a worktree thread): open it when the host
     /// confirms creation, unless the user has gone elsewhere in the meantime.
     new_thread_open: bool,
@@ -240,6 +242,7 @@ impl Plait {
             agent: Default::default(),
             harnesses: Default::default(),
             providers: Default::default(),
+            linear: Default::default(),
             new_thread_open: false,
             draft: Default::default(),
             admission: Default::default(),
@@ -293,6 +296,7 @@ impl Plait {
             this.sync_project_settings(cx);
             this.sync_harnesses(cx);
             this.sync_provider_settings(cx);
+            this.sync_linear_settings(cx);
         })
         .detach();
         // Keys dispatch from the focused element. One that is no longer drawn,

@@ -16,6 +16,7 @@ pub mod host;
 pub mod host_state;
 pub mod images;
 pub mod lease;
+pub mod linear_settings;
 pub mod local_socket;
 pub mod machine;
 pub mod markdown;
