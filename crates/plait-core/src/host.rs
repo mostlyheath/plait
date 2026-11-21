@@ -1168,6 +1168,7 @@ pub mod identity;
 pub mod linear;
 pub mod policy;
 pub mod providers;
+pub mod release;
 pub mod review;
 pub mod sign_in;
 pub mod worktree;
