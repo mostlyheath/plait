@@ -55,6 +55,7 @@ mod settings_modal;
 mod showcase;
 mod storage;
 mod tabs;
+mod toasts;
 mod turn_review;
 mod undo;
 mod ways_out;
@@ -2407,6 +2408,7 @@ fn walk(output: Option<&Path>) {
         ownership_scenes(&repository, output, suffix, width, height);
         isolation::walk(&repository, output, suffix, width, height);
         storage::walk(&repository, output, suffix, width, height);
+        toasts::walk(&repository, output, suffix, width, height);
         worktrees_view::walk(&repository, output, suffix, width, height);
     }
     let _ = std::fs::remove_dir_all(&scratch);

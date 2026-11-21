@@ -344,10 +344,20 @@ folder availability. A disconnected thread-list watch reports that updates are
 paused. Hosts using protocol 1 or 2 retain their one-checkout thread listing and
 journal titles; rename and archive require version 3.
 
-The bell button beside the filters (struck through when off) controls system notifications and window attention requests.
-Unread markers remain when alerts are off. Alerts occur for a thread you are not
-viewing, or while Plait is inactive, when it finishes, fails, stops, is interrupted,
-or needs approval. Opening a notification selects its thread. A bundled Mac app
+The bell button beside the filters (struck through when off) controls alerts:
+in-app toasts, system notifications, and window attention requests. Unread
+markers remain when alerts are off. Alerts occur for a thread you are not
+viewing, or while Plait is inactive, when it finishes, fails, stops, is
+interrupted, or needs approval.
+
+While Plait is the active app, an alert is a toast in the window's upper right
+instead of a system notification. At most three show at once; a newer alert
+for the same thread replaces its older one, and each disappears after eight
+seconds. Choose a toast to open its thread, or its **×** to dismiss it; opening
+the thread any other way also clears it. While Plait is in the background,
+alerts are system notifications, and opening one selects its thread. Quitting
+Plait stops alerts, not host work; reopening shows unread markers without
+replaying alerts. A bundled Mac app
 requests notification authorization on first delivery; an unbundled build cannot
 post macOS notifications, and delivery depends on system permission and Focus
 settings. The initial listing never posts alerts. Native delivery and activation

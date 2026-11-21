@@ -58,6 +58,7 @@ impl Plait {
     }
 
     pub(super) fn mark_thread_read(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.dismiss_toast(id, cx);
         if self.preferences.value.navigation.unread.contains(id) {
             let mut preferences = self.preferences.value.clone();
             preferences.navigation.unread.remove(id);
@@ -233,24 +234,32 @@ impl Plait {
         if cfg!(test) {
             return;
         }
+        // In front, an alert is a toast; in the background, a system notification.
+        let active = window.is_window_active();
         for id in notifications {
-            if let Some(thread) = self
+            let Some(thread) = self
                 .host
                 .connection
                 .threads
                 .iter()
                 .find(|thread| thread.id == id)
-            {
+            else {
+                continue;
+            };
+            let title = self.thread_title(&id);
+            let detail = format!(
+                "{} · {}",
+                plait_core::state::project_name(&thread.checkout),
+                navigation::state_label(thread)
+            );
+            if active {
+                self.show_toast(&id, title, detail, cx);
+            } else {
                 window.request_attention();
                 cx.show_system_notification(SystemNotification {
                     tag: format!("plait-thread:{id}").into(),
-                    title: self.thread_title(&id).into(),
-                    body: format!(
-                        "{} · {}",
-                        plait_core::state::project_name(&thread.checkout),
-                        navigation::state_label(thread)
-                    )
-                    .into(),
+                    title: title.into(),
+                    body: detail.into(),
                     actions: Vec::new(),
                 });
             }
