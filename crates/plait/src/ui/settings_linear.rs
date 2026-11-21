@@ -4,25 +4,28 @@ use super::{Plait, settings, text_field::TextField, theme::*};
 use gpui::{prelude::*, *};
 use plait_core::{
     host::{self, linear},
-    linear_settings::{Account, Auth, Pending},
+    linear_settings::{Account, Auth, Pending, ProjectTeam, TeamPending},
 };
 
 #[derive(Default)]
 pub(super) struct LinearState {
     pub account: Account,
     pub field: Option<Entity<TextField>>,
+    /// The Project settings page's Linear team.
+    pub team: ProjectTeam,
 }
 
 /// A status reply, or the refusal already classified on the background thread.
 type Reply = Result<linear::AuthStatus, linear::Rejection>;
 
 impl Plait {
-    /// Runs one Linear call on the background executor. A reply that lands
-    /// after a reconnect is dropped here; `Account::reply` drops the rest.
-    fn linear_call(
+    /// Runs one Linear call on the background executor and hands its result
+    /// to `apply`, which returns whether it was current. A reply that lands
+    /// after a reconnect is dropped here; the models drop the rest.
+    fn linear_task<T: Send + 'static>(
         &mut self,
-        generation: u64,
-        call: impl FnOnce(&host::Client) -> Reply + Send + 'static,
+        call: impl FnOnce(&host::Client) -> Result<T, linear::Rejection> + Send + 'static,
+        apply: impl FnOnce(&mut Self, Result<T, linear::Rejection>) -> bool + 'static,
         cx: &mut Context<Self>,
     ) {
         let epoch = self.host.connection.epoch;
@@ -35,9 +38,7 @@ impl Plait {
         cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
-                if this.host.connection.epoch == epoch
-                    && this.linear.account.reply(generation, result)
-                {
+                if this.host.connection.epoch == epoch && apply(this, result) {
                     cx.notify();
                 }
             });
@@ -45,10 +46,30 @@ impl Plait {
         .detach();
     }
 
+    fn linear_call(
+        &mut self,
+        generation: u64,
+        call: impl FnOnce(&host::Client) -> Reply + Send + 'static,
+        cx: &mut Context<Self>,
+    ) {
+        self.linear_task(
+            call,
+            move |this, result| this.linear.account.reply(generation, result),
+            cx,
+        );
+    }
+
+    fn linear_team_page(&self) -> bool {
+        self.settings_open && self.settings_page == settings::SettingsPage::Project
+    }
+
     /// Keeps the account in step with the connection, and loads it the first
     /// time the Linear tab is shown. The key field never outlives Settings.
     pub(super) fn sync_linear_settings(&mut self, cx: &mut Context<Self>) {
-        let showing = self.settings_open && self.settings_tab == settings::SettingsTab::Linear;
+        let showing = self.settings_open
+            && self.settings_page == settings::SettingsPage::Application
+            && self.settings_tab == settings::SettingsTab::Linear;
+        let project = self.linear_team_page();
         if self.linear.account.connect(self.host.connection.epoch) || !showing {
             self.clear_linear_field(cx);
         }
@@ -57,9 +78,33 @@ impl Plait {
             cx.observe(&input, |_, _, cx| cx.notify()).detach();
             self.linear.field = Some(input);
         }
-        // Test scenes inject account state and never reach a host.
-        if cfg!(test) || !showing || !self.host.connection.connected {
+        if project {
+            let checkout = self.settings_checkout().to_owned();
+            self.linear
+                .team
+                .target(self.host.connection.epoch, &checkout);
+        }
+        // Test scenes inject state and never reach a host.
+        if cfg!(test) || !(showing || project) || !self.host.connection.connected {
             return;
+        }
+        if project
+            && matches!(self.linear.account.auth, Auth::SignedIn { .. })
+            && self.linear.team.needs_load()
+        {
+            let generation = self.linear.team.start_load();
+            let checkout = self.settings_checkout().to_owned();
+            self.linear_task(
+                move |client| {
+                    let classify = |error: host::Error| linear::classify(&error, false);
+                    let binding =
+                        linear::get_project_binding(client, checkout).map_err(classify)?;
+                    let teams = linear::list_teams(client, false).map_err(classify)?;
+                    Ok((binding, teams))
+                },
+                move |this, result| this.linear.team.loaded(generation, result),
+                cx,
+            );
         }
         if self.linear.account.needs_load() {
             let generation = self.linear.account.start_load();
@@ -305,4 +350,242 @@ impl Plait {
                 el.child(tag("linear-note", note, color).line_height(px(18.)))
             })
     }
+
+    pub(super) fn bind_linear_team(&mut self, team: Option<linear::Team>, cx: &mut Context<Self>) {
+        let Some(generation) = self
+            .linear
+            .team
+            .start_bind(team.as_ref().map(|team| team.id.as_str()))
+        else {
+            return;
+        };
+        cx.notify();
+        if cfg!(test) {
+            return;
+        }
+        let checkout = self.settings_checkout().to_owned();
+        self.linear_task(
+            move |client| {
+                let (id, key, name) = match team {
+                    Some(team) => (Some(team.id), Some(team.key), Some(team.name)),
+                    None => (None, None, None),
+                };
+                linear::bind_project(client, checkout, id, key, name)
+                    .map_err(|error| linear::classify(&error, false))
+            },
+            move |this, result| this.linear.team.bound(generation, result),
+            cx,
+        );
+    }
+
+    fn refresh_linear_teams(&mut self, cx: &mut Context<Self>) {
+        let Some(generation) = self.linear.team.start_refresh() else {
+            return;
+        };
+        cx.notify();
+        if cfg!(test) {
+            return;
+        }
+        self.linear_task(
+            |client| {
+                linear::list_teams(client, true).map_err(|error| linear::classify(&error, false))
+            },
+            move |this, result| this.linear.team.refreshed(generation, result),
+            cx,
+        );
+    }
+
+    fn open_linear_account(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_page(Some(settings::SettingsPage::Application), window, cx);
+        self.settings_tab = settings::SettingsTab::Linear;
+        cx.notify();
+    }
+
+    /// Project settings → Linear: which team's issues this project shows.
+    pub(super) fn project_linear_settings(&self, cx: &mut Context<Self>) -> Div {
+        let section = settings::section("Linear");
+        let connected = self.host.connection.connected;
+        match &self.linear.account.auth {
+            Auth::OlderHost => {
+                return section.child(tag(
+                    "project-linear-older-host",
+                    "Linear needs a newer host.",
+                    colors().muted,
+                ));
+            }
+            Auth::Loading => {
+                return section.child(tag(
+                    "project-linear-loading",
+                    if connected {
+                        "Checking Linear sign-in…"
+                    } else {
+                        "Connect to the host to link this project to Linear."
+                    },
+                    colors().muted,
+                ));
+            }
+            Auth::SignedOut | Auth::KeyRejected => {
+                return section
+                    .child(tag(
+                        "project-linear-signed-out",
+                        "Sign in to Linear to show a team's issues for this project.",
+                        colors().muted,
+                    ))
+                    .child(
+                        button("project-linear-open-account", "Linear settings…")
+                            .on_activate(cx, |this, window, cx| {
+                                this.open_linear_account(window, cx)
+                            }),
+                    );
+            }
+            Auth::SignedIn { .. } => {}
+        }
+        let team = &self.linear.team;
+        let idle = connected && team.pending == TeamPending::None;
+        let bound = team.binding.as_ref().map(|binding| binding.team_id.clone());
+        let current = match &team.binding {
+            Some(binding) => format!(
+                "Issues from {}{}.",
+                binding.team_name.as_deref().unwrap_or("the linked team"),
+                binding
+                    .team_key
+                    .as_deref()
+                    .map(|key| format!(" ({key})"))
+                    .unwrap_or_default()
+            ),
+            None => "Not linked to a Linear team.".into(),
+        };
+        let mut rows = column().gap_1();
+        for (index, choice) in team.teams.iter().flat_map(|t| t.teams.iter()).enumerate() {
+            let selected = bound.as_deref() == Some(choice.id.as_str());
+            let pick = choice.clone();
+            rows = rows.child(
+                toned_button(
+                    ("project-linear-team", index),
+                    "",
+                    if selected {
+                        Tone::Selected
+                    } else {
+                        Tone::Ghost
+                    },
+                )
+                .aria_label(format!("{} ({})", choice.name, choice.key))
+                .aria_selected(selected)
+                .role(Role::RadioButton)
+                .w_full()
+                .px_2()
+                .disabled(!idle)
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .child(choice.name.clone()),
+                )
+                .child(tag(
+                    ("project-linear-team-key", index),
+                    choice.key.clone(),
+                    colors().subtle,
+                ))
+                .when(idle && !selected, |el| {
+                    el.on_activate(cx, move |this, _, cx| {
+                        this.bind_linear_team(Some(pick.clone()), cx)
+                    })
+                }),
+            );
+        }
+        let notes = team.teams.as_ref().map(|teams| {
+            let mut notes = Vec::new();
+            if teams.teams_complete == Some(false) {
+                notes.push(
+                    "Linear lists more teams than this shows; the list may be incomplete."
+                        .to_owned(),
+                );
+            }
+            if teams.cache.stale {
+                notes.push(format!(
+                    "Showing teams saved {} ago; Linear could not be reached.",
+                    age(teams.cache.cache_age_seconds)
+                ));
+            }
+            if let Some(warning) = &teams.cache.warning {
+                notes.push(warning.clone());
+            }
+            notes
+        });
+        let progress = match team.pending {
+            TeamPending::Loading => Some("Loading teams…"),
+            TeamPending::Saving => Some("Saving the link…"),
+            TeamPending::Refreshing => Some("Refreshing teams…"),
+            TeamPending::None => None,
+        };
+        section
+            .child(tag("project-linear-current", current, colors().text))
+            .when(
+                team.teams.as_ref().is_some_and(|t| t.teams.is_empty()),
+                |el| {
+                    el.child(tag(
+                        "project-linear-no-teams",
+                        "This workspace has no teams you can see.",
+                        colors().muted,
+                    ))
+                },
+            )
+            .child(rows)
+            .children(
+                notes
+                    .into_iter()
+                    .flatten()
+                    .enumerate()
+                    .map(|(index, note)| {
+                        tag(("project-linear-team-note", index), note, colors().amber)
+                            .line_height(px(18.))
+                    }),
+            )
+            .child(
+                row()
+                    .gap_2()
+                    .flex_wrap()
+                    .when(bound.is_some(), |el| {
+                        el.child(
+                            button("project-linear-unlink", "Unlink")
+                                .disabled(!idle)
+                                .when(idle, |el| {
+                                    el.on_activate(cx, |this, _, cx| {
+                                        this.bind_linear_team(None, cx)
+                                    })
+                                }),
+                        )
+                    })
+                    .child(
+                        button("project-linear-refresh", "Refresh teams")
+                            .disabled(!idle)
+                            .when(idle, |el| {
+                                el.on_activate(cx, |this, _, cx| this.refresh_linear_teams(cx))
+                            }),
+                    ),
+            )
+            .when_some(progress, |el, text| {
+                el.child(tag("project-linear-progress", text, colors().muted))
+            })
+            .when_some(team.note.clone(), |el, note| {
+                let color = if team.failed {
+                    colors().amber
+                } else {
+                    colors().mint
+                };
+                el.child(tag("project-linear-note", note, color).line_height(px(18.)))
+            })
+    }
+}
+
+/// A cache age in the largest whole unit: "40 seconds", "3 minutes", "2 days".
+fn age(seconds: u64) -> String {
+    let (count, unit) = match seconds {
+        0..60 => (seconds, "second"),
+        60..3600 => (seconds / 60, "minute"),
+        3600..86400 => (seconds / 3600, "hour"),
+        _ => (seconds / 86400, "day"),
+    };
+    format!("{count} {unit}{}", if count == 1 { "" } else { "s" })
 }
