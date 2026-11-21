@@ -2124,8 +2124,8 @@ thread-to-issue links, and perform two explicit person-initiated writes. Like
 [Recorded turn review](#recorded-turn-review), they omit `protocol_version`:
 versions 1–6 retain their existing request, `ThreadSummary`, and `Snapshot`
 shapes unchanged. New result fields and typed error fields apply only to Linear
-operations, which the current desktop does not call (the typed client in
-`plait-core::host::linear` is not wired to a view yet); existing desktop reply
+operations, which the desktop calls only from Settings → Linear for sign-in;
+existing desktop reply
 shapes remain unchanged, so no protocol version bump is required. An older host rejects these operation names with
 `invalid_request`. Unknown fields (including `protocol_version`) are refused.
 
