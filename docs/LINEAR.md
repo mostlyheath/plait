@@ -10,6 +10,13 @@
   fallback, local thread-to-issue links, and two durably recorded person-initiated
   writes (post comment and change workflow state). Nothing is visible in the
   desktop app yet.
+- **Rust client for the read and link operations (`plait-core::host::linear`).**
+  Typed requests and validated replies for sign-in status, the API key, teams,
+  project binding, issue lists and details, exact resolution, and thread links,
+  with the key redacted from debug output and typed rejections (offline, rate
+  limited with its wait, conflict, not found, rejected key, signed out, older
+  host). The two writes and `linear_get_write` are not modelled yet. No desktop
+  view calls the client yet.
 - **Planned next.** A persistent project-level issue view adds search, ticket
   details, references in existing threads, and starting a thread from an issue.
   Settings holds the API key; a source-issue label links back to Linear.

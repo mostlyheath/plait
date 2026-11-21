@@ -418,6 +418,7 @@ fn tool_states(snapshot: &mut Snapshot) {
         ),
     ];
     snapshot.error = Some(HostError {
+        retry_after_seconds: None,
         code: "sample_error".into(),
         message: "Sample host error. This is a rendering fixture, not an agent run.".into(),
     });
@@ -1757,6 +1758,7 @@ fn a_creation_reply_lands_only_on_the_draft_that_sent_it() {
         plait.open_draft(window, cx);
         sent(plait, "refused", "Try again");
         let refused = Err(Error::Rejected(HostError {
+            retry_after_seconds: None,
             code: "invalid".into(),
             message: "Sample refusal.".into(),
         }));
@@ -4940,6 +4942,7 @@ fn history_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
             "failed",
             ThreadStatus::Error,
             Some(HostError {
+                retry_after_seconds: None,
                 code: "runtime_error".into(),
                 message: "The provider did not complete the request. Try another message.".into(),
             }),
@@ -4948,6 +4951,7 @@ fn history_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
             "turn-limit",
             ThreadStatus::Error,
             Some(HostError {
+                retry_after_seconds: None,
                 code: "turn_limit".into(),
                 message: "Limit".into(),
             }),
