@@ -100,6 +100,7 @@ pub struct TabMetadata {
     pub id: TabId,
     pub title: String,
     pub worktrees: bool,
+    pub issues: bool,
     pub project: String,
     pub state: TabState,
     pub word: &'static str,
@@ -128,13 +129,15 @@ pub fn metadata(window: &WindowTabs, context: &RowContext<'_>) -> Vec<TabMetadat
             let unread = summary.is_some_and(|t| context.navigation.unread.contains(&t.id));
             let state = if !same_host || !tab.session().connected() {
                 TabState::Offline
-            } else if target.is_draft() || target.is_worktrees() {
+            } else if target.is_draft() || target.is_project_view() {
                 TabState::Idle
             } else {
                 summary.map_or(TabState::Unavailable, |t| summary_state(t, unread))
             };
             let title = if target.is_worktrees() {
                 "Worktrees"
+            } else if target.is_issues() {
+                "Issues"
             } else if target.is_draft() {
                 "New thread"
             } else {
@@ -152,6 +155,8 @@ pub fn metadata(window: &WindowTabs, context: &RowContext<'_>) -> Vec<TabMetadat
                 crate::display_text::escape(context.machine),
                 if target.is_worktrees() && state != TabState::Offline {
                     "Project branches, worktrees and storage"
+                } else if target.is_issues() && state != TabState::Offline {
+                    "The project's Linear issues"
                 } else {
                     state.description()
                 },
@@ -163,10 +168,11 @@ pub fn metadata(window: &WindowTabs, context: &RowContext<'_>) -> Vec<TabMetadat
             TabMetadata {
                 id: tab.id,
                 worktrees: target.is_worktrees(),
+                issues: target.is_issues(),
                 title,
                 project,
                 state,
-                word: if target.is_worktrees() {
+                word: if target.is_project_view() {
                     ""
                 } else {
                     state.word(active)

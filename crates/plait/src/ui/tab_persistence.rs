@@ -332,7 +332,9 @@ impl Plait {
             .iter()
             .filter_map(|tab| match tab.session().target() {
                 TabTarget::Draft { id, .. } => Some(id.clone()),
-                TabTarget::Existing { .. } | TabTarget::Worktrees { .. } => None,
+                TabTarget::Existing { .. }
+                | TabTarget::Worktrees { .. }
+                | TabTarget::Issues { .. } => None,
             })
             .collect();
         kept.extend(self.draft.id.clone());
