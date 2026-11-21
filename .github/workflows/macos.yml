@@ -272,8 +272,13 @@ jobs:
           trap 'rm -f "$key"' EXIT
           printf '%s\n' "$PLAIT_UPDATE_SIGNING_KEY" > "$key"
           # Signing refuses a key that does not match the one built into Plait.
-          target/debug/examples/update-key sign "$key" release/update.json
-          target/debug/examples/update-key verify release/update.json
+          # Schema 1 for current apps, and one manifest per component for the
+          # independent updates in docs/RELEASING.md. Each is checked as a client would.
+          for manifest in release/update.json release/update-client.json release/update-host.json; do
+            test -f "$manifest" || continue
+            target/debug/examples/update-key sign "$key" "$manifest"
+            target/debug/examples/update-key verify "$manifest"
+          done
       - name: Publish an immutable preview
         run: |
           printf '%s\n' \
@@ -297,6 +302,6 @@ jobs:
           gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" --prerelease --draft \
             --title "Plait $RELEASE_TAG — local preview" --notes-file notes.md --generate-notes \
             release/*.dmg release/*.pkg release/*.zip release/*.tar.gz release/*.sha256 \
-            release/update.json release/update.json.sig \
+            release/update*.json release/update*.json.sig \
             release/install.sh release/release.json release/Plait-Release-*.json release/installed-client*.png
           gh release edit "$RELEASE_TAG" --draft=false
