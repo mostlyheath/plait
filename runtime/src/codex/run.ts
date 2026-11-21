@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { isAbsolute, relative, sep } from 'node:path';
 import type { ConversationView } from '@earendil-works/pi-durable';
 import { approvalFor, approvalReply, declineUnsupported } from './approval.ts';
-import type { CodexEntries } from './entries.ts';
+import type { ExternalEntries } from '../external/entries.ts';
 import { NOTIFICATIONS } from './protocol.ts';
 import { CodexRpcError } from './server.ts';
 import type {
@@ -39,7 +39,7 @@ export type CodexRunContext = {
   /** The thread's Codex mode for this turn. */
   mode: string;
   lease: Lease;
-  entries: CodexEntries;
+  entries: ExternalEntries;
   approvals: InteractiveApproval;
   /** Ends the run: Stop, a host shutdown, or the run finishing. */
   signal: AbortSignal;

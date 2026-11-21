@@ -4,11 +4,10 @@
 import type { SDKMessage, PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 import type { Message, Part } from '../transcript.ts';
 import type { Usage } from '../protocol.ts';
-import type { Applied, Entry } from '../codex/transcript.ts';
+import type { Applied, Entry } from '../external/entries.ts';
 import { clipHead, clipTail } from '../text.ts';
 import { mcpName } from './approval.ts';
 
-export type { Applied, Entry, Placed } from '../codex/transcript.ts';
 export type TurnEnd = { status: 'completed' | 'interrupted' | 'failed'; error?: string; queued: number };
 
 const VIEW_ENTRIES = 100;

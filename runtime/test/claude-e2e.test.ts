@@ -10,7 +10,8 @@ import type { ClaudeApproval } from '../src/claude/approval.ts';
 import { ClaudeSession } from '../src/claude/session.ts';
 import type { ClaudeModeId } from '../src/claude/session.ts';
 import { ClaudeTranscript, isTurnEnd } from '../src/claude/transcript.ts';
-import type { Placed, TurnEnd } from '../src/claude/transcript.ts';
+import type { TurnEnd } from '../src/claude/transcript.ts';
+import type { Placed } from '../src/external/entries.ts';
 import { loadSdk } from '../src/claude/sdk.ts';
 import { DEV_SDK, FAKE_CLAUDE, FAKE_SESSION, fakeEnv } from './support/fake-claude-env.ts';
 
