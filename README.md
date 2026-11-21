@@ -73,6 +73,9 @@ tabs, threads, and drafts.
   a "Needs me" filter, alerts (toasts while Plait is in front, notifications
   when it is not), rename and archive, and optional
   per-thread worktrees.
+- **Linear issues.** Sign in with an API key, link a project to its Linear
+  team, browse and search its issues in a tab of their own, and start a
+  thread from one. See [Linear issues](docs/MACOS.md#linear-issues).
 - **Keyboard first.** A command palette, quick open (Cmd-P), find in file, and
   shortcuts you can rebind.
 - **Your models.** Sign in to a provider or add an API key or custom server from

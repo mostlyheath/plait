@@ -1,6 +1,6 @@
 # Remote hosts
 
-**Agreed design for M3; not built.** The maintainer chose the direction:
+**Agreed design for M3; transport framing and the bridge are built.** The maintainer chose the direction:
 reach a Plait host on another machine over SSH or over a tailnet, with this
 Linux workstation as the first remote host, and remote threads before remote
 Git. [HOST.md](HOST.md) remains the contract for what is implemented.
@@ -147,7 +147,7 @@ desktop's local Git reads. That design is written before it is built.
    - Includes the documentation changes.
    - Tests: trusted execution, Stop and process-group cleanup, trusted MCP,
      and continued refusal of a sandboxed policy on Linux.
-2. **Stream format, `plait-host bridge`, and the client's transport
+2. **Built: stream format, `plait-host bridge`, and the client's transport
    abstraction.**
    - Tests: round trips over socket pairs, concurrent requests and watches,
      Close ending a watch without stopping a run, size limits, a stalled

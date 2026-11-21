@@ -101,6 +101,7 @@ pub(super) const ACTIONS: &[AppAction] = &[
     entry("thread.switch_model", "Change Thread Model…", "File", Some("cmd-shift-m"), Item, || Box::new(SwitchThreadModel)),
     entry("repository.open", "Open Repository…", "File", Some("cmd-o"), Group, || Box::new(OpenRepository)),
     entry("project.worktrees", "Worktrees", "File", None, Item, || Box::new(super::worktrees_view::Worktrees)),
+    entry("project.issues", "Linear Issues", "File", None, Item, || Box::new(super::issues_view::Issues)),
     entry("project.settings", "Project Settings…", "File", None, Item, || Box::new(ProjectSettings)),
     entry("file.open", "Open File…", "File", Some("cmd-p"), Item, || Box::new(QuickOpen)),
     entry("git.refresh", "Refresh Git Status", "File", Some("cmd-r"), Item, || Box::new(Refresh)),

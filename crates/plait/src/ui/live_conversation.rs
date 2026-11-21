@@ -1290,6 +1290,14 @@ Tone::Filled,
                             .child(composer),
                     )
                 })
+                // The source issue shows whatever the host's protocol.
+                .children(self.issue_link_line(cx).map(|line| {
+                    div()
+                        .w_full()
+                        .max_w(px(CONTENT_WIDTH))
+                        .mx_auto()
+                        .child(line)
+                }))
                 .child(if self.host.protocol() >= 3 {
                     self.thread_environment(cx)
                 } else {

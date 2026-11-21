@@ -96,11 +96,12 @@ export class Worktrees {
   private prepare: (request: Create, id: string) => Promise<Snapshot>;
   private changed: () => void;
   private busy: (root: string) => boolean;
+  private admit: () => void;
   constructor(store: Store, directory: string,
     prepare: (request: Create, id: string) => Promise<Snapshot>,
-    changed: () => void, busy: (root: string) => boolean) {
+    changed: () => void, busy: (root: string) => boolean, admit: () => void = () => {}) {
     this.store = store; this.directory = directory; this.prepare = prepare;
-    this.changed = changed; this.busy = busy;
+    this.changed = changed; this.busy = busy; this.admit = admit;
     this.builds = new BuildOutputs(store, directory, changed, busy);
     store.db.exec(`CREATE TABLE IF NOT EXISTS worktree_operations(request_id TEXT PRIMARY KEY,input TEXT NOT NULL,thread_id TEXT NOT NULL,snapshot TEXT NOT NULL,result TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS worktree_removals(request_id TEXT PRIMARY KEY,input TEXT NOT NULL,creation_id TEXT NOT NULL,result TEXT);`);
@@ -150,7 +151,7 @@ export class Worktrees {
     const state = value.op === 'skip_build_output' ? this.builds.skip(operation.thread_id) : this.builds.state(operation.thread_id);
     return { schema: 1, worktree_build_output_v1: true, request_id: value.request_id, thread_id: operation.thread_id, ...state, ...(operation.state === 'failed' ? { phase: 'cold', outcome: null } : {}) };
   }
-  async handle(input: unknown) {
+  async handle(input: unknown, accepted = false) {
     if (this.buildRequest(input)) return this.handleBuild(input);
     const request = validateWorktree(input);
     if (request.op === 'worktree_info') return { schema: 1, worktree_threads_v1: true, parent: await worktreeHelper<Parent>({ action: 'parent', root: request.checkout }) };
@@ -164,7 +165,7 @@ export class Worktrees {
     if (request.op === 'remove_worktree') return this.remove(request);
     const earlier = this.admitting.get(request.request_id);
     if (earlier) await earlier;
-    const admission = this.create(request);
+    const admission = this.create(request, accepted);
     this.admitting.set(request.request_id, admission);
     try { return await admission; } finally { if (this.admitting.get(request.request_id) === admission) this.admitting.delete(request.request_id); }
   }
@@ -219,7 +220,7 @@ export class Worktrees {
   private put(operation: Operation) {
     this.store.db.prepare('UPDATE worktree_operations SET result=? WHERE request_id=?').run(JSON.stringify(operation), operation.request_id);
   }
-  private async create(request: Create) {
+  private async create(request: Create, accepted: boolean) {
     if (this.store.db.prepare('SELECT 1 FROM worktree_removals WHERE request_id=?').get(request.request_id)) fail('invalid_request', 'This request ID belongs to a removal.');
     const previous = this.store.db.prepare('SELECT input FROM worktree_operations WHERE request_id=?').get(request.request_id);
     if (previous) {
@@ -231,6 +232,7 @@ export class Worktrees {
     }
     const id = randomUUID();
     const snapshot = await this.prepare(request, id);
+    if (!accepted) this.admit();
     this.store.setSetting(`worktree_policy:${id}`, commandPolicy(this.store, request.parent.root, request.parent.identity));
     const operation: Operation = { request_id: request.request_id, thread_id: id, state: 'preparing', worktree: null, error: null };
     this.store.db.prepare('INSERT INTO worktree_operations VALUES (?,?,?,?,?)').run(request.request_id, canonical(request), id, JSON.stringify(snapshot), JSON.stringify(operation));
