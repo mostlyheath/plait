@@ -315,7 +315,7 @@ impl Plait {
             .model
             .active()
             .and_then(|id| self.tabs.model.get(id))
-            .filter(|tab| tab.session().target().is_worktrees())
+            .filter(|tab| tab.session().target().is_project_view())
             .map_or(&self.host.creation.checkout, |tab| {
                 &tab.session().target().checkout().root
             })

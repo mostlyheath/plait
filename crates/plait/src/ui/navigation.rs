@@ -710,10 +710,12 @@ impl Plait {
             let select = checkout.clone();
             let configure = checkout.clone();
             let trees = checkout.clone();
+            let issues = checkout.clone();
             let hide = checkout.clone();
             panel = panel.child(tag("project-menu-heading", "Project", colors().muted))
                 .child(button("project-open", "Open project").on_activate(cx, move |this, window, cx| { this.navigation.menu = None; this.change_checkout(select.clone(), window, cx); }))
                 .child(button("project-worktrees", "Worktrees").on_activate(cx, move |this,window,cx| this.open_worktrees(trees.clone(),window,cx)))
+                .child(button("project-issues", "Linear issues").on_activate(cx, move |this,window,cx| this.open_issues(issues.clone(),window,cx)))
                 .child(button("project-settings", "Project settings…").on_activate(cx, move |this, window, cx| {
                     this.navigation.menu = None;
                     this.show_settings_for_project(configure.clone(), window, cx);

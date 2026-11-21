@@ -47,6 +47,7 @@ mod admission;
 mod branches;
 mod find;
 mod isolation;
+mod issues;
 mod linear_settings;
 mod many_drafts;
 mod mcp;
@@ -2423,6 +2424,7 @@ fn walk(output: Option<&Path>) {
         toasts::walk(&repository, output, suffix, width, height);
         linear_settings::walk(&repository, output, suffix, width, height);
         linear_settings::walk_project(&repository, output, suffix, width, height);
+        issues::walk(&repository, output, suffix, width, height);
         worktrees_view::walk(&repository, output, suffix, width, height);
     }
     let _ = std::fs::remove_dir_all(&scratch);

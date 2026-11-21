@@ -2889,3 +2889,12 @@ leases, harness permissions and containment enforce it.
 The saved admission binds the checkout directory identity. The host rechecks it
 after model discovery, before saving a thread, so replacement at the same path
 fails explicitly instead of redirecting the draft.
+
+## Remote bridge
+
+`plait-host bridge` multiplexes an authenticated byte stream onto the host's
+owner-only socket. It connects only to the invoking owner's socket, using the
+default store or `--store PATH`; it does not expose a network listener. The
+[remote transport format](REMOTE.md#transport) defines its frames. Each link
+allows at most 32 streams; requests are limited to 64 KiB, replies to 1 MiB,
+and a partial frame has a 15-second deadline. SSH integration remains planned.

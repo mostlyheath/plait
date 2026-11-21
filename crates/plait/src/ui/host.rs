@@ -672,7 +672,7 @@ impl Plait {
         cx: &mut Context<Self>,
     ) {
         let Created {
-            draft_id: _,
+            draft_id,
             request_id,
             choice,
             harness,
@@ -698,6 +698,7 @@ impl Plait {
                         .insert(0, host::ThreadSummary::from(&reply.thread));
                     self.rebuild_projects(cx);
                 }
+                self.link_created_thread(draft_id.as_deref(), &id, cx);
                 if self.new_thread_open && self.host.thread.watch_epoch == selection_epoch {
                     self.open_created_thread(id, window, cx);
                 }

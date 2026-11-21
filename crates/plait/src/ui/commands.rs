@@ -60,6 +60,8 @@ pub(super) enum Command {
     SwitchBranch(String),
     /// A new branch's name, as typed in the branch picker.
     CreateBranch(String),
+    /// A thread to add the offered Linear issue to.
+    IssueToThread(String),
 }
 
 impl Clone for Command {
@@ -72,6 +74,7 @@ impl Clone for Command {
             Self::OpenFile(path) => Self::OpenFile(path.clone()),
             Self::SwitchBranch(name) => Self::SwitchBranch(name.clone()),
             Self::CreateBranch(name) => Self::CreateBranch(name.clone()),
+            Self::IssueToThread(id) => Self::IssueToThread(id.clone()),
             Self::SignIn(id) => Self::SignIn(id.clone()),
             Self::OpenProject(path) => Self::OpenProject(path.clone()),
             Self::NewThread(choice) => Self::NewThread(choice.clone()),
@@ -473,6 +476,7 @@ impl Plait {
                 self.settings_tab = SettingsTab::Agents;
             }
             Command::DraftProject(path) => self.choose_draft_project(path, window, cx),
+            Command::IssueToThread(id) => self.add_issue_to_thread(id, window, cx),
             Command::DraftHarness(id) => self.choose_draft_harness(id, cx),
             Command::DraftApproval(mode) => self.choose_draft_approval(mode, cx),
             Command::DraftThinking(level) => self.choose_draft_thinking(level, cx),
