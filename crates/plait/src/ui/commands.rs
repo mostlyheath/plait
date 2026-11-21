@@ -24,6 +24,7 @@ pub(super) enum Command {
     ReviewRecord(plait_core::review::recorded::Target),
     SignIn(String),
     OpenProject(std::path::PathBuf),
+    OpenRemoteProject(String),
     NewThread(ModelChoice),
     /// A model chosen in the model picker. The picker's purpose gives it meaning.
     Model(ModelChoice),
@@ -77,6 +78,7 @@ impl Clone for Command {
             Self::IssueToThread(id) => Self::IssueToThread(id.clone()),
             Self::SignIn(id) => Self::SignIn(id.clone()),
             Self::OpenProject(path) => Self::OpenProject(path.clone()),
+            Self::OpenRemoteProject(path) => Self::OpenRemoteProject(path.clone()),
             Self::NewThread(choice) => Self::NewThread(choice.clone()),
             Self::Model(choice) => Self::Model(choice.clone()),
             Self::HarnessModel(id, choice) => Self::HarnessModel(*id, choice.clone()),
@@ -400,7 +402,7 @@ impl Plait {
         }
     }
 
-    fn run_command(
+    pub(super) fn run_command(
         &mut self,
         command: Command,
         purpose: Option<ModelPurpose>,
@@ -485,6 +487,16 @@ impl Plait {
                 Some(ModelPurpose::ThreadModel) => self.choose_thread_model(choice, window, cx),
                 _ => {}
             },
+            Command::OpenRemoteProject(path) => {
+                if !self.host_is_local() && super::valid_remote_path(&path) {
+                    let path = std::path::PathBuf::from(path);
+                    let mut preferences = self.preferences.value.clone();
+                    preferences.navigation.open(&path);
+                    self.persist_navigation(preferences, cx);
+                    self.rebuild_projects(cx);
+                    self.change_checkout(path, window, cx);
+                }
+            }
             Command::OpenProject(path) => {
                 if self.host.creation.pending_create.is_none() && !self.host.creation.creating {
                     self.change_checkout(path, window, cx);

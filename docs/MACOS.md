@@ -806,8 +806,9 @@ a machine; its host and threads stay on that machine.
 
 On a remote machine, threads, approvals, Stop, the queue, models, and history
 work as they do here. Changes, History, Files, and Open in Editor or
-Terminal are not available there yet. Remote projects open by path on that
-machine. The window's header names the machine in use.
+Terminal or Show in Finder are not available there yet. Choose **Open repository…**
+and enter an absolute path on that machine to add a remote project. The host
+checks the checkout when you create a thread. The live remote check remains outstanding. The window's header names the machine in use.
 
 ### Settings and Project settings
 

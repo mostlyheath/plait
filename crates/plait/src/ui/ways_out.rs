@@ -78,7 +78,7 @@ impl Plait {
 
     /// What is on screen: the file in Files, or the file selected in Changes.
     pub(super) fn way_out_target(&self) -> Option<Target> {
-        if self.settings_open {
+        if !self.host_is_local() || self.settings_open {
             return None;
         }
         match self.workspace.tab {
@@ -143,6 +143,9 @@ impl Plait {
 
     /// Hover text for an Editor control: what it opens, where, and with what.
     pub(super) fn editor_hover(&self) -> String {
+        if !self.host_is_local() {
+            return super::REMOTE_UNAVAILABLE.into();
+        }
         let Some(target) = self.way_out_target() else {
             return NO_FILE.into();
         };
@@ -156,6 +159,9 @@ impl Plait {
     }
 
     pub(super) fn finder_hover(&self) -> String {
+        if !self.host_is_local() {
+            return super::REMOTE_UNAVAILABLE.into();
+        }
         self.way_out_target().map_or_else(
             || NO_FILE.into(),
             |target| format!("Shows {} in Finder", target.display),
@@ -163,6 +169,9 @@ impl Plait {
     }
 
     pub(super) fn open_in_editor(&mut self, cx: &mut Context<Self>) {
+        if !self.host_is_local() {
+            return self.way_out_failed(super::REMOTE_UNAVAILABLE.into(), cx);
+        }
         let Some(target) = self.way_out_target() else {
             return self.way_out_failed(NO_FILE.into(), cx);
         };
@@ -176,6 +185,9 @@ impl Plait {
     }
 
     pub(super) fn show_in_finder(&mut self, cx: &mut Context<Self>) {
+        if !self.host_is_local() {
+            return self.way_out_failed(super::REMOTE_UNAVAILABLE.into(), cx);
+        }
         let Some(target) = self.way_out_target() else {
             return self.way_out_failed(NO_FILE.into(), cx);
         };
@@ -184,12 +196,18 @@ impl Plait {
 
     /// A terminal at the open checkout, whatever is on screen.
     pub(super) fn open_terminal(&mut self, cx: &mut Context<Self>) {
+        if !self.host_is_local() {
+            return self.way_out_failed(super::REMOTE_UNAVAILABLE.into(), cx);
+        }
         let choice = &self.preferences.value.open_terminals_with;
         let launch = handoff::open_terminal(choice, &self.file_root());
         self.hand_off(launch, cx);
     }
 
     pub(super) fn hand_off(&mut self, launch: Result<Launch, String>, cx: &mut Context<Self>) {
+        if !self.host_is_local() {
+            return self.way_out_failed(super::REMOTE_UNAVAILABLE.into(), cx);
+        }
         match launch {
             Ok(launch) => {
                 // A new attempt replaces the last failure's sentence.
@@ -253,10 +271,12 @@ pub(super) fn editor_button(
     id: &'static str,
     name: &str,
     shortcut: String,
+    local: bool,
     cx: &mut Context<Plait>,
 ) -> super::theme::Control {
     let plait = cx.weak_entity();
     super::theme::button(id, "Editor")
+        .disabled(!local)
         .aria_label(format!("Open {name} in your editor"))
         .aria_keyshortcuts(shortcut)
         .tooltip(move |_, cx| {
@@ -273,10 +293,12 @@ pub(super) fn editor_button(
 pub(super) fn finder_button(
     id: &'static str,
     name: &str,
+    local: bool,
     cx: &mut Context<Plait>,
 ) -> super::theme::Control {
     let plait = cx.weak_entity();
     super::theme::button(id, "Finder")
+        .disabled(!local)
         .aria_label(format!("Show {name} in Finder"))
         .tooltip(move |_, cx| {
             let text = plait

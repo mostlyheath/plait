@@ -186,7 +186,8 @@ impl Plait {
             note: self.branch_note(note),
         };
         let enabled = blocker.is_none();
-        let typed: Typed = Rc::new(move |text, items| create_item(text, items, enabled, create));
+        let typed: Typed =
+            Rc::new(move |text, items| create_item(text.trim(), items, enabled, create));
         let palette = cx.new(|cx| {
             let mut palette = Palette::new(options, items, window, cx);
             palette.set_typed(typed, cx);
