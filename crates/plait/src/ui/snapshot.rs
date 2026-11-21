@@ -968,8 +968,14 @@ fn approval_shortcuts_act_only_when_the_buttons_would() {
             );
         }
         // The buttons read the keymap.
-        assert_eq!(plait.shortcut_label("approval.allow_once"), "⌥⌘Y");
-        assert_eq!(plait.shortcut_label("approval.deny_once"), "⌥⌘.");
+        assert_eq!(
+            plait.shortcut_label("approval.allow_once"),
+            keys("cmd-alt-y")
+        );
+        assert_eq!(
+            plait.shortcut_label("approval.deny_once"),
+            keys("cmd-alt-.")
+        );
         // One gate decides for the buttons and the keys.
         let approval = plait
             .host
@@ -1097,7 +1103,10 @@ fn approval_shortcuts_act_only_when_the_buttons_would() {
         let keymap = &mut plait.preferences.value.keymap;
         keymap.insert("approval.allow_once".into(), "cmd-alt-u".into());
         super::actions::install(cx, keymap);
-        assert_eq!(plait.shortcut_label("approval.allow_once"), "⌥⌘U");
+        assert_eq!(
+            plait.shortcut_label("approval.allow_once"),
+            keys("cmd-alt-u")
+        );
     });
     assert!(!harness.answers("cmd-alt-y", "a6"), "the old key is free");
     assert!(harness.answers("cmd-alt-u", "a6"), "the new key answers");
@@ -4062,6 +4071,12 @@ fn inspector_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
 
 /// Layout and paint run for every view. GPUI reports some misuse, such as a
 /// second hover style on one element, only when the element is drawn.
+/// How this platform spells `key`, so label checks follow the binding rather
+/// than one platform's modifier glyphs.
+fn keys(key: &'static str) -> String {
+    super::actions::label(&[Keystroke::parse(key).unwrap()])
+}
+
 #[core::prelude::v1::test]
 fn every_view_draws() {
     if !isolated("every_view_draws") {
