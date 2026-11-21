@@ -46,3 +46,24 @@ test('unknown saved harness refuses work while its transcript remains readable',
     if (selected.kind === 'external') assert.equal(selected.harness, host[selected.id]);
   }
 });
+
+test('a harness without steering refuses before accepting or queueing', async t => {
+  const { root, base } = await setup(t);
+  const directory = join(base, 'store'); await mkdir(directory);
+  const models = createModels(); models.setProvider(fauxProvider().provider);
+  const host = new Runtime(directory, models, new Set(['faux']));
+  t.after(async () => { await host.close(); });
+  const created = await host.handle({ op: 'create_thread', protocol_version: 4, checkout: root, provider: 'faux', model_id: 'faux-1', request_id: 'create' }) as { thread: { id: string } };
+  const id = created.thread.id;
+  const row = host.store.db.prepare('SELECT snapshot FROM threads WHERE id=?').get(id)!;
+  const snapshot = JSON.parse(String(row.snapshot));
+  snapshot.harness = { id: 'codex', version: null, mode: null, reported: null };
+  host.store.db.prepare('UPDATE threads SET snapshot=?, harness=? WHERE id=?').run(JSON.stringify(snapshot), 'codex', id);
+  Object.defineProperty(host.codex, 'supportsSteer', { value: false });
+  const result = await host.reply({ op: 'submit', protocol_version: 4, thread_id: id, request_id: 'steer', text: 'hello', when_busy: 'steer' }) as { ok: boolean; error?: { code: string; message: string } };
+  assert.equal(result.ok, false);
+  assert.equal(result.error?.code, 'invalid_request');
+  assert.equal(result.error?.message, 'This harness cannot take a message while it runs. Queue it instead.');
+  assert.deepEqual(host.store.queue(id), []);
+  assert.equal(host.store.duplicate(id, 'steer', 'hello'), undefined);
+});

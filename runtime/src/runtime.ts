@@ -41,9 +41,8 @@ import type { Providers } from './providers.ts';
 import { commandPolicy, commandPolicyOperation, TRUSTED_INSTRUCTIONS } from './command/policy.ts';
 import type { TemplateEntry } from './templates.ts';
 import { CODEX_MODES, CODEX_PROVIDER, CodexHarness, PI_ENTRY, codexEffort, codexLevels } from './harness.ts';
-import type { Lease } from './harness.ts';
 import { ExternalEntries, transcriptPath } from './external/entries.ts';
-import { ExternalHarnesses } from './external/registry.ts';
+import { ExternalHarnesses, type ExternalRun } from './external/registry.ts';
 import { CodexRun } from './codex/run.ts';
 import { CLAUDE_MODES, CLAUDE_PROVIDER, ClaudeHarness } from './claude/harness.ts';
 import { ClaudeRun } from './claude/run.ts';
@@ -58,10 +57,7 @@ type Session = ToolState & {
   steered: Map<string, Submission>;
   /** The person's prompt templates, found when the run started. */
   templates?: TemplateEntry[];
-  /** A Codex thread's turn, its server lease, and its transcript store. */
-  codex?: { run?: CodexRun; lease?: Lease; entries?: ExternalEntries };
-  /** A Claude Code thread's run and its transcript store. */
-  claude?: { run?: ClaudeRun; entries?: ExternalEntries };
+  external?: ExternalRun;
 };
 type Query = { minEntryId?: number; maxEntryId?: number; order: 'ascending' | 'descending' };
 /** Inputs one thread may hold behind its run. */
@@ -448,7 +444,7 @@ export class Runtime {
       if (request.provider === undefined && request.thinking === undefined) {
         snapshot.harness = { ...snapshot.harness!, mode: String(request.mode), reported: null };
         this.save(snapshot);
-        void this.sessions.get(id)?.claude?.run?.setMode(String(request.mode));
+        void this.sessions.get(id)?.external?.setMode?.(String(request.mode));
         return snapshot;
       }
     }
@@ -516,9 +512,7 @@ export class Runtime {
       if (session?.root) return work({ ...base, entries: entries(session.root) });
       // A Codex thread's translated transcript is its own store, read the same way.
       const stored = (codex: ExternalEntries) => async (query: Query, limit: number) => codex.entries(query, limit) as unknown as EntryRecord[];
-      if (session?.codex?.entries) return work({ ...base, entries: stored(session.codex.entries) });
-      const claude = session?.claude?.entries;
-      if (claude) return work({ ...base, entries: stored(claude) });
+      if (session?.external?.entries) return work({ ...base, entries: stored(session.external.entries) });
       const selected = this.external.resolveHarness(this.snapshot(id));
       switch (selected.kind) {
         case 'external':
@@ -621,7 +615,11 @@ export class Runtime {
   }
   async submit(id: string, requestId: string, text: string, mode: ApprovalMode = 'ask', whenBusy?: QueueMode, images: string[] = []) {
     const snapshot = this.snapshot(id);
-    if (this.external.resolveHarness(snapshot).kind === 'unknown') unsupportedHarness();
+    const selected = this.external.resolveHarness(snapshot);
+    if (selected.kind === 'unknown') unsupportedHarness();
+    if (whenBusy === 'steer' && selected.kind === 'external' && !selected.harness.supportsSteer) {
+      fail('invalid_request', 'This harness cannot take a message while it runs. Queue it instead.');
+    }
     const duplicate = this.store.duplicate(id, requestId, images.length ? { text, images } : text);
     if (duplicate !== undefined) return duplicate;
     this.usable(snapshot);
@@ -720,7 +718,7 @@ export class Runtime {
   }
   /** Codex takes a steering message into the running turn at once, so it cannot be withdrawn afterwards. */
   private async steerCodex(session: Session) {
-    const run = session.codex?.run;
+    const run = session.external?.harness === 'codex' ? session.external.run : undefined;
     if (!session.started || !run) return;
     for (const input of session.inputs) {
       if (input.queued?.mode !== 'steer' || session.steered.has(input.request_id)) continue;
@@ -731,7 +729,7 @@ export class Runtime {
   }
   /** Claude Code takes a steering message at its next step, or as the next turn; either way it cannot be withdrawn. */
   private steerClaude(session: Session) {
-    const run = session.claude?.run;
+    const run = session.external?.harness === 'claude' ? session.external.run : undefined;
     if (!session.started || !run) return;
     for (const input of session.inputs) {
       if (input.queued?.mode !== 'steer' || session.steered.has(input.request_id)) continue;
@@ -858,14 +856,9 @@ export class Runtime {
     return { type: 'continue' };
   }
   private async release(session: Session) {
-    if (session.codex) {
-      session.codex.run?.close(); session.codex.entries?.close(); session.codex.lease?.release();
-      session.codex = undefined;
-      return;
-    }
-    if (session.claude) {
-      session.claude.run?.close(); session.claude.entries?.close();
-      session.claude = undefined;
+    if (session.external) {
+      session.external.close();
+      session.external = undefined;
       return;
     }
     await session.watch?.stop();
@@ -988,13 +981,13 @@ export class Runtime {
     // Shown on edit approvals only; Codex does not honor Plait's guard on these files.
     const dirty = new Set(await dirtyPaths(snapshot.checkout).catch(() => [] as string[]));
     const lease = await this.codex.acquire();
-    session.codex = { lease };
+    session.external = { harness: 'codex', supportsSteer: this.codex.supportsSteer, lease, close() { this.run?.close(); this.entries?.close(); this.lease?.release(); } };
     const model = lease.models.find(candidate => candidate.id === snapshot.model.model_id);
     if (!model) fail('model_unavailable', 'This Codex model is no longer offered by your Codex. Choose another.');
     const mode = snapshot.harness?.mode ?? this.codex.defaultMode();
     snapshot.harness = { ...snapshot.harness, id: 'codex', version: lease.install.version ?? null, mode };
     const entries = await this.gate(id, async () => new ExternalEntries(transcriptPath(this.directory, id, 'codex')));
-    session.codex.entries = entries;
+    session.external.entries = entries;
     const placed = (requestId: string, entry: number) => {
       this.store.place(id, requestId, entry);
       session.inputs = this.store.inputs(id);
@@ -1006,7 +999,7 @@ export class Runtime {
       inputs: () => session.inputs, place: placed, persist: head => this.save(snapshot, head), publish: () => this.changed(id),
       changed: path => this.store.recordWrite(id, path),
     });
-    session.codex.run = run;
+    session.external.run = run;
     this.save(snapshot);
     if (session.authorization.signal.aborted) return;
     session.authorization.activate();
@@ -1025,7 +1018,7 @@ export class Runtime {
     const mode = snapshot.harness?.mode ?? this.claude.defaultMode();
     snapshot.harness = { ...snapshot.harness, id: 'claude', version: launch.install.version ?? null, mode };
     const entries = await this.gate(id, async () => new ExternalEntries(transcriptPath(this.directory, id, 'claude')));
-    session.claude = { entries };
+    session.external = { harness: 'claude', supportsSteer: this.claude.supportsSteer, entries, close() { this.run?.close(); this.entries?.close(); } };
     const run = new ClaudeRun({
       snapshot, mode, launch, instructions, cleanup: session.lease?.cleanup, model: snapshot.model.model_id, level: snapshot.thinking_level, entries,
       approvals: session.approvals, signal: session.authorization.signal, dirty,
@@ -1040,7 +1033,8 @@ export class Runtime {
       initialized: init => this.claude.observe(launch, init),
       opened: () => void this.steer(session),
     });
-    session.claude.run = run;
+    session.external.run = run;
+    session.external.setMode = mode => run.setMode(mode);
     this.save(snapshot);
     if (session.authorization.signal.aborted) return;
     session.authorization.activate();

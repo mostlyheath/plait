@@ -128,6 +128,7 @@ type Shared = { server: Promise<{ server: AppServer; check: Check }>; ready?: Ap
 
 /** Finds and checks Codex, and keeps one app-server while any Codex thread runs. */
 export class CodexHarness {
+  readonly supportsSteer: boolean = true;
   private check?: Promise<Check>;
   /** The latest finished check, for decisions that must not wait. */
   private latest?: Check;
