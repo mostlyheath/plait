@@ -4,7 +4,7 @@ import type { ConversationView } from '@earendil-works/pi-durable';
 import { update } from '../src/transcript.ts';
 import type { InputRecord, Snapshot } from '../src/protocol.ts';
 import { ClaudeTranscript, isTurnEnd, toolCall } from '../src/claude/transcript.ts';
-import type { Entry, Placed } from '../src/claude/transcript.ts';
+import type { Entry, Placed } from '../src/external/entries.ts';
 
 const session = '6f1c2a4e-0000-4000-8000-000000000009';
 const U1 = '00000000-0000-4000-8000-0000000000a1';

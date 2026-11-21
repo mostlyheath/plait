@@ -1,12 +1,25 @@
-// A Codex thread's translated transcript, one SQLite file per thread beside the
+// An external thread's translated transcript, one SQLite file per thread beside the
 // Pi conversation stores. Entries are written as they finish, so history, full
-// text, and a restarted host read the thread without asking Codex again.
+// text, and a restarted host read the thread without asking the harness again.
 import { DatabaseSync } from 'node:sqlite';
-import type { Entry } from './transcript.ts';
+import { join } from 'node:path';
+import type { Message } from '../transcript.ts';
+
+/**
+ * One persisted transcript entry, in the shape Pi's conversation view uses, so
+ * `update()` in ../transcript.ts and the history pages read external threads unchanged.
+ */
+export type Entry = { id: number; kind: 'message'; model: Message[] };
+export type Placed = { clientId: string; entry: number };
+export type Applied = { append: Entry[]; changed: boolean; placed: Placed[] };
+
+export function transcriptPath(directory: string, threadId: string, harness: 'codex' | 'claude'): string {
+  return join(directory, `${threadId}.${harness}.sqlite`);
+}
 
 type Query = { minEntryId?: number; maxEntryId?: number; order: 'ascending' | 'descending' };
 
-export class CodexEntries {
+export class ExternalEntries {
   private readonly db: DatabaseSync;
   constructor(path: string, options: { readOnly?: boolean } = {}) {
     this.db = new DatabaseSync(path, { readOnly: options.readOnly === true });
@@ -15,7 +28,7 @@ export class CodexEntries {
       CREATE TABLE IF NOT EXISTS entries(id INTEGER PRIMARY KEY, model TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);`);
   }
-  /** The Codex thread this Plait thread continues, once one was started. */
+  /** The external thread this Plait thread continues, once one was started. */
   thread(): string | undefined {
     const row = this.db.prepare("SELECT value FROM meta WHERE key='thread'").get();
     return row ? String(row.value) : undefined;

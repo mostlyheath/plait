@@ -13,7 +13,7 @@ import { isAbsolute, relative, sep } from 'node:path';
 import type { SDKControlInitializeResponse, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { ConversationView } from '@earendil-works/pi-durable';
 import type { InteractiveApproval } from '../approval.ts';
-import type { CodexEntries } from '../codex/entries.ts';
+import type { ExternalEntries } from '../external/entries.ts';
 import { fail, HostError } from '../protocol.ts';
 import type { InputRecord, Snapshot, ThinkingLevel } from '../protocol.ts';
 import { update } from '../transcript.ts';
@@ -24,7 +24,7 @@ import type { ClaudeLaunch } from './harness.ts';
 import { catalogModel } from './install.ts';
 import { ClaudeSession } from './session.ts';
 import { ClaudeTranscript, isTurnEnd } from './transcript.ts';
-import type { Applied } from './transcript.ts';
+import type { Applied } from '../external/entries.ts';
 
 const VIEW_ENTRIES = 100;
 const PUBLISH_MS = 16;
@@ -45,7 +45,7 @@ export type ClaudeRunContext = {
   /** A model ID from Claude Code's list; `default` is Claude Code's own choice. */
   model: string;
   level: ThinkingLevel | undefined;
-  entries: CodexEntries;
+  entries: ExternalEntries;
   approvals: InteractiveApproval;
   signal: AbortSignal;
   /** Checkout paths that had changes when the run started, shown on edit approvals. */

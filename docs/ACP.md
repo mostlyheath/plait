@@ -90,6 +90,12 @@ harness. Unknown saved IDs must fail before admission or startup, never select
 another agent. Extract the shared `CodexEntries` store without changing Codex
 or Claude file names or table formats. No arbitrary ACP-server registry is added.
 
+**Progress.** Step 1 is done: the store is `ExternalEntries` in
+`runtime/src/external/entries.ts`, with `transcriptPath` naming
+`<thread>.codex.sqlite` and `<thread>.claude.sqlite` exactly as before. Steps
+2–4 (explicit dispatch, unified external runs, compatibility tests) follow the
+plan on [issue #31](https://github.com/heath0xFF/plait/issues/31).
+
 ## Discovery and authentication
 
 - Find `agy` in the host's login-shell environment, or use an absolute path
