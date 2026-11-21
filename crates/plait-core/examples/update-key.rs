@@ -66,9 +66,31 @@ fn sign(key: &Path, manifest: &Path) -> io::Result<()> {
     target.push(".sig");
     fs::write(&target, &signature)?;
     // Prove the published pair passes the same check the app runs.
-    plait_core::update::verify(&bytes, signature.as_bytes(), &expected)
-        .map_err(io::Error::other)?;
+    check(manifest, &bytes, signature.as_bytes(), &expected)?;
     Ok(())
+}
+
+/// The check a client runs on this file: schema 1 for `update.json`, the
+/// component manifests for `update-client.json` and `update-host.json`.
+fn check(
+    manifest: &Path,
+    bytes: &[u8],
+    signature: &[u8],
+    key: &ed25519_dalek::VerifyingKey,
+) -> io::Result<(String, usize)> {
+    use plait_core::update::{Component, verify, verify_component};
+    let component = match manifest.file_name().and_then(|name| name.to_str()) {
+        Some("update-client.json") => Some(Component::Client),
+        Some("update-host.json") => Some(Component::Host),
+        _ => None,
+    };
+    match component {
+        Some(component) => {
+            verify_component(bytes, signature, key, component).map(|m| (m.tag, m.artifacts.len()))
+        }
+        None => verify(bytes, signature, key).map(|m| (m.tag, m.artifacts.len())),
+    }
+    .map_err(io::Error::other)
 }
 
 fn verify(manifest: &Path) -> io::Result<()> {
@@ -77,13 +99,8 @@ fn verify(manifest: &Path) -> io::Result<()> {
     target.push(".sig");
     let signature = fs::read(&target)?;
     let key = plait_core::update::public_key().map_err(io::Error::other)?;
-    let manifest =
-        plait_core::update::verify(&bytes, &signature, &key).map_err(io::Error::other)?;
-    println!(
-        "{} ({} artifacts) is signed by the Plait release key",
-        manifest.tag,
-        manifest.artifacts.len()
-    );
+    let (tag, artifacts) = check(manifest, &bytes, &signature, &key)?;
+    println!("{tag} ({artifacts} artifacts) is signed by the Plait release key");
     Ok(())
 }
 

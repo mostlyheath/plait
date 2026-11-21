@@ -69,6 +69,9 @@ features; their agreed scope remains.
   build-output reuse are already built.
 - **Named CLIs (M8 step 3):** wait for a sandboxed project that needs one.
   Trusted projects already run the person's tools.
+- **Remote hosts (M3) — next after the current work.** Agreed design in
+  [Remote hosts](REMOTE.md): SSH and tailnet transports, this Linux
+  workstation first, remote threads before remote Git.
 - **Other clients and remote servers (M3/M6):** support other apps through a
   versioned public protocol, not GPUI or Rust internals. Authenticated remote
   transport and recovery come first for network access; Linux execution also
