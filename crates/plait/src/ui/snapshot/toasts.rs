@@ -85,7 +85,7 @@ fn toasts_are_labelled_and_dismissable_wide_and_narrow() {
         h.update(|p, _, cx| p.dismiss_toast(&second, cx));
         h.update(|p, _, _| {
             let left: Vec<_> = p.toasts.items().iter().map(|t| t.thread.clone()).collect();
-            assert_eq!(left, [first.clone()]);
+            assert_eq!(left, vec![first.clone()]);
         });
         // Reading the thread clears its toast, as it clears its unread marker.
         h.update(|p, _, cx| p.mark_thread_read(&first, cx));
