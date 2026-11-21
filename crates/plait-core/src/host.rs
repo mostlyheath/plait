@@ -969,6 +969,8 @@ pub struct Client {
 enum Transport {
     Local(PathBuf),
     Link(std::sync::Arc<crate::remote::link::Link>),
+    /// The local environment named no usable host; each request reports why.
+    Unavailable(String),
 }
 impl Client {
     pub fn from_environment() -> Result<Self, Error> {
@@ -990,6 +992,15 @@ impl Client {
         })
     }
 
+    /// This Mac's host, or a client whose every request returns the
+    /// configuration error, so a bad environment is a connection error,
+    /// not a failure to start.
+    pub fn local_or_unavailable() -> Self {
+        Self::from_environment().unwrap_or_else(|error| Self {
+            transport: Transport::Unavailable(error.to_string()),
+        })
+    }
+
     pub fn over_link(link: std::sync::Arc<crate::remote::link::Link>) -> Self {
         Self {
             transport: Transport::Link(link),
@@ -1000,6 +1011,7 @@ impl Client {
         match &self.transport {
             Transport::Local(path) => crate::local_socket::connect(path),
             Transport::Link(link) => link.open(),
+            Transport::Unavailable(reason) => Err(std::io::Error::other(reason.clone())),
         }
     }
 

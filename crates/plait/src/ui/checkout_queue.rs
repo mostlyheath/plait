@@ -189,6 +189,7 @@ impl Plait {
             return "";
         };
         self.host.submissions.forget_accepted(id, request_id);
+        let client = self.host_client();
         let restored = self
             .workspace
             .composers
@@ -199,7 +200,12 @@ impl Plait {
                     let revision = composer.saved_draft().1;
                     let restored = composer.restore_cancelled(&pending.text, revision, cx);
                     if restored {
-                        composer.restore_thread_images(pending.images.clone(), id.to_owned(), cx);
+                        composer.restore_thread_images_with_client(
+                            pending.images.clone(),
+                            id.to_owned(),
+                            client,
+                            cx,
+                        );
                     }
                     restored
                 })

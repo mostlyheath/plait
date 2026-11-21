@@ -494,7 +494,8 @@ impl Plait {
                 Ok(reply) if reply.thread.id == id && reply.thread.checkout == checkout && !reply.thread.queued.iter().any(|q| q.request_id == request_id) => {
                     this.host.submissions.forget_accepted(&id, &request_id);
                     if let (Some(text), Some(composer), Some(revision)) = (text, composer, revision) {
-                        let restored = composer.update(cx, |composer, cx|  { let restored=composer.restore_cancelled(&text,revision,cx);if restored { composer.restore_thread_images(images,id.clone(),cx); } restored });
+                        let client = this.host_client();
+                        let restored = composer.update(cx, |composer, cx|  { let restored=composer.restore_cancelled(&text,revision,cx);if restored { composer.restore_thread_images_with_client(images,id.clone(),client,cx); } restored });
                         if restored && this.host.thread.selected.as_ref() == Some(&id) { this.focus_composer(window, cx); }
                         else if !restored { cx.write_to_clipboard(ClipboardItem::new_string(text)); this.set_thread_notice(id.clone(), "Message cancelled. The draft changed, so its text was copied to the clipboard.".into(), false); }
                     }

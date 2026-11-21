@@ -6,7 +6,7 @@ use super::{Plait, Workspace, theme::*};
 use gpui::{prelude::*, *};
 use plait_core::{
     git::{self, LineCount},
-    host::{self, Client, Request},
+    host::{self, Request},
     model::DiffMode,
 };
 use std::path::PathBuf;
@@ -177,9 +177,9 @@ impl Plait {
         let epoch = self.host.connection.epoch;
         let watch = self.host.thread.watch_epoch;
         let thread = id.clone();
+        let client = self.host_client();
         let task = cx.background_executor().spawn(async move {
-            Client::from_environment()?
-                .request::<host::ChangedFilesReply>(&Request::changed_files(id))
+            client.request::<host::ChangedFilesReply>(&Request::changed_files(id))
         });
         cx.spawn(async move |this, cx| {
             let result = task.await;

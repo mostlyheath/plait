@@ -332,9 +332,10 @@ impl Plait {
             .and_then(|summary| self.saved_thread(summary))
         {
             let draft = saved.draft.clone();
+            let client = self.host_client();
             composer.update(cx, |composer, cx| {
                 composer.restore_draft(draft.text, draft.revision, draft.submitted, cx);
-                composer.restore_thread_images(draft.images, id.to_owned(), cx)
+                composer.restore_thread_images_with_client(draft.images, id.to_owned(), client, cx)
             });
         }
     }

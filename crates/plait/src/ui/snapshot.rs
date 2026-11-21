@@ -49,6 +49,7 @@ mod find;
 mod isolation;
 mod issues;
 mod linear_settings;
+mod machines;
 mod many_drafts;
 mod mcp;
 mod messages;
@@ -2423,6 +2424,7 @@ fn walk(output: Option<&Path>) {
         storage::walk(&repository, output, suffix, width, height);
         toasts::walk(&repository, output, suffix, width, height);
         linear_settings::walk(&repository, output, suffix, width, height);
+        machines::walk(&repository, output, suffix, width, height);
         linear_settings::walk_project(&repository, output, suffix, width, height);
         issues::walk(&repository, output, suffix, width, height);
         worktrees_view::walk(&repository, output, suffix, width, height);
@@ -5579,6 +5581,26 @@ fn thread_management_preserves_newer_edits_and_activity() {
         plait.finish_thread_management(operation, reply(40), window, cx);
         assert!(plait.navigation.rename.is_none());
         assert!(focus.is_focused(window));
+    });
+    drop(harness);
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
+#[core::prelude::v1::test]
+fn switching_machine_reconnects() {
+    if !isolated("switching_machine_reconnects") {
+        return;
+    }
+    let scratch = std::env::temp_dir().join(format!("plait-machine-switch-{}", std::process::id()));
+    let repository = fixture_repository(&scratch);
+    let mut harness = Harness::new(&repository, None, 900., 600.);
+    harness.connect(&repository, false);
+    harness.update(|plait, window, cx| {
+        let epoch = plait.host.connection.epoch;
+        let client = plait.host_client();
+        plait.use_machine_client(client, false, window, cx);
+        assert!(!plait.host_is_local());
+        assert!(plait.host.connection.epoch > epoch);
     });
     drop(harness);
     std::fs::remove_dir_all(scratch).unwrap();

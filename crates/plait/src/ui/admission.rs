@@ -69,9 +69,10 @@ impl Plait {
         self.admission.origin = Some((id.clone(), None));
         let epoch = self.host.connection.epoch;
         let thread = id.clone();
+        let client = self.host_client();
         let task = cx
             .background_executor()
-            .spawn(async move { admission::origin(&Client::from_environment()?, thread) });
+            .spawn(async move { admission::origin(&client, thread) });
         cx.spawn(async move |this, cx| {
             if let Ok(origin) = task.await {
                 let _ = this.update(cx, |this, cx| {
@@ -89,11 +90,12 @@ impl Plait {
     fn poll_preparation(&mut self, id: String, delay: bool, cx: &mut Context<Self>) {
         let epoch = self.host.connection.epoch;
         let thread = id.clone();
+        let client = self.host_client();
         let task = cx.background_executor().spawn(async move {
             if delay {
                 std::thread::sleep(Duration::from_millis(300));
             }
-            admission::preparation(&Client::from_environment()?, thread)
+            admission::preparation(&client, thread)
         });
         cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -187,9 +189,10 @@ impl Plait {
         }
         self.admission.capabilities = Some((epoch, root.clone(), false));
         let target = root.clone();
+        let client = self.host_client();
         let task = cx
             .background_executor()
-            .spawn(async move { admission::info(&Client::from_environment()?, target) });
+            .spawn(async move { admission::info(&client, target) });
         cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
@@ -354,6 +357,7 @@ impl Plait {
         let expected = self.state.checkout_key().cloned();
         let journal = self.session.journal.clone();
         let polling = cx.background_executor().clone();
+        let client = self.host_client();
         let task = cx.background_executor().spawn(async move {
             if let Some(journal) = journal {
                 journal.flush().map_err(host::Error::Protocol)?;
@@ -361,7 +365,7 @@ impl Plait {
             if let Some(expected) = expected {
                 expected.verify().map_err(host::Error::Protocol)?;
             }
-            let client = Client::from_environment()?;
+
             let Request::CreateAdmittedThread {
                 checkout,
                 source_thread_id,

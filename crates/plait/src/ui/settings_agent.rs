@@ -390,6 +390,7 @@ impl Plait {
         let checkout_generation =
             (key.1 == self.host.creation.checkout).then_some(self.host.creation.generation);
         let expected = self.settings_checkout_key(&key.1).cloned();
+        let client = self.host_client();
         let task = cx.background_executor().spawn(async move {
             let identity = Self::identify_settings_checkout(&checkout, expected)?;
             let canonical = identity.root.clone();
@@ -399,8 +400,7 @@ impl Plait {
                 }
                 None => Request::agent_resources(canonical.clone()),
             };
-            let reply: AgentResources =
-                plait_core::host::Client::from_environment()?.send(&request)?;
+            let reply: AgentResources = client.send(&request)?;
             if reply.checkout != canonical {
                 return Err(plait_core::host::Error::Protocol(
                     "Host returned another checkout's agent setup.".into(),
