@@ -92,9 +92,12 @@ or Claude file names or table formats. No arbitrary ACP-server registry is added
 
 **Progress.** Step 1 is done: the store is `ExternalEntries` in
 `runtime/src/external/entries.ts`, with `transcriptPath` naming
-`<thread>.codex.sqlite` and `<thread>.claude.sqlite` exactly as before. Steps
-2–4 (explicit dispatch, unified external runs, compatibility tests) follow the
-plan on [issue #31](https://github.com/heath0xFF/plait/issues/31).
+`<thread>.codex.sqlite` and `<thread>.claude.sqlite` exactly as before. Step 2
+is done: `runtime/src/external/registry.ts` resolves a thread to Pi, a known
+external harness, or an unknown ID, and an unknown saved harness is refused
+before admission everywhere while its history stays readable (decision 6).
+Steps 3–4 (unified external runs, compatibility tests) follow the plan on
+[issue #31](https://github.com/heath0xFF/plait/issues/31).
 
 ## Discovery and authentication
 

@@ -13,7 +13,7 @@ export type Entry = { id: number; kind: 'message'; model: Message[] };
 export type Placed = { clientId: string; entry: number };
 export type Applied = { append: Entry[]; changed: boolean; placed: Placed[] };
 
-export function transcriptPath(directory: string, threadId: string, harness: 'codex' | 'claude'): string {
+export function transcriptPath(directory: string, threadId: string, harness: string): string {
   return join(directory, `${threadId}.${harness}.sqlite`);
 }
 
