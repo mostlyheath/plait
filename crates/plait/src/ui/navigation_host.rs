@@ -234,8 +234,10 @@ impl Plait {
         if cfg!(test) {
             return;
         }
-        // In front, an alert is a toast; in the background, a system notification.
-        let active = window.is_window_active();
+        self.retain_toasts(cx);
+        // In front, an alert is a toast; in the background, or behind Settings
+        // or an enlarged image, a system notification.
+        let active = window.is_window_active() && self.toasts_visible();
         for id in notifications {
             let Some(thread) = self
                 .host
@@ -255,6 +257,8 @@ impl Plait {
             if active {
                 self.show_toast(&id, title, detail, cx);
             } else {
+                // A newer state replaces a toast this thread showed earlier.
+                self.dismiss_toast(&id, cx);
                 window.request_attention();
                 cx.show_system_notification(SystemNotification {
                     tag: format!("plait-thread:{id}").into(),

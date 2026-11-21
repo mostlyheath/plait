@@ -23,10 +23,12 @@ features; their agreed scope remains.
   installer script. Preserve existing servers and active work. Separate first
   setup from server replacement before wiring it into startup. See
   [Client/server platform and installation](#clientserver-platform-and-installation).
-- **Thread alerts.** In-app toasts for other threads while Plait is active;
-  native macOS notifications while it runs in the background. Quit stops new
-  notifications, not host work. Reopening shows unread state without replaying
-  old alerts. Reuse the desktop's existing status stream and notification path.
+- **Thread alerts — built.** In-app toasts for other threads while Plait is
+  active; native macOS notifications while it runs in the background or
+  Settings covers the window. Quit stops new alerts, not host work. Reopening
+  shows unread state without replaying old alerts. See
+  [alerts in the Mac guide](MACOS.md#projects-and-threads); native delivery
+  remains a manual check.
 - **Antigravity (M7 step 3).** Add a first-class harness through the official
   `agy acp` interface, using the person's installed CLI and sign-in. Prefer
   the official ACP SDK over an unofficial bridge. Follow the [agreed contract](ACP.md)

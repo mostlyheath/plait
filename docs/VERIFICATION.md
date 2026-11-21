@@ -1161,6 +1161,20 @@ None of this has been run against a real editor, Finder, Terminal, or Rex:
 whether Rex opens the tab and Neovim lands on the line, what each app does
 when it is not running, and the two-second failure window are unchecked.
 
+## Thread alerts
+
+The toast stack is a headless model (`plait-core::toasts`) with tests for
+replacing a thread's older alert, the three-toast bound, expiry, and removal
+on dismiss or when a thread is gone. A scene test checks, at wide and
+900-point widths, that each toast has a status label and labelled Open and
+Dismiss controls, that Dismiss and reading the thread clear it, and that a
+reconnect or a vanished thread drops it. An ignored test,
+`ui::snapshot::toasts::toast_snapshots`, exports the toast scenes for layout
+review. Routing between a toast and a system notification (active window,
+Settings or an enlarged image open, background) is not exercised by tests:
+the scenes inject toasts directly, and native notification delivery and
+activation remain manual checks.
+
 ## Find in the conversation
 
 Core tests match with letter case ignored, inside and outside ASCII, with

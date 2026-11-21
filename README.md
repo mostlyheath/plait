@@ -70,7 +70,8 @@ tabs, threads, and drafts.
   commit, push, fetch, fast-forward pull, and create or switch branches. Click
   diff line numbers to ask the agent about exactly those lines.
 - **Every project in one sidebar.** Threads across checkouts with live status,
-  a "Needs me" filter, notifications, rename and archive, and optional
+  a "Needs me" filter, alerts (toasts while Plait is in front, notifications
+  when it is not), rename and archive, and optional
   per-thread worktrees.
 - **Keyboard first.** A command palette, quick open (Cmd-P), find in file, and
   shortcuts you can rebind.

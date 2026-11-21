@@ -1,23 +1,35 @@
 //! Thread alert toasts, injected directly: no host activity posts them here.
 use super::*;
 
-fn two(h: &mut Harness) {
+/// Toasts for the fixture's first two threads; returns their ids.
+fn two(h: &mut Harness) -> (String, String) {
+    let mut ids = Vec::new();
     h.update(|p, _, cx| {
+        ids = p
+            .host
+            .connection
+            .threads
+            .iter()
+            .take(2)
+            .map(|thread| thread.id.clone())
+            .collect();
+        assert_eq!(ids.len(), 2, "the fixture lists two threads");
         let now = std::time::Instant::now();
         p.toasts.push(
-            "scene-toast-a",
+            &ids[0],
             "Add retries to the client".into(),
             "forecast · Done".into(),
             now,
         );
         p.toasts.push(
-            "scene-toast-b",
+            &ids[1],
             "Run the integration tests".into(),
             "forecast · Needs approval".into(),
             now,
         );
         cx.notify();
     });
+    (ids[0].clone(), ids[1].clone())
 }
 
 pub(super) fn walk(repo: &Path, out: Option<&Path>, suffix: &str, width: f32, height: f32) {
@@ -54,10 +66,11 @@ fn toasts_are_labelled_and_dismissable_wide_and_narrow() {
     for (width, height) in [(1380., 860.), (900., 600.)] {
         let mut h = Harness::new(&repo, None, width, height);
         h.connect(&repo, false);
-        two(&mut h);
+        let (first, second) = two(&mut h);
         let frame = h.draw_a11y();
         frame.assert_no_duplicates("toasts");
         for required in [
+            "Add retries to the client: forecast · Done",
             "Open Add retries to the client: forecast · Done",
             "Dismiss alert for Run the integration tests",
         ] {
@@ -69,14 +82,34 @@ fn toasts_are_labelled_and_dismissable_wide_and_narrow() {
                 "toasts missing {required} at {width}"
             );
         }
-        h.update(|p, _, cx| p.dismiss_toast("scene-toast-b", cx));
+        h.update(|p, _, cx| p.dismiss_toast(&second, cx));
         h.update(|p, _, _| {
-            let left: Vec<_> = p.toasts.items().iter().map(|t| t.thread.as_str()).collect();
-            assert_eq!(left, ["scene-toast-a"]);
+            let left: Vec<_> = p.toasts.items().iter().map(|t| t.thread.clone()).collect();
+            assert_eq!(left, [first.clone()]);
         });
         // Reading the thread clears its toast, as it clears its unread marker.
-        h.update(|p, _, cx| p.mark_thread_read("scene-toast-a", cx));
+        h.update(|p, _, cx| p.mark_thread_read(&first, cx));
         h.update(|p, _, _| assert!(p.toasts.items().is_empty()));
+        // A toast for a thread the host no longer lists is dropped, not drawn.
+        h.update(|p, _, cx| {
+            p.toasts.push(
+                "gone",
+                "Gone".into(),
+                "x · Done".into(),
+                std::time::Instant::now(),
+            );
+            p.retain_toasts(cx);
+            assert!(p.toasts.items().is_empty());
+            // A reconnect clears every alert.
+            p.toasts.push(
+                &first,
+                "A".into(),
+                "x · Done".into(),
+                std::time::Instant::now(),
+            );
+            p.clear_toasts();
+            assert!(p.toasts.items().is_empty());
+        });
     }
     std::fs::remove_dir_all(scratch).unwrap();
 }
