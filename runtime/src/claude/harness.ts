@@ -80,6 +80,7 @@ type Check = { install: ClaudeInstall; env?: NodeJS.ProcessEnv; models: ClaudeMo
 
 /** Finds and checks Claude Code. Each run starts its own Claude Code process, so nothing is shared. */
 export class ClaudeHarness {
+  readonly supportsSteer: boolean = true;
   private check?: Promise<Check>;
   private latest?: Check;
   private setup?: Promise<void>;
