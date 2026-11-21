@@ -18,10 +18,11 @@ Deliver each as a separate change. Installation comes first, with independent
 client/server lifecycles. These priorities precede the remaining M9 review
 features; their agreed scope remains.
 
-- **Drag-and-drop installation.** Put `Plait.app` and an Applications shortcut
-  in the DMG. On first launch, set up a missing local server without a required
-  installer script. Preserve existing servers and active work. Separate first
-  setup from server replacement before wiring it into startup. See
+- **Drag-and-drop installation — built in v0.1.0-preview.26.** The DMG holds
+  `Plait.app` and an Applications shortcut; first launch sets up a missing
+  local server and leaves an existing one alone. Still open: acceptance of a
+  real downloaded DMG on a Mac with no host, and the independent client/server
+  update flows under **Next**. See
   [Client/server platform and installation](#clientserver-platform-and-installation).
 - **Thread alerts.** In-app toasts for other threads while Plait is active;
   native macOS notifications while it runs in the background. Quit stops new
@@ -91,7 +92,7 @@ build order. The priority list above controls planning.
 | Milestone | Built | Remaining |
 | --- | --- | --- |
 | M1 — Native foundation | GPUI desktop, navigation, conversation, Git reads | Ongoing maintenance |
-| M2 / M2.5 — Local daily use | Durable local agents, history, approvals, provider settings, thread management, search, tabs, and optional worktrees | Drag-and-drop installation and first-launch local-server setup; independent update flows |
+| M2 / M2.5 — Local daily use | Durable local agents, history, approvals, provider settings, thread management, search, tabs, and optional worktrees | Independent client/server update flows; installed acceptance of first-launch setup |
 | M3 — Remote execution | Local host boundary | Authenticated connections, remote project discovery, network recovery; Linux containment |
 | M4 — Development tools | Git staging, commits, history, push, fetch, fast-forward pull, branches, file viewer, and editor/terminal handoffs | Editor, review feedback, process and log views |
 | M5 — Previews | — | HTML, Markdown, and MDX with refresh and selected-content feedback |
@@ -128,6 +129,14 @@ exposed as an unauthenticated network service. See [HOST.md](HOST.md) for the
 implemented protocol, not a claim of a complete external-app API.
 
 ### First implementation: remove the mandatory installer script
+
+**Built in v0.1.0-preview.26**, following the steps below. First setup is
+`plait-core::update::setup` with `install::register`, which never stops a
+loaded service; client and server replacement remain the update path. The
+system-wide migration stays explicit as **Move from system-wide
+install.command** on the DMG. Behavior is described in the
+[Mac guide](MACOS.md#what-first-launch-sets-up); what is and is not yet
+verified is in [Verification](VERIFICATION.md#known-gaps).
 
 1. Separate **first setup**, **client replacement**, and **server replacement**
    in the install layer. They have different permissions and safety conditions;
