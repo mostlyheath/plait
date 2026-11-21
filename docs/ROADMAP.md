@@ -47,7 +47,8 @@ features; their agreed scope remains.
 
 ### Next — independent releases and the review loop
 
-- **Independent client/server releases.** Finish separate update selection,
+- **Independent client/server releases.** The contract is agreed in
+  [Releasing](RELEASING.md#independent-client-and-server-releases). Finish separate update selection,
   publication, and compatibility checks. Installing or updating a client must
   not force a server replacement. Keep the bootstrap work compatible with
   this direction from the first change.
