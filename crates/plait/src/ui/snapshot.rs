@@ -3944,6 +3944,70 @@ fn a_draft_keeps_its_default_harness_when_unavailable() {
 }
 
 #[core::prelude::v1::test]
+fn unknown_harness_thread_does_not_offer_pi_controls() {
+    if !isolated("unknown_harness_thread_does_not_offer_pi_controls") {
+        return;
+    }
+    let scratch =
+        std::env::temp_dir().join(format!("plait-unknown-harness-{}", std::process::id()));
+    let repository = fixture_repository(&scratch);
+    let mut harness = Harness::new(&repository, None, 900., 600.);
+    harness.connect(&repository, false);
+    harness.change_snapshot(|snapshot| {
+        snapshot.harness = Some(serde_json::from_str(r#"{"id":"antigravity"}"#).unwrap());
+        snapshot.status = ThreadStatus::Idle;
+    });
+    harness.update(|plait, _, _| {
+        plait
+            .host
+            .connection
+            .status
+            .as_mut()
+            .unwrap()
+            .protocol_version = 4;
+        plait.sync_thread_harness();
+        assert_eq!(
+            super::harnesses::harness_of(plait.host.thread.snapshot.as_ref().unwrap()),
+            HarnessId::Other
+        );
+        assert_eq!(plait.thread_harness(), HarnessId::Other);
+        assert_eq!(
+            plait.thread_harness_line().unwrap().label.as_ref(),
+            "Another harness"
+        );
+    });
+    #[cfg(debug_assertions)]
+    {
+        harness.draw_a11y();
+        let frame = harness.draw_a11y();
+        assert!(
+            frame
+                .nodes
+                .iter()
+                .any(|node| node.label.as_deref() == Some("Another harness"))
+        );
+        assert!(!frame.nodes.iter().any(|node| {
+            node.label
+                .as_deref()
+                .is_some_and(|label| label.starts_with("Run settings:"))
+        }));
+    }
+    harness.update(|plait, window, cx| plait.open_thread_models(window, cx));
+    assert!(
+        shown(&mut harness).is_empty(),
+        "unknown harness must not list Pi models"
+    );
+    harness.update(|plait, window, cx| {
+        plait.preferences.value =
+            serde_json::from_str(r#"{"default_harness":"antigravity"}"#).unwrap();
+        plait.open_draft(window, cx);
+        assert_eq!(plait.draft_harness(), HarnessId::Pi);
+    });
+    drop(harness);
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
+#[core::prelude::v1::test]
 fn a_mode_reply_lands_only_on_the_thread_it_was_sent_for() {
     if !isolated("a_mode_reply_lands_only_on_the_thread_it_was_sent_for") {
         return;
