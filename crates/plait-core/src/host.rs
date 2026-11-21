@@ -963,7 +963,12 @@ fn validate_created_checkout(line: &[u8], expected: &std::path::Path) -> Result<
 
 #[derive(Clone)]
 pub struct Client {
-    path: PathBuf,
+    transport: Transport,
+}
+#[derive(Clone)]
+enum Transport {
+    Local(PathBuf),
+    Link(std::sync::Arc<crate::remote::link::Link>),
 }
 impl Client {
     pub fn from_environment() -> Result<Self, Error> {
@@ -980,7 +985,22 @@ impl Client {
                 "PLAIT_HOST_STORE must be an absolute path.".into(),
             ));
         }
-        Ok(Self { path })
+        Ok(Self {
+            transport: Transport::Local(path),
+        })
+    }
+
+    pub fn over_link(link: std::sync::Arc<crate::remote::link::Link>) -> Self {
+        Self {
+            transport: Transport::Link(link),
+        }
+    }
+
+    fn socket(&self) -> std::io::Result<UnixStream> {
+        match &self.transport {
+            Transport::Local(path) => crate::local_socket::connect(path),
+            Transport::Link(link) => link.open(),
+        }
     }
 
     fn connect(&self, request: &Request) -> Result<Frames, Error> {
@@ -991,7 +1011,7 @@ impl Client {
                 "Message exceeds the host's 64 KiB request limit.".into(),
             ));
         }
-        let mut socket = crate::local_socket::connect(&self.path)?;
+        let mut socket = self.socket()?;
         socket.set_write_timeout(Some(Duration::from_secs(5)))?;
         socket.write_all(&bytes)?;
         socket.write_all(b"\n")?;
@@ -1171,7 +1191,7 @@ impl Client {
                 "Request exceeds the host's 64 KiB limit.".into(),
             ));
         }
-        let mut socket = crate::local_socket::connect(&self.path)?;
+        let mut socket = self.socket()?;
         socket.set_write_timeout(Some(Duration::from_secs(5)))?;
         socket.write_all(bytes)?;
         socket.write_all(b"\n")?;
@@ -1262,7 +1282,9 @@ mod tests {
             assert_eq!(request["op"], "status");
             socket.write_all(b"{\"ok\":true,\"result\":{\"protocol_version\":1,\"default_model\":null,\"models\":[]}}\n").unwrap();
         });
-        let client = Client { path: path.clone() };
+        let client = Client {
+            transport: Transport::Local(path.clone()),
+        };
         let reply: Status = client
             .request(&Request::Status {
                 protocol_version: None,
@@ -1310,7 +1332,13 @@ mod tests {
                 })
                 .collect()
         });
-        (Client { path }, server, directory)
+        (
+            Client {
+                transport: Transport::Local(path),
+            },
+            server,
+            directory,
+        )
     }
 
     #[test]

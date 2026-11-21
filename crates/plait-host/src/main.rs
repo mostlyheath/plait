@@ -1,3 +1,4 @@
+mod bridge;
 mod build_output;
 mod command;
 mod files;
@@ -95,6 +96,26 @@ fn run() -> io::Result<()> {
     }
     if operation == "update" {
         return update::run(args.collect());
+    }
+    if operation == "bridge" {
+        let mut store = env::var_os("PLAIT_HOST_STORE")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                PathBuf::from(env::var_os("HOME").unwrap_or_default()).join(".local/share/plait")
+            });
+        while let Some(option) = args.next() {
+            if option != "--store" {
+                return Err(io::Error::other("unknown option"));
+            }
+            store = args
+                .next()
+                .ok_or_else(|| io::Error::other("missing option value"))?
+                .into();
+        }
+        if !store.is_absolute() {
+            return Err(io::Error::other("store path must be absolute"));
+        }
+        return bridge::run(io::stdin(), io::stdout(), &store);
     }
     let paths = installation::runtime_paths(&env::current_exe()?)?;
     let service_home = (operation == "run-user")
