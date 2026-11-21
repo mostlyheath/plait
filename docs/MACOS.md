@@ -784,10 +784,12 @@ Find does not load pages to search them.
 ### Machines
 
 **Settings → Machines** chooses whose Plait host this window works with:
-this Mac's, or another machine's over SSH. Each window works with one
-machine at a time.
+this Mac's, or another machine's over SSH or Tailscale. Each window works
+with one machine at a time.
 
-To add one, choose **Add SSH machine…**:
+To add one, choose **Add machine…**, then **SSH** or **Tailnet**.
+
+Over SSH:
 
 1. Give it a name and an SSH destination, such as `you@workstation` or an
    alias from your `~/.ssh/config`. Optionally add a port, and the host's
@@ -800,8 +802,20 @@ To add one, choose **Add SSH machine…**:
    current machine and shows SSH's own reason, such as `Permission denied
    (publickey)`.
 
+Over Tailscale, no SSH is needed:
+
+1. On the other machine, with its host running, allow your Tailscale login
+   with `plait-host tailnet allow --me` and start the listener with
+   `plait-host serve --tailnet` (on Linux, `plait-host install-service
+   --tailnet` keeps it running). A tagged device must also be allowed by
+   name with `plait-host tailnet allow-node <name>`.
+2. Give the machine a name, its tailnet name or address, and the port
+   (7419 unless you chose another).
+3. **Use** connects in the background. A device the host has not allowed is
+   refused with a message saying so.
+
 The window remembers the machine it used and reconnects at launch without
-waiting for it. **Reconnect** makes a new SSH connection. **Remove…** forgets
+waiting for it. **Reconnect** makes a new connection. **Remove…** forgets
 a machine; its host and threads stay on that machine.
 
 On a remote machine, threads, approvals, Stop, the queue, models, and history

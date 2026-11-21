@@ -201,8 +201,10 @@ The latest preview is on the
 [Releases page](https://github.com/heath0xFF/plait/releases); every merge that
 changes the app publishes the next one.
 
-- **Mac only, local only.** Remote hosts and Linux execution are
-  [planned](docs/ROADMAP.md).
+- **Mac app, with early remote hosts.** A window can work with another
+  machine's host over SSH or Tailscale, including a Linux host; there,
+  Changes, History, and Files are not available yet. See
+  [Remote hosts](docs/REMOTE.md).
 - **Agent harnesses.** A thread runs on Pi, built in, or in your own Codex or
   Claude Code, with its own sign-in and permissions; Claude Code needs a
   one-time setup in Settings → Agents. Other harnesses are planned (M7).

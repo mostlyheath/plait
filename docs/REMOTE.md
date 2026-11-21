@@ -79,6 +79,12 @@ this frame:
   nodes are refused unless listed by name.
 - The same stream format and limits apply.
 - The client dials `host:port` over the tailnet and needs no SSH.
+- On the host, run `plait-host tailnet allow --me` to allow your login, or
+  `plait-host tailnet allow <login>` to allow another login. Tagged nodes also
+  require `plait-host tailnet allow-node <name>`. Start the listener with
+  `plait-host serve --tailnet [--port 7419] [--store PATH]`. On Linux,
+  `plait-host install-service --tailnet` installs the separate listener unit.
+  The owner host service must also be running.
 
 ### What crosses the link
 
@@ -199,7 +205,7 @@ desktop's local Git reads. That design is written before it is built.
      unavailable Git views, and scoped alerts.
    - Tests: scenes with mixed local, remote, and offline machines, and
      approval and Stop routing.
-6. **Tailnet listener and client.**
+6. **Tailnet listener and client — built.**
    - Tests: a scripted `tailscaled` answering for an allowed owner, the
      wrong user, a tagged peer, and being down; refusal to bind a
      non-Tailscale address; and limits.

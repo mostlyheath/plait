@@ -74,13 +74,15 @@ features; their agreed scope remains.
   build-output reuse are already built.
 - **Named CLIs (M8 step 3):** wait for a sandboxed project that needs one.
   Trusted projects already run the person's tools.
-- **Remote hosts (M3) — next after the current work.** Agreed design in
-  [Remote hosts](REMOTE.md): SSH and tailnet transports, this Linux
-  workstation first, remote threads before remote Git.
+- **Remote hosts (M3) — in progress.** Agreed design in
+  [Remote hosts](REMOTE.md). Remote threads over SSH and the tailnet, and a
+  Linux host kept running as a user service, are built. Remote Git and Files,
+  Linux host releases, and several machines in one sidebar come next.
 - **Other clients and remote servers (M3/M6):** support other apps through a
   versioned public protocol, not GPUI or Rust internals. Authenticated remote
   transport and recovery come first for network access; Linux execution also
-  needs tested containment. No additional client or public listener is built yet.
+  needs tested containment. No additional client or public listener is built; the tailnet listener
+  binds only Tailscale addresses and admits only allowed devices.
 - **Developer ID signing and notarization:** deferred. Script-free installation
   does not remove unsigned-download warnings. Do not remove quarantine or
   bypass Gatekeeper to simulate a signed release.
