@@ -589,6 +589,7 @@ mod inventory_tests {
         assert!(read(bad).is_err());
         assert_eq!(
             compatibility(Error::Rejected(HostError {
+                retry_after_seconds: None,
                 code: "invalid_request".into(),
                 message: "Unknown operation".into()
             }))

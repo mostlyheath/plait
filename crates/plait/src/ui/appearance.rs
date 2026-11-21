@@ -34,7 +34,8 @@ pub(super) struct CodeFont {
     _changed: Option<Subscription>,
 }
 
-#[cfg(test)]
+// Only the macOS font scenes measure installed families.
+#[cfg(all(test, target_os = "macos"))]
 impl CodeFont {
     /// Nothing is being read or measured in the background.
     pub fn settled(&self) -> bool {

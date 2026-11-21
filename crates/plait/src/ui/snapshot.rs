@@ -419,6 +419,7 @@ fn tool_states(snapshot: &mut Snapshot) {
         ),
     ];
     snapshot.error = Some(HostError {
+        retry_after_seconds: None,
         code: "sample_error".into(),
         message: "Sample host error. This is a rendering fixture, not an agent run.".into(),
     });
@@ -969,8 +970,14 @@ fn approval_shortcuts_act_only_when_the_buttons_would() {
             );
         }
         // The buttons read the keymap.
-        assert_eq!(plait.shortcut_label("approval.allow_once"), "⌥⌘Y");
-        assert_eq!(plait.shortcut_label("approval.deny_once"), "⌥⌘.");
+        assert_eq!(
+            plait.shortcut_label("approval.allow_once"),
+            keys("cmd-alt-y")
+        );
+        assert_eq!(
+            plait.shortcut_label("approval.deny_once"),
+            keys("cmd-alt-.")
+        );
         // One gate decides for the buttons and the keys.
         let approval = plait
             .host
@@ -1098,7 +1105,10 @@ fn approval_shortcuts_act_only_when_the_buttons_would() {
         let keymap = &mut plait.preferences.value.keymap;
         keymap.insert("approval.allow_once".into(), "cmd-alt-u".into());
         super::actions::install(cx, keymap);
-        assert_eq!(plait.shortcut_label("approval.allow_once"), "⌥⌘U");
+        assert_eq!(
+            plait.shortcut_label("approval.allow_once"),
+            keys("cmd-alt-u")
+        );
     });
     assert!(!harness.answers("cmd-alt-y", "a6"), "the old key is free");
     assert!(harness.answers("cmd-alt-u", "a6"), "the new key answers");
@@ -1758,6 +1768,7 @@ fn a_creation_reply_lands_only_on_the_draft_that_sent_it() {
         plait.open_draft(window, cx);
         sent(plait, "refused", "Try again");
         let refused = Err(Error::Rejected(HostError {
+            retry_after_seconds: None,
             code: "invalid".into(),
             message: "Sample refusal.".into(),
         }));
@@ -4064,6 +4075,12 @@ fn inspector_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
 
 /// Layout and paint run for every view. GPUI reports some misuse, such as a
 /// second hover style on one element, only when the element is drawn.
+/// How this platform spells `key`, so label checks follow the binding rather
+/// than one platform's modifier glyphs.
+fn keys(key: &'static str) -> String {
+    super::actions::label(&[Keystroke::parse(key).unwrap()])
+}
+
 #[core::prelude::v1::test]
 fn every_view_draws() {
     if !isolated("every_view_draws") {
@@ -4942,6 +4959,7 @@ fn history_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
             "failed",
             ThreadStatus::Error,
             Some(HostError {
+                retry_after_seconds: None,
                 code: "runtime_error".into(),
                 message: "The provider did not complete the request. Try another message.".into(),
             }),
@@ -4950,6 +4968,7 @@ fn history_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
             "turn-limit",
             ThreadStatus::Error,
             Some(HostError {
+                retry_after_seconds: None,
                 code: "turn_limit".into(),
                 message: "Limit".into(),
             }),

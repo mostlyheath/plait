@@ -364,6 +364,7 @@ impl Plait {
             })?;
             expected.verify().map_err(|message| {
                 host::Error::Rejected(host::HostError {
+                    retry_after_seconds: None,
                     code: "checkout_identity_changed".into(),
                     message,
                 })

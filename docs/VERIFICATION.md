@@ -239,10 +239,12 @@ close any of these native gaps.
   running or manual host, installed-but-stopped release, source build and
   development store, DMG and translocated launch, legacy install, missing
   bundled host) and its symbolic-link refusal are unit tests in
-  `plait-core::update::setup`. Registering the LaunchAgent, the cross-launch
-  lock, the new DMG layout, and the setup line in the app have not run on a
-  Mac yet. A real downloaded DMG, dragged to Applications with quarantine
-  intact and opened on a Mac with no host, is still needed.
+  `plait-core::update::setup`. The v0.1.0-preview.26 release build made the
+  new DMG and checked the mounted image: the app's code signature, its bundled
+  host, and the Applications shortcut. Registering the LaunchAgent on first
+  launch, the cross-launch lock, and the setup line in the app have not run on
+  a Mac with no host. A real downloaded DMG, dragged to Applications with
+  quarantine intact and opened on such a Mac, is still needed.
 - The bundle targets macOS 15+, but CI currently runs on macOS 26. Older-system
   runtime behavior, Intel macOS, and a native Linux client are not validated.
 - Full VoiceOver, keyboard focus, IME, and sustained typing/streaming checks

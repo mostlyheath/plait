@@ -387,6 +387,8 @@ pub enum ApprovalKind {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HostError {
+    #[serde(default)]
+    pub retry_after_seconds: Option<u32>,
     pub code: String,
     pub message: String,
 }
@@ -1143,6 +1145,7 @@ pub mod checkout_queue;
 pub mod cleanup;
 pub mod harness;
 pub mod identity;
+pub mod linear;
 pub mod policy;
 pub mod providers;
 pub mod review;
