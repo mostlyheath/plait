@@ -46,7 +46,7 @@ Owner-only Unix stream socket, UTF-8 newline-delimited JSON, protocol version 1
 by default; versions 2–6 are opt-in per request.
 Clients and the daemon verify connected-peer user identity with `getpeereid` on
 macOS or `SO_PEERCRED` on Linux. Clients also check socket and parent ownership
-and private modes before connecting. This does not enable Linux commands.
+and private modes before connecting. Linux supports trusted commands and trusted MCP servers, but not sandboxed execution.
 One request and one reply per connection, then EOF, except `watch` and the
 version 3 `watch_threads`. No greeting.
 Request limit: 64 KiB including newline. Reply/event limit: 1 MiB including
@@ -958,7 +958,7 @@ snapshot does not yet report the policy its run used.
   changes the policy, and a thread cannot take it to another checkout.
 - **When it applies.** A run reads the policy once at admission and keeps it
   until it ends. A change applies to the next run. Recovery starts no run.
-- **Linux.** Commands are rejected in both modes.
+- **Linux.** Trusted commands and trusted MCP servers run as the user. Sandboxed commands and MCP servers are refused because a Linux containment backend is not yet enabled; see [Linux sandbox](LINUX-SANDBOX.md).
 
 | | `sandboxed` | `trusted` |
 | --- | --- | --- |
@@ -1562,7 +1562,7 @@ or transcript data in the production host.
 Use `bash scripts/check.sh` for the shared macOS/Linux development checks.
 `bash scripts/check.sh --require-command-sandbox` requires full command-sandbox
 coverage and currently fails on Linux. Runtime `npm test` labels its platform
-coverage; Linux runs common daemon/file tests and explicit execution-denial tests.
+coverage; Linux runs common daemon/file tests and trusted execution and sandbox-denial tests.
 See [Verification](VERIFICATION.md) for versioned results and
 [Linux containment](LINUX-SANDBOX.md) for the open backend decision. A Linux
 development pass is not full host-execution acceptance.
@@ -1784,7 +1784,7 @@ writes have no alternates, preventing even Git's object-freshening timestamp
 write in the person's store. Object copies stream through Git pack/unpack
 commands from read-only alternates to the private store. Linux exercises this
 same recording code but has no recorder sandbox; it is not macOS containment
-evidence and does not enable Linux agent commands.
+evidence and does not establish sandboxed Linux agent commands.
 
 Records of archived threads are retained too. Startup and daily pruning remove
 pairs older than 30 days, waiting for active record helpers and holding back
@@ -2898,3 +2898,12 @@ default store or `--store PATH`; it does not expose a network listener. The
 [remote transport format](REMOTE.md#transport) defines its frames. Each link
 allows at most 32 streams; requests are limited to 64 KiB, replies to 1 MiB,
 and a partial frame has a 15-second deadline. SSH integration remains planned.
+
+### Host release information and draining
+
+These additive operations are versionless and do not change protocol versions 1–6. Requests accept only the `op` field; unknown fields return `invalid_request`.
+
+- `{"op":"host_info"}` returns `{"schema":1,"release":null,"build_id":null,"protocol_min":1,"protocol_max":6,"capabilities":["drain_v1"],"storage_schema":1}`. Release and build ID are strings when packaged metadata is available.
+- `{"op":"drain_for_update"}` returns `{"draining":true,"active_runs":N}`. Running and approval-waiting threads count as active. New work returns `busy` while accepted work, Stop, approvals, reads and watches continue. Repeating the request is safe.
+- `{"op":"cancel_drain"}` returns `{"draining":false}` and wakes the checkout queue. Drain state is in memory and does not survive a host restart.
+- While draining, a retried request that would admit work also returns `busy`, even if an earlier attempt was already accepted; after the update the same request ID returns its saved result as usual, so a client retries after `busy` rather than treating it as a refusal of the original.

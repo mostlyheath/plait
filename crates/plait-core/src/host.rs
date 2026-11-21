@@ -1180,6 +1180,7 @@ pub mod identity;
 pub mod linear;
 pub mod policy;
 pub mod providers;
+pub mod release;
 pub mod review;
 pub mod sign_in;
 pub mod worktree;
@@ -1821,6 +1822,21 @@ mod tests {
             (None, None)
         );
         assert!(decode::<ThreadsPage>(br#"{"ok":true,"result":{"threads":[{"id":"t","checkout":"/repo","model":{"provider":"p","model_id":"m"},"status":"idle","extra":1}],"next_cursor":null}}"#).is_err());
+    }
+
+    #[test]
+    fn unknown_harness_survives_snapshot_and_summary_decoding() {
+        let reply: ThreadReply = decode(br#"{"ok":true,"result":{"thread":{"id":"t","checkout":"/repo","model":{"provider":"p","model_id":"m"},"status":"idle","messages":[],"live_text":"","tools":[],"pending_approval":null,"error":null,"truncated":false,"harness":{"id":"antigravity"}}}}"#).unwrap();
+        assert_eq!(
+            reply.thread.harness.as_ref().unwrap().id,
+            harness::HarnessId::Other
+        );
+        assert_eq!(
+            ThreadSummary::from(&reply.thread).harness,
+            Some(harness::HarnessId::Other)
+        );
+        let page: ThreadsPage = decode(br#"{"ok":true,"result":{"threads":[{"id":"t","checkout":"/repo","model":{"provider":"p","model_id":"m"},"status":"idle","harness":"antigravity"}],"next_cursor":null}}"#).unwrap();
+        assert_eq!(page.threads[0].harness, Some(harness::HarnessId::Other));
     }
 
     #[test]

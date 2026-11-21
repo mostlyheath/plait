@@ -167,15 +167,14 @@ pub(crate) fn cleanup_receipt(text: &str) {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn trusted_command(args: &[String]) -> io::Result<Command> {
     let mut command = Command::new("/bin/sh");
     command.args(["-c", &args[1]]).current_dir(&args[0]);
     Ok(command)
 }
 
-// Trusted mode is not a way around the missing Linux containment decision.
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn trusted_command(_: &[String]) -> io::Result<Command> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
@@ -218,12 +217,24 @@ fn sandbox_command(_: &[String]) -> io::Result<Command> {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn trusted_command_runs_on_linux() {
+        let output = trusted_command(&["/tmp".into(), "printf trusted".into()])
+            .unwrap()
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"trusted");
+    }
+
     #[test]
     fn unsupported_platform_denies_before_starting_a_command() {
         let error = run(vec!["/nonexistent".into(), String::new(), "exit 0".into()]).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::Unsupported);
     }
 
+    #[cfg(not(target_os = "linux"))]
     #[test]
     fn unsupported_platform_denies_trusted_commands_too() {
         let error = run_trusted(vec!["/nonexistent".into(), "exit 0".into()]).unwrap_err();

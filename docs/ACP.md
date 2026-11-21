@@ -96,7 +96,11 @@ or Claude file names or table formats. No arbitrary ACP-server registry is added
 is done: `runtime/src/external/registry.ts` resolves a thread to Pi, a known
 external harness, or an unknown ID, and an unknown saved harness is refused
 before admission everywhere while its history stays readable (decision 6).
-Steps 3–4 (unified external runs, compatibility tests) follow the plan on
+Step 3 is done: a running external thread holds one `ExternalRun` handle
+(its transcript store, its run, any server lease, an optional live mode
+switch, and one `close()`), and a steering request for a harness without
+`supportsSteer` is refused before acceptance (decision 7). Codex and Claude
+Code both still steer. Step 4 (compatibility tests) follows the plan on
 [issue #31](https://github.com/heath0xFF/plait/issues/31).
 
 ## Discovery and authentication
