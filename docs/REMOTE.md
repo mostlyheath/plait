@@ -143,7 +143,7 @@ desktop's local Git reads. That design is written before it is built.
 
 ## Order of work
 
-1. **Linux trusted commands and MCP.**
+1. **Linux trusted commands and MCP — built.**
    - Includes the documentation changes.
    - Tests: trusted execution, Stop and process-group cleanup, trusted MCP,
      and continued refusal of a sandboxed policy on Linux.

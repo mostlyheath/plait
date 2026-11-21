@@ -6,7 +6,7 @@ import type { ToolState } from '../tools.ts';
 import { unsafeLoaderEnvironment } from './config.ts';
 import type { Entry } from './config.ts';
 import { guardianPipe } from './pipe.ts';
-import { commandPlatform } from '../command/platform.ts';
+import { commandPlatform, trustedPlatform } from '../command/platform.ts';
 import { hostAccount, loginEnvironment } from '../command/login-environment.ts';
 import { runGuardian } from '../command/supervisor.ts';
 import { checkRoot } from '../safety.ts';
@@ -30,6 +30,8 @@ export async function transport(entry: Entry, state: ToolState, secrets: Secrets
   const config = entry.config;
   await checkRoot(root, state.rootIdentity);
   const trusted = state.commandPolicy === 'trusted';
+  if (trusted) trustedPlatform();
+  else commandPlatform();
   if (!trusted && unsafeLoaderEnvironment(config)) throw new Error('MCP loader environment is not allowed in a sandboxed project.');
   let scratch: string | undefined;
   let env: NodeJS.ProcessEnv;
@@ -41,7 +43,6 @@ export async function transport(entry: Entry, state: ToolState, secrets: Secrets
     const needsProcess = 'command' in config || Object.values(values ?? {}).some(value => value.startsWith('!'));
     const needsEnvironment = needsProcess || Object.values(values ?? {}).some(value => /\$(?:[A-Za-z_]|\{)/.test(value));
     if (trusted && needsEnvironment) {
-      commandPlatform();
       env = (await (state.loginEnvironment ??= loginEnvironment(hostAccount(), signal))).env;
     } else if (!trusted && needsEnvironment) {
       const platform = commandPlatform();

@@ -22,7 +22,7 @@ const quote = (text: string) => `'${text.replaceAll("'", "'\\''")}'`;
 /** The account the host serves. `run-user` sets HOME from the OS account. */
 export function hostAccount(): Account {
   const info = userInfo();
-  const shell = info.shell && isAbsolute(info.shell) ? info.shell : '/bin/zsh';
+  const shell = info.shell && isAbsolute(info.shell) ? info.shell : process.platform === 'linux' ? '/bin/sh' : '/bin/zsh';
   return { home: homedir(), shell, user: info.username };
 }
 
@@ -39,7 +39,8 @@ function baseEnvironment(account: Account): Record<string, string> {
 
 function fallbackEnvironment(account: Account): LoginEnvironment {
   const env = baseEnvironment(account);
-  env.PATH = `${account.home}/.cargo/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:${SYSTEM_PATH}`;
+  const homebrew = process.platform === 'darwin' ? '/opt/homebrew/bin:/opt/homebrew/sbin:' : '';
+  env.PATH = `${account.home}/.cargo/bin:${homebrew}/usr/local/bin:${SYSTEM_PATH}`;
   return { env, source: 'fallback' };
 }
 
