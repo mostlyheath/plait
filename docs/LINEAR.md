@@ -19,7 +19,12 @@
 - **Desktop sign-in and project team (Settings → Linear, Project settings →
   Linear).** Save, replace, and sign out of the host's Linear key, and link a
   project to one Linear team, with the state models in
-  `plait-core::linear_settings`. The issue view comes next.
+  `plait-core::linear_settings`.
+- **Issues tab.** A persistent project tab lists, filters, and searches the
+  linked team's issues, resolves a pasted identifier or URL exactly, and
+  shows an issue's details as plain text, with Open in Linear. State lives in
+  `plait-core::linear_issues`. Inserting references into drafts, starting a
+  thread from an issue, and the source-issue label come next.
 - **Planned next.** A persistent project-level issue view adds search, ticket
   details, references in existing threads, and starting a thread from an issue.
   Settings holds the API key; a source-issue label links back to Linear.

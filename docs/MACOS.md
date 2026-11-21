@@ -501,6 +501,29 @@ needed. Missing folders stay visible and cannot be removed through this view.
 Publication facts reflect the last fetch. Work returns through commit, push
 and pull request.
 
+### Linear issues
+
+Choose **Linear issues** from a project's sidebar menu, or **Linear Issues**
+from the File menu or command palette. One Issues tab opens per project per
+window, marked with a ring; it returns with its selected issue after a
+restart. It needs a Linear sign-in (Settings → Linear) and a team linked to
+the project (Project settings → Linear); until then it says which is missing
+and opens the right place.
+
+The list shows the linked team's issues 50 at a time, up to 500, with
+**Active**, **Assigned to me**, **Backlog**, **Completed**, and **All**
+filters. Search matches titles and numbers after you pause typing; it is
+broad and never picks an issue for you. A pasted identifier such as
+`PLA-142`, or a `https://linear.app/…/issue/PLA-142` address, opens that
+exact issue. Choose an issue to read its state, priority, assignee, labels,
+description, attachment names, and first page of comments; in narrow windows
+it takes the whole tab, with **All issues** to go back. **Open in Linear**
+opens the issue in your browser. **Refresh** asks Linear again.
+
+Linear's text is shown as plain text: Markdown is not rendered, links are not
+clickable, and attachments are named but never opened. When Linear cannot be
+reached, the tab shows the host's saved copy and says how old it is.
+
 ### Codex and Claude Code threads
 
 A thread can run in Codex or Claude Code instead of Pi (since

@@ -22,10 +22,11 @@ impl Plait {
     /// Runs one Linear call on the background executor and hands its result
     /// to `apply`, which returns whether it was current. A reply that lands
     /// after a reconnect is dropped here; the models drop the rest.
-    fn linear_task<T: Send + 'static>(
+    pub(super) fn linear_task<T: Send + 'static>(
         &mut self,
         call: impl FnOnce(&host::Client) -> Result<T, linear::Rejection> + Send + 'static,
-        apply: impl FnOnce(&mut Self, Result<T, linear::Rejection>) -> bool + 'static,
+        apply: impl FnOnce(&mut Self, Result<T, linear::Rejection>, &mut Context<Self>) -> bool
+        + 'static,
         cx: &mut Context<Self>,
     ) {
         let epoch = self.host.connection.epoch;
@@ -38,7 +39,7 @@ impl Plait {
         cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
-                if this.host.connection.epoch == epoch && apply(this, result) {
+                if this.host.connection.epoch == epoch && apply(this, result, cx) {
                     cx.notify();
                 }
             });
@@ -54,7 +55,7 @@ impl Plait {
     ) {
         self.linear_task(
             call,
-            move |this, result| this.linear.account.reply(generation, result),
+            move |this, result, _| this.linear.account.reply(generation, result),
             cx,
         );
     }
@@ -70,6 +71,8 @@ impl Plait {
             && self.settings_page == settings::SettingsPage::Application
             && self.settings_tab == settings::SettingsTab::Linear;
         let project = self.linear_team_page();
+        // The Issues tab needs to know who is signed in, too.
+        let issues = self.issues_visible();
         if self.linear.account.connect(self.host.connection.epoch) || !showing {
             self.clear_linear_field(cx);
         }
@@ -85,7 +88,7 @@ impl Plait {
                 .target(self.host.connection.epoch, &checkout);
         }
         // Test scenes inject state and never reach a host.
-        if cfg!(test) || !(showing || project) || !self.host.connection.connected {
+        if cfg!(test) || !(showing || project || issues) || !self.host.connection.connected {
             return;
         }
         if project
@@ -102,7 +105,7 @@ impl Plait {
                     let teams = linear::list_teams(client, false).map_err(classify)?;
                     Ok((binding, teams))
                 },
-                move |this, result| this.linear.team.loaded(generation, result),
+                move |this, result, _| this.linear.team.loaded(generation, result),
                 cx,
             );
         }
@@ -373,7 +376,7 @@ impl Plait {
                 linear::bind_project(client, checkout, id, key, name)
                     .map_err(|error| linear::classify(&error, false))
             },
-            move |this, result| this.linear.team.bound(generation, result),
+            move |this, result, _| this.linear.team.bound(generation, result),
             cx,
         );
     }
@@ -390,7 +393,7 @@ impl Plait {
             |client| {
                 linear::list_teams(client, true).map_err(|error| linear::classify(&error, false))
             },
-            move |this, result| this.linear.team.refreshed(generation, result),
+            move |this, result, _| this.linear.team.refreshed(generation, result),
             cx,
         );
     }

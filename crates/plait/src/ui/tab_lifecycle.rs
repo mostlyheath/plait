@@ -46,7 +46,8 @@ impl Lifecycle {
                 let checkout = match target {
                     TabTarget::Existing { checkout, .. }
                     | TabTarget::Draft { checkout, .. }
-                    | TabTarget::Worktrees { checkout } => checkout,
+                    | TabTarget::Worktrees { checkout }
+                    | TabTarget::Issues { checkout } => checkout,
                 };
                 if &checkout.host == previous {
                     checkout.host = host.clone();
@@ -303,7 +304,7 @@ impl Plait {
                 TabNavigation::Jump(n) => self.tabs.model.jump(n),
                 TabNavigation::Reopen => self.tabs.model.reopen(|target| match target {
                     // As on restore: only a project the sidebar still verifies.
-                    TabTarget::Worktrees { checkout } => (checkout.host == self.tabs.host
+                    TabTarget::Worktrees { checkout } | TabTarget::Issues { checkout } => (checkout.host == self.tabs.host
                         && self.tabs.identity.checkouts.iter().any(|(root, identity)| {
                             *root == checkout.root && checkout.directory == Some(*identity)
                         }))
@@ -444,7 +445,7 @@ impl Plait {
         let task = cx.background_executor().spawn(async move {
             let bookmark = match record {
                 BookmarkRecord::Inline { .. } => record.inline(),
-                BookmarkRecord::Worktrees { .. } => None,
+                BookmarkRecord::Worktrees { .. } | BookmarkRecord::Issues { .. } => None,
                 BookmarkRecord::Stored { blob, .. } => journal
                     .read_record_bytes(&blob, bookmark::EXTENDED_BOOKMARK_LIMIT)?
                     .and_then(|bytes| bookmark::decode_extended(&bytes)),

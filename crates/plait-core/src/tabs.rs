@@ -56,16 +56,29 @@ pub struct ThreadKey {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TabTarget {
-    Existing { id: String, checkout: CheckoutKey },
-    Draft { id: String, checkout: CheckoutKey },
-    Worktrees { checkout: CheckoutKey },
+    Existing {
+        id: String,
+        checkout: CheckoutKey,
+    },
+    Draft {
+        id: String,
+        checkout: CheckoutKey,
+    },
+    Worktrees {
+        checkout: CheckoutKey,
+    },
+    /// The project's Linear issues. Older builds drop this tab kind on restore.
+    Issues {
+        checkout: CheckoutKey,
+    },
 }
 impl TabTarget {
     pub fn checkout(&self) -> &CheckoutKey {
         match self {
             Self::Existing { checkout, .. }
             | Self::Draft { checkout, .. }
-            | Self::Worktrees { checkout } => checkout,
+            | Self::Worktrees { checkout }
+            | Self::Issues { checkout } => checkout,
         }
     }
     pub fn thread_key(&self) -> Option<ThreadKey> {
@@ -74,11 +87,18 @@ impl TabTarget {
                 host: checkout.host.clone(),
                 id: id.clone(),
             }),
-            Self::Draft { .. } | Self::Worktrees { .. } => None,
+            Self::Draft { .. } | Self::Worktrees { .. } | Self::Issues { .. } => None,
         }
     }
     pub fn is_worktrees(&self) -> bool {
         matches!(self, Self::Worktrees { .. })
+    }
+    pub fn is_issues(&self) -> bool {
+        matches!(self, Self::Issues { .. })
+    }
+    /// A project-level tab rather than a thread or draft.
+    pub fn is_project_view(&self) -> bool {
+        self.is_worktrees() || self.is_issues()
     }
     pub fn is_draft(&self) -> bool {
         matches!(self, Self::Draft { .. })
@@ -105,7 +125,8 @@ impl TabTarget {
                     checkout: bc,
                 },
             ) => a == b && ac == bc,
-            (Self::Worktrees { checkout: a }, Self::Worktrees { checkout: b }) => {
+            (Self::Worktrees { checkout: a }, Self::Worktrees { checkout: b })
+            | (Self::Issues { checkout: a }, Self::Issues { checkout: b }) => {
                 a.host == b.host && a.root == b.root
             }
             _ => false,
@@ -116,6 +137,7 @@ impl TabTarget {
         let id = match self {
             Self::Existing { id, .. } | Self::Draft { id, .. } => id.as_str(),
             Self::Worktrees { .. } => "worktrees",
+            Self::Issues { .. } => "issues",
         };
         identifier(id)
             && identifier(&checkout.host.id)
@@ -129,7 +151,7 @@ impl TabTarget {
         let checkout = self.checkout();
         let id = match self {
             Self::Existing { id, .. } | Self::Draft { id, .. } => id.capacity(),
-            Self::Worktrees { .. } => 0,
+            Self::Worktrees { .. } | Self::Issues { .. } => 0,
         };
         id + checkout.host.id.capacity() + checkout.host.store.capacity() + checkout.root.capacity()
     }
@@ -357,7 +379,8 @@ impl WindowTabs {
             let checkout = match &mut target {
                 TabTarget::Existing { checkout, .. }
                 | TabTarget::Draft { checkout, .. }
-                | TabTarget::Worktrees { checkout } => checkout,
+                | TabTarget::Worktrees { checkout }
+                | TabTarget::Issues { checkout } => checkout,
             };
             if &checkout.host == previous && checkout.directory.is_none() {
                 checkout.host = host.clone();
@@ -541,7 +564,7 @@ impl WindowTabs {
         let i = self.index(id)?;
         if !target.valid()
             || target.is_draft()
-            || target.is_worktrees()
+            || target.is_project_view()
             || !self.tabs[i].session().target.is_draft()
         {
             return Err(TabError::InvalidIdentity);
@@ -877,7 +900,8 @@ impl WindowTabs {
 }
 
 fn content_for(session: Box<TabSession>) -> TabContent {
-    if session.target.is_worktrees() {
+    // Project views share one content kind; the target says which view.
+    if session.target.is_project_view() {
         TabContent::Worktrees(session)
     } else {
         TabContent::Thread(session)
@@ -896,6 +920,7 @@ fn validate_record(target: &TabTarget, bookmark: &BookmarkRecord) -> Result<(), 
     }
     if !bookmark.valid()
         || (matches!(bookmark, BookmarkRecord::Worktrees { .. }) && !target.is_worktrees())
+        || (matches!(bookmark, BookmarkRecord::Issues { .. }) && !target.is_issues())
     {
         return Err(TabError::InvalidBookmark);
     }

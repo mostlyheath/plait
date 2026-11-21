@@ -1224,6 +1224,19 @@ old one.
 the scenes. Nothing has been tried against Linear's live API, and the
 background request path is not exercised by these tests.
 
+## Linear issues
+
+`plait-core::linear_issues` tests an unlinked project, paging and the
+500-issue bound, a new filter or search starting over, replies for an older
+filter, search, selection, project, or connection being dropped, failures
+explained without host text, and the words for freshness, priority, and
+age. Tab persistence round-trips the Issues target and its bookmark, and
+older builds drop the unknown tab kind (an existing test). Scenes draw the
+tab signed out, unlinked, listing a saved team list, and showing an issue,
+at 1380 and 900 points, and check labels and that choosing an issue is saved
+with the tab. `ui::snapshot::issues::issues_snapshots` (ignored) exports
+them. The request path to the host and Linear's live API are not exercised.
+
 ## Themes
 
 Core tests parse both published Base16 layouts, name what is wrong with a broken
