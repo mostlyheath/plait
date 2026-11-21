@@ -602,8 +602,9 @@ impl Plait {
             return;
         };
         cx.notify();
+        let client = self.host_client();
         let task = cx.background_executor().spawn(async move {
-            let reply: Harnesses = host::Client::from_environment()?.send(&request)?;
+            let reply: Harnesses = client.send(&request)?;
             Ok::<_, host::Error>(HarnessesView::new(reply))
         });
         cx.spawn(async move |this, cx| {

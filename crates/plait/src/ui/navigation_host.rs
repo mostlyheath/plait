@@ -3,7 +3,7 @@
 use super::{Plait, host::WatchLease};
 use gpui::*;
 use plait_core::{
-    host::{self, Client, Request, ThreadSummary},
+    host::{self, Request, ThreadSummary},
     navigation,
 };
 use std::collections::HashSet;
@@ -80,8 +80,9 @@ impl Plait {
         self.navigation.loading = true;
         self.navigation.error = None;
         let executor = cx.background_executor().clone();
+        let client = self.host_client();
         let task = cx.background_executor().spawn(async move {
-            let client = Client::from_environment()?;
+
             // Subscribe first, so changes during pagination remain in the inbox.
             let queue = host::checkout_queue::available(&client)?;
             let lists = client.subscribe_threads_queue(true, queue)?;
@@ -321,11 +322,13 @@ impl Plait {
             return;
         }
         let generation = self.navigation.generation;
+        let local = self.host_is_local();
         let task = cx.background_executor().spawn(async move {
             pending
                 .into_iter()
                 .map(|path| {
-                    let available = path.is_dir();
+                    // The remote host owns checkout availability.
+                    let available = !local || path.is_dir();
                     (path, available)
                 })
                 .collect::<Vec<_>>()

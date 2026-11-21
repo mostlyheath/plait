@@ -113,10 +113,10 @@ impl Plait {
         self.worktree_busy = true;
         self.notice = Some("Creating a worktree from the selected commit…".into());
         cx.notify();
-        let task = cx.background_executor().spawn(async move {
-            let client = Client::from_environment()?;
-            worktree::info(&client, root)
-        });
+        let client = self.host_client();
+        let task = cx
+            .background_executor()
+            .spawn(async move { worktree::info(&client, root) });
         cx.spawn_in(window, async move |this, cx| {
             let result = task.await;
             let _ = this.update_in(cx, |this, window, cx| {
@@ -171,8 +171,9 @@ impl Plait {
         self.notice = Some("Creating worktree… You can keep working in another tab.".into());
         cx.notify();
         let request = pending.request.clone();
+        let client = self.host_client();
         let task = cx.background_executor().spawn(async move {
-            let client = Client::from_environment()?;
+
             let operation = await_operation(&client, &request)?;
             let summary = if operation.state == Stage::Ready {
                 let reply: host::ThreadReply = client.request(&host::Request::Watch {
@@ -235,9 +236,10 @@ impl Plait {
     /// Reconcile receipts after a closed window or a lost acknowledgement.
     pub(super) fn refresh_host_worktrees(&mut self, cx: &mut Context<Self>) {
         let epoch = self.host.connection.epoch;
+        let client = self.host_client();
         let task = cx
             .background_executor()
-            .spawn(async move { worktree::list(&Client::from_environment()?) });
+            .spawn(async move { worktree::list(&client) });
         cx.spawn(async move |this, cx| {
             if let Ok(operations) = task.await {
                 let _ = this.update(cx, |this, cx| {
@@ -355,9 +357,10 @@ impl Plait {
         }
         self.worktree_busy = true;
         let request = attempt.request.clone();
-        let task = cx.background_executor().spawn(async move {
-            super::worktree::await_operation(&Client::from_environment()?, &request)
-        });
+        let client = self.host_client();
+        let task = cx
+            .background_executor()
+            .spawn(async move { super::worktree::await_operation(&client, &request) });
         cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {

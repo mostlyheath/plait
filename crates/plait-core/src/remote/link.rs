@@ -167,10 +167,11 @@ impl Link {
     }
     /// Runs `hook` once when the link dies, or at once if it already has.
     pub fn on_dead(&self, hook: impl FnOnce() + Send + 'static) {
-        let dead = self.shared.state.lock().map_or(true, |state| state.dead);
-        if dead {
+        let mut slot = self.shared.on_dead.lock().expect("link hook lock poisoned");
+        if self.shared.state.lock().map_or(true, |state| state.dead) {
+            drop(slot);
             hook();
-        } else if let Ok(mut slot) = self.shared.on_dead.lock() {
+        } else {
             *slot = Some(Box::new(hook));
         }
     }
@@ -203,6 +204,12 @@ impl Link {
         let shared = Arc::clone(&self.shared);
         thread::spawn(move || pump(id, far, shared));
         Ok(near)
+    }
+}
+
+impl Drop for Link {
+    fn drop(&mut self) {
+        self.shared.die();
     }
 }
 

@@ -41,6 +41,7 @@ mod settings_editor;
 mod settings_isolation;
 mod settings_keyboard;
 mod settings_linear;
+mod settings_machines;
 mod settings_modal;
 mod settings_policy;
 mod settings_project;
@@ -141,6 +142,8 @@ pub struct Plait {
     tabs: tabs::Tabs,
     state: AppState,
     host: HostState,
+    host_client: plait_core::host::Client,
+    host_local: bool,
     navigation: navigation::Navigation,
     /// Presentation state for the single selected thread workspace.
     workspace: thread_workspace::ThreadWorkspace,
@@ -167,6 +170,7 @@ pub struct Plait {
     providers: settings_providers::ProviderState,
     linear: settings_linear::LinearState,
     issues: issues_view::IssuesUi,
+    machines: settings_machines::MachinesUi,
     /// A thread was created at once (a worktree thread): open it when the host
     /// confirms creation, unless the user has gone elsewhere in the meantime.
     new_thread_open: bool,
@@ -210,6 +214,27 @@ pub struct Plait {
 }
 
 impl Plait {
+    fn host_client(&self) -> plait_core::host::Client {
+        self.host_client.clone()
+    }
+    fn host_is_local(&self) -> bool {
+        self.host_local
+    }
+    #[allow(dead_code)]
+    fn use_machine_client(
+        &mut self,
+        client: plait_core::host::Client,
+        local: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.host_client = client;
+        self.host_local = local;
+        // This client was just made: the reconnect below must not make another.
+        self.machines.fresh_link = true;
+        self.host.connection.connecting = false;
+        self.reconnect_host(window, cx);
+    }
     pub fn new(
         path: PathBuf,
         startup: Instant,
@@ -226,6 +251,8 @@ impl Plait {
             tabs: Default::default(),
             state,
             host,
+            host_client: plait_core::host::Client::local_or_unavailable(),
+            host_local: true,
             navigation: navigation::Navigation::new(cx),
             workspace: thread_workspace::ThreadWorkspace::new(commit_message),
             commit_sends: Default::default(),
@@ -246,6 +273,7 @@ impl Plait {
             providers: Default::default(),
             linear: Default::default(),
             issues: Default::default(),
+            machines: Default::default(),
             new_thread_open: false,
             draft: Default::default(),
             admission: Default::default(),
@@ -302,6 +330,12 @@ impl Plait {
             this.sync_linear_settings(cx);
             this.sync_issues_view(cx);
             this.sync_issue_links(cx);
+        })
+        .detach();
+        // The machine saved last time, once preferences have loaded.
+        let entity = cx.entity();
+        cx.observe_in(&entity, window, |this, _, window, cx| {
+            this.restore_machine(window, cx)
         })
         .detach();
         // Keys dispatch from the focused element. One that is no longer drawn,
@@ -1079,9 +1113,12 @@ impl Render for Plait {
         let connection = if self.host.connection.connecting {
             ("Connecting…".to_owned(), colors().muted)
         } else if self.host.connection.connected {
-            ("Host connected".to_owned(), colors().mint)
+            (format!("{} connected", self.machine_label()), colors().mint)
         } else {
-            ("Host disconnected".to_owned(), colors().amber)
+            (
+                format!("{} disconnected", self.machine_label()),
+                colors().amber,
+            )
         };
         let drafting = !real && self.draft.open;
         let title = if real {

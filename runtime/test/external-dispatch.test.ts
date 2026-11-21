@@ -35,6 +35,17 @@ test('unknown saved harness refuses work while its transcript remains readable',
     assert.equal(result.ok, false); assert.equal(result.error?.code, 'invalid_request');
   }
   assert.equal(existsSync(join(directory, `${id}.sqlite`)), false);
+  for (let version = 1; version <= 6; version++) {
+    const listed = await host.handle({ op: 'list_threads', protocol_version: version, checkout: root }) as { threads: { id: string; harness?: string }[] };
+    const thread = listed.threads.find(thread => thread.id === id);
+    assert.ok(thread, `protocol ${version} keeps the thread`);
+    if (version >= 4) assert.equal(thread.harness, 'antigravity');
+    else assert.equal('harness' in thread, false);
+    if (version >= 3) {
+      const page = await host.handle({ op: 'history', protocol_version: version, thread_id: id });
+      assert.match(JSON.stringify(page), /saved transcript/);
+    }
+  }
   const history = await host.handle({ op: 'history', protocol_version: 6, thread_id: id });
   assert.match(JSON.stringify(history), /saved transcript/);
   const watch = await host.handle({ op: 'watch', protocol_version: 6, thread_id: id });

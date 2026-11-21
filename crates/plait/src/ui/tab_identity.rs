@@ -2,7 +2,7 @@
 use super::{Plait, tab_lifecycle::Intent};
 use gpui::*;
 use plait_core::{
-    host::{self, Client},
+    host::{self},
     tabs::{CheckoutKey, DirectoryIdentity, HostKey, TabTarget},
 };
 use std::{collections::HashMap, os::unix::fs::MetadataExt, path::PathBuf};
@@ -63,8 +63,9 @@ impl Plait {
         }
         roots.sort();
         roots.dedup();
+        let client = self.host_client();
+        let local = self.host_is_local();
         let task = cx.background_executor().spawn(async move {
-            let client = Client::from_environment().ok()?;
             let host = host::identity::read(&client).ok().or_else(|| {
                 let info = host::review::info(&client, thread.as_deref()?).ok()?;
                 let (_, store) = plait_core::session::locations().ok()?;
@@ -73,11 +74,20 @@ impl Plait {
             let checkouts = roots
                 .into_iter()
                 .filter_map(|root| {
-                    directory(&root).map(|directory| CheckoutKey {
-                        host: host.clone(),
-                        root,
-                        directory: Some(directory),
-                    })
+                    // The remote host verifies its own checkout identity.
+                    if local {
+                        directory(&root).map(|directory| CheckoutKey {
+                            host: host.clone(),
+                            root,
+                            directory: Some(directory),
+                        })
+                    } else {
+                        Some(CheckoutKey {
+                            host: host.clone(),
+                            root,
+                            directory: None,
+                        })
+                    }
                 })
                 .collect::<Vec<_>>();
             Some((host, checkouts))
@@ -218,13 +228,15 @@ impl Plait {
         let host = self.tabs.host.clone();
         let root = target.checkout().root.clone();
         let worktrees = target.is_worktrees();
+        let local = self.host_is_local();
         let task = cx.background_executor().spawn(async move {
-            let root = if worktrees {
+            let root = if local && worktrees {
                 plait_core::git::worktree::main_checkout(&root).unwrap_or(root)
             } else {
                 root
             };
-            let identity = directory(&root);
+            // Remote checkout identity is checked by its host.
+            let identity = if local { directory(&root) } else { None };
             (root, identity)
         });
         cx.spawn_in(window, async move |this, cx| {

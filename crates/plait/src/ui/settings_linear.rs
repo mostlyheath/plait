@@ -30,12 +30,8 @@ impl Plait {
         cx: &mut Context<Self>,
     ) {
         let epoch = self.host.connection.epoch;
-        let task = cx.background_executor().spawn(async move {
-            match host::Client::from_environment() {
-                Ok(client) => call(&client),
-                Err(error) => Err(linear::classify(&error, false)),
-            }
-        });
+        let client = self.host_client();
+        let task = cx.background_executor().spawn(async move { call(&client) });
         cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {

@@ -26,6 +26,8 @@ pub(super) enum PreferenceGroup {
     Editor,
     /// Layout choices made outside Settings, such as hiding the Git inspector.
     View,
+    /// Settings → Machines: the machine list and the one in use.
+    Machines,
 }
 
 /// Saved state of the preference file, shown beside the setting.

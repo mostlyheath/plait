@@ -19,7 +19,8 @@ impl Plait {
     /// Called when the host does not answer. A server that exists is never
     /// replaced here; setup only installs one that is missing.
     pub(super) fn offer_server_setup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if matches!(self.server_setup, ServerSetup::NotTried) {
+        // Setup installs this machine’s server only.
+        if self.host_is_local() && matches!(self.server_setup, ServerSetup::NotTried) {
             self.run_server_setup(window, cx);
         }
     }

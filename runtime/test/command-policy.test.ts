@@ -54,7 +54,7 @@ test('policy operations accept only their own fields', () => {
   ]) assert.throws(() => validate(input), { code: 'invalid_request' }, JSON.stringify(input));
 });
 
-test('the policy is per canonical checkout and per store, durable, and trusted by default', { timeout: 60000 }, async t => {
+test('the policy is per canonical checkout and per store, durable, and trusted by default', { timeout: 60000, skip: process.platform === 'linux' }, async t => {
   const f = await setup(t, 'answer', false, false);
   const elsewhere = await setup(t, 'answer', false, false);
   const other = join(f.base, 'other'); await exec('/usr/bin/git', ['init', '-q', other]);
@@ -131,4 +131,12 @@ test('MCP switch operation returns the refreshed safe report and survives host r
   assert.equal((await read()).result.mcp_servers[0].enabled, false);
   assert.equal((await change(true, 'missing')).error?.code, 'not_found');
   assert.equal(await readFile(join(agent, 'mcp.json'), 'utf8'), config, 'Pi configuration is never edited');
+});
+
+ test('Linux refuses a sandboxed policy', { skip: process.platform !== 'linux' }, async t => {
+  const f = await setup(t, 'answer', false, false);
+  const result = await set(f, 'sandboxed');
+  assert.equal(result.error?.code, 'invalid_request');
+  assert.match(result.error!.message, /command sandbox is not available on Linux yet/);
+  assert.equal((await read(f)).result.policy, 'trusted');
 });

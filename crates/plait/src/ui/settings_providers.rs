@@ -88,9 +88,10 @@ impl Plait {
         complete: impl FnOnce(&mut Self, Result<T, host::Error>, &mut Context<Self>) + 'static,
     ) {
         let epoch = self.host.connection.epoch;
+        let client = self.host_client();
         let task = cx
             .background_executor()
-            .spawn(async move { host::Client::from_environment()?.send(&request) });
+            .spawn(async move { client.send(&request) });
         cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {

@@ -7,7 +7,7 @@ use super::{
 };
 use gpui::{prelude::*, *};
 use plait_core::host::{
-    self, CancelWatch, Client,
+    self, CancelWatch,
     build_output::{self, Info, Kind, Phase, Progress, Request},
 };
 use std::{collections::BTreeMap, path::PathBuf};
@@ -87,9 +87,10 @@ impl Plait {
         let previous = self.build_output.info.clone();
         let root = key.1.clone();
         self.build_output.busy = true;
+        let client = self.host_client();
         let task = cx.background_executor().spawn(async move {
             let identity = Self::identify_settings_checkout(&root, expected)?;
-            let client = Client::from_environment()?;
+
             let info = if let Some(paths) = paths {
                 let info = previous.ok_or_else(|| {
                     host::Error::Protocol("Load build output choices before saving.".into())
@@ -256,9 +257,10 @@ impl Plait {
         self.build_output.prepare_progress();
         let epoch = self.host.connection.epoch;
         let id = request.clone();
+        let client = self.host_client();
         let task = cx
             .background_executor()
-            .spawn(async move { build_output::subscribe(&Client::from_environment()?, id, kind) });
+            .spawn(async move { build_output::subscribe(&client, id, kind) });
         cx.spawn(async move |this, cx| {
             let mut updates = match task.await {
                 Ok(updates) => updates,
@@ -324,12 +326,14 @@ impl Plait {
     pub(super) fn build_progress_bar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let (id, kind, label) = self.build_output.label.as_ref()?;
         let (id, kind, label) = (id.clone(), *kind, label.clone());
+        let client = self.host_client();
         Some(row().px_4().py_2().gap_2().flex_wrap()
             .child(tag("build-progress", label, colors().muted))
             .child(button("build-skip", "Skip").tooltip(|_, cx| cx.new(|_| TextTooltip("Discard this clone and start the worktree cold. The first message waits until partial output has been removed.".into())).into())
                 .on_activate(cx, move |_, _, cx| {
                     let request = id.clone();
-                    let task = cx.background_executor().spawn(async move { build_output::skip(&Client::from_environment()?, request, kind) });
+                    let client = client.clone();
+        let task = cx.background_executor().spawn(async move { build_output::skip(&client, request, kind) });
                     cx.spawn(async move |this, cx| { if let Err(error) = task.await { let _ = this.update(cx, |this, cx| { this.notice = Some(error.to_string()); cx.notify(); }); } }).detach();
                 })).into_any_element())
     }

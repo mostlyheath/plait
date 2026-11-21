@@ -10,7 +10,7 @@ use super::{
 use gpui::{prelude::*, *};
 use plait_core::{
     history::records,
-    host::{self, Client, review},
+    host::{self, review},
     model::{Diff, DiffMode},
     review::recorded::{Record, Stamp, Target},
 };
@@ -112,8 +112,8 @@ impl Plait {
         let history = self.host.thread.snapshot.clone();
         let task_stamp = stamp.clone();
         let read_record = self.workspace.tab == Workspace::Changes;
+        let client = self.host_client();
         let task = cx.background_executor().spawn(async move {
-            let client = Client::from_environment()?;
             let info = review::info(&client, &task_stamp.thread)?;
             let mut result = Loaded {
                 info,

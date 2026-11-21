@@ -22,7 +22,7 @@ const tests = readdirSync(directory).filter(name => name.endsWith('.test.ts')
   .sort().map(name => fileURLToPath(new URL(name, import.meta.url)));
 console.log(platform === 'macos'
   ? 'Runtime checks: common daemon tests and real macOS command-sandbox tests.'
-  : 'Runtime checks: common daemon tests and Linux command-denial tests. Linux execution is NOT enabled.');
+  : 'Runtime checks: common daemon tests and Linux trusted execution tests; sandboxed execution is disabled.');
 // An outer integration test must not make Node silently skip this independent suite.
 const environment = { ...process.env };
 delete environment.NODE_TEST_CONTEXT;

@@ -32,6 +32,8 @@ pub(super) enum SettingsTab {
     Providers,
     /// The host's Linear sign-in.
     Linear,
+    /// Which machine's host this window works with.
+    Machines,
     Agents,
     Keyboard,
     /// What Open in Editor and Open Terminal Here run.
@@ -41,10 +43,11 @@ pub(super) enum SettingsTab {
 }
 
 impl SettingsTab {
-    pub(super) const ALL: [Self; 8] = [
+    pub(super) const ALL: [Self; 9] = [
         Self::NewThreads,
         Self::Providers,
         Self::Linear,
+        Self::Machines,
         Self::Agents,
         Self::Keyboard,
         Self::Editor,
@@ -57,6 +60,7 @@ impl SettingsTab {
             Self::NewThreads => "New threads",
             Self::Providers => "Providers",
             Self::Linear => "Linear",
+            Self::Machines => "Machines",
             Self::Agents => "Agents",
             Self::Keyboard => "Keyboard",
             Self::Editor => "Editor",
@@ -172,14 +176,24 @@ fn state_line(id: impl Into<ElementId>, text: impl Into<SharedString>, tint: u32
 impl Plait {
     fn host_status(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let (label, tint) = if self.host.connection.connecting {
-            ("Connecting to local host…".to_owned(), colors().muted)
+            (
+                format!("Connecting to {}…", self.machine_label()),
+                colors().muted,
+            )
         } else if self.host.connection.connected {
             (
-                format!("Local host connected · protocol {}", self.host.protocol()),
+                format!(
+                    "{} connected · protocol {}",
+                    self.machine_label(),
+                    self.host.protocol()
+                ),
                 colors().mint,
             )
         } else {
-            ("Local host disconnected".to_owned(), colors().amber)
+            (
+                format!("{} disconnected", self.machine_label()),
+                colors().amber,
+            )
         };
         column()
             .gap_2()
@@ -468,6 +482,7 @@ impl Plait {
             SettingsTab::NewThreads => self.new_thread_settings(cx).into_any_element(),
             SettingsTab::Providers => self.provider_settings(cx).into_any_element(),
             SettingsTab::Linear => self.linear_settings(cx).into_any_element(),
+            SettingsTab::Machines => self.machine_settings(cx).into_any_element(),
             SettingsTab::Agents => self.harness_settings(cx).into_any_element(),
             SettingsTab::Keyboard => self.keyboard_settings(cx).into_any_element(),
             SettingsTab::Editor => self.editor_settings(cx).into_any_element(),

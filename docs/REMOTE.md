@@ -1,6 +1,6 @@
 # Remote hosts
 
-**Agreed design for M3; transport framing and the bridge are built.** The maintainer chose the direction:
+**Agreed design for M3; transport framing, the bridge, and SSH transport are built.** The maintainer chose the direction:
 reach a Plait host on another machine over SSH or over a tailnet, with this
 Linux workstation as the first remote host, and remote threads before remote
 Git. [HOST.md](HOST.md) remains the contract for what is implemented.
@@ -55,7 +55,7 @@ this frame:
 ### SSH
 
 - The client keeps one child per machine:
-  `ssh -T -o BatchMode=yes <destination> plait-host bridge`. The arguments
+  `ssh -T -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -- <destination> plait-host bridge`. The arguments
   are passed as a list and never through a shell.
 - The person's SSH configuration (aliases, keys, agent, `ProxyJump`,
   Tailscale SSH) applies as usual. Plait never asks for or stores a
@@ -145,6 +145,28 @@ machine's loopback.
   the editor and terminal handoffs are shown as unavailable for remote
   checkouts, with the reason, until remote Git is built.
 
+### First desktop slice: one machine at a time
+
+**Built:** request routing and Settings → Machines with the SSH transport, including the saved choice at launch and Reconnect over a new link. Still to come in this slice: opening a remote project by path, and "not available on a remote machine" in the Git views.
+
+Decided while building step 4, to reach usable remote threads sooner.
+
+- **One machine per window.** The first desktop slice works with one
+  machine at a time, chosen in **Settings → Machines**. The desktop already
+  treats a different host store as another host, and parks that host's tabs
+  as offline, so switching reuses that path.
+- **Routing.** Every host request goes through the selected machine's
+  client.
+- **Local-only work.**
+  - The folder picker, the client-side checkout checks, and first-launch
+    setup apply only to this Mac.
+  - A remote project is opened by typing its path on that machine.
+- **Git views.** Changes, History, Files, and the editor and terminal
+  handoffs say they are unavailable on a remote machine until remote Git is
+  built.
+- **Later.** Projects from several machines in one sidebar at once, as
+  described above, follow as their own slice.
+
 ## Remote Git and files (next slice)
 
 Bounded host-side read operations give remote checkouts their status,
@@ -154,7 +176,7 @@ desktop's local Git reads. That design is written before it is built.
 
 ## Order of work
 
-1. **Linux trusted commands and MCP.**
+1. **Linux trusted commands and MCP — built.**
    - Includes the documentation changes.
    - Tests: trusted execution, Stop and process-group cleanup, trusted MCP,
      and continued refusal of a sandboxed policy on Linux.
@@ -163,12 +185,13 @@ desktop's local Git reads. That design is written before it is built.
    - Tests: round trips over socket pairs, concurrent requests and watches,
      Close ending a watch without stopping a run, size limits, a stalled
      partial frame, and bridge EOF.
-3. **SSH transport.**
+3. **Built: SSH transport.**
    - Tests: with a scripted `ssh`, connect, reconnect, dead-link detection,
      and arguments that cannot reach a shell.
-4. **Machines in core.**
-   - Covers one identity, per-machine connection state, projects under
-     machines, and remote checkout identity.
+4. **Machines in core (part 1 built).**
+   - The saved machine list and per-machine connection model are built; the
+     desktop still connects locally. One identity, projects under machines,
+     and remote checkout identity remain.
    - Tests: headless grouping, jumps across machines, independent epochs,
      and one machine going offline.
 5. **Desktop remote threads.**

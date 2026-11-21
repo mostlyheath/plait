@@ -3,7 +3,7 @@ use super::{Plait, theme::*};
 use gpui::{prelude::*, *};
 use plait_core::{
     history::{self, History, Key},
-    host::{Client, HistoryField, Snapshot},
+    host::{HistoryField, Snapshot},
     markdown, transcript,
 };
 use std::{
@@ -354,8 +354,8 @@ impl Plait {
         let operation = load.clone();
         let thread = id.clone();
         let protocol = self.host.protocol();
+        let client = self.host_client();
         let task = cx.background_executor().spawn(async move {
-            let client = Client::from_environment()?;
             let mut cache = (*cache).clone();
             match operation {
                 Load::Restore(before) => {

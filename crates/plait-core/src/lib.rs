@@ -5,6 +5,7 @@
 pub mod build_output;
 pub mod checkout_state;
 pub mod compose;
+pub mod connections;
 pub mod conversation_find;
 pub mod diff;
 pub mod file_view;
@@ -20,6 +21,7 @@ pub mod linear_issues;
 pub mod linear_settings;
 pub mod local_socket;
 pub mod machine;
+pub mod machines;
 pub mod markdown;
 pub mod model;
 pub mod operations;

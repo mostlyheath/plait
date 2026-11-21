@@ -4,7 +4,7 @@ use gpui::{prelude::*, *};
 use plait_core::{
     git::record::Uncovered,
     history::records::{self, Availability, Line, Lines},
-    host::{self, Client, Request, TurnRecord, UndoState, UndoTurnReply},
+    host::{self, Request, TurnRecord, UndoState, UndoTurnReply},
     host_state::request_id,
     transcript,
 };
@@ -160,9 +160,10 @@ impl Plait {
         self.workspace.turn_records.loaded = false;
         self.workspace.turn_records.error = None;
         let thread = stamp.thread.clone();
-        let task = cx.background_executor().spawn(async move {
-            records::read(&Client::from_environment()?, &thread).map(Arc::new)
-        });
+        let client = self.host_client();
+        let task = cx
+            .background_executor()
+            .spawn(async move { records::read(&client, &thread).map(Arc::new) });
         cx.spawn_in(window, async move |this, cx| {
             let result = task.await;
             let _ = this.update_in(cx, |this, window, cx| {
@@ -358,6 +359,7 @@ impl Plait {
         );
         self.restore_undo_operation();
         self.remeasure_undo_panel(&attempt.run);
+        let client = self.host_client();
         let task = cx.background_executor().spawn(async move {
             let expected = expected.ok_or_else(|| {
                 host::Error::Protocol("Checkout identity is not verified.".into())
@@ -369,7 +371,7 @@ impl Plait {
                     message,
                 })
             })?;
-            Client::from_environment()?.request::<UndoTurnReply>(&request)
+            client.request::<UndoTurnReply>(&request)
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = task.await.map_err(|error| match error {
