@@ -2422,6 +2422,7 @@ fn walk(output: Option<&Path>) {
         storage::walk(&repository, output, suffix, width, height);
         toasts::walk(&repository, output, suffix, width, height);
         linear_settings::walk(&repository, output, suffix, width, height);
+        linear_settings::walk_project(&repository, output, suffix, width, height);
         worktrees_view::walk(&repository, output, suffix, width, height);
     }
     let _ = std::fs::remove_dir_all(&scratch);

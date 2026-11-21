@@ -16,9 +16,10 @@
   with the key redacted from debug output and typed rejections (offline, rate
   limited with its wait, conflict, not found, rejected key, signed out, older
   host). The two writes and `linear_get_write` are not modelled yet.
-- **Desktop sign-in (Settings → Linear).** Save, replace, and sign out of the
-  host's Linear key, with the state model in `plait-core::linear_settings`.
-  Binding a project to a team and the issue view come next.
+- **Desktop sign-in and project team (Settings → Linear, Project settings →
+  Linear).** Save, replace, and sign out of the host's Linear key, and link a
+  project to one Linear team, with the state models in
+  `plait-core::linear_settings`. The issue view comes next.
 - **Planned next.** A persistent project-level issue view adds search, ticket
   details, references in existing threads, and starting a thread from an issue.
   Settings holds the API key; a source-issue label links back to Linear.
