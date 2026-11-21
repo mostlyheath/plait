@@ -152,6 +152,8 @@ impl Plait {
                 Some("Thread change not confirmed. Refresh to check before trying again.".into());
         }
         self.tabs.identity.pending = None;
+        // A reconnected host may hold other threads; old alerts no longer apply.
+        self.clear_toasts();
         self.tabs.model.disconnected(&self.tabs.host);
         self.refresh_tab_rows();
         for draft in std::iter::once(&mut self.draft).chain(self.tabs.lifecycle.drafts.values_mut())

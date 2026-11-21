@@ -33,6 +33,7 @@ pub mod state;
 pub mod tabs;
 pub mod theme;
 pub mod thread_view;
+pub mod toasts;
 pub mod tool_view;
 pub mod transcript;
 pub mod update;

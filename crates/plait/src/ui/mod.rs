@@ -55,6 +55,7 @@ pub mod theme;
 mod thread_controls;
 mod thread_files;
 mod thread_workspace;
+mod toasts;
 mod tool_card;
 mod turn_records;
 mod turn_review;
@@ -191,6 +192,8 @@ pub struct Plait {
     code_font: appearance::CodeFont,
     updates: update::UpdateState,
     server_setup: server_setup::ServerSetup,
+    toasts: plait_core::toasts::Toasts,
+    toast_timer: Option<Task<()>>,
     session: session::SessionState,
     picker_open: bool,
     notice: Option<String>,
@@ -258,6 +261,8 @@ impl Plait {
             code_font: Default::default(),
             updates: update::UpdateState::default(),
             server_setup: server_setup::ServerSetup::default(),
+            toasts: Default::default(),
+            toast_timer: None,
             session: session::SessionState::default(),
             picker_open: false,
             notice: None,
@@ -1355,6 +1360,8 @@ impl Render for Plait {
             // Timings stay available without spending a permanent chrome row on them.
             .when(self.diagnostics, |el| el.child(self.diagnostics_bar()))
             .when_some(self.tab_list(cx), |el, list| el.child(list))
+            // Above the workspace, beneath images, Settings, and pickers.
+            .when_some(self.toast_stack(cx), |el, toasts| el.child(toasts))
             .when_some(self.image_overlay(window, cx), |el, overlay| {
                 el.child(overlay)
             })
