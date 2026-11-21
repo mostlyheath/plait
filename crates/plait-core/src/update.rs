@@ -166,6 +166,36 @@ pub struct Manifest {
     pub artifacts: BTreeMap<String, Artifact>,
 }
 
+/// A signed release for one independently updated component.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ComponentManifest {
+    pub schema_version: u32,
+    pub component: Component,
+    pub version: String,
+    pub tag: String,
+    pub revision: String,
+    pub protocol: ProtocolRange,
+    pub build_id: Option<String>,
+    pub capabilities: Option<Vec<String>>,
+    pub storage_schema: Option<u32>,
+    pub artifacts: BTreeMap<String, Artifact>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Component {
+    Client,
+    Host,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProtocolRange {
+    pub min: u32,
+    pub max: u32,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Artifact {
@@ -205,12 +235,16 @@ pub fn public_key() -> Result<VerifyingKey, Error> {
     VerifyingKey::from_bytes(&bytes).map_err(|_| Error::Signature)
 }
 
-/// Checks the signature before parsing, then the manifest's own invariants.
-pub fn verify(bytes: &[u8], signature: &[u8], key: &VerifyingKey) -> Result<Manifest, Error> {
+fn verify_signature(bytes: &[u8], signature: &[u8], key: &VerifyingKey) -> Result<(), Error> {
     let text = std::str::from_utf8(signature).map_err(|_| Error::Signature)?;
     let signature = decode_hex::<64>(text.trim()).ok_or(Error::Signature)?;
     key.verify_strict(bytes, &Signature::from_bytes(&signature))
-        .map_err(|_| Error::Signature)?;
+        .map_err(|_| Error::Signature)
+}
+
+/// Checks the signature before parsing, then the manifest's own invariants.
+pub fn verify(bytes: &[u8], signature: &[u8], key: &VerifyingKey) -> Result<Manifest, Error> {
+    verify_signature(bytes, signature, key)?;
     let manifest: Manifest =
         serde_json::from_slice(bytes).map_err(|error| invalid(error.to_string()))?;
     if manifest.schema_version != 1 {
@@ -230,6 +264,67 @@ pub fn verify(bytes: &[u8], signature: &[u8], key: &VerifyingKey) -> Result<Mani
                 .bytes()
                 .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'));
         if !safe_name(&artifact.name)
+            || !digest
+            || artifact.size == 0
+            || artifact.size > ARTIFACT_LIMIT
+        {
+            return Err(invalid(format!("invalid artifact {:?}", artifact.name)));
+        }
+    }
+    Ok(manifest)
+}
+
+/// Verify the detached signature and the invariants for one component.
+pub fn verify_component(
+    bytes: &[u8],
+    signature: &[u8],
+    key: &VerifyingKey,
+    expected: Component,
+) -> Result<ComponentManifest, Error> {
+    verify_signature(bytes, signature, key)?;
+    let manifest: ComponentManifest =
+        serde_json::from_slice(bytes).map_err(|error| invalid(error.to_string()))?;
+    if manifest.schema_version != 2 || manifest.component != expected {
+        return Err(invalid("unsupported manifest schema or component"));
+    }
+    Version::parse(&manifest.version)?;
+    if manifest.tag != format!("v{}", manifest.version) {
+        return Err(invalid("release tag does not match its version"));
+    }
+    if manifest.protocol.min > manifest.protocol.max {
+        return Err(invalid("invalid protocol range"));
+    }
+    if manifest.artifacts.is_empty() {
+        return Err(invalid("the manifest names no artifact"));
+    }
+    match manifest.component {
+        Component::Client
+            if manifest.build_id.is_some()
+                || manifest.capabilities.is_some()
+                || manifest.storage_schema.is_some() =>
+        {
+            return Err(invalid("unexpected host fields"));
+        }
+        Component::Host
+            if !manifest.build_id.as_deref().is_some_and(valid_build_id)
+                || manifest.storage_schema.is_none()
+                || !manifest.capabilities.as_ref().is_some_and(|items| {
+                    items.len() <= 64
+                        && items.iter().all(|item| item.len() <= 64 && item.is_ascii())
+                }) =>
+        {
+            return Err(invalid("invalid host metadata"));
+        }
+        _ => {}
+    }
+    for (platform, artifact) in &manifest.artifacts {
+        let digest = artifact.sha256.len() == 64
+            && artifact
+                .sha256
+                .bytes()
+                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'));
+        if !safe_name(platform)
+            || !safe_name(&artifact.name)
             || !digest
             || artifact.size == 0
             || artifact.size > ARTIFACT_LIMIT
@@ -533,6 +628,114 @@ mod tests {
             ),
             Err(Error::Invalid(_))
         ));
+    }
+
+    /// Manifests written by scripts/update_manifest.py, read from PLAIT_MANIFEST_DIR.
+    #[test]
+    #[ignore = "set PLAIT_MANIFEST_DIR to manifests the release script wrote"]
+    fn script_manifests_decode_and_verify() {
+        let dir = std::path::PathBuf::from(std::env::var_os("PLAIT_MANIFEST_DIR").unwrap());
+        let key = SigningKey::from_bytes(&[9; 32]);
+        for (name, component) in [
+            ("update-client.json", Component::Client),
+            ("update-host.json", Component::Host),
+        ] {
+            let bytes = std::fs::read(dir.join(name)).unwrap();
+            let signature: String = key
+                .sign(&bytes)
+                .to_bytes()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
+            verify_component(
+                &bytes,
+                signature.as_bytes(),
+                &key.verifying_key(),
+                component,
+            )
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+        }
+    }
+
+    #[test]
+    fn component_manifests_verify_and_reject_invalid_inputs() {
+        let key = SigningKey::from_bytes(&[7; 32]);
+        let sign = |bytes: &[u8]| {
+            key.sign(bytes)
+                .to_bytes()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        };
+        let mut value = serde_json::json!({
+            "schema_version": 2, "component": "host", "version": "0.1.0",
+            "tag": "v0.1.0", "revision": "abc", "protocol": {"min": 1, "max": 6},
+            "build_id": "0.1.0-014483b69f94cba19406", "capabilities": [],
+            "storage_schema": 1, "artifacts": {"macos-arm64": {
+                "name": "host.tar.gz", "sha256": "a".repeat(64), "size": 10}}
+        });
+        let bytes = serde_json::to_vec(&value).unwrap();
+        let signature = sign(&bytes);
+        assert!(
+            verify_component(
+                &bytes,
+                signature.as_bytes(),
+                &key.verifying_key(),
+                Component::Host
+            )
+            .is_ok()
+        );
+        assert!(matches!(
+            verify_component(
+                b"tampered",
+                signature.as_bytes(),
+                &key.verifying_key(),
+                Component::Host
+            ),
+            Err(Error::Signature)
+        ));
+        assert!(
+            verify_component(
+                &bytes,
+                signature.as_bytes(),
+                &key.verifying_key(),
+                Component::Client
+            )
+            .is_err()
+        );
+        for (field, bad) in [
+            ("protocol", serde_json::json!({"min": 7, "max": 6})),
+            ("unknown", serde_json::json!(true)),
+        ] {
+            let old = value.get(field).cloned();
+            value[field] = bad;
+            let invalid_bytes = serde_json::to_vec(&value).unwrap();
+            assert!(
+                verify_component(
+                    &invalid_bytes,
+                    sign(&invalid_bytes).as_bytes(),
+                    &key.verifying_key(),
+                    Component::Host
+                )
+                .is_err()
+            );
+            if let Some(old) = old {
+                value[field] = old;
+            } else {
+                value.as_object_mut().unwrap().remove(field);
+            }
+        }
+        let legacy = manifest("0.1.0");
+        assert!(
+            verify_component(
+                &legacy,
+                sign(&legacy).as_bytes(),
+                &key.verifying_key(),
+                Component::Host
+            )
+            .is_err()
+        );
+        assert!(verify(&bytes, signature.as_bytes(), &key.verifying_key()).is_err());
     }
 
     #[test]

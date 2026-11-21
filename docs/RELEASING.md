@@ -97,10 +97,11 @@ the in-app update replaces both.
   archive. A release with only a client publishes `update-client.json` and
   the app. A release that carries both publishes both manifests.
 - `update.json` (schema 1) is not changed. Its clients reject unknown fields
-  and other schema versions. Every release that includes a client also
-  publishes it, until 0.2, so an older Plait can always update to one that
-  reads the new manifests. Releases with only a host omit it, so an older
-  Plait never offers them.
+  and other schema versions, and it names a client and a host together. So
+  until 0.2, every release that changes the client is published with its
+  host and also publishes `update.json`; an older Plait can always update to
+  one that reads the new manifests. Releases with only a host omit it, so an
+  older Plait never offers them. Client-only releases begin at 0.2.
 - A client archive keeps its bundled host for first-launch setup, which
   stays offline.
 
