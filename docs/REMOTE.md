@@ -101,9 +101,20 @@ machine's loopback.
     run trusted" (macOS and Linux).
   - The login-shell fallback becomes `/bin/sh` on Linux.
   - Process-group cleanup and cleanup receipts are unchanged.
-- **Running the host on Linux:**
+- **Running the host on Linux (systemd user service built):**
   - `plait-host run` in the foreground, and a systemd user unit installed by
     `plait-host install-service`.
+  - From a source checkout, run:
+
+    ```sh
+    cargo build --release -p plait-host
+    (cd runtime && npm ci)
+    target/release/plait-host install-service
+    ```
+
+    The service uses the Node found on your current PATH. Without lingering,
+    it stops when you log out; `loginctl enable-linger $USER` keeps it running.
+    Remove the service with `plait-host uninstall-service`.
   - The store stays `~/.local/share/plait`.
   - Published Linux host archives follow
     [independent releases](RELEASING.md#independent-client-and-server-releases).
@@ -193,7 +204,8 @@ desktop's local Git reads. That design is written before it is built.
      wrong user, a tagged peer, and being down; refusal to bind a
      non-Tailscale address; and limits.
 7. **Linux host releases, the systemd unit, and a live check** from the
-   Mac to the Linux workstation.
+   Mac to the Linux workstation. The systemd user service is built; releases
+   and the live check remain planned.
 
 Remote Git and files follow as their own design and slice.
 

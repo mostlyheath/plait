@@ -5,6 +5,8 @@ mod files;
 mod fingerprint;
 mod installation;
 mod lease;
+#[cfg(target_os = "linux")]
+mod linux_service;
 mod mcp;
 mod record;
 mod review;
@@ -81,6 +83,19 @@ fn run() -> io::Result<()> {
         "prune" => return record::prune(),
         "prune-contained" => return record::prune_contained(),
         _ => {}
+    }
+    if operation == "install-service" || operation == "uninstall-service" {
+        if args.next().is_some() {
+            return Err(io::Error::other("service commands take no options"));
+        }
+        #[cfg(target_os = "linux")]
+        return if operation == "install-service" {
+            linux_service::install()
+        } else {
+            linux_service::uninstall()
+        };
+        #[cfg(not(target_os = "linux"))]
+        return Err(io::Error::other("service commands are Linux-only"));
     }
     if operation == "version" {
         serde_json::to_writer(
