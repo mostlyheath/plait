@@ -147,6 +147,11 @@ impl Plait {
         if self.host.connection.connecting {
             return;
         }
+        // A remote machine reconnects over a new SSH link; this runs again
+        // once that link is made.
+        if self.relink_before_reconnect(window, cx) {
+            return;
+        }
         self.workspace.reset_for_reconnect();
         self.navigation.watch = None;
         self.navigation.generation += 1;

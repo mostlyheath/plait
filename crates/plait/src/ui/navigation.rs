@@ -1075,12 +1075,13 @@ impl Plait {
 
     /// Host state stays visible; remote entries are labeled where they appear.
     fn host_footer(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let machine = self.machine_label();
         let (label, tint) = if self.host.connection.connecting {
-            ("Connecting to local host…", colors().muted)
+            (format!("Connecting to {machine}…"), colors().muted)
         } else if self.host.connection.connected {
-            ("Local host connected", colors().mint)
+            (format!("{machine} connected"), colors().mint)
         } else {
-            ("Local host disconnected", colors().amber)
+            (format!("{machine} disconnected"), colors().amber)
         };
         row()
             .h(px(40.))

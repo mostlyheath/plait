@@ -781,6 +781,34 @@ not loaded, the bar says **Loaded messages only**, with the reason on hover.
 Find does not load pages to search them.
 
 
+### Machines
+
+**Settings → Machines** chooses whose Plait host this window works with:
+this Mac's, or another machine's over SSH. Each window works with one
+machine at a time.
+
+To add one, choose **Add SSH machine…**:
+
+1. Give it a name and an SSH destination, such as `you@workstation` or an
+   alias from your `~/.ssh/config`. Optionally add a port, and the host's
+   store path on that machine.
+2. Plait runs `ssh -T -o BatchMode=yes … -- <destination> plait-host bridge`
+   with your own keys or agent. It never asks for or keeps a password. The
+   other machine needs Plait's host running (`plait-host run`), and that
+   command must work from this Mac without a prompt.
+3. **Use** connects in the background. If it fails, Plait stays on the
+   current machine and shows SSH's own reason, such as `Permission denied
+   (publickey)`.
+
+The window remembers the machine it used and reconnects at launch without
+waiting for it. **Reconnect** makes a new SSH connection. **Remove…** forgets
+a machine; its host and threads stay on that machine.
+
+On a remote machine, threads, approvals, Stop, the queue, models, and history
+work as they do here. Changes, History, Files, and Open in Editor or
+Terminal are not available there yet. Remote projects open by path on that
+machine. The window's header names the machine in use.
+
 ### Settings and Project settings
 
 Settings opens as a centered modal over the window from Cmd-comma,

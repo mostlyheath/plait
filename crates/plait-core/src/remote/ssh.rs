@@ -16,6 +16,9 @@ use std::{
 #[serde(transparent)]
 pub struct SshDestination(String);
 impl SshDestination {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
     pub fn new(value: impl Into<String>) -> Result<Self, Error> {
         let value = value.into();
         if value.is_empty()

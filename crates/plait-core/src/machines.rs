@@ -12,6 +12,11 @@ pub const MACHINE_LIMIT: usize = 32;
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[serde(transparent)]
 pub struct MachineId(String);
+impl Default for MachineId {
+    fn default() -> Self {
+        Self("local".into())
+    }
+}
 impl MachineId {
     pub fn new(value: impl Into<String>) -> Result<Self, String> {
         let value = value.into();

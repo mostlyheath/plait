@@ -49,6 +49,7 @@ mod find;
 mod isolation;
 mod issues;
 mod linear_settings;
+mod machines;
 mod many_drafts;
 mod mcp;
 mod messages;
@@ -2423,6 +2424,7 @@ fn walk(output: Option<&Path>) {
         storage::walk(&repository, output, suffix, width, height);
         toasts::walk(&repository, output, suffix, width, height);
         linear_settings::walk(&repository, output, suffix, width, height);
+        machines::walk(&repository, output, suffix, width, height);
         linear_settings::walk_project(&repository, output, suffix, width, height);
         issues::walk(&repository, output, suffix, width, height);
         worktrees_view::walk(&repository, output, suffix, width, height);
