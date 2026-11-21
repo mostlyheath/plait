@@ -430,6 +430,13 @@ impl Plait {
             return;
         }
         match target {
+            Some((TabTarget::Issues { .. }, _)) => {
+                self.host.select(None);
+                self.draft.open = false;
+                window.focus(&self.focus, cx);
+                self.restore_issues_bookmark();
+                cx.notify();
+            }
             Some((TabTarget::Worktrees { .. }, _)) => {
                 self.host.select(None);
                 self.draft.open = false;
@@ -848,8 +855,8 @@ impl Plait {
                     .flex_shrink_0()
                     .flex()
                     .justify_center()
-                    .child(if meta.worktrees {
-                        icon("branch")
+                    .child(if meta.worktrees || meta.issues {
+                        icon(if meta.issues { "issue" } else { "branch" })
                             .text_color(rgb(colors().muted))
                             .into_any_element()
                     } else {

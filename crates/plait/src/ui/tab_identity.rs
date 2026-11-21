@@ -163,7 +163,8 @@ impl Plait {
                 let checkout = match target {
                     TabTarget::Existing { checkout, .. }
                     | TabTarget::Draft { checkout, .. }
-                    | TabTarget::Worktrees { checkout } => checkout,
+                    | TabTarget::Worktrees { checkout }
+                    | TabTarget::Issues { checkout } => checkout,
                 };
                 if checkout.host == previous {
                     checkout.host = host.clone();
@@ -235,7 +236,8 @@ impl Plait {
                 let checkout = match &mut target {
                     TabTarget::Existing { checkout, .. }
                     | TabTarget::Draft { checkout, .. }
-                    | TabTarget::Worktrees { checkout } => checkout,
+                    | TabTarget::Worktrees { checkout }
+                    | TabTarget::Issues { checkout } => checkout,
                 };
                 checkout.root = root;
                 checkout.directory = directory;

@@ -58,7 +58,7 @@ impl RestoreContext<'_> {
                 .iter()
                 .any(|t| &t.id == id && t.checkout == checkout.root),
             TabTarget::Draft { .. } => self.drafts.contains(target),
-            TabTarget::Worktrees { .. } => true,
+            TabTarget::Worktrees { .. } | TabTarget::Issues { .. } => true,
         }
     }
 }
@@ -577,6 +577,45 @@ mod tests {
                 .session()
                 .target(),
             &target
+        );
+    }
+    #[test]
+    fn issues_round_trip_and_reject_a_mismatched_bookmark() {
+        let (mut w, c) = source(1);
+        let target = TabTarget::Issues {
+            checkout: checkout("/repo"),
+        };
+        let id = w.open(target.clone(), Some(2)).unwrap();
+        let bookmark = BookmarkRecord::Issues {
+            selected: Some("2f1c0d8e-issue".into()),
+        };
+        w.save_bookmark(id, bookmark.clone()).unwrap();
+        let restored = read(&value(&w, &c), &c);
+        assert_eq!(restored.status, RestoreStatus::Restored);
+        let tab = restored
+            .window
+            .get(restored.window.active().unwrap())
+            .unwrap();
+        assert_eq!(tab.session().target(), &target);
+        assert_eq!(tab.session().bookmark(), &bookmark);
+        // An Issues bookmark belongs only to an Issues tab, and its ID is bounded.
+        let other = w
+            .open(
+                TabTarget::Worktrees {
+                    checkout: checkout("/repo"),
+                },
+                Some(2),
+            )
+            .unwrap();
+        assert!(w.save_bookmark(other, bookmark).is_err());
+        assert!(
+            w.save_bookmark(
+                id,
+                BookmarkRecord::Issues {
+                    selected: Some("bad id/../x".into())
+                }
+            )
+            .is_err()
         );
     }
 }

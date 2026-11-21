@@ -501,6 +501,40 @@ needed. Missing folders stay visible and cannot be removed through this view.
 Publication facts reflect the last fetch. Work returns through commit, push
 and pull request.
 
+### Linear issues
+
+Choose **Linear issues** from a project's sidebar menu, or **Linear Issues**
+from the File menu or command palette. One Issues tab opens per project per
+window, marked with a ring; it returns with its selected issue after a
+restart. It needs a Linear sign-in (Settings → Linear) and a team linked to
+the project (Project settings → Linear); until then it says which is missing
+and opens the right place.
+
+The list shows the linked team's issues 50 at a time, up to 500, with
+**Active**, **Assigned to me**, **Backlog**, **Completed**, and **All**
+filters. Search matches titles and numbers after you pause typing; it is
+broad and never picks an issue for you. A pasted identifier such as
+`PLA-142`, or a `https://linear.app/…/issue/PLA-142` address, opens that
+exact issue. Choose an issue to read its state, priority, assignee, labels,
+description, attachment names, and first page of comments; in narrow windows
+it takes the whole tab, with **All issues** to go back. **Open in Linear**
+opens the issue in your browser. **Refresh** asks Linear again.
+
+**Start thread** opens a new draft in the project with the issue's
+identifier, title, address, and description (up to 4,000 characters) as its
+first message. **Add to thread…** lists the project's threads and adds the
+same text to the end of the chosen thread's message box. Either way nothing
+is sent; you read and edit it first, and an existing draft is never replaced.
+A thread started from an issue is linked to it once the host creates the
+thread, and shows **From PLA-142 · title** above its details, with **Open in
+Linear**. The link lives on this Mac's host and is never written to Linear.
+If Plait quits before the draft is sent, the draft keeps its text but not the
+link.
+
+Linear's text is shown as plain text: Markdown is not rendered, links are not
+clickable, and attachments are named but never opened. When Linear cannot be
+reached, the tab shows the host's saved copy and says how old it is.
+
 ### Codex and Claude Code threads
 
 A thread can run in Codex or Claude Code instead of Pi (since
@@ -790,8 +824,8 @@ project. Signed in, it lists the workspace's teams; choose one to link it, or
 **Unlink**. The link changes only when the host confirms it. **Refresh teams**
 asks Linear again. The list says when it may be incomplete (Linear caps it at
 50) or when it is a saved copy because Linear could not be reached. Signed out,
-**Linear settings…** opens the sign-in. Linear's issue view is not in the app
-yet.
+**Linear settings…** opens the sign-in. The project's issues are in its
+[Issues tab](#linear-issues).
 
 ### Application shortcuts
 

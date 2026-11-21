@@ -490,6 +490,10 @@ impl AssetSource for Assets {
             "more" => {
                 r#"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><circle cx="3" cy="8" r="1"/><circle cx="8" cy="8" r="1"/><circle cx="13" cy="8" r="1"/></svg>"#
             }
+            // An original mark for an issue: a ring around a point.
+            "issue" => {
+                r#"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5" fill="none" stroke="black" stroke-width="1.4"/><circle cx="8" cy="8" r="1.6"/></svg>"#
+            }
             "close" => {
                 r#"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><path d="m4 4 8 8m0-8-8 8" fill="none" stroke="black" stroke-width="1.4" stroke-linecap="round"/></svg>"#
             }

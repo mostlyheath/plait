@@ -20,6 +20,7 @@ mod harnesses;
 mod history;
 mod host;
 mod images;
+mod issues_view;
 mod jump;
 mod live_conversation;
 mod markdown;
@@ -165,6 +166,7 @@ pub struct Plait {
     harnesses: harnesses::HarnessesState,
     providers: settings_providers::ProviderState,
     linear: settings_linear::LinearState,
+    issues: issues_view::IssuesUi,
     /// A thread was created at once (a worktree thread): open it when the host
     /// confirms creation, unless the user has gone elsewhere in the meantime.
     new_thread_open: bool,
@@ -243,6 +245,7 @@ impl Plait {
             harnesses: Default::default(),
             providers: Default::default(),
             linear: Default::default(),
+            issues: Default::default(),
             new_thread_open: false,
             draft: Default::default(),
             admission: Default::default(),
@@ -297,6 +300,8 @@ impl Plait {
             this.sync_harnesses(cx);
             this.sync_provider_settings(cx);
             this.sync_linear_settings(cx);
+            this.sync_issues_view(cx);
+            this.sync_issue_links(cx);
         })
         .detach();
         // Keys dispatch from the focused element. One that is no longer drawn,
@@ -1119,6 +1124,9 @@ impl Render for Plait {
                     this.open_worktrees(this.visible_project_checkout().to_owned(), window, cx)
                 }),
             )
+            .on_action(cx.listener(|this, _: &issues_view::Issues, window, cx| {
+                this.open_issues(this.visible_project_checkout().to_owned(), window, cx)
+            }))
             .on_action(
                 cx.listener(|this, _: &Settings, window, cx| this.toggle_settings(window, cx)),
             )
@@ -1346,6 +1354,8 @@ impl Render for Plait {
                             })
                             .child(if self.worktrees_visible() {
                                 self.worktrees_view(wide, cx)
+                            } else if self.issues_visible() {
+                                self.issues_tab(wide, cx)
                             } else if self.workspace.tab == Workspace::History {
                                 self.history_view(wide, cx).into_any_element()
                             } else if self.workspace.tab == Workspace::Files {
