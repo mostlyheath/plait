@@ -4,7 +4,7 @@ import { fail, HostError } from '../protocol.ts';
 import { checkRoot, fileAction, ignoredPaths, pathKey, safePath } from '../safety.ts';
 import type { FileIdentity, LeaseHandle, Postimage } from '../safety.ts';
 import { clipHead, clipTail } from '../text.ts';
-import { commandPlatform } from './platform.ts';
+import { trustedPlatform } from './platform.ts';
 import { runGuardian, COMMAND_TIMEOUT_MS } from './supervisor.ts';
 import { hostAccount, loginEnvironment } from './login-environment.ts';
 import type { Account, LoginEnvironment } from './login-environment.ts';
@@ -113,8 +113,7 @@ export async function refreshChanged(run: TrustedRun) {
  * the environment, the guardian request, and the bookkeeping afterwards.
  */
 export async function trustedCommand(run: TrustedRun, text: string, signal: AbortSignal, output: (chunk: string) => void, options: TrustedOptions = {}): Promise<string> {
-  // Linux still rejects every command; trusted mode is not a containment substitute.
-  commandPlatform();
+  trustedPlatform();
   if (signal.aborted) fail('permission_denied', 'Run stopped.');
   const root = run.snapshot.checkout;
   await checkRoot(root, run.rootIdentity);

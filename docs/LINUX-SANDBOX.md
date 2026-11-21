@@ -11,7 +11,7 @@ cleanup. Clients attach to that daemon; a client disconnect must not stop a run.
 The machine that runs a command must enforce its permissions. A desktop approval
 or a private network connection is not a substitute for local containment.
 
-Linux command support is a local-host prerequisite, not permission to expose the
+Trusted commands and trusted MCP servers run on Linux without containment. Sandboxed commands and MCP servers remain refused: no Linux backend has passed the containment gates below. Linux command support is a local-host prerequisite, not permission to expose the
 existing Unix-socket protocol over TCP. Remote authentication, authorization,
 and machine-scoped checkout state remain a separate slice.
 
@@ -88,15 +88,15 @@ need a design and real negative tests.
    or another mechanism that can enforce the same behavior. Account for machine
    setup, filesystem freshness, build-cache behavior, and maintenance cost.
    Do not add a syscall broker or a privileged helper as an unreviewed shortcut.
-4. **Keep Linux commands disabled while completing the independent daemon.**
+4. **Keep sandboxed Linux commands disabled while completing the independent daemon.**
    Build and test persistence, approvals, file helpers, ownership checks,
    subscriptions, reconnect, and crash recovery with scripted providers.
-   This is the current direction, not a claim of supported Linux agent execution.
+   This is the current direction, not a claim of sandboxed Linux agent execution.
 
 An unrestricted shell fallback is not an option. Do not disable AppArmor, change
 sysctls, upgrade the kernel, or restart machine services just to pass a test.
 
-## Gates before enabling Linux commands
+## Gates before enabling sandboxed Linux commands
 
 - Select and document a containment mechanism and its tested prerequisites.
 - Keep platform policy separate from common admission, persistence, approval,

@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { connect } from 'node:net';
+import { DatabaseSync } from 'node:sqlite';
+import { rootIdentity } from '../../src/safety.ts';
 import { mkdtemp, readFile, writeFile, rm, stat, realpath, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -83,7 +85,12 @@ export async function setup(t: { after: (fn: () => Promise<void>) => void }, sce
   });
   const host = await start();
   // Most suites test the sandbox, which is now opt-in; trusted suites switch per test.
-  if (sandboxed) assert.equal((await request(store, { op: 'set_command_policy', checkout: repo, policy: 'sandboxed' })).ok, true);
+  if (sandboxed && process.platform === 'linux') {
+    // Simulate a pre-existing sandboxed store without bypassing the policy operation.
+    const db = new DatabaseSync(join(store, 'host.sqlite'));
+    try { db.prepare('INSERT INTO settings VALUES (?,?)').run(`command_policy:${repo}`, JSON.stringify({ policy: 'sandboxed', root: await rootIdentity(repo) })); }
+    finally { db.close(); }
+  } else if (sandboxed) assert.equal((await request(store, { op: 'set_command_policy', checkout: repo, policy: 'sandboxed' })).ok, true);
   const create = async (id = 'create-1') => {
     const reply = await request(store, { op: 'create_thread', checkout: repo, provider: 'faux', model_id: 'faux-1', request_id: id });
     assert.equal(reply.ok, true, JSON.stringify(reply)); return reply.result.thread;
