@@ -1,6 +1,6 @@
 //! Settings → Linear, with account state injected: no scene reaches Linear.
 use super::*;
-use plait_core::linear_settings::{Auth, Pending};
+use plait_core::linear_settings::{Auth, Pending, TeamPending};
 
 fn open(h: &mut Harness) {
     h.update(|p, window, cx| {
@@ -85,6 +85,116 @@ pub(super) fn walk(repo: &Path, out: Option<&Path>, suffix: &str, width: f32, he
     }
 }
 
+fn open_project(h: &mut Harness) {
+    h.update(|p, window, cx| {
+        let checkout = p.host.creation.checkout.clone();
+        p.show_settings_for_project(checkout, window, cx);
+    });
+    h.settle();
+}
+
+fn teams() -> plait_core::host::linear::Teams {
+    serde_json::from_value(serde_json::json!({
+        "teams": [
+            {"id": "t-plait", "key": "PLA", "name": "Plait", "states": []},
+            {"id": "t-docs", "key": "DOC", "name": "Documentation", "states": []}
+        ],
+        "teams_complete": false,
+        "cached": true, "stale": true, "cached_at": 0, "cache_age_seconds": 7200,
+        "partial": false, "warning": null
+    }))
+    .unwrap()
+}
+
+fn bound_to_plait(h: &mut Harness) {
+    h.update(|p, _, _| {
+        p.linear.account.auth = signed_in();
+        p.linear.team.teams = Some(teams());
+        p.linear.team.binding = Some(
+            serde_json::from_value(serde_json::json!({
+                "workspace_id": "ORG", "team_id": "t-plait", "team_key": "PLA",
+                "team_name": "Plait", "updated_at": 1
+            }))
+            .unwrap(),
+        );
+    });
+}
+
+fn project_scenes() -> [Scene; 2] {
+    [
+        (
+            "project-linear-signed-out",
+            |h| set(h, |a| a.auth = Auth::SignedOut),
+            &["Linear settings…"],
+        ),
+        (
+            "project-linear-bound",
+            bound_to_plait,
+            &[
+                "Plait (PLA)",
+                "Documentation (DOC)",
+                "Unlink",
+                "Refresh teams",
+            ],
+        ),
+    ]
+}
+
+pub(super) fn walk_project(repo: &Path, out: Option<&Path>, suffix: &str, width: f32, height: f32) {
+    for (name, install, _) in project_scenes() {
+        let mut h = Harness::new(repo, out, width, height);
+        h.connect(repo, false);
+        open_project(&mut h);
+        install(&mut h);
+        h.update(|p, _, _| p.settings_scroll.set_offset(point(px(0.), px(-10000.))));
+        h.capture(&format!("{name}-{suffix}"));
+    }
+}
+
+#[cfg(debug_assertions)]
+#[core::prelude::v1::test]
+fn project_linear_team_is_labelled_and_waits_for_the_host() {
+    if !isolated("linear_settings::project_linear_team_is_labelled_and_waits_for_the_host") {
+        return;
+    }
+    let scratch = std::env::temp_dir().join(format!("plait-linear-team-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    for (width, height) in [(1380., 860.), (900., 600.)] {
+        for (name, install, required) in project_scenes() {
+            let mut h = Harness::new(&repo, None, width, height);
+            h.connect(&repo, false);
+            open_project(&mut h);
+            install(&mut h);
+            let frame = h.draw_a11y();
+            frame.assert_no_duplicates(name);
+            for required in required {
+                assert!(
+                    frame
+                        .nodes
+                        .iter()
+                        .any(|n| n.label.as_deref() == Some(*required)),
+                    "{name} missing {required} at {width}"
+                );
+            }
+        }
+    }
+    let mut h = Harness::new(&repo, None, 900., 600.);
+    h.connect(&repo, false);
+    open_project(&mut h);
+    bound_to_plait(&mut h);
+    h.update(|p, _, cx| {
+        let docs = p.linear.team.teams.as_ref().unwrap().teams[1].clone();
+        p.bind_linear_team(Some(docs), cx);
+        assert_eq!(p.linear.team.pending, TeamPending::Saving);
+        assert_eq!(
+            p.linear.team.binding.as_ref().unwrap().team_id,
+            "t-plait",
+            "the shown link waits for the host"
+        );
+    });
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
 /// Only the Linear settings scenes, for reviewing their layout quickly.
 #[core::prelude::v1::test]
 #[ignore = "writes PNG files; set PLAIT_SNAPSHOT_DIR and pass --ignored"]
@@ -98,6 +208,8 @@ fn linear_settings_snapshots() {
     let repo = fixture_repository(&scratch);
     walk(&repo, Some(&output), "wide", 1380., 860.);
     walk(&repo, Some(&output), "narrow", 900., 600.);
+    walk_project(&repo, Some(&output), "wide", 1380., 860.);
+    walk_project(&repo, Some(&output), "narrow", 900., 600.);
     std::fs::remove_dir_all(scratch).unwrap();
 }
 

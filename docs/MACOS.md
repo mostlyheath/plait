@@ -784,8 +784,14 @@ key** saves a different key; **Sign out…** asks first, then removes the saved
 key, cached issues, and project bindings, keeping the links between threads
 and issues. If Linear stops accepting the saved key, the tab says so and asks
 for a new one. An older host that cannot reach Linear is named as such.
-Linear's issue view, and binding a project to a Linear team, are not in the
-app yet.
+
+**Project settings → Linear** chooses which Linear team's issues belong to the
+project. Signed in, it lists the workspace's teams; choose one to link it, or
+**Unlink**. The link changes only when the host confirms it. **Refresh teams**
+asks Linear again. The list says when it may be incomplete (Linear caps it at
+50) or when it is a saved copy because Linear could not be reached. Signed out,
+**Linear settings…** opens the sign-in. Linear's issue view is not in the app
+yet.
 
 ### Application shortcuts
 
