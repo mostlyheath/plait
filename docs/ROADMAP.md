@@ -35,11 +35,12 @@ features; their agreed scope remains.
   the official ACP SDK over an unofficial bridge. Follow the [agreed contract](ACP.md)
   for capabilities, permissions, sessions, and the prerequisite refactor;
   show only the models Antigravity offers to Plait.
-- **Linear view — browsing built.** Settings → Linear signs in, Project
-  settings links a team, and the project's Issues tab lists, searches, and
-  shows issues. Still to build: references in existing threads, starting a
-  thread from an issue, and the source-issue label. The original scope:
-  a persistent project-level issue view with search, ticket
+- **Linear view — built.** Settings → Linear signs in, Project settings links
+  a team, and the project's Issues tab lists, searches, and shows issues,
+  starts a thread from one, adds one to an existing thread's draft, and labels
+  a thread with its source issue. Still open: verification against Linear's
+  live API. The original scope: a persistent project-level issue view with
+  search, ticket
   details, references in existing threads, and starting a thread from an issue.
   Keep a source-issue link and Open in Linear. Reuse the host foundation and
   verify real read-only API access. This view does not depend on automation.

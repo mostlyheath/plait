@@ -134,12 +134,29 @@ fn scenes() -> [Scene; 4] {
         (
             "issues-detail",
             |h| linked(h, false, true),
-            &["Open in Linear"],
+            &["Open in Linear", "Start thread", "Add to thread…"],
         ),
     ]
 }
 
+fn thread_from_issue(h: &mut Harness) {
+    h.update(|p, _, _| {
+        let id = p.host.thread.selected.clone().expect("a thread is open");
+        p.issues.links.insert(
+            id.clone(),
+            serde_json::from_value(serde_json::json!({"thread_id": id, "workspace_id": "ORG",
+                "issue_id": "i1", "identifier": "PLA-142", "url": "https://linear.app/acme/issue/PLA-142",
+                "title": "Retry rate-limited requests with backoff", "linked_at": 1, "historical": false}))
+            .unwrap(),
+        );
+    });
+}
+
 pub(super) fn walk(repo: &Path, out: Option<&Path>, suffix: &str, width: f32, height: f32) {
+    let mut h = Harness::new(repo, out, width, height);
+    h.connect(repo, false);
+    thread_from_issue(&mut h);
+    h.capture(&format!("thread-from-issue-{suffix}"));
     for (name, install, _) in scenes() {
         let mut h = Harness::new(repo, out, width, height);
         h.connect(repo, false);
@@ -205,5 +222,78 @@ fn issues_tab_is_labelled_and_keeps_its_selection() {
             plait_core::tabs::bookmark::BookmarkRecord::Issues { selected: Some(id) } if id == "i2"
         ));
     });
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
+#[core::prelude::v1::test]
+fn starting_a_thread_from_an_issue_fills_a_draft_and_links_on_creation() {
+    if !isolated("issues::starting_a_thread_from_an_issue_fills_a_draft_and_links_on_creation") {
+        return;
+    }
+    let scratch = std::env::temp_dir().join(format!("plait-issues-start-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    let mut h = Harness::new(&repo, None, 1380., 860.);
+    h.connect(&repo, false);
+    open(&mut h);
+    linked(&mut h, false, true);
+    h.update(|p, window, cx| p.start_thread_from_issue(window, cx));
+    h.settle();
+    h.update(|p, _, cx| {
+        let draft = p.draft.id.clone().expect("a new draft opened");
+        let issue = p
+            .issues
+            .pending_links
+            .get(&draft)
+            .expect("linked once created");
+        assert_eq!(issue.identifier, "PLA-142");
+        let text = p
+            .draft
+            .composer
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .text()
+            .to_owned();
+        assert!(
+            text.starts_with("Linear issue PLA-142: Retry rate-limited requests"),
+            "{text}"
+        );
+        // Creation confirmed by the host: the pending link is used once.
+        p.link_created_thread(Some(&draft), "thread-x", cx);
+        assert!(p.issues.pending_links.is_empty());
+    });
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
+#[cfg(debug_assertions)]
+#[core::prelude::v1::test]
+fn a_thread_started_from_an_issue_names_it() {
+    if !isolated("issues::a_thread_started_from_an_issue_names_it") {
+        return;
+    }
+    let scratch = std::env::temp_dir().join(format!("plait-issues-label-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    let mut h = Harness::new(&repo, None, 1380., 860.);
+    h.connect(&repo, false);
+    h.update(|p, _, _| {
+        let id = p.host.thread.selected.clone().expect("a thread is open");
+        p.issues.links.insert(
+            id.clone(),
+            serde_json::from_value(serde_json::json!({"thread_id": id, "workspace_id": "ORG",
+                "issue_id": "i1", "identifier": "PLA-142", "url": "https://linear.app/acme/issue/PLA-142",
+                "title": "Retry rate-limited requests with backoff", "linked_at": 1, "historical": false}))
+            .unwrap(),
+        );
+    });
+    h.update(|p, _, cx| assert!(p.issue_link_line(cx).is_some(), "the line is built"));
+    // Its Open in Linear control is the only one in a thread view.
+    let frame = h.draw_a11y();
+    assert!(
+        frame
+            .nodes
+            .iter()
+            .any(|n| n.label.as_deref() == Some("Open in Linear")),
+        "the source issue line is drawn"
+    );
     std::fs::remove_dir_all(scratch).unwrap();
 }

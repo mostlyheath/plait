@@ -71,8 +71,6 @@ impl Plait {
             && self.settings_page == settings::SettingsPage::Application
             && self.settings_tab == settings::SettingsTab::Linear;
         let project = self.linear_team_page();
-        // The Issues tab needs to know who is signed in, too.
-        let issues = self.issues_visible();
         if self.linear.account.connect(self.host.connection.epoch) || !showing {
             self.clear_linear_field(cx);
         }
@@ -88,7 +86,9 @@ impl Plait {
                 .target(self.host.connection.epoch, &checkout);
         }
         // Test scenes inject state and never reach a host.
-        if cfg!(test) || !(showing || project || issues) || !self.host.connection.connected {
+        // The account loads on every connection: issue labels on threads and
+        // the Issues tab need to know who is signed in. It is a local read.
+        if cfg!(test) || !self.host.connection.connected {
             return;
         }
         if project

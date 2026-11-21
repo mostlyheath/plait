@@ -6,11 +6,11 @@ use super::{Plait, settings, text_field::TextField, text_field::TextFieldEvent, 
 use gpui::{prelude::*, *};
 use plait_core::{
     host::linear::{self, IssueDetail, IssueSummary},
-    linear_issues::{self, FILTERS, IssuesView, ListRequest, Load},
+    linear_issues::{self, FILTERS, IssueRef, IssuesView, ListRequest, Load},
     linear_settings::Auth,
     tabs::{TabTarget, bookmark::BookmarkRecord},
 };
-use std::{path::PathBuf, time::Duration};
+use std::{collections::HashMap, path::PathBuf, time::Duration};
 
 actions!(plait, [Issues]);
 
@@ -25,6 +25,20 @@ pub(super) struct IssuesUi {
     search_generation: u64,
     /// The selection the restored tab asked for, applied on its next read.
     restored: Option<String>,
+    /// Drafts started from an issue, by draft ID: linked once the host creates the thread.
+    pub pending_links: HashMap<String, IssueRef>,
+    /// The issue offered to "Add to thread…" while its picker is open.
+    offer: Option<(IssueRef, String)>,
+    /// Each thread's source issue, read once per connection.
+    pub links: HashMap<String, linear::Link>,
+    links_epoch: Option<u64>,
+}
+
+/// Where a reference is waiting to be added.
+#[derive(Clone, PartialEq, Eq)]
+enum Destination {
+    Draft(String),
+    Thread(String),
 }
 
 impl Plait {
@@ -506,6 +520,18 @@ impl Plait {
                     ))
                     .child(div().flex_1())
                     .child(
+                        toned_button("issue-start-thread", "Start thread", Tone::Primary)
+                            .on_activate(cx, |this, window, cx| {
+                                this.start_thread_from_issue(window, cx)
+                            }),
+                    )
+                    .child(
+                        button("issue-add-to-thread", "Add to thread…")
+                            .on_activate(cx, |this, window, cx| {
+                                this.choose_thread_for_issue(window, cx)
+                            }),
+                    )
+                    .child(
                         button("issue-open-linear", "Open in Linear")
                             .on_activate(cx, move |_, _, cx| cx.open_url(&url)),
                     ),
@@ -689,5 +715,223 @@ trait IntoDiv {
 impl<E: IntoElement> IntoDiv for E {
     fn into_div(self) -> Div {
         div().flex().flex_1().min_w_0().min_h_0().child(self)
+    }
+}
+
+impl Plait {
+    fn issue_reference(&self) -> Option<(IssueRef, String)> {
+        let detail = &self.issues.view.detail.as_ref()?.issue;
+        let workspace = self.issues.view.team().and_then(|b| b.workspace_id.clone());
+        let issue = IssueRef::of(&detail.summary, workspace);
+        let text = linear_issues::reference(&issue, detail.description.as_deref());
+        Some((issue, text))
+    }
+
+    /// A new draft in this project, with the issue in it. Nothing is sent;
+    /// the thread is linked to the issue once the host creates it.
+    pub(super) fn start_thread_from_issue(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((issue, text)) = self.issue_reference() else {
+            return;
+        };
+        let project = self.visible_project_checkout().to_owned();
+        self.open_draft_in(project, window, cx);
+        let Some(draft) = self.draft.id.clone() else {
+            return;
+        };
+        self.issues.pending_links.insert(draft.clone(), issue);
+        self.add_reference(Destination::Draft(draft), text, window, cx);
+    }
+
+    /// The project's threads, to add the issue to one of their drafts.
+    fn choose_thread_for_issue(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(offer) = self.issue_reference() else {
+            return;
+        };
+        let project = self.visible_project_checkout().to_owned();
+        let items = self
+            .host
+            .connection
+            .threads
+            .iter()
+            .filter(|thread| {
+                thread.archived != Some(true) && self.project_of(&thread.checkout) == project
+            })
+            .map(|thread| {
+                super::palette::Item::new(
+                    format!("issue-thread:{}", thread.id),
+                    self.thread_title(&thread.id),
+                    super::commands::Command::IssueToThread(thread.id.clone()),
+                )
+                .section("Threads in this project")
+            })
+            .collect::<Vec<_>>();
+        self.issues.offer = Some(offer);
+        let options = super::palette::Options {
+            name: "Add the issue to a thread".into(),
+            placeholder: "Search threads…".into(),
+            empty: "This project has no threads yet. Start one from the issue instead.".into(),
+            initial: None,
+            mark: None,
+            aside: None,
+            note: Some("The issue is added to the thread's message box; nothing is sent.".into()),
+        };
+        let palette = cx.new(|cx| super::palette::Palette::new(options, items, window, cx));
+        self.present(palette, None, window, cx);
+    }
+
+    pub(super) fn add_issue_to_thread(
+        &mut self,
+        id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((_, text)) = self.issues.offer.take() else {
+            return;
+        };
+        self.select_host_thread(id.clone(), window, cx);
+        self.add_reference(Destination::Thread(id), text, window, cx);
+    }
+
+    /// Appends `text` to the destination's message box once it accepts input,
+    /// trying briefly while the thread loads. Leaving it first drops the text.
+    fn add_reference(
+        &mut self,
+        to: Destination,
+        text: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.spawn_in(window, async move |this, cx| {
+            for _ in 0..50 {
+                let done = this
+                    .update_in(cx, |this, window, cx| {
+                        let composer = match &to {
+                            Destination::Draft(id)
+                                if this.draft.id.as_ref() == Some(id) && this.draft.open =>
+                            {
+                                this.draft.composer.clone()
+                            }
+                            Destination::Thread(id)
+                                if this.host.thread.selected.as_ref() == Some(id) =>
+                            {
+                                this.workspace.composers.get(id).cloned()
+                            }
+                            // Somewhere else now: drop it rather than surprise another draft.
+                            _ => return true,
+                        };
+                        composer.is_some_and(|composer| {
+                            composer
+                                .update(cx, |composer, cx| composer.append_block(&text, window, cx))
+                        })
+                    })
+                    .unwrap_or(true);
+                if done {
+                    return;
+                }
+                cx.background_executor()
+                    .timer(Duration::from_millis(100))
+                    .await;
+            }
+        })
+        .detach();
+    }
+
+    /// Links a thread created from an issue's draft. Called once the host
+    /// confirms the thread; a failure leaves the draft's text reference.
+    pub(super) fn link_created_thread(
+        &mut self,
+        draft: Option<&str>,
+        thread: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(issue) = draft.and_then(|draft| self.issues.pending_links.remove(draft)) else {
+            return;
+        };
+        if cfg!(test) {
+            return;
+        }
+        let thread = thread.to_owned();
+        self.linear_task(
+            move |client| {
+                linear::link_thread(
+                    client,
+                    thread,
+                    issue.workspace_id,
+                    issue.issue_id,
+                    issue.identifier,
+                    issue.url,
+                    issue.title,
+                )
+                .map_err(|error| linear::classify(&error, false))
+            },
+            |this, result, _| match result {
+                Ok(reply) => {
+                    this.issues
+                        .links
+                        .insert(reply.link.thread_id.clone(), reply.link);
+                    true
+                }
+                Err(_) => false,
+            },
+            cx,
+        );
+    }
+
+    /// Reads every thread's source issue once per connection, in one request.
+    pub(super) fn sync_issue_links(&mut self, cx: &mut Context<Self>) {
+        let epoch = self.host.connection.epoch;
+        if cfg!(test)
+            || !self.host.connection.connected
+            || !matches!(self.linear.account.auth, Auth::SignedIn { .. })
+            || self.issues.links_epoch == Some(epoch)
+        {
+            return;
+        }
+        self.issues.links_epoch = Some(epoch);
+        self.linear_task(
+            |client| {
+                linear::list_thread_links(client, Some(500), None)
+                    .map_err(|error| linear::classify(&error, false))
+            },
+            |this, result, _| {
+                let Ok(page) = result else { return false };
+                this.issues.links = page
+                    .links
+                    .into_iter()
+                    .map(|link| (link.thread_id.clone(), link))
+                    .collect();
+                true
+            },
+            cx,
+        );
+    }
+
+    /// Under a thread started from an issue: which one, and a way to it.
+    pub(super) fn issue_link_line(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let id = self.host.thread.selected.as_ref()?;
+        let link = self.issues.links.get(id)?;
+        let url = link.url.clone();
+        Some(
+            row()
+                .gap_2()
+                .child(icon("issue"))
+                .child(
+                    // The label takes the free space and truncates within it; on its
+                    // own in a row it could shrink to nothing.
+                    tag(
+                        "thread-issue-link",
+                        format!("From {} · {}", link.identifier, link.title),
+                        colors().subtle,
+                    )
+                    .flex_1()
+                    .min_w_0()
+                    .truncate(),
+                )
+                .child(
+                    button("thread-issue-open", "Open in Linear")
+                        .on_activate(cx, move |_, _, cx| cx.open_url(&url)),
+                )
+                .into_any_element(),
+        )
     }
 }

@@ -301,6 +301,7 @@ impl Plait {
             this.sync_provider_settings(cx);
             this.sync_linear_settings(cx);
             this.sync_issues_view(cx);
+            this.sync_issue_links(cx);
         })
         .detach();
         // Keys dispatch from the focused element. One that is no longer drawn,

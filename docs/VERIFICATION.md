@@ -1235,7 +1235,12 @@ older builds drop the unknown tab kind (an existing test). Scenes draw the
 tab signed out, unlinked, listing a saved team list, and showing an issue,
 at 1380 and 900 points, and check labels and that choosing an issue is saved
 with the tab. `ui::snapshot::issues::issues_snapshots` (ignored) exports
-them. The request path to the host and Linear's live API are not exercised.
+them. A test starts a thread from an issue and checks the draft's text and
+that the pending link is used once when the host confirms the thread; another
+checks a linked thread draws its source-issue line (the scene image shows the
+label; the test checks the line is built and its Open in Linear control is in
+the accessibility tree). The request path to the host, Add to thread's retry
+while a thread loads, and Linear's live API are not exercised.
 
 ## Themes
 

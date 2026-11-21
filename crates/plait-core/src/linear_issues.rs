@@ -333,6 +333,55 @@ impl IssuesView {
     }
 }
 
+/// The issue a thread starts from or quotes: its stable identity and the
+/// words a person recognises. Saved with the thread only once the host has
+/// created it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IssueRef {
+    pub workspace_id: Option<String>,
+    pub issue_id: String,
+    pub identifier: String,
+    pub url: String,
+    pub title: String,
+}
+
+impl IssueRef {
+    pub fn of(summary: &IssueSummary, workspace_id: Option<String>) -> Self {
+        Self {
+            workspace_id,
+            issue_id: summary.id.clone(),
+            identifier: summary.identifier.clone(),
+            url: summary.url.clone(),
+            title: summary.title.clone(),
+        }
+    }
+}
+
+/// Description text carried into a draft, at most; the rest stays in Linear.
+pub const REFERENCE_DESCRIPTION_LIMIT: usize = 4000;
+
+/// The block a draft receives: the issue's identifier, title, and address,
+/// then its description when asked for, clipped on a character boundary.
+/// It is ordinary draft text the person reads and edits before sending.
+pub fn reference(issue: &IssueRef, description: Option<&str>) -> String {
+    let mut text = format!(
+        "Linear issue {}: {}\n{}",
+        issue.identifier, issue.title, issue.url
+    );
+    if let Some(description) = description.map(str::trim).filter(|d| !d.is_empty()) {
+        let clipped: String = description
+            .chars()
+            .take(REFERENCE_DESCRIPTION_LIMIT)
+            .collect();
+        text.push_str("\n\n");
+        text.push_str(&clipped);
+        if clipped.len() < description.len() {
+            text.push_str("\n\n(Description shortened; the rest is in Linear.)");
+        }
+    }
+    text
+}
+
 /// How fresh a reply is, in words, or `None` when it came straight from Linear.
 pub fn freshness(cache: &Cache) -> Option<String> {
     if cache.stale {
@@ -526,6 +575,22 @@ mod tests {
                 .contains("could not be reached")
         );
         assert!(!view.needs_list(), "a failure waits for Refresh");
+    }
+
+    #[test]
+    fn a_reference_names_the_issue_and_clips_its_description() {
+        let summary: IssueSummary = serde_json::from_value(summary("a")).unwrap();
+        let issue = IssueRef::of(&summary, Some("ORG".into()));
+        assert_eq!(
+            reference(&issue, None),
+            "Linear issue PLA-1: Issue a\nhttps://linear.app/acme/issue/PLA-1"
+        );
+        let with = reference(&issue, Some("  Fix it.  "));
+        assert!(with.ends_with("\n\nFix it."));
+        let long = "é".repeat(REFERENCE_DESCRIPTION_LIMIT + 10);
+        let clipped = reference(&issue, Some(&long));
+        assert!(clipped.contains("Description shortened"));
+        assert_eq!(clipped.matches('é').count(), REFERENCE_DESCRIPTION_LIMIT);
     }
 
     #[test]

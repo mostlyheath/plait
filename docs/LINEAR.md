@@ -23,8 +23,10 @@
 - **Issues tab.** A persistent project tab lists, filters, and searches the
   linked team's issues, resolves a pasted identifier or URL exactly, and
   shows an issue's details as plain text, with Open in Linear. State lives in
-  `plait-core::linear_issues`. Inserting references into drafts, starting a
-  thread from an issue, and the source-issue label come next.
+  `plait-core::linear_issues`. Start thread fills a new draft and links the
+  thread once the host creates it; Add to thread appends the reference to an
+  existing thread's draft; a linked thread shows its source issue. Links are
+  read once per connection with `linear_list_thread_links` (first 500).
 - **Planned next.** A persistent project-level issue view adds search, ticket
   details, references in existing threads, and starting a thread from an issue.
   Settings holds the API key; a source-issue label links back to Linear.
