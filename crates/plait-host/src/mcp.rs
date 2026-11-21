@@ -23,21 +23,34 @@ pub fn run(args: Vec<String>) -> io::Result<()> {
     crate::command::guard(command, "MCP", lifetime, Stdio::inherit())
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn prepare(args: &[String]) -> io::Result<std::process::Command> {
     let mut command = if args[1] == "trusted" {
         let mut command = Command::new(&args[2]);
         command.env_clear().envs(environment()?);
         command
     } else {
-        sandbox_command(&args[1], &args[2])?
+        prepare_sandbox(&args[1], &args[2])?
     };
     command.args(&args[3..]).current_dir(&args[0]);
     Ok(command)
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn prepare(_: &[String]) -> io::Result<std::process::Command> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "MCP processes require the macOS command policy",
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn prepare_sandbox(profile: &str, program: &str) -> io::Result<Command> {
+    sandbox_command(profile, program)
+}
+
+#[cfg(target_os = "linux")]
+fn prepare_sandbox(_: &str, _: &str) -> io::Result<Command> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "MCP processes require the macOS command policy",
