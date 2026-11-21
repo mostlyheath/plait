@@ -1,6 +1,6 @@
 # Remote hosts
 
-**Agreed design for M3; transport framing, the bridge, and SSH transport are built.** The maintainer chose the direction:
+**Agreed design for M3. Built: transport framing, the bridge, SSH and tailnet transports, one remote machine per window, and the Linux user service.** The maintainer chose the direction:
 reach a Plait host on another machine over SSH or over a tailnet, with this
 Linux workstation as the first remote host, and remote threads before remote
 Git. [HOST.md](HOST.md) remains the contract for what is implemented.
