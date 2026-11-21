@@ -493,8 +493,8 @@ and pull request.
 
 ### Codex and Claude Code threads
 
-Source builds from `main` with a matching host can run a thread in Codex or
-Claude Code instead of Pi. Neither is in a release yet. Each runs your own
+A thread can run in Codex or Claude Code instead of Pi (since
+v0.1.0-preview.10). Each runs your own
 install with its own sign-in, settings, instructions, and tools; Plait never
 sees their credentials. **Settings → Agents** lists each harness with its state,
 version, path, and what protects your checkout. **Choose…** runs a particular

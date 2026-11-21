@@ -175,7 +175,10 @@ fn seed() -> u32 {
 // Host-managed operations have a private durable journal. Legacy helpers above
 // remain for older callers; desktop associations alone cannot use this API.
 use serde::{Deserialize, Serialize};
-use std::{fs, os::unix::fs::MetadataExt};
+use std::{
+    fs,
+    os::unix::fs::{DirBuilderExt, MetadataExt},
+};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -382,7 +385,10 @@ fn worktree_base(main: &Path) -> Result<PathBuf> {
 }
 fn owned_base(main: &Path) -> Result<PathBuf> {
     let base = worktree_base(main)?;
-    match fs::create_dir(&base) {
+    // An explicit mode, so a group-writable umask in the calling process
+    // (common on Linux) cannot produce a folder the check below refuses.
+    // The host's helper already runs under 022; tests and other callers may not.
+    match fs::DirBuilder::new().mode(0o755).create(&base) {
         Ok(()) => (),
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => (),
         Err(e) => return Err(e.to_string()),
