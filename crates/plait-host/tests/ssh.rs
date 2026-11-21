@@ -9,6 +9,11 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// These tests write a script and then run it. Another test thread forking
+/// while one is written can briefly hold it open for writing, and Linux then
+/// refuses to run it (ETXTBSY), so the tests here run one at a time.
+static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 struct Fixture(PathBuf);
 impl Fixture {
     fn new(name: &str) -> Self {
@@ -48,6 +53,7 @@ fn wait_for(mut predicate: impl FnMut() -> bool) {
 }
 #[test]
 fn ssh_early_exit_reports_stderr() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let fixture = Fixture::new("early");
     let script = fixture.script("echo 'Permission denied (publickey).' >&2; exit 255");
     let error = match connect(&destination(), options(script)) {
@@ -58,6 +64,7 @@ fn ssh_early_exit_reports_stderr() {
 }
 #[test]
 fn ssh_bridge_lifecycle() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let fixture = Fixture::new("bridge");
     let socket = fixture.0.join("host.sock");
     let listener = UnixListener::bind(&socket).unwrap();
@@ -93,6 +100,7 @@ fn ssh_bridge_lifecycle() {
 }
 #[test]
 fn ssh_child_death_closes_streams() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let fixture = Fixture::new("death");
     let socket = fixture.0.join("host.sock");
     let listener = UnixListener::bind(&socket).unwrap();
