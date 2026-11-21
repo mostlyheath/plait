@@ -1,3 +1,13 @@
+import type { ExternalEntries } from './entries.ts';
+import type { Lease } from '../harness.ts';
+import type { CodexRun } from '../codex/run.ts';
+import type { ClaudeRun } from '../claude/run.ts';
+
+export type ExternalRun = {
+  entries?: ExternalEntries; supportsSteer: boolean; lease?: Lease;
+  setMode?(mode: string): Promise<void> | void; close(): void;
+} & ({ harness: 'codex'; run?: CodexRun } | { harness: 'claude'; run?: ClaudeRun });
+
 import type { Snapshot } from '../protocol.ts';
 import type { CodexHarness } from '../harness.ts';
 import type { ClaudeHarness } from '../claude/harness.ts';
