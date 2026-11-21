@@ -400,6 +400,24 @@ mod tests {
         }
     }
     #[test]
+    fn unknown_saved_draft_harness_is_not_replaced_by_preferences() {
+        let mut session = Session::empty("/host".into());
+        session.set_draft_tab("draft".into(), tab("saved"));
+        let mut value = serde_json::to_value(session).unwrap();
+        value["draft_tabs"]["draft"]["settings"]["harness"] = "antigravity".into();
+        let restored: Session = serde_json::from_value(value).unwrap();
+        restored.validate_draft_tabs().unwrap();
+        let preferences: crate::preferences::Preferences =
+            serde_json::from_str(r#"{"default_harness":"antigravity"}"#).unwrap();
+        assert_eq!(preferences.default_harness, HarnessId::Pi);
+        assert_eq!(
+            restored.draft_tabs["draft"].settings.harness,
+            Some(HarnessId::Other)
+        );
+        assert_eq!(restored.draft_tabs["draft"].draft.text, "saved");
+    }
+
+    #[test]
     fn additive_shape_keeps_old_reader_and_imports_old_and_downgrade_edits() {
         let mut session = Session::empty("/host".into());
         session.set_new_draft("/project".into(), tab("legacy").draft);
