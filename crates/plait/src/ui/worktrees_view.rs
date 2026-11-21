@@ -5,7 +5,7 @@ use super::{Plait, theme::*, thread_controls::TextTooltip};
 use gpui::{prelude::*, *};
 use plait_core::{
     host::{
-        self, Client,
+        self,
         worktree::{self, Checkout},
     },
     tabs::{ReadStamp, TabTarget},
@@ -396,8 +396,9 @@ impl Plait {
         }
         let cancelled = self.worktrees.cancelled.clone();
         self.worktrees.reading = true;
+        let client = self.host_client();
         let task = cx.background_executor().spawn(async move {
-            let inventory = worktree::inventory(&Client::from_environment()?, root)?;
+            let inventory = worktree::inventory(&client, root)?;
             if cancelled.load(Ordering::Acquire) {
                 return Err(host::Error::Protocol("Read cancelled.".into()));
             }
@@ -531,8 +532,9 @@ impl Plait {
         let cancelled = self.worktrees.cancelled.clone();
         let mut rows = self.worktrees.rows.clone();
         self.worktrees.reading = true;
+        let client = self.host_client();
         let task = cx.background_executor().spawn(async move {
-            let row = worktree::inventory_row(&Client::from_environment()?, root, path, main)?;
+            let row = worktree::inventory_row(&client, root, path, main)?;
             if cancelled.load(Ordering::Acquire) {
                 return Err(host::Error::Protocol("Read cancelled.".into()));
             }

@@ -141,6 +141,8 @@ pub struct Plait {
     tabs: tabs::Tabs,
     state: AppState,
     host: HostState,
+    host_client: plait_core::host::Client,
+    host_local: bool,
     navigation: navigation::Navigation,
     /// Presentation state for the single selected thread workspace.
     workspace: thread_workspace::ThreadWorkspace,
@@ -210,6 +212,25 @@ pub struct Plait {
 }
 
 impl Plait {
+    fn host_client(&self) -> plait_core::host::Client {
+        self.host_client.clone()
+    }
+    fn host_is_local(&self) -> bool {
+        self.host_local
+    }
+    #[allow(dead_code)]
+    fn use_machine_client(
+        &mut self,
+        client: plait_core::host::Client,
+        local: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.host_client = client;
+        self.host_local = local;
+        self.host.connection.connecting = false;
+        self.reconnect_host(window, cx);
+    }
     pub fn new(
         path: PathBuf,
         startup: Instant,
@@ -226,6 +247,8 @@ impl Plait {
             tabs: Default::default(),
             state,
             host,
+            host_client: plait_core::host::Client::local_or_unavailable(),
+            host_local: true,
             navigation: navigation::Navigation::new(cx),
             workspace: thread_workspace::ThreadWorkspace::new(commit_message),
             commit_sends: Default::default(),

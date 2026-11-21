@@ -4,7 +4,7 @@ use super::{
 };
 use gpui::{prelude::*, *};
 use plait_core::{
-    host::{self, Client, Request, Snapshot},
+    host::{self, Request, Snapshot},
     host_state::request_id,
     transcript::{self, Update},
 };
@@ -91,6 +91,8 @@ impl Plait {
             .map(|(_, images)| plait_core::images::pin(images))
             .transpose();
         let journal = self.session.journal.clone();
+        let client = self.host_client();
+        let local = self.host_is_local();
         let task = cx.background_executor().spawn(async move {
             let image_pins = image_pins.map_err(host::Error::Protocol)?;
             let result = (|| {
@@ -102,15 +104,17 @@ impl Plait {
                     })?;
                     journal.flush().map_err(std::io::Error::other)?;
                 }
-                if let Request::ListThreads { checkout } | Request::CreateThread { checkout, .. } =
-                    &mut request
+                // Remote checkout identity is checked by the host.
+                if local
+                    && let Request::ListThreads { checkout }
+                    | Request::CreateThread { checkout, .. } = &mut request
                 {
                     *checkout = std::fs::canonicalize(&*checkout)?;
                 }
-                if let Some(expected) = &expected {
+                if local && let Some(expected) = &expected {
                     expected.verify().map_err(host::Error::Protocol)?;
                 }
-                let client = Client::from_environment()?;
+
                 if let Some((thread, images)) = uploads {
                     client.upload_images(&thread, &images)?;
                 }
@@ -388,8 +392,9 @@ impl Plait {
         let watch_id = id.clone();
         let protocol = self.host.protocol();
         let executor = cx.background_executor().clone();
+        let client = self.host_client();
         let task = cx.background_executor().spawn(async move {
-            let snapshots = Client::from_environment()?.subscribe(watch_id, protocol)?;
+            let snapshots = client.subscribe(watch_id, protocol)?;
             let lease = WatchLease {
                 cancel: Some(snapshots.cancel_handle()),
                 executor,

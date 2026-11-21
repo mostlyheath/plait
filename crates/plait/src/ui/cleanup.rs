@@ -50,13 +50,14 @@ impl Plait {
         self.cleanup.busy = true;
         let root = key.2.clone();
         let expected = confirm.as_ref().and(self.cleanup.identity.clone());
+        let client = self.host_client();
         let task = cx.background_executor().spawn(async move {
             let identity = match expected {
                 Some(value) => value,
                 None => CheckoutKey::resolve(None, &root).map_err(host::Error::Protocol)?,
             };
             let value = host::cleanup::read(
-                &host::Client::from_environment()?,
+                &client,
                 &identity,
                 confirm
                     .as_ref()
