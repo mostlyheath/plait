@@ -73,3 +73,96 @@ artifact's name, size, and SHA-256. Clients verify the signature before reading
 any field, reject a tag that differs from the release they asked for, and
 discard downloads whose size or digest differ. Workflow changes that can read
 the signing secret can sign updates; review them like release code.
+
+## Independent client and server releases
+
+**Agreed contract, not built.** It implements the roadmap's
+[independent release contract](ROADMAP.md#independent-release-contract).
+Today one signed `update.json` describes the app and its host together, and
+the in-app update replaces both.
+
+### What a release publishes
+
+- Every release keeps one tag counter, `v<version>-preview.N`. The `plait` and
+  `plait-host` Cargo versions stay equal until 0.2.
+- Two new signed manifests use the same release key, `schema_version: 2`:
+  - `update-client.json` names `component: "client"`, the client archive,
+    and the host protocol range the client speaks (`protocol.min`,
+    `protocol.max`).
+  - `update-host.json` names `component: "host"`, the host archive, its
+    `build_id`, protocol range, capabilities, and a monotonic
+    `storage_schema`. A host is never offered when its storage schema is
+    older than the installed one.
+- A release with only a host publishes `update-host.json` and the host
+  archive. A release with only a client publishes `update-client.json` and
+  the app. A release that carries both publishes both manifests.
+- `update.json` (schema 1) is not changed. Its clients reject unknown fields
+  and other schema versions. Every release that includes a client also
+  publishes it, until 0.2, so an older Plait can always update to one that
+  reads the new manifests. Releases with only a host omit it, so an older
+  Plait never offers them.
+- A client archive keeps its bundled host for first-launch setup, which
+  stays offline.
+
+### How a client judges a server
+
+- Status negotiation from protocol 6 down to 1 is unchanged. A new
+  versionless, read-only `host_info` reply gives the host's release, build,
+  protocol range, capabilities, and storage schema. An older host refuses it,
+  and the client falls back to the negotiated protocol and the existing
+  feature probes.
+- A server inside the client's range is compatible. A feature it lacks
+  disables only that feature's controls, as today.
+- A server newer than the client can speak asks the person to update Plait.
+  One older than the client's minimum asks them to update the server. Neither
+  sends, retries, or replays anything.
+- The server update a client offers is the newest signed host whose
+  protocol range overlaps its own, and never an older version or storage
+  schema. When the newest host needs a newer client, Plait says so instead of
+  offering it. Only the per-user LaunchAgent server is updated in the app;
+  a manual or development host shows `plait-host update`.
+- Protocols 1–6 stay supported until 0.2. Raising the minimum takes a
+  release that announces it first.
+
+### Update flows
+
+- **Update Plait** replaces only the app and relaunches it. It never reads
+  runs, unpacks a host, writes the service definition or `installed.json`,
+  or prunes releases, so it works while threads run.
+- **Update Server** follows these steps:
+  1. It stages the verified host as an immutable release without marking it
+     installed.
+  2. It asks the host to drain (`drain_for_update`, capability `drain_v1`).
+     New admissions are refused with `busy` ("Host is updating"), while
+     accepted work finishes.
+  3. While work is still running, the app shows how many runs remain, with
+     **Cancel** (`cancel_drain`). When none remain, it switches over by itself.
+  4. Activation restarts the service on the new release, waits until it
+     answers, and confirms launchd runs it. Only then does it record the
+     release as installed and prune the others. A failed start restores the
+     previous definition and keeps both releases.
+
+  A host without `drain_v1` falls back to today's double idle check.
+- `plait-host update` uses the same stage, drain, and activate path, and
+  adds `--stage`, `--wait`, and `--version`.
+- First-launch setup stays bootstrap-only. It never replaces or downgrades
+  an existing server.
+
+### Order of work
+
+1. Version 2 manifests, verification, and the release plan. These have
+   Python and Rust tests for host-only, client-only, and combined releases,
+   component mismatch, and mixed feeds.
+2. `host_info`, `drain_for_update`, and `cancel_drain` in the host. Runtime
+   tests show that version 1–6 replies are unchanged, that drain blocks new
+   admissions and queue drains while active work finishes, and that cancel
+   restores admissions.
+3. Compatibility checks and separate client and host update queries, tested
+   against protocol 1–6 fixtures and out-of-range hosts.
+4. Install primitives: a client-only update, host staging, and activation
+   with rollback. macOS tests show a client update leaves the host
+   untouched during an active run.
+5. Separate update controls, drain progress, incompatibility notices, and
+   the `plait-host update` options, each with scenes.
+6. A cross-version check on CI, pairing the current client with the previous
+   release's host and the reverse, and documentation.
