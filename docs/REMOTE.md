@@ -134,6 +134,26 @@ machine's loopback.
   the editor and terminal handoffs are shown as unavailable for remote
   checkouts, with the reason, until remote Git is built.
 
+### First desktop slice: one machine at a time
+
+Decided while building step 4, to reach usable remote threads sooner.
+
+- **One machine per window.** The first desktop slice works with one
+  machine at a time, chosen in **Settings → Machines**. The desktop already
+  treats a different host store as another host, and parks that host's tabs
+  as offline, so switching reuses that path.
+- **Routing.** Every host request goes through the selected machine's
+  client.
+- **Local-only work.**
+  - The folder picker, the client-side checkout checks, and first-launch
+    setup apply only to this Mac.
+  - A remote project is opened by typing its path on that machine.
+- **Git views.** Changes, History, Files, and the editor and terminal
+  handoffs say they are unavailable on a remote machine until remote Git is
+  built.
+- **Later.** Projects from several machines in one sidebar at once, as
+  described above, follow as their own slice.
+
 ## Remote Git and files (next slice)
 
 Bounded host-side read operations give remote checkouts their status,
