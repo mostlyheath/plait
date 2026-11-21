@@ -786,6 +786,7 @@ mod tests {
 
     fn rejected(code: &str, message: &str) -> Error {
         Error::Rejected(HostError {
+            retry_after_seconds: None,
             code: code.into(),
             message: message.into(),
         })

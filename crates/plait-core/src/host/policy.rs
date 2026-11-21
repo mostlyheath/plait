@@ -154,11 +154,13 @@ mod tests {
     fn an_old_host_is_recognized_by_its_rejection() {
         use crate::host::{Error, HostError, providers::needs_host_update};
         let old = Error::Rejected(HostError {
+            retry_after_seconds: None,
             code: "invalid_request".into(),
             message: "Unknown operation or field.".into(),
         });
         assert!(needs_host_update(&old));
         let missing = Error::Rejected(HostError {
+            retry_after_seconds: None,
             code: "not_found".into(),
             message: "checkout is not inside a Git working tree.".into(),
         });

@@ -1220,6 +1220,7 @@ mod tests {
             assert!(run_state(&s, 0).unwrap().0.starts_with(prefix));
         }
         s.error = Some(HostError {
+            retry_after_seconds: None,
             code: "turn_limit".into(),
             message: "raw".into(),
         });

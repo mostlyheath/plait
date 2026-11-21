@@ -304,6 +304,7 @@ mod tests {
                 state: Stage::Ready,
                 worktree: None,
                 error: Some(HostError {
+                    retry_after_seconds: None,
                     code: "busy".into(),
                     message: "New work appeared.".into(),
                 }),

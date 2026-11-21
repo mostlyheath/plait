@@ -553,6 +553,7 @@ fn removal_here_marks_the_folder_missing_for_the_sidebar() {
             state: plait_core::host::worktree::Stage::Ready,
             worktree: None,
             error: Some(plait_core::host::HostError {
+                retry_after_seconds: None,
                 code: "busy".into(),
                 message: "New work appeared.".into(),
             }),
