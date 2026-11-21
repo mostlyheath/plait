@@ -12,7 +12,8 @@ use std::{
     time::Duration,
 };
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(transparent)]
 pub struct SshDestination(String);
 impl SshDestination {
     pub fn new(value: impl Into<String>) -> Result<Self, Error> {
@@ -27,6 +28,13 @@ impl SshDestination {
             return Err(Error::Transport("Invalid SSH destination.".into()));
         }
         Ok(Self(value))
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for SshDestination {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = <String as serde::Deserialize>::deserialize(deserializer)?;
+        Self::new(value).map_err(serde::de::Error::custom)
     }
 }
 

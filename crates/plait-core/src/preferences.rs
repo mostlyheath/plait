@@ -93,6 +93,7 @@ impl PartialEq<ModelChoice> for ModelKey {
 #[serde(default)]
 pub struct Preferences {
     pub navigation: crate::navigation::Preferences,
+    pub machines: crate::machines::Machines,
     pub jump_target: JumpTarget,
     /// Ask before each edit and command. Off by default: runs approve their own
     /// edits and sandboxed commands, and file protections still apply.
@@ -476,6 +477,20 @@ pub fn jump(
 mod tests {
     use super::*;
     use crate::model::Machine;
+
+    #[test]
+    fn preferences_machines_old_and_bad_entries() {
+        let old: Preferences = serde_json::from_str(r#"{"hide_inspector":true}"#).unwrap();
+        assert!(old.hide_inspector);
+        assert_eq!(old.machines.list().len(), 1);
+        let saved: Preferences = serde_json::from_str(r#"{"hide_inspector":true,"machines":[{"id":"bad id","name":"Bad","transport":{"type":"local"}},{"id":"remote","name":"Remote","transport":{"type":"tailnet","host":"node","port":123}},{"id":"bad","name":"Bad","transport":{"type":"tailnet","host":"node","port":0}}]}"#).unwrap();
+        assert!(saved.hide_inspector);
+        assert_eq!(saved.machines.list().len(), 2);
+        assert_eq!(
+            serde_json::from_str::<Preferences>(&serde_json::to_string(&saved).unwrap()).unwrap(),
+            saved
+        );
+    }
 
     #[test]
     fn default_thinking_is_medium_until_chosen_and_survives_newer_levels() {

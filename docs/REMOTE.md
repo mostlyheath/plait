@@ -155,9 +155,10 @@ desktop's local Git reads. That design is written before it is built.
 3. **Built: SSH transport.**
    - Tests: with a scripted `ssh`, connect, reconnect, dead-link detection,
      and arguments that cannot reach a shell.
-4. **Machines in core.**
-   - Covers one identity, per-machine connection state, projects under
-     machines, and remote checkout identity.
+4. **Machines in core (part 1 built).**
+   - The saved machine list and per-machine connection model are built; the
+     desktop still connects locally. One identity, projects under machines,
+     and remote checkout identity remain.
    - Tests: headless grouping, jumps across machines, independent epochs,
      and one machine going offline.
 5. **Desktop remote threads.**
