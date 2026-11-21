@@ -59,9 +59,10 @@ export class Admissions {
   private worktrees: Worktrees;
   private createHere: (input: Record<string, unknown>, identity: FileIdentity) => Promise<unknown>;
   private busy: (root: string) => boolean;
+  private admit: () => void;
   constructor(store: Store, worktrees: Worktrees, capacity: RunCapacity,
-    createHere: (input: Record<string, unknown>, identity: FileIdentity) => Promise<unknown>, busy: (root: string) => boolean) {
-    this.capacity = capacity; this.store = store; this.worktrees = worktrees; this.createHere = createHere; this.busy = busy;
+    createHere: (input: Record<string, unknown>, identity: FileIdentity) => Promise<unknown>, busy: (root: string) => boolean, admit: () => void = () => {}) {
+    this.capacity = capacity; this.store = store; this.worktrees = worktrees; this.createHere = createHere; this.busy = busy; this.admit = admit;
     store.db.exec('CREATE TABLE IF NOT EXISTS thread_admissions(request_id TEXT PRIMARY KEY,input TEXT NOT NULL,plan TEXT NOT NULL,result TEXT NOT NULL)');
     for (const row of store.db.prepare('SELECT request_id,result FROM thread_admissions').all()) {
       if ((JSON.parse(String(row.result)) as Admission).state === 'preparing') this.start(String(row.request_id));
@@ -147,6 +148,7 @@ export class Admissions {
     const effectId = randomUUID();
     const worktree: Create | null = isolated ? { op: 'create_worktree_thread', request_id: effectId, parent: info.parent!, harness, provider, model_id, approval, ...(mode === undefined ? {} : { mode }), ...(thinking === undefined ? {} : { thinking }) } : null;
     const plan: Plan = { identity: info.identity, input: request, worktree, here_id: effectId };
+    this.admit();
     this.store.db.prepare('INSERT INTO thread_admissions VALUES (?,?,?,?)').run(request.request_id, canonical(request), JSON.stringify(plan), JSON.stringify(result));
     this.start(request.request_id);
     return result;
@@ -167,7 +169,7 @@ export class Admissions {
     try {
       if (plan.worktree) {
         const reply = await this.worktrees.handle({ op: 'worktree_status', request_id: plan.worktree.request_id }).catch(error => {
-          if (error instanceof HostError && error.code === 'not_found') return requireCleanup(plan.input.checkout).then(() => this.worktrees.handle(plan.worktree));
+          if (error instanceof HostError && error.code === 'not_found') return requireCleanup(plan.input.checkout).then(() => this.worktrees.handle(plan.worktree, true));
           throw error;
         }) as { operation: { state: string; thread_id: string; worktree: Managed | null; error: Failure | null } };
         result.thread_id = reply.operation.thread_id; result.worktree = reply.operation.worktree;

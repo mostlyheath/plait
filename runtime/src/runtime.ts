@@ -8,9 +8,9 @@ import type { ImageData } from './images.ts';
 import { TurnReview } from './turn-review.ts';
 import { LinearService } from './linear/service.ts';
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { lstat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context';
 import { clampThinkingLevel, createModels, getSupportedThinkingLevels } from '@earendil-works/pi-ai/models';
 import type { Api, Model, Models } from '@earendil-works/pi-ai';
@@ -18,7 +18,7 @@ import { createRegistry, Harness, ROOT_CONVERSATION_ID } from '@earendil-works/p
 import type { Conversation, ConversationRetryPolicy, ConversationWatch, Cursor, EntryQuery, EntryRecord, Submission, SubmissionDraft } from '@earendil-works/pi-durable';
 import { SqliteStorage } from '@earendil-works/pi-durable/storage/sqlite';
 import { openNodeSqliteDatabase } from '@earendil-works/pi-durable/storage/sqlite/node';
-import { fail, failure, queuedView, summaryView, THINKING_LEVELS, validate, version, view } from './protocol.ts';
+import { PROTOCOL_VERSIONS, fail, failure, queuedView, summaryView, THINKING_LEVELS, validate, version, view } from './protocol.ts';
 import type { ApprovalMode, HarnessId, ModelChoice, Protocol, QueueMode, Request, Snapshot, InputRecord, ThinkingLevel } from './protocol.ts';
 import { Store } from './store.ts';
 import { Records } from './records.ts';
@@ -101,7 +101,9 @@ export class Runtime {
   codex: CodexHarness;
   /** The person's Claude Code; a test runtime points it at the fake and the dev copy of the SDK. */
   claude: ClaudeHarness;
+  private draining = false;
   private closing = false;
+  private admitWork() { if (this.draining) fail('busy', 'The host is updating. Try again when it finishes.'); }
   private queueDrains = new Map<string, Promise<void>>();
   private queueWake?: ReturnType<typeof setTimeout>;
   private mcpObserved = new Map<string, Map<string, { fingerprint: string; observation: Observation }>>();
@@ -133,8 +135,8 @@ export class Runtime {
     this.records.start();
     this.codex = new CodexHarness(this.store);
     this.claude = new ClaudeHarness(this.store, { sdk: sdkDirectory(directory), cwd: directory });
-    this.worktrees = new Worktrees(this.store, directory, (request, id) => this.prepareWorktreeThread(request, id), () => this.changed('#'), root => this.active.has(root) || this.records.busy(root));
-    this.admissions = new Admissions(this.store, this.worktrees, this.capacity, (input, identity) => this.handle(input, identity), root => this.active.has(root) || this.records.busy(root) || this.store.waiters.line(root).some(waiter => waiter.kind === 'checkout' || waiter.state === 'waiting'));
+    this.worktrees = new Worktrees(this.store, directory, (request, id) => this.prepareWorktreeThread(request, id), () => this.changed('#'), root => this.active.has(root) || this.records.busy(root), () => this.admitWork());
+    this.admissions = new Admissions(this.store, this.worktrees, this.capacity, (input, identity) => this.handle(input, identity), root => this.active.has(root) || this.records.busy(root) || this.store.waiters.line(root).some(waiter => waiter.kind === 'checkout' || waiter.state === 'waiting'), () => this.admitWork());
   }
   /** Validate the selected harness before reserving filesystem effects. */
   private async prepareWorktreeThread(request: WorktreeCreate, id: string): Promise<Snapshot> {
@@ -253,6 +255,28 @@ export class Runtime {
     return this.store.images.data(thread, this.store.images.forRequest(thread, request));
   }
   async handle(input: unknown, expectedCheckout?: FileIdentity): Promise<unknown> {
+    const op = input && typeof input === 'object' ? (input as { op?: unknown }).op : undefined;
+    if (op === 'host_info' || op === 'drain_for_update' || op === 'cancel_drain') {
+      if (Array.isArray(input) || Object.keys(input as object).some(key => key !== 'op')) fail('invalid_request', 'Unknown operation or field.');
+      if (op === 'host_info') {
+        let release: string | null = null, build_id: string | null = null;
+        try {
+          const metadata = JSON.parse(readFileSync(join(dirname(dirname(process.env.PLAIT_HOST_EXE ?? '')), 'component.json'), 'utf8'));
+          if (metadata.component === 'host') {
+            release = typeof metadata.version === 'string' ? metadata.version : null;
+            build_id = typeof metadata.build_id === 'string' ? metadata.build_id : null;
+          }
+        } catch { /* Development hosts have no packaged metadata. */ }
+        return { schema: 1, release, build_id, protocol_min: PROTOCOL_VERSIONS[0], protocol_max: PROTOCOL_VERSIONS[PROTOCOL_VERSIONS.length - 1], capabilities: ['drain_v1'], storage_schema: 1 };
+      }
+      if (op === 'drain_for_update') {
+        this.draining = true;
+        const row = this.store.db.prepare("SELECT count(*) AS count FROM threads WHERE json_extract(snapshot,'$.status') IN ('running','awaiting_approval')").get();
+        return { draining: true, active_runs: Number(row!.count) };
+      }
+      this.draining = false; this.wakeQueue(); return { draining: false };
+    }
+    if (op === 'create_worktree_thread' || op === 'create_admitted_thread' || op === 'submit_checkout' || op === 'create_thread' && !expectedCheckout || op === 'submit' || op === 'undo_turn') this.admitWork();
     if (this.providers?.handles(input)) return this.providers.handle(input);
     if (handlesCleanup(input)) return this.checkoutCleanup(input);
     if (this.turnReview.handles(input)) return this.turnReview.handle(input);
@@ -310,6 +334,7 @@ export class Runtime {
         const identity = await rootIdentity(root);
         // Admission captured the directory before model discovery could yield.
         if (expectedCheckout && (identity.dev !== expectedCheckout.dev || identity.ino !== expectedCheckout.ino)) fail('permission_denied', 'Checkout identity changed. Refresh before starting a thread.');
+        if (!expectedCheckout) this.admitWork();
         this.store.admit('create', String(request.request_id), input, result, snapshot, identity);
         this.changed('#');
         return result;
@@ -605,6 +630,7 @@ export class Runtime {
       // An idle thread with a held queue resumes it now, which needs the checkout as any run does.
       if (!session && this.active.has(snapshot.checkout)) fail('busy', 'This checkout already has an active run.');
       if (this.store.queue(id).length >= QUEUE_LIMIT) fail('busy', `This thread already has ${QUEUE_LIMIT} queued messages.`);
+      this.admitWork();
       this.notify(id, this.store.enqueue(requestId, text, result, { mode: whenBusy, approval: mode }, snapshot, images));
       this.changed('#');
       if (!session) { this.store.waiters.resumeThread(id); this.drainCheckout(snapshot.checkout); }
@@ -649,6 +675,7 @@ export class Runtime {
       // Read once here: the run keeps this policy, and a later change waits for the next run.
       session.commandPolicy = commandPolicy(this.store, snapshot.checkout, session.rootIdentity);
       session.forget = path => this.store.forget(id, path);
+      this.admitWork();
       this.sessions.set(id, session);
       snapshot.status = 'running'; snapshot.error = null; snapshot.live_text = ''; snapshot.pending_approval = null;
       snapshot.live_reasoning = ''; snapshot.retry = null;
@@ -724,6 +751,7 @@ export class Runtime {
       const refs = this.store.images.refs(id,images);
       if (refs.length && this.imageInput(current) === 'no') fail('model_unavailable','This model cannot take images.');
       const result = { thread_id: id, request_id: request.request_id, accepted: true };
+      this.admitWork();
       this.notify(id,this.store.enqueue(request.request_id,request.text,result,{mode:'follow_up',approval},current,images,true));
       this.changed('#'); this.drainCheckout(current.checkout); return result;
     });
@@ -747,12 +775,12 @@ export class Runtime {
   }
   /** Run completions wake all independent checkouts. Only external lock contention needs a timer. */
   private drainCheckout(root: string) {
-    if (this.closing || this.active.has(root) || this.queueDrains.has(root)) return;
+    if (this.closing || this.draining || this.active.has(root) || this.queueDrains.has(root)) return;
     const work = this.drainLine(root).finally(() => this.queueDrains.delete(root));
     this.queueDrains.set(root,work); void work.catch(() => {});
   }
   private async drainLine(root: string) {
-    while (!this.closing && !this.active.has(root)) {
+    while (!this.closing && !this.draining && !this.active.has(root)) {
       const next = this.store.waiters.line(root).find(waiter => waiter.kind === 'checkout' || waiter.state === 'waiting');
       if (!next || next.state === 'held') return;
       const snapshot = this.store.get(next.thread_id);
@@ -768,6 +796,7 @@ export class Runtime {
         if (input.images?.length && this.imageInput(snapshot) === 'no') fail('model_unavailable','The queued images are not supported by this model.');
         await this.start(snapshot,next.request_id,input.text,next.approval,() => {
           // The cancellation may have arrived while admission awaited a lease or harness.
+          this.admitWork();
           const current = this.store.waiters.get(next.thread_id,next.request_id);
           if (this.closing || current?.state !== 'waiting') fail('cancelled','This queued message is no longer ready to start.');
           const latest = this.store.get(next.thread_id);
