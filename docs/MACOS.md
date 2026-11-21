@@ -770,6 +770,23 @@ scroll position, selection, find and draft remain in place; a running thread
 continues receiving replies. Settings changes keep their existing immediate
 save and confirmation behavior.
 
+#### Linear
+
+**Settings → Linear** connects Plait's host to your Linear workspace with a
+personal API key, created in Linear under Settings → Security & access. A key
+with read access is enough to browse issues. Paste it and choose **Save key**:
+the host checks it with Linear before saving it in its own private file, and
+the field is emptied as the key is sent. Plait never shows the key again, and
+leaving the tab or closing Settings empties the field.
+
+Once signed in, the tab names the workspace and your Linear user. **Replace
+key** saves a different key; **Sign out…** asks first, then removes the saved
+key, cached issues, and project bindings, keeping the links between threads
+and issues. If Linear stops accepting the saved key, the tab says so and asks
+for a new one. An older host that cannot reach Linear is named as such.
+Linear's issue view, and binding a project to a Linear team, are not in the
+app yet.
+
 ### Application shortcuts
 
 These are the default shortcuts for application actions. The table is generated

@@ -1205,6 +1205,20 @@ directly; reaching it through a version 3 host's paged history, and the hover
 text, have not been checked in the installed app, nor have Cmd-G from the menu
 bar and VoiceOver's reading of the bar.
 
+## Linear sign-in
+
+`plait-core::host::linear` decodes every documented reply and rejects
+malformed ones; `plait-core::linear_settings` tests loading, an older host,
+saving with fixed refusal messages that cannot contain the key, a key Linear
+rejects, confirmed sign-out, and stale replies after a reconnect or a newer
+request. Scene tests draw Settings → Linear signed out, saving, with a
+rejected key, signed in, confirming sign-out, and with an older host, at
+1380 and 900 points, and check that Save empties the key field, that sign-out
+waits for confirmation, and that leaving the tab empties the field.
+`ui::snapshot::linear_settings::linear_settings_snapshots` (ignored) exports
+the scenes. Nothing has been tried against Linear's live API, and the
+background request path is not exercised by these tests.
+
 ## Themes
 
 Core tests parse both published Base16 layouts, name what is wrong with a broken
