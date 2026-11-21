@@ -8,7 +8,8 @@
 //! Messages are fixed text, so neither a host error nor a submitted key can
 //! appear in them.
 
-use crate::host::linear::{AuthState, AuthStatus, Rejection};
+use crate::host::linear::{AuthState, AuthStatus, Binding, ProjectBinding, Rejection, Teams};
+use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum Auth {
@@ -156,6 +157,158 @@ fn auth(status: &AuthStatus) -> Auth {
                 .unwrap_or_else(|| "your workspace".into()),
             viewer: status.viewer_name.clone().unwrap_or_else(|| "you".into()),
         },
+    }
+}
+
+/// What the project's Linear section is sending to the host.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TeamPending {
+    #[default]
+    None,
+    Loading,
+    Saving,
+    Refreshing,
+}
+
+/// One project's Linear team: its binding and the teams it can choose from.
+/// Like `Account`, a reply from an older generation changes nothing, and a
+/// new connection or another project starts over.
+#[derive(Debug, Default)]
+pub struct ProjectTeam {
+    pub checkout: Option<PathBuf>,
+    pub binding: Option<Binding>,
+    pub teams: Option<Teams>,
+    pub pending: TeamPending,
+    pub note: Option<String>,
+    pub failed: bool,
+    generation: u64,
+    epoch: Option<u64>,
+}
+
+impl ProjectTeam {
+    /// Points the state at `checkout` on connection `epoch`, starting over
+    /// when either changed. Returns whether it started over.
+    pub fn target(&mut self, epoch: u64, checkout: &Path) -> bool {
+        if self.epoch == Some(epoch) && self.checkout.as_deref() == Some(checkout) {
+            return false;
+        }
+        *self = Self {
+            checkout: Some(checkout.to_owned()),
+            generation: self.generation.wrapping_add(1),
+            epoch: Some(epoch),
+            ..Self::default()
+        };
+        true
+    }
+
+    pub fn needs_load(&self) -> bool {
+        self.teams.is_none() && self.pending == TeamPending::None && self.note.is_none()
+    }
+
+    fn begin(&mut self, pending: TeamPending) -> u64 {
+        self.generation = self.generation.wrapping_add(1);
+        self.pending = pending;
+        self.note = None;
+        self.failed = false;
+        self.generation
+    }
+
+    pub fn start_load(&mut self) -> u64 {
+        self.begin(TeamPending::Loading)
+    }
+
+    pub fn start_refresh(&mut self) -> Option<u64> {
+        (self.pending == TeamPending::None).then(|| self.begin(TeamPending::Refreshing))
+    }
+
+    /// Binding to the team already bound, or while busy, sends nothing.
+    pub fn start_bind(&mut self, team_id: Option<&str>) -> Option<u64> {
+        let current = self
+            .binding
+            .as_ref()
+            .map(|binding| binding.team_id.as_str());
+        if self.pending != TeamPending::None || current == team_id {
+            return None;
+        }
+        Some(self.begin(TeamPending::Saving))
+    }
+
+    fn accept(&mut self, generation: u64) -> Option<TeamPending> {
+        if generation != self.generation || self.pending == TeamPending::None {
+            return None;
+        }
+        Some(std::mem::take(&mut self.pending))
+    }
+
+    fn refuse(&mut self, pending: TeamPending, error: Rejection) {
+        self.failed = true;
+        self.note = Some(team_message(pending, error));
+    }
+
+    /// The binding and team list read together when the section opens.
+    pub fn loaded(
+        &mut self,
+        generation: u64,
+        result: Result<(ProjectBinding, Teams), Rejection>,
+    ) -> bool {
+        let Some(pending) = self.accept(generation) else {
+            return false;
+        };
+        match result {
+            Ok((project, teams)) => {
+                self.binding = project.binding;
+                self.teams = Some(teams);
+            }
+            Err(error) => self.refuse(pending, error),
+        }
+        true
+    }
+
+    pub fn refreshed(&mut self, generation: u64, result: Result<Teams, Rejection>) -> bool {
+        let Some(pending) = self.accept(generation) else {
+            return false;
+        };
+        match result {
+            Ok(teams) => self.teams = Some(teams),
+            Err(error) => self.refuse(pending, error),
+        }
+        true
+    }
+
+    /// The binding only changes once the host confirms it.
+    pub fn bound(&mut self, generation: u64, result: Result<ProjectBinding, Rejection>) -> bool {
+        let Some(pending) = self.accept(generation) else {
+            return false;
+        };
+        match result {
+            Ok(project) => {
+                self.note = Some(match &project.binding {
+                    Some(binding) => format!(
+                        "Linked to {}.",
+                        binding.team_name.as_deref().unwrap_or("the team")
+                    ),
+                    None => "Unlinked from Linear.".into(),
+                });
+                self.binding = project.binding;
+            }
+            Err(error) => self.refuse(pending, error),
+        }
+        true
+    }
+}
+
+fn team_message(pending: TeamPending, error: Rejection) -> String {
+    match (pending, error) {
+        (_, Rejection::SignedOut | Rejection::KeyRejected) => {
+            "Sign in to Linear again in Settings → Linear.".into()
+        }
+        (TeamPending::Saving, Rejection::Offline) => {
+            "Linear could not be reached, so the link was not changed.".into()
+        }
+        (TeamPending::Saving, Rejection::Other | Rejection::Conflict | Rejection::NotFound) => {
+            "The host could not change the link. Nothing was changed.".into()
+        }
+        (_, error) => message(Pending::Loading, error),
     }
 }
 
@@ -307,6 +460,69 @@ mod tests {
         let load = account.start_load();
         account.reply(load, Ok(status(AuthState::KeyRejected)));
         assert_eq!(account.auth, Auth::KeyRejected);
+    }
+
+    fn teams(ids: &[&str]) -> Teams {
+        serde_json::from_value(serde_json::json!({
+            "teams": ids.iter().map(|id| serde_json::json!({"id": id, "key": id.to_uppercase(), "name": format!("Team {id}"), "states": []})).collect::<Vec<_>>(),
+            "teams_complete": true,
+            "cached": false, "stale": false, "cached_at": 0, "cache_age_seconds": 0, "partial": false, "warning": null
+        }))
+        .unwrap()
+    }
+
+    fn project(team: Option<&str>) -> ProjectBinding {
+        serde_json::from_value(serde_json::json!({
+            "checkout": "/repo",
+            "binding": team.map(|id| serde_json::json!({"workspace_id": "ORG", "team_id": id, "team_key": "K", "team_name": format!("Team {id}"), "updated_at": 1})),
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_project_loads_its_binding_and_teams_and_binds_once_confirmed() {
+        let mut team = ProjectTeam::default();
+        assert!(team.target(1, Path::new("/repo")));
+        assert!(team.needs_load());
+        let load = team.start_load();
+        assert!(team.loaded(load, Ok((project(None), teams(&["a", "b"])))));
+        assert!(team.binding.is_none());
+        let bind = team.start_bind(Some("a")).unwrap();
+        // Not yet confirmed: the binding is unchanged until the host replies.
+        assert!(team.binding.is_none());
+        assert_eq!(team.start_bind(Some("b")), None, "one change at a time");
+        team.bound(bind, Ok(project(Some("a"))));
+        assert_eq!(team.binding.as_ref().unwrap().team_id, "a");
+        assert_eq!(team.note.as_deref(), Some("Linked to Team a."));
+        assert_eq!(team.start_bind(Some("a")), None, "already bound");
+        let unlink = team.start_bind(None).unwrap();
+        team.bound(unlink, Ok(project(None)));
+        assert!(team.binding.is_none());
+    }
+
+    #[test]
+    fn another_project_or_connection_starts_over_and_drops_old_replies() {
+        let mut team = ProjectTeam::default();
+        team.target(1, Path::new("/repo"));
+        let load = team.start_load();
+        assert!(team.target(1, Path::new("/other")));
+        assert!(!team.loaded(load, Ok((project(Some("a")), teams(&["a"])))));
+        assert!(team.teams.is_none());
+        assert!(!team.target(1, Path::new("/other")));
+        assert!(team.target(2, Path::new("/other")));
+    }
+
+    #[test]
+    fn a_refused_link_keeps_the_old_one() {
+        let mut team = ProjectTeam::default();
+        team.target(1, Path::new("/repo"));
+        let load = team.start_load();
+        team.loaded(load, Ok((project(Some("a")), teams(&["a", "b"]))));
+        let bind = team.start_bind(Some("b")).unwrap();
+        team.bound(bind, Err(Rejection::Offline));
+        assert_eq!(team.binding.as_ref().unwrap().team_id, "a");
+        assert!(team.failed);
+        assert!(team.note.as_deref().unwrap().contains("not changed"));
     }
 
     #[test]

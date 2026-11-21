@@ -1214,7 +1214,12 @@ rejects, confirmed sign-out, and stale replies after a reconnect or a newer
 request. Scene tests draw Settings → Linear signed out, saving, with a
 rejected key, signed in, confirming sign-out, and with an older host, at
 1380 and 900 points, and check that Save empties the key field, that sign-out
-waits for confirmation, and that leaving the tab empties the field.
+waits for confirmation, and that leaving the tab empties the field. Project
+settings → Linear is drawn signed out and linked (with an incomplete, saved
+team list); a test checks that choosing another team leaves the shown link
+unchanged until the host confirms it, and the model tests cover another
+project or connection dropping old replies and a refused link keeping the
+old one.
 `ui::snapshot::linear_settings::linear_settings_snapshots` (ignored) exports
 the scenes. Nothing has been tried against Linear's live API, and the
 background request path is not exercised by these tests.

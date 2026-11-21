@@ -94,6 +94,7 @@ impl Plait {
                     .child(self.policy_settings(cx))
                     .child(self.agent_settings(cx))
                     .child(self.isolation_settings(cx))
+                    .child(self.project_linear_settings(cx))
                     .child(
                         super::theme::button("project-settings-worktrees", "Worktrees")
                             .on_activate(cx, |this, window, cx| {
