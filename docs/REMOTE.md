@@ -1,6 +1,6 @@
 # Remote hosts
 
-**Agreed design for M3; transport framing and the bridge are built.** The maintainer chose the direction:
+**Agreed design for M3; transport framing, the bridge, and SSH transport are built.** The maintainer chose the direction:
 reach a Plait host on another machine over SSH or over a tailnet, with this
 Linux workstation as the first remote host, and remote threads before remote
 Git. [HOST.md](HOST.md) remains the contract for what is implemented.
@@ -55,7 +55,7 @@ this frame:
 ### SSH
 
 - The client keeps one child per machine:
-  `ssh -T -o BatchMode=yes <destination> plait-host bridge`. The arguments
+  `ssh -T -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -- <destination> plait-host bridge`. The arguments
   are passed as a list and never through a shell.
 - The person's SSH configuration (aliases, keys, agent, `ProxyJump`,
   Tailscale SSH) applies as usual. Plait never asks for or stores a
@@ -152,7 +152,7 @@ desktop's local Git reads. That design is written before it is built.
    - Tests: round trips over socket pairs, concurrent requests and watches,
      Close ending a watch without stopping a run, size limits, a stalled
      partial frame, and bridge EOF.
-3. **SSH transport.**
+3. **Built: SSH transport.**
    - Tests: with a scripted `ssh`, connect, reconnect, dead-link detection,
      and arguments that cannot reach a shell.
 4. **Machines in core.**
