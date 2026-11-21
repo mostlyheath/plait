@@ -76,7 +76,7 @@ the signing secret can sign updates; review them like release code.
 
 ## Independent client and server releases
 
-**Agreed contract, not built.** It implements the roadmap's
+**Agreed contract; host operations in step 2 are built.** It implements the roadmap's
 [independent release contract](ROADMAP.md#independent-release-contract).
 Today one signed `update.json` describes the app and its host together, and
 the in-app update replaces both.
@@ -154,7 +154,7 @@ the in-app update replaces both.
 1. Version 2 manifests, verification, and the release plan. These have
    Python and Rust tests for host-only, client-only, and combined releases,
    component mismatch, and mixed feeds.
-2. `host_info`, `drain_for_update`, and `cancel_drain` in the host. Runtime
+2. **Built:** `host_info`, `drain_for_update`, and `cancel_drain` in the host. Runtime
    tests show that version 1–6 replies are unchanged, that drain blocks new
    admissions and queue drains while active work finishes, and that cancel
    restores admissions.
