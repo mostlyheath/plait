@@ -822,7 +822,13 @@ mod tests {
             socket.write_all(b"\n").unwrap();
             line
         });
-        (crate::host::Client { path }, server, directory)
+        (
+            crate::host::Client {
+                transport: crate::host::Transport::Local(path),
+            },
+            server,
+            directory,
+        )
     }
 
     #[test]
@@ -921,7 +927,9 @@ mod tests {
     fn a_failed_send_never_repeats_the_secret() {
         // No host: the socket path does not exist.
         let client = crate::host::Client {
-            path: std::env::temp_dir().join("plait-no-such-host/host.sock"),
+            transport: crate::host::Transport::Local(
+                std::env::temp_dir().join("plait-no-such-host/host.sock"),
+            ),
         };
         let request = Request::SetProviderKey {
             provider: "openrouter".into(),

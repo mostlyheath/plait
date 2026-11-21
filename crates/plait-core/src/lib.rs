@@ -27,6 +27,7 @@ pub mod ownership;
 pub mod patch;
 pub mod preferences;
 pub mod recent;
+pub mod remote;
 pub mod reveal;
 pub mod review;
 pub mod selection;

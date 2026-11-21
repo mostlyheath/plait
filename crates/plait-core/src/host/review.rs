@@ -389,7 +389,13 @@ mod tests {
                 assert_eq!(input, "{\"op\":\"turn_review_info\",\"thread_id\":\"t\"}\n");
                 writeln!(socket, "{reply}").unwrap();
             });
-            let error = info(&Client { path }, "t").unwrap_err();
+            let error = info(
+                &Client {
+                    transport: super::super::Transport::Local(path),
+                },
+                "t",
+            )
+            .unwrap_err();
             assert_eq!(needs_host_update(&error), old);
             server.join().unwrap();
             std::fs::remove_dir_all(directory).unwrap();
