@@ -535,6 +535,7 @@ impl Plait {
                     "diff-editor",
                     &change.display_path(),
                     self.shortcut_aria("file.open_in_editor"),
+                    self.host_is_local(),
                     cx,
                 ))
             })

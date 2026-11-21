@@ -363,6 +363,9 @@ impl Plait {
     }
 
     fn pump(&mut self, cx: &mut Context<Self>) {
+        if !self.host_is_local() {
+            return;
+        }
         let Some(job) = self.state.next_repository_job() else {
             return;
         };
@@ -580,6 +583,10 @@ impl Plait {
             self.notice =
                 Some("Resolve the pending thread creation before changing checkout.".into());
             cx.notify();
+            return;
+        }
+        if !self.host_is_local() {
+            self.open_remote_path(window, cx);
             return;
         }
         self.picker_open = true;
@@ -1393,6 +1400,13 @@ impl Render for Plait {
                                 self.worktrees_view(wide, cx)
                             } else if self.issues_visible() {
                                 self.issues_tab(wide, cx)
+                            } else if !self.host_is_local()
+                                && matches!(
+                                    self.workspace.tab,
+                                    Workspace::Changes | Workspace::History | Workspace::Files
+                                )
+                            {
+                                remote_unavailable().into_any_element()
                             } else if self.workspace.tab == Workspace::History {
                                 self.history_view(wide, cx).into_any_element()
                             } else if self.workspace.tab == Workspace::Files {
@@ -1434,4 +1448,62 @@ impl Render for Plait {
 pub fn menus(cx: &mut App) {
     actions::install(cx, &actions::KeyOverrides::new());
     cx.on_action(|_: &Quit, cx| cx.quit());
+}
+
+const REMOTE_UNAVAILABLE: &str =
+    "Changes, History, and Files are not available on a remote machine yet.";
+
+fn remote_unavailable() -> gpui::Div {
+    theme::column()
+        .flex_1()
+        .justify_center()
+        .items_center()
+        .p_6()
+        .child(
+            gpui::div()
+                .text_size(gpui::px(12.))
+                .text_color(gpui::rgb(theme::colors().muted))
+                .child(REMOTE_UNAVAILABLE),
+        )
+}
+
+fn valid_remote_path(path: &str) -> bool {
+    !path.is_empty() && path.starts_with('/') && !path.chars().any(char::is_control)
+}
+
+impl Plait {
+    fn open_remote_path(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use palette::{Item, Options, Palette, Typed};
+        let options = Options {
+            name: "Open remote project".into(),
+            placeholder: format!("Path on {}", self.machine_label()).into(),
+            empty: "Enter an absolute path without control characters.".into(),
+            initial: None,
+            mark: None,
+            aside: None,
+            note: None,
+        };
+        let typed: Typed = std::rc::Rc::new(|text, _| {
+            let valid = valid_remote_path(text);
+            Some((
+                Item::new(
+                    "remote-path",
+                    if valid {
+                        format!("Open {text}")
+                    } else {
+                        "Enter an absolute path without control characters.".into()
+                    },
+                    commands::Command::OpenRemoteProject(text.into()),
+                )
+                .enabled(valid),
+                true,
+            ))
+        });
+        let palette = cx.new(|cx| {
+            let mut palette = Palette::new(options, Vec::new(), window, cx);
+            palette.set_typed(typed, cx);
+            palette
+        });
+        self.present(palette, None, window, cx);
+    }
 }

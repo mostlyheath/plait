@@ -172,6 +172,9 @@ impl Plait {
     }
 
     fn read_file(&mut self, reload: bool, cx: &mut Context<Self>) {
+        if !self.host_is_local() {
+            return;
+        }
         let owner = self.host.read_stamp();
         let cancelled = self.workspace.cancelled.clone();
         let expected = self.state.checkout_key().cloned();
@@ -239,7 +242,7 @@ impl Plait {
 
     /// Reread the open file if its size or time changed. Cheap: one stat.
     pub(super) fn check_file(&mut self, cx: &mut Context<Self>) {
-        if self.workspace.tab != Workspace::Files {
+        if !self.host_is_local() || self.workspace.tab != Workspace::Files {
             return;
         }
         let owner = self.host.read_stamp();
@@ -565,9 +568,15 @@ impl Plait {
                 "file-editor",
                 &display,
                 self.shortcut_aria("file.open_in_editor"),
+                self.host_is_local(),
                 cx,
             ))
-            .child(ways_out::finder_button("file-finder", &display, cx));
+            .child(ways_out::finder_button(
+                "file-finder",
+                &display,
+                self.host_is_local(),
+                cx,
+            ));
         let body = match (&viewer.error, viewer.opened.as_deref(), viewer.loading) {
             (Some(error), _, _) => {
                 empty("This file cannot be shown", error.clone()).into_any_element()

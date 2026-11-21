@@ -19,7 +19,11 @@ impl Plait {
                     .flex_shrink_0()
                     .child(section_label("inspector-working-tree", "Working tree")),
             )
-            .child(self.file_panel(true, cx))
+            .child(if self.host_is_local() {
+                self.file_panel(true, cx).into_any_element()
+            } else {
+                super::remote_unavailable().into_any_element()
+            })
             .child(self.resize_handle(Panel::Inspector, cx))
     }
 

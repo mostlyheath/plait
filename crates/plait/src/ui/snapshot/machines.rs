@@ -106,6 +106,17 @@ fn machines_snapshots() {
     let repo = fixture_repository(&scratch);
     walk(&repo, Some(&output), "wide", 1380., 860.);
     walk(&repo, Some(&output), "narrow", 900., 600.);
+    for (width, height, suffix) in [(1380., 860., "wide"), (900., 600., "narrow")] {
+        let mut h = Harness::new(&repo, Some(&output), width, height);
+        h.connect(&repo, false);
+        h.update(|p, window, cx| {
+            p.host_local = false;
+            p.show_tab(super::super::Workspace::Changes, window, cx);
+        });
+        h.capture(&format!("remote-changes-{suffix}"));
+        h.update(|p, window, cx| p.open_repository(&super::super::OpenRepository, window, cx));
+        h.capture(&format!("remote-path-{suffix}"));
+    }
     std::fs::remove_dir_all(scratch).unwrap();
 }
 
@@ -160,5 +171,106 @@ fn machines_are_labelled_and_validate_input() {
         assert_eq!(p.preferences.value.machines.list().len(), 2);
         assert_eq!(p.machine_label(), "Local host", "adding does not switch");
     });
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
+#[core::prelude::v1::test]
+fn remote_path_validation() {
+    assert!(super::super::valid_remote_path("/srv/project"));
+    assert!(!super::super::valid_remote_path(""));
+    assert!(!super::super::valid_remote_path("relative/path"));
+    assert!(!super::super::valid_remote_path("/srv/\nproject"));
+}
+
+#[core::prelude::v1::test]
+fn remote_handoffs_are_blocked() {
+    if !isolated("machines::remote_handoffs_are_blocked") {
+        return;
+    }
+    let scratch =
+        std::env::temp_dir().join(format!("plait-remote-handoffs-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    let mut h = Harness::new(&repo, None, 900., 600.);
+    h.connect(&repo, false);
+    h.update(|p, _, cx| {
+        p.host_local = false;
+        p.open_in_editor(cx);
+        p.show_in_finder(cx);
+        p.open_terminal(cx);
+        assert!(p.ways_out.started.is_empty());
+        assert_eq!(p.notice.as_deref(), Some(super::super::REMOTE_UNAVAILABLE));
+    });
+    drop(h);
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
+#[core::prelude::v1::test]
+fn remote_project_path_opens_only_absolute_paths() {
+    if !isolated("machines::remote_project_path_opens_only_absolute_paths") {
+        return;
+    }
+    let scratch = std::env::temp_dir().join(format!("plait-remote-path-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    let mut h = Harness::new(&repo, None, 900., 600.);
+    h.connect(&repo, false);
+    h.update(|p, window, cx| {
+        p.host_local = false;
+        p.run_command(
+            super::super::commands::Command::OpenRemoteProject("relative".into()),
+            None,
+            window,
+            cx,
+        );
+        assert!(
+            !p.preferences
+                .value
+                .navigation
+                .opened
+                .contains(&PathBuf::from("relative"))
+        );
+        p.run_command(
+            super::super::commands::Command::OpenRemoteProject("/remote/project".into()),
+            None,
+            window,
+            cx,
+        );
+        assert!(
+            p.preferences
+                .value
+                .navigation
+                .opened
+                .contains(&PathBuf::from("/remote/project"))
+        );
+    });
+    drop(h);
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
+#[core::prelude::v1::test]
+fn remote_machine_runs_no_local_git_job() {
+    if !isolated("machines::remote_machine_runs_no_local_git_job") {
+        return;
+    }
+    let scratch = std::env::temp_dir().join(format!("plait-remote-jobs-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    let mut h = Harness::new(&repo, None, 900., 600.);
+    h.connect(&repo, false);
+    h.settle();
+    // Updated directly: settle would wait for a repository read that, on a
+    // remote machine, deliberately never starts.
+    h.window
+        .update(&mut h.cx, |p, _, cx| {
+            p.host_local = false;
+            // A refresh queues repository work; on a remote machine the pump
+            // must leave it queued rather than read this Mac's disk.
+            p.state.repository.refresh();
+            p.pump(cx);
+            assert!(
+                p.state.next_repository_job().is_some(),
+                "the job is still waiting, not started"
+            );
+        })
+        .unwrap();
+    drop(h);
     std::fs::remove_dir_all(scratch).unwrap();
 }

@@ -136,7 +136,7 @@ machine's loopback.
 
 ### First desktop slice: one machine at a time
 
-**Built:** request routing and Settings → Machines with the SSH transport, including the saved choice at launch and Reconnect over a new link. Still to come in this slice: opening a remote project by path, and "not available on a remote machine" in the Git views.
+**Built:** request routing, Settings → Machines with SSH, opening a remote project by path, and unavailable states for local Git and file views. The live check remains.
 
 Decided while building step 4, to reach usable remote threads sooner.
 

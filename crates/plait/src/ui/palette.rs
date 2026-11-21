@@ -462,7 +462,7 @@ impl Palette {
             return;
         };
         self.items.truncate(self.base);
-        let typed = typed(query.trim(), &self.items);
+        let typed = typed(query, &self.items);
         self.typed_leads = typed.as_ref().is_some_and(|(_, leads)| *leads);
         self.items.extend(typed.map(|(item, _)| item));
         self.entries = self.items.iter().map(Entry::from).collect();
