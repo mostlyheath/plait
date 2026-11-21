@@ -43,6 +43,7 @@ import type { TemplateEntry } from './templates.ts';
 import { CODEX_MODES, CODEX_PROVIDER, CodexHarness, PI_ENTRY, codexEffort, codexLevels } from './harness.ts';
 import type { Lease } from './harness.ts';
 import { ExternalEntries, transcriptPath } from './external/entries.ts';
+import { ExternalHarnesses } from './external/registry.ts';
 import { CodexRun } from './codex/run.ts';
 import { CLAUDE_MODES, CLAUDE_PROVIDER, ClaudeHarness } from './claude/harness.ts';
 import { ClaudeRun } from './claude/run.ts';
@@ -101,6 +102,7 @@ export class Runtime {
   codex: CodexHarness;
   /** The person's Claude Code; a test runtime points it at the fake and the dev copy of the SDK. */
   claude: ClaudeHarness;
+  private external = new ExternalHarnesses(this);
   private closing = false;
   private queueDrains = new Map<string, Promise<void>>();
   private queueWake?: ReturnType<typeof setTimeout>;
@@ -139,12 +141,13 @@ export class Runtime {
   /** Validate the selected harness before reserving filesystem effects. */
   private async prepareWorktreeThread(request: WorktreeCreate, id: string): Promise<Snapshot> {
     const { harness, mode, thinking } = request;
+    if (harness !== 'pi' && harness !== 'codex' && harness !== 'claude') unsupportedHarness();
     const choice = { provider: request.provider, model_id: request.model_id };
     if (harness !== providerHarness(choice.provider)) fail('invalid_request', 'Choose a model from the harness that runs the thread.');
     const levels = harness === 'pi' ? (this.model(choice), undefined) : await this.levels(harness, choice.model_id);
     if (mode !== undefined) this.checkMode(harness, mode);
     const snapshot: Snapshot = { id, checkout: request.parent.root, model: choice, status: 'idle', messages: [], live_text: '', tools: [], pending_approval: null, error: null, truncated: false, approval_mode: request.approval };
-    if (harness !== 'pi') snapshot.harness = { id: harness, version: null, mode: mode ?? (harness === 'codex' ? this.codex : this.claude).defaultMode(), reported: null };
+    if (harness !== 'pi') snapshot.harness = { id: harness, version: null, mode: mode ?? this.externalHarness(harness).defaultMode(), reported: null };
     if (thinking !== undefined) snapshot.thinking_level = levels ? nearest(levels, thinking) : clampThinkingLevel(this.models.getModel(choice.provider, choice.model_id)!, thinking);
     return snapshot;
   }
@@ -220,9 +223,21 @@ export class Runtime {
     if (!modes) fail('invalid_request', "Pi threads use Plait's approval mode, not a harness mode.");
     if (!modes.some(candidate => candidate.id === mode)) fail('invalid_request', `${harness === 'codex' ? 'Codex' : 'Claude Code'} has no such mode.`);
   }
+  /** The adapter for a known external harness. Exhaustive: a new harness ID fails to compile here instead of being sent to another adapter. */
+  private externalHarness(id: 'codex' | 'claude'): CodexHarness | ClaudeHarness {
+    switch (id) {
+      case 'codex': return this.codex;
+      case 'claude': return this.claude;
+    }
+  }
   /** A harness's thinking levels for one of its models. */
   private async levels(harness: HarnessId, modelId: string) {
-    return harness === 'codex' ? codexLevels((await this.codex.model(modelId)).efforts) : (await this.claude.model(modelId)).levels;
+    switch (harness) {
+      case 'codex': return codexLevels((await this.codex.model(modelId)).efforts);
+      case 'claude': return (await this.claude.model(modelId)).levels;
+      case 'pi': return fail('invalid_request', "Pi threads use Plait's model catalog.");
+      default: return unsupportedHarness();
+    }
   }
   catalog(protocol: Protocol = 1) {
     return this.models.getModels().map(model => ({
@@ -233,9 +248,12 @@ export class Runtime {
   }
   /** Refuses a model the thread's harness cannot run now. Synchronous, so admission timing is the same for both harnesses. */
   usable(snapshot: Snapshot) {
-    if (snapshot.harness?.id === 'codex') this.codex.refuse(snapshot.model.model_id);
-    else if (snapshot.harness?.id === 'claude') this.claude.refuse(snapshot.model.model_id);
-    else this.model(snapshot.model);
+    const selected = this.external.resolveHarness(snapshot);
+    switch (selected.kind) {
+      case 'pi': return this.model(snapshot.model);
+      case 'external': return selected.harness.refuse(snapshot.model.model_id);
+      case 'unknown': return unsupportedHarness();
+    }
   }
   model(choice: ModelChoice) {
     if (!this.models.getModel(choice.provider, choice.model_id) || !this.authenticated.has(choice.provider)) {
@@ -244,10 +262,15 @@ export class Runtime {
   }
   snapshot(id: string) { const snapshot = this.sessions.get(id)?.snapshot ?? this.store.get(id); snapshot.records_revision = this.records.revision(id); snapshot.image_input = this.imageInput(snapshot); return snapshot; }
   private imageInput(snapshot: Snapshot): 'yes' | 'no' | 'unknown' {
-    if (snapshot.harness?.id === 'claude') return 'unknown';
-    if (snapshot.harness?.id === 'codex') return this.codex.imageInput(snapshot.model.model_id);
-    const model = this.models.getModel(snapshot.model.provider, snapshot.model.model_id);
-    return model ? model.input.includes('image') ? 'yes' : 'no' : 'unknown';
+    const selected = this.external.resolveHarness(snapshot);
+    switch (selected.kind) {
+      case 'unknown': return 'unknown';
+      case 'external': return selected.id === 'codex' ? selected.harness.imageInput(snapshot.model.model_id) : 'unknown';
+      case 'pi': {
+        const model = this.models.getModel(snapshot.model.provider, snapshot.model.model_id);
+        return model ? model.input.includes('image') ? 'yes' : 'no' : 'unknown';
+      }
+    }
   }
   private imageData(thread: string, request: string): ImageData[] {
     return this.store.images.data(thread, this.store.images.forRequest(thread, request));
@@ -301,7 +324,7 @@ export class Runtime {
         const levels = harness === 'pi' ? (this.model(choice), undefined) : await this.levels(harness, choice.model_id);
         const snapshot: Snapshot = { id: randomUUID(), checkout: root, model: choice, status: 'idle', messages: [], live_text: '', tools: [], pending_approval: null, error: null, truncated: false };
         if (mode !== undefined) this.checkMode(harness, mode);
-        if (harness !== 'pi') snapshot.harness = { id: harness, version: null, mode: mode ?? (harness === 'codex' ? this.codex : this.claude).defaultMode(), reported: null };
+        if (harness !== 'pi') snapshot.harness = { id: harness, version: null, mode: mode ?? this.externalHarness(harness).defaultMode(), reported: null };
         // A starting level is a preference, not a demand: use the nearest one the model has.
         if (requested !== undefined) {
           snapshot.thinking_level = levels ? nearest(levels, requested) : clampThinkingLevel(this.models.getModel(choice.provider, choice.model_id)!, requested);
@@ -317,12 +340,12 @@ export class Runtime {
       case 'harnesses': return this.harnesses(undefined, protocol);
       case 'set_harness_path': {
         if (request.harness === 'pi') fail('invalid_request', 'Pi runs inside the host, not from a chosen path.');
-        (request.harness === 'codex' ? this.codex : this.claude).setPath(request.path as string | undefined);
+        this.externalHarness(request.harness as 'codex' | 'claude').setPath(request.path as string | undefined);
         return this.harnesses(request.harness as HarnessId, protocol);
       }
       case 'set_harness_mode': {
         if (request.harness === 'pi') fail('invalid_request', "Pi threads use Plait's approval mode, not a harness mode.");
-        (request.harness === 'codex' ? this.codex : this.claude).setDefaultMode(String(request.mode));
+        this.externalHarness(request.harness as 'codex' | 'claude').setDefaultMode(String(request.mode));
         return this.harnesses(undefined, protocol);
       }
       // The only operation that reaches the network for a harness: it downloads the pinned Agent SDK.
@@ -417,6 +440,7 @@ export class Runtime {
   /** Changes apply from the next run, so a busy thread refuses them. */
   private async configure(id: string, request: ReturnType<typeof validate>) {
     const snapshot = this.snapshot(id);
+    if (this.external.resolveHarness(snapshot).kind === 'unknown') unsupportedHarness();
     if (request.mode !== undefined) {
       this.checkMode(snapshot.harness?.id, request.mode);
       // A mode alone may change while a run goes on: Codex takes it from the next turn, Claude Code
@@ -495,11 +519,17 @@ export class Runtime {
       if (session?.codex?.entries) return work({ ...base, entries: stored(session.codex.entries) });
       const claude = session?.claude?.entries;
       if (claude) return work({ ...base, entries: stored(claude) });
-      for (const kind of ['codex', 'claude'] as const) {
-        const storedPath = transcriptPath(this.directory, id, kind);
-        if (!existsSync(storedPath)) continue;
-        const file = new ExternalEntries(storedPath, { readOnly: true });
-        try { return await work({ ...base, entries: stored(file) }); } finally { file.close(); }
+      const selected = this.external.resolveHarness(this.snapshot(id));
+      switch (selected.kind) {
+        case 'external':
+        case 'unknown': {
+          if (!/^[a-z][a-z0-9-]{0,31}$/.test(selected.id)) return work(base);
+          const storedPath = transcriptPath(this.directory, id, selected.id);
+          if (!existsSync(storedPath)) return work(base);
+          const file = new ExternalEntries(storedPath, { readOnly: true });
+          try { return await work({ ...base, entries: stored(file) }); } finally { file.close(); }
+        }
+        case 'pi': break;
       }
       const path = join(this.directory, `${id}.sqlite`);
       if (!existsSync(path)) return work(base);
@@ -591,6 +621,7 @@ export class Runtime {
   }
   async submit(id: string, requestId: string, text: string, mode: ApprovalMode = 'ask', whenBusy?: QueueMode, images: string[] = []) {
     const snapshot = this.snapshot(id);
+    if (this.external.resolveHarness(snapshot).kind === 'unknown') unsupportedHarness();
     const duplicate = this.store.duplicate(id, requestId, images.length ? { text, images } : text);
     if (duplicate !== undefined) return duplicate;
     this.usable(snapshot);
@@ -618,6 +649,7 @@ export class Runtime {
   }
   /** Admits one run: reserves the checkout, creates its own authorization, then commits acceptance. */
   private async start(snapshot: Snapshot, requestId: string, text: string, mode: ApprovalMode, accept: () => boolean) {
+    if (this.external.resolveHarness(snapshot).kind === 'unknown') unsupportedHarness();
     const id = snapshot.id;
     if (this.active.has(snapshot.checkout)) fail('busy', 'This checkout already has an active run.');
     this.capacity.admit(this.active.size);
@@ -671,8 +703,12 @@ export class Runtime {
   }
   /** Offers queued steering inputs to the run that is active now, under that run's authorization. */
   private async steer(session: Session) {
-    if (session.codex) return this.steerCodex(session);
-    if (session.claude) return this.steerClaude(session);
+    const selected = this.external.resolveHarness(session.snapshot);
+    switch (selected.kind) {
+      case 'unknown': return unsupportedHarness();
+      case 'external': return selected.id === 'codex' ? this.steerCodex(session) : this.steerClaude(session);
+      case 'pi': break;
+    }
     if (!session.started || !session.root || session.authorization.signal.aborted) return;
     for (const input of session.inputs) {
       if (input.queued?.mode !== 'steer' || session.steered.has(input.request_id)) continue;
@@ -711,6 +747,7 @@ export class Runtime {
     }
     const id = String(request.thread_id); const snapshot = this.snapshot(id);
     if (request.op === 'submit_checkout') return this.gate(`queue:${id}`, async () => {
+      if (this.external.resolveHarness(this.snapshot(id)).kind === 'unknown') unsupportedHarness();
       const images = request.images ?? []; const approval = request.approval ?? 'ask';
       const previous = this.store.waiters.get(id,request.request_id);
       if (previous && (previous.kind !== 'checkout' || previous.approval !== approval)) fail('conflict','Request ID was already used with different queue permissions.');
@@ -757,6 +794,7 @@ export class Runtime {
       if (!next || next.state === 'held') return;
       const snapshot = this.store.get(next.thread_id);
       try {
+        if (this.external.resolveHarness(snapshot).kind === 'unknown') unsupportedHarness();
         await checkRoot(root,next.identity);
         if (next.kind === 'checkout' && (queueSettings(snapshot) !== next.settings || commandPolicy(this.store,root,next.identity) !== next.policy)) fail('queue_settings_changed','The model, permissions or project policy changed while this message waited. Send it again with the intended settings.');
         this.usable(snapshot);
@@ -843,6 +881,7 @@ export class Runtime {
     const snapshot = session.snapshot;
     let record: string | undefined;
     try {
+      if (this.external.resolveHarness(snapshot).kind === 'unknown') unsupportedHarness();
       if (!session.lease) {
         await this.records.settled(snapshot.checkout);
         await checkRoot(snapshot.checkout, session.rootIdentity);
@@ -855,8 +894,12 @@ export class Runtime {
         () => this.records.before(snapshot.id, requestId, snapshot.checkout, session.lease));
       if (session.authorization.signal.aborted) return;
       const header = await runHeader(snapshot.checkout);
-      if (snapshot.harness?.id === 'codex') return await this.runCodex(session, requestId, text, header);
-      if (snapshot.harness?.id === 'claude') return await this.runClaude(session, requestId, text, header);
+      const selected = this.external.resolveHarness(snapshot);
+      switch (selected.kind) {
+        case 'unknown': return unsupportedHarness();
+        case 'external': return selected.id === 'codex' ? await this.runCodex(session, requestId, text, header) : await this.runClaude(session, requestId, text, header);
+        case 'pi': break;
+      }
       const baseline = await dirtyPaths(snapshot.checkout);
       session.owned = await restoreOwned(snapshot.checkout, baseline, this.store.owned(snapshot.id), session.rootIdentity, session.lease?.fd, session.lease?.lifecycleFd);
       session.baseline = baseline.filter(path => !session.owned.has(pathKey(path)));
@@ -930,7 +973,12 @@ export class Runtime {
       if (snapshot.status === 'error' || snapshot.status === 'interrupted') this.store.waiters.hold(snapshot.id);
       this.changed('#');
       for (const root of this.store.waiters.roots()) this.drainCheckout(root);
-      if (!snapshot.error) this.worktrees.builds.scheduleSeed(snapshot.checkout, snapshot.harness?.id !== 'codex' && snapshot.harness?.id !== 'claude' && session.commandPolicy === 'sandboxed' ? snapshot.id : '');
+      const selected = this.external.resolveHarness(snapshot);
+      switch (selected.kind) {
+        case 'unknown': break;
+        case 'external': if (!snapshot.error) this.worktrees.builds.scheduleSeed(snapshot.checkout, ''); break;
+        case 'pi': if (!snapshot.error) this.worktrees.builds.scheduleSeed(snapshot.checkout, session.commandPolicy === 'sandboxed' ? snapshot.id : ''); break;
+      }
     }
   }
   /** A Codex thread's run: one Codex turn, under Codex's own sandbox and Plait's approvals. */
@@ -1031,5 +1079,13 @@ export class Runtime {
 
 /** The harness a model's provider belongs to: Codex and Claude Code each have one provider name. */
 function providerHarness(provider: string): HarnessId {
-  return provider === CODEX_PROVIDER ? 'codex' : provider === CLAUDE_PROVIDER ? 'claude' : 'pi';
+  switch (provider) {
+    case CODEX_PROVIDER: return 'codex';
+    case CLAUDE_PROVIDER: return 'claude';
+    default: return 'pi';
+  }
+}
+
+function unsupportedHarness(): never {
+  return fail('invalid_request', "This thread uses a harness this host does not support. Update Plait's host to continue it.");
 }
