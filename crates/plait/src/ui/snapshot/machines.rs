@@ -34,7 +34,7 @@ fn workstation(h: &mut Harness) -> plait_core::machines::MachineId {
 
 type Scene = (&'static str, fn(&mut Harness), &'static [&'static str]);
 
-fn scenes() -> [Scene; 7] {
+fn scenes() -> [Scene; 9] {
     [
         (
             "machines-list",
@@ -106,6 +106,40 @@ fn scenes() -> [Scene; 7] {
                         id,
                         name: "workstation".into(),
                         stage: super::super::machine_install::Stage::Installing,
+                    });
+                });
+            },
+            &[],
+        ),
+        (
+            "machines-update-available",
+            |h| {
+                let id = workstation(h);
+                h.update(|p, _, _| {
+                    p.machines.active = id.clone();
+                    p.host.connection.connected = true;
+                    p.machines.update = Some(super::super::machine_update::MachineUpdate {
+                        id,
+                        name: "workstation".into(),
+                        stage: super::super::machine_update::Stage::Available(
+                            "Plait v1 is available for workstation.".into(),
+                        ),
+                    });
+                });
+            },
+            &["Update host", "Check for host update"],
+        ),
+        (
+            "machines-updating",
+            |h| {
+                let id = workstation(h);
+                h.update(|p, _, _| {
+                    p.machines.active = id.clone();
+                    p.host.connection.connected = true;
+                    p.machines.update = Some(super::super::machine_update::MachineUpdate {
+                        id,
+                        name: "workstation".into(),
+                        stage: super::super::machine_update::Stage::Updating,
                     });
                 });
             },

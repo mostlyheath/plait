@@ -50,10 +50,10 @@ one's state on the connected machine:
 ## Order of work
 
 1. **Built:** Linux host archives and their signed manifests in the release pipeline.
-2. The server-side install script.
+2. **Built:** The server-side install script.
 3. **Built:** Installing from the Mac over SSH.
 4. **Built:** Host-installed CLIs and their sign-in in the app.
-5. Host updates on Linux: `plait-host update` and from the Mac.
+5. **Built:** Host updates on Linux: `plait-host update` and from the Mac.
 
 ## Set up a Linux host
 
@@ -84,7 +84,7 @@ A source-built service uses the Node on the current PATH. The host stores data
 in `~/.local/share/plait`. Run `plait-host run` for a foreground host, or
 `plait-host uninstall-service` to remove the service. Without lingering, the
 user service stops at logout; `loginctl enable-linger $USER` keeps it running.
-In-app Linux host updates are planned.
+Installed Linux hosts update with `plait-host update`; source builds update by rebuilding. Settings → Machines can check for and apply host updates over SSH.
 
 Linux runs trusted commands and trusted MCP servers as the host user. It
 refuses the sandboxed command policy; see [Linux sandbox](LINUX-SANDBOX.md).
