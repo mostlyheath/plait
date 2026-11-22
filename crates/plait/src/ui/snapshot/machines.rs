@@ -311,6 +311,7 @@ fn a_remote_window_shows_only_its_hosts_workspace() {
             }],
             worktrees: Vec::new(),
             seen: Vec::new(),
+            status: Default::default(),
         };
         assert!(p.apply_workspace(generation, view, window, cx));
         let names = p
