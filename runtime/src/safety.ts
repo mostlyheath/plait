@@ -109,15 +109,21 @@ export async function rootIdentity(root: string): Promise<FileIdentity> {
   if (!info.isDirectory() || await realpath(root) !== root) fail('permission_denied', 'Checkout root changed.');
   return { dev: String(info.dev), ino: String(info.ino) };
 }
+export async function sameDirectory(stored: FileIdentity, current: FileIdentity, path: string): Promise<boolean> {
+  if (stored.ino !== current.ino) return false;
+  if (stored.dev === current.dev) return true;
+  try { return await realpath(path) === path; } catch { return false; }
+}
 export async function verifyExpectedIdentity(root: string, expected: unknown): Promise<void> {
   if (expected === undefined) return;
   const current = await rootIdentity(root);
   const identity = expected as FileIdentity;
-  if (current.dev !== identity.dev || current.ino !== identity.ino) fail('invalid_request', 'This folder changed since it was opened.');
+  if (!await sameDirectory(identity, current, root)) fail('invalid_request', 'This folder changed since it was opened.');
 }
 export async function checkRoot(root: string, expected: FileIdentity) {
   const current = await rootIdentity(root);
-  if (current.dev !== expected.dev || current.ino !== expected.ino) fail('permission_denied', 'Checkout root identity changed. Create a new thread for the replacement.');
+  if (!await sameDirectory(expected, current, root)) fail('permission_denied', 'Checkout root identity changed. Create a new thread for the replacement.');
+  return current;
 }
 export async function identities(root: string, paths: string[]): Promise<FileIdentity[]> {
   const result: FileIdentity[] = [];
@@ -211,6 +217,7 @@ export const checkoutLockName = (identity: FileIdentity) => `checkout-${lockHex(
  */
 async function openLifecycle(root: string): Promise<{ root: string; identity: FileIdentity; lifecycle: FileHandle }> {
   const canonical = await realpath(root).catch(() => fail('permission_denied', 'Checkout root changed.'));
+  // Persisted device numbers can change across boots; all processes lock the current identity.
   const identity = await rootIdentity(canonical);
   const directory = leaseDirectory();
   try {

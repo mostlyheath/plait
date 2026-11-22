@@ -35,6 +35,28 @@ pub(super) struct Lifecycle {
 }
 
 impl Lifecycle {
+    pub(super) fn reopen_checkout(&mut self, key: &plait_core::tabs::CheckoutKey) {
+        let update = |target: &mut TabTarget| {
+            let checkout = match target {
+                TabTarget::Existing { checkout, .. }
+                | TabTarget::Draft { checkout, .. }
+                | TabTarget::Worktrees { checkout }
+                | TabTarget::Issues { checkout } => checkout,
+            };
+            if checkout.host == key.host && checkout.root == key.root {
+                *checkout = key.clone();
+            }
+        };
+        for (target, _) in &mut self.editors {
+            update(target);
+        }
+        for intent in &mut self.pending {
+            if let Intent::Open(target) = intent {
+                update(target);
+            }
+        }
+    }
+
     pub(super) fn verify_pending(
         &mut self,
         previous: &plait_core::tabs::HostKey,

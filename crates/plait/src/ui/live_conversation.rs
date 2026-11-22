@@ -1072,7 +1072,15 @@ impl Plait {
     fn live_banners(&self, pending: bool, cx: &mut Context<Self>) -> Vec<Div> {
         let mut banners = Vec::new();
         if let Some(error) = self.host.connection.error.clone() {
-            banners.push(banner(colors().red).child(a11y_text("host-connection-error", error)));
+            let recovery = self.has_identity_recovery(&error);
+            banners.push(
+                banner(colors().red)
+                    .child(a11y_text(
+                        "host-connection-error",
+                        self.identity_recovery_message(&error),
+                    ))
+                    .when(recovery, |el| el.child(self.identity_recovery_button(cx))),
+            );
         }
         if !self.host.connection.connected {
             let connecting = self.host.connection.connecting;

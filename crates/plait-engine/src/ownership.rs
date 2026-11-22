@@ -3,7 +3,7 @@ use std::{os::unix::fs::MetadataExt, path::Path};
 
 pub trait CheckoutKeyExt: Sized {
     fn resolve(host: Option<HostKey>, root: &Path) -> Result<Self, String>;
-    fn verify(&self) -> Result<(), String>;
+    fn verify(&self) -> Result<Self, String>;
 }
 
 impl CheckoutKeyExt for CheckoutKey {
@@ -26,17 +26,22 @@ impl CheckoutKeyExt for CheckoutKey {
     }
 
     /// Blocking. A substituted symlink is a changed identity, even if it resolves back.
-    fn verify(&self) -> Result<(), String> {
+    /// Returns the key with the current device number: macOS assigns device numbers
+    /// at mount time, so a restart can change one while the folder (same canonical
+    /// path, same inode) is unchanged.
+    fn verify(&self) -> Result<Self, String> {
         let meta = std::fs::symlink_metadata(&self.root)
             .map_err(|_| "Checkout identity changed.".to_owned())?;
         if !meta.is_dir()
-            || meta.dev() != self.device
             || meta.ino() != self.inode
             || self.root.canonicalize().ok().as_ref() != Some(&self.root)
         {
             return Err("Checkout identity changed.".into());
         }
-        Ok(())
+        Ok(Self {
+            device: meta.dev(),
+            ..self.clone()
+        })
     }
 }
 
@@ -66,5 +71,14 @@ mod tests {
         std::os::unix::fs::symlink(scratch.join("old"), &root).unwrap();
         assert!(key.verify().is_err());
         std::fs::remove_dir_all(scratch).unwrap();
+    }
+
+    #[test]
+    fn current_checkout_refreshes_changed_device() {
+        let mut key = CheckoutKey::resolve(None, &std::env::temp_dir()).unwrap();
+        key.device = key.device.wrapping_add(1);
+        let refreshed = key.verify().unwrap();
+        assert_ne!(refreshed.device, key.device);
+        assert_eq!(refreshed.inode, key.inode);
     }
 }

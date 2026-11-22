@@ -1,6 +1,7 @@
 //! Identity is verified off the UI thread; an older host keeps session-only tabs.
 use super::{Plait, tab_lifecycle::Intent};
 use gpui::*;
+use plait_core::ownership::CheckoutKeyExt;
 use plait_core::{
     host::{self},
     tabs::{CheckoutKey, DirectoryIdentity, HostKey, TabTarget},
@@ -19,11 +20,16 @@ pub(super) struct Identity {
     pub catalog_ready: bool,
     pub generation: u64,
     pub opening: u64,
+    pub recovery: Option<(PathBuf, bool)>,
+    pub reopening: bool,
 }
 
 pub(super) fn directory(root: &std::path::Path) -> Option<DirectoryIdentity> {
     use std::os::unix::fs::MetadataExt;
-    let meta = std::fs::metadata(root).ok()?;
+    if root.canonicalize().ok()?.as_path() != root {
+        return None;
+    }
+    let meta = std::fs::symlink_metadata(root).ok()?;
     meta.is_dir().then_some(DirectoryIdentity {
         device: meta.dev(),
         inode: meta.ino(),
@@ -31,6 +37,230 @@ pub(super) fn directory(root: &std::path::Path) -> Option<DirectoryIdentity> {
 }
 
 impl Plait {
+    pub(super) fn refresh_checkout_identity(
+        &mut self,
+        old: &plait_core::ownership::CheckoutKey,
+        refreshed: &plait_core::ownership::CheckoutKey,
+        cx: &mut Context<Self>,
+    ) {
+        if old == refreshed {
+            return;
+        }
+        if self.state.refresh_checkout(old, refreshed) {
+            self.pump(cx);
+        }
+        self.host.refresh_checkout(old, refreshed);
+        let previous = DirectoryIdentity {
+            device: old.device,
+            inode: old.inode,
+        };
+        if self.tabs.identity.checkouts.get(&old.root) != Some(&previous) {
+            return;
+        }
+        let directory = DirectoryIdentity {
+            device: refreshed.device,
+            inode: refreshed.inode,
+        };
+        let key = CheckoutKey {
+            host: self.tabs.host.clone(),
+            root: refreshed.root.clone(),
+            directory: Some(directory),
+        };
+        if self.tabs.model.reopen_checkout(&key).is_err() {
+            return;
+        }
+        self.tabs.lifecycle.reopen_checkout(&key);
+        self.tabs
+            .identity
+            .checkouts
+            .insert(refreshed.root.clone(), directory);
+        self.tabs.persistence.edited = true;
+        self.capture_session(cx);
+    }
+
+    pub(super) fn identity_message(path: &std::path::Path) -> String {
+        let name = path
+            .file_name()
+            .unwrap_or(path.as_os_str())
+            .to_string_lossy();
+        format!("{name} changed on disk since Plait opened it. It may have been moved or replaced.")
+    }
+
+    pub(super) fn has_identity_recovery(&self, message: &str) -> bool {
+        self.tabs
+            .identity
+            .recovery
+            .as_ref()
+            .is_some_and(|(path, _)| Self::identity_message(path) == message)
+    }
+
+    pub(super) fn identity_recovery_message(&self, fallback: &str) -> String {
+        match &self.tabs.identity.recovery {
+            Some((path, true)) if Self::identity_message(path) == fallback => {
+                format!("{} no longer exists.", path.display())
+            }
+            _ => fallback.to_owned(),
+        }
+    }
+
+    pub(super) fn identity_recovery_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        use super::theme::*;
+        let missing = self
+            .tabs
+            .identity
+            .recovery
+            .as_ref()
+            .is_some_and(|(_, missing)| *missing);
+        let busy = self.tabs.identity.reopening;
+        button(
+            "identity-recovery",
+            if missing {
+                "Open project…"
+            } else if busy {
+                "Reopening…"
+            } else {
+                "Reopen project"
+            },
+        )
+        .disabled(busy)
+        .on_activate(cx, move |this, window, cx| {
+            if missing {
+                this.open_repository(&super::OpenRepository, window, cx);
+            } else {
+                this.reopen_project(window, cx);
+            }
+        })
+    }
+
+    pub(super) fn reopen_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((path, _)) = self.tabs.identity.recovery.clone() else {
+            return;
+        };
+        if self.tabs.identity.reopening {
+            return;
+        }
+        self.tabs.identity.reopening = true;
+        self.tabs.identity.opening += 1;
+        let generation = self.tabs.identity.opening;
+        let host = self.tabs.host.clone();
+        let epoch = self.host.connection.epoch;
+        let local = self.host_is_local();
+        let client = self.host_client();
+        let root = path.clone();
+        let owner = self
+            .state
+            .checkout_key()
+            .and_then(|key| key.host.clone())
+            .or_else(|| {
+                self.host
+                    .thread
+                    .selected
+                    .as_deref()
+                    .and_then(|id| self.host.expected_checkout(id))
+                    .and_then(|key| key.host.clone())
+            });
+        let task = cx.background_executor().spawn(async move {
+            if local && directory(&root).is_none() {
+                return Ok(None);
+            }
+            let resolved = match host::workspace::open_project(&client, &root) {
+                Err(_) if local && directory(&root).is_none() => return Ok(None),
+                result => result?,
+            };
+            let key = if local {
+                match plait_core::ownership::CheckoutKey::resolve(owner, &resolved) {
+                    Ok(key) => Some(key),
+                    Err(_) if directory(&resolved).is_none() => return Ok(None),
+                    Err(error) => return Err(host::Error::Protocol(error)),
+                }
+            } else {
+                None
+            };
+            let identity = key.as_ref().map(|key| DirectoryIdentity {
+                device: key.device,
+                inode: key.inode,
+            });
+            Ok::<_, host::Error>(Some((resolved, identity, key)))
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = task.await;
+            let _ = this.update_in(cx, |this, _, cx| {
+                if this.tabs.identity.opening != generation
+                    || this.tabs.host != host
+                    || this.host.connection.epoch != epoch
+                {
+                    this.tabs.identity.reopening = false;
+                    cx.notify();
+                    return;
+                }
+                this.tabs.identity.reopening = false;
+                if this.tabs.identity.recovery.as_ref().map(|(root, _)| root) != Some(&path)
+                    || this.host.creation.checkout != path
+                {
+                    cx.notify();
+                    return;
+                }
+                match result {
+                    Ok(Some((root, directory, owner_key))) if root == path => {
+                        let key = CheckoutKey {
+                            host,
+                            root: root.clone(),
+                            directory,
+                        };
+                        if let Err(error) = this.tabs.model.reopen_checkout(&key) {
+                            this.notice = Some(error.to_string());
+                            cx.notify();
+                            return;
+                        }
+                        if let Some(owner_key) = owner_key {
+                            this.state.reopen_checkout(owner_key.clone());
+                            this.host.reopen_checkout(&owner_key);
+                        }
+                        this.tabs.lifecycle.reopen_checkout(&key);
+                        if let Some(directory) = directory {
+                            this.tabs.identity.checkouts.insert(root, directory);
+                        }
+                        let message = Self::identity_message(&path);
+                        this.tabs.identity.recovery = None;
+                        if this.host.connection.error.as_ref() == Some(&message) {
+                            this.host.connection.error = None;
+                        }
+                        if this.draft.error.as_ref() == Some(&message) {
+                            this.draft.error = None;
+                        }
+                        for draft in this.tabs.lifecycle.drafts.values_mut() {
+                            if draft.error.as_ref() == Some(&message) {
+                                draft.error = None;
+                            }
+                        }
+                        if this
+                            .workspace
+                            .thread_controls
+                            .note
+                            .as_ref()
+                            .is_some_and(|(_, note, _)| note == &message)
+                        {
+                            this.workspace.thread_controls.note = None;
+                        }
+                        this.tabs.persistence.edited = true;
+                        this.capture_session(cx);
+                    }
+                    Ok(None) => this.tabs.identity.recovery = Some((path, true)),
+                    Ok(Some(_)) => {
+                        this.notice = Some(
+                            "The project resolved to a different path. Open project… to choose it."
+                                .into(),
+                        )
+                    }
+                    Err(error) => this.notice = Some(format!("Could not reopen project: {error}")),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
     pub(super) fn tab_identity_current(&self) -> bool {
         !self.tabs.identity.verified
             || self.tabs.identity.verified_epoch == Some(self.host.connection.epoch)

@@ -22,6 +22,22 @@ pub(super) struct Created {
     pub(super) checkout: Option<std::path::PathBuf>,
 }
 
+/// A local identity refusal has the same finality as a host rejection.
+pub(super) fn checkout_identity_changed() -> host::Error {
+    host::Error::Rejected(host::HostError {
+        retry_after_seconds: None,
+        code: "checkout_identity_changed".into(),
+        message: "This folder changed since it was opened.".into(),
+    })
+}
+
+pub(super) fn is_checkout_identity_changed(error: &host::Error) -> bool {
+    matches!(error, host::Error::Rejected(reason)
+        if reason.code == "checkout_identity_changed"
+            || (reason.code == "invalid_request"
+                && reason.message == "This folder changed since it was opened."))
+}
+
 pub(super) struct WatchLease {
     pub(super) cancel: Option<host::CancelWatch>,
     pub(super) executor: BackgroundExecutor,
@@ -76,6 +92,7 @@ impl Plait {
         {
             *identity = self.host.connection.checkout_identity(expected.as_ref());
         }
+        let captured_expected = expected.clone();
         let persist = matches!(
             request,
             Request::Submit { .. } | Request::SubmitCheckout { .. }
@@ -128,6 +145,7 @@ impl Plait {
                 None
             };
             let image_pins = image_pins.map_err(host::Error::Protocol);
+            let mut refreshed = None;
             let result = image_pins.and_then(|image_pins| {
                 let result = (|| {
                     if persist {
@@ -145,7 +163,8 @@ impl Plait {
                             *checkout = std::fs::canonicalize(&*checkout)?;
                         }
                         if let Some(expected) = &expected {
-                            expected.verify().map_err(host::Error::Protocol)?;
+                            refreshed =
+                                Some(expected.verify().map_err(|_| checkout_identity_changed())?);
                         }
                     }
                     if let Some((thread, images)) = uploads {
@@ -160,10 +179,10 @@ impl Plait {
                 }
                 result
             });
-            (result, capability)
+            (result, capability, refreshed)
         });
         cx.spawn_in(window, async move |this, cx| {
-            let (result, capability) = task.await;
+            let (result, capability, refreshed) = task.await;
             let _ = this.update_in(cx, |this, window, cx| {
                 if this.host.identity != identity
                     || (!acknowledgement && this.host.connection.epoch != epoch)
@@ -172,6 +191,11 @@ impl Plait {
                 }
                 if let Some(capability) = capability {
                     this.host.connection.has_checkout_identity = capability;
+                }
+                if this.host.connection.epoch == epoch
+                    && let (Some(old), Some(new)) = (&captured_expected, &refreshed)
+                {
+                    this.refresh_checkout_identity(old, new, cx);
                 }
                 complete(this, result, window, cx);
                 this.sync_composer(cx);
@@ -762,10 +786,15 @@ impl Plait {
             Err(error) => {
                 if matches!(error, host::Error::Rejected(_)) {
                     self.host.creation.pending_create = None;
+                    let message = if is_checkout_identity_changed(&error) {
+                        let path = checkout.clone().unwrap_or_else(|| self.host.creation.checkout.clone());
+                        self.tabs.identity.recovery = Some((path.clone(), false));
+                        Self::identity_message(&path)
+                    } else { error.to_string() };
                     if drafted {
-                        self.draft_rejected(error.to_string());
+                        self.draft_rejected(message);
                     } else {
-                        self.host.connection.error = Some(error.to_string());
+                        self.host.connection.error = Some(message);
                     }
                 } else {
                     self.host.connection.error = Some(format!(
@@ -896,7 +925,14 @@ impl Plait {
                         if matches!(error, host::Error::Rejected(_)) {
                             if matches!(&error, host::Error::Rejected(reason) if reason.code == "busy") { this.admission.refused_busy = Some(id.clone()); }
                             this.host.submissions.finish(&id, &pending.request_id);
-                            this.set_thread_notice(id.clone(), error.to_string(), true);
+                            let message = if is_checkout_identity_changed(&error) {
+                                let path = this.host.connection.threads.iter().find(|thread| thread.id == id)
+                                    .map(|thread| thread.checkout.clone())
+                                    .unwrap_or_else(|| this.host.creation.checkout.clone());
+                                this.tabs.identity.recovery = Some((path.clone(), false));
+                                Self::identity_message(&path)
+                            } else { error.to_string() };
+                            this.set_thread_notice(id.clone(), message, true);
                             this.refresh_cleanup(cx);
                         } else {
                             this.host
@@ -1136,5 +1172,34 @@ impl Plait {
             );
         });
         self.sync_prompt_history(cx);
+    }
+}
+
+#[cfg(test)]
+mod identity_error_tests {
+    use super::{checkout_identity_changed, is_checkout_identity_changed};
+    use plait_core::host;
+
+    #[test]
+    fn classifies_only_identity_refusals() {
+        assert!(is_checkout_identity_changed(&checkout_identity_changed()));
+        let rejected = |code: &str, message: &str| {
+            host::Error::Rejected(host::HostError {
+                retry_after_seconds: None,
+                code: code.into(),
+                message: message.into(),
+            })
+        };
+        assert!(is_checkout_identity_changed(&rejected(
+            "invalid_request",
+            "This folder changed since it was opened."
+        )));
+        assert!(!is_checkout_identity_changed(&rejected(
+            "invalid_request",
+            "Another error."
+        )));
+        assert!(!is_checkout_identity_changed(&host::Error::Protocol(
+            "This folder changed since it was opened.".into()
+        )));
     }
 }

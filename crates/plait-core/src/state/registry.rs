@@ -146,6 +146,39 @@ impl AppState {
         self.checkouts.keys.get(&self.checkouts.active)
     }
 
+    /// Refresh only identities captured by the completed background check.
+    pub fn refresh_checkout(&mut self, old: &CheckoutKey, refreshed: &CheckoutKey) -> bool {
+        if old.host != refreshed.host || old.root != refreshed.root || old.inode != refreshed.inode
+        {
+            return false;
+        }
+        let active = self.checkout_key() == Some(old);
+        for key in self.checkouts.keys.values_mut() {
+            if key == old {
+                *key = refreshed.clone();
+            }
+        }
+        if active && old != refreshed {
+            self.repository.refresh();
+            return true;
+        }
+        false
+    }
+
+    /// Accept a checkout identity after an explicit reopen.
+    pub fn reopen_checkout(&mut self, key: CheckoutKey) {
+        for expected in self.checkouts.keys.values_mut() {
+            if expected.host == key.host && expected.root == key.root {
+                *expected = key.clone();
+            }
+        }
+        if self.repository.path() == key.root {
+            self.checkouts.keys.insert(self.checkouts.active, key);
+            self.repository.reset_view();
+            self.repository.refresh();
+        }
+    }
+
     pub fn open_checkout(&mut self, path: PathBuf) {
         if self.repository.path() == path {
             self.repository.reset_view();
@@ -242,7 +275,9 @@ impl AppState {
     /// Returns whether the reply belongs to the checkout currently in front.
     pub fn complete_repository_job(&mut self, job: RepositoryJob, reply: RepositoryReply) -> bool {
         let registry = &mut self.checkouts;
-        if let Some(key) = reply.identity {
+        if let Some(key) = reply.identity
+            && (job.expected.is_none() || registry.keys.get(&job.owner) == job.expected.as_ref())
+        {
             let existing = registry
                 .keys
                 .iter()
@@ -372,6 +407,32 @@ mod tests {
     }
 
     #[test]
+    fn refreshing_identity_reissues_loading_status() {
+        let mut state = AppState::new("/a".into());
+        let old = key("/a", 1);
+        state.reopen_checkout(old.clone());
+        let stale = state.next_repository_job().unwrap();
+        let mut refreshed = old.clone();
+        refreshed.device += 1;
+        assert!(state.refresh_checkout(&old, &refreshed));
+        state.complete_repository_job(
+            stale,
+            RepositoryReply {
+                identity: None,
+                reply: Reply::Status(Err("stale".into())),
+            },
+        );
+        assert!(matches!(state.repository.snapshot(), Load::Loading));
+        status(&mut state, refreshed.clone());
+        assert!(matches!(state.repository.snapshot(), Load::Ready(_)));
+        assert_eq!(state.checkout_key(), Some(&refreshed));
+        let mut replacement = refreshed.clone();
+        replacement.inode += 1;
+        assert!(!state.refresh_checkout(&refreshed, &replacement));
+        assert_eq!(state.checkout_key(), Some(&refreshed));
+    }
+
+    #[test]
     fn inactive_write_acknowledges_its_checkout_and_queues_no_reads() {
         let mut state = AppState::new("/a".into());
         status(&mut state, key("/a", 1));
@@ -479,5 +540,30 @@ mod tests {
             }
         ));
         assert!(!state.repository.write().busy());
+    }
+}
+
+#[cfg(test)]
+mod reopen_identity_tests {
+    use super::*;
+
+    #[test]
+    fn reopen_replaces_expected_identity() {
+        // macOS reaches its temp directory through a symlink; checkout roots are canonical.
+        let dir = std::env::temp_dir()
+            .canonicalize()
+            .unwrap()
+            .join(format!("plait-reopen-{}", crate::host_state::request_id()));
+        let root = dir.join("project");
+        std::fs::create_dir_all(&root).unwrap();
+        let mut state = AppState::new(root.clone());
+        let old = CheckoutKey::resolve(None, &root).unwrap();
+        state.reopen_checkout(old);
+        std::fs::rename(&root, dir.join("old")).unwrap();
+        std::fs::create_dir(&root).unwrap();
+        let resolved = CheckoutKey::resolve(None, &root).unwrap();
+        state.reopen_checkout(resolved.clone());
+        assert_eq!(state.checkout_key(), Some(&resolved));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

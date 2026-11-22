@@ -356,72 +356,92 @@ impl Plait {
         );
         let epoch = self.host.connection.epoch;
         let expected = self.state.checkout_key().cloned();
+        let captured_expected = expected.clone();
         let journal = self.session.journal.clone();
         let polling = cx.background_executor().clone();
         let client = self.host_client();
         let task = cx.background_executor().spawn(async move {
-            if let Some(journal) = journal {
-                journal.flush().map_err(host::Error::Protocol)?;
+            if let Some(journal) = journal
+                && let Err(error) = journal.flush()
+            {
+                return (None, Err(host::Error::Protocol(error)));
             }
-            if let Some(expected) = expected {
-                expected.verify().map_err(host::Error::Protocol)?;
-            }
-
-            let Request::CreateAdmittedThread {
-                checkout,
-                source_thread_id,
-                harness,
-                provider,
-                model_id,
-                placement,
-                ..
-            } = &request
-            else {
-                unreachable!()
+            let refreshed = expected
+                .as_ref()
+                .map(|key| {
+                    key.verify()
+                        .map_err(|_| super::host::checkout_identity_changed())
+                })
+                .transpose();
+            let refreshed = match refreshed {
+                Ok(key) => key,
+                Err(error) => return (None, Err(error)),
             };
-            if *placement == Placement::Wait && !host::checkout_queue::available(&client)? {
-                return Err(host::Error::Protocol(
-                    "Wait needs a newer host. The draft and its original request are kept.".into(),
-                ));
-            }
-            if admission::info(&client, checkout.clone())?.is_none() {
-                if source_thread_id.is_some() {
+            let result = async {
+                let Request::CreateAdmittedThread {
+                    checkout,
+                    source_thread_id,
+                    harness,
+                    provider,
+                    model_id,
+                    placement,
+                    ..
+                } = &request
+                else {
+                    unreachable!()
+                };
+                if *placement == Placement::Wait && !host::checkout_queue::available(&client)? {
                     return Err(host::Error::Protocol(
-                        "Linked worktree threads need a newer host.".into(),
+                        "Wait needs a newer host. The draft and its original request are kept."
+                            .into(),
                     ));
                 }
-                let reply: host::ThreadReply = client.request(&legacy)?;
-                return Ok((None, Some(reply)));
-            }
-            let receipt = await_admission(&client, &request, &polling).await?;
-            let reply = if receipt.state == Stage::Ready {
-                let thread = receipt
-                    .thread_id
-                    .clone()
-                    .ok_or_else(|| host::Error::Protocol("Admission omitted its thread.".into()))?;
-                let reply: host::ThreadReply = client.request(&host::Request::Watch {
-                    thread_id: thread.clone(),
-                    protocol_version: Some(host::PROTOCOL_VERSION),
-                })?;
-                if reply.thread.id != thread
-                    || reply.thread.checkout != receipt.checkout
-                    || super::harnesses::harness_of(&reply.thread) != *harness
-                    || reply.thread.model.provider != *provider
-                    || reply.thread.model.model_id != *model_id
-                {
-                    return Err(host::Error::Protocol(
-                        "Admission returned a different thread, checkout, model or harness.".into(),
-                    ));
+                if admission::info(&client, checkout.clone())?.is_none() {
+                    if source_thread_id.is_some() {
+                        return Err(host::Error::Protocol(
+                            "Linked worktree threads need a newer host.".into(),
+                        ));
+                    }
+                    let reply: host::ThreadReply = client.request(&legacy)?;
+                    return Ok((None, Some(reply)));
                 }
-                Some(reply)
-            } else {
-                None
-            };
-            Ok::<_, host::Error>((Some(receipt), reply))
+                let receipt = await_admission(&client, &request, &polling).await?;
+                let reply = if receipt.state == Stage::Ready {
+                    let thread = receipt.thread_id.clone().ok_or_else(|| {
+                        host::Error::Protocol("Admission omitted its thread.".into())
+                    })?;
+                    let reply: host::ThreadReply = client.request(&host::Request::Watch {
+                        thread_id: thread.clone(),
+                        protocol_version: Some(host::PROTOCOL_VERSION),
+                    })?;
+                    if reply.thread.id != thread
+                        || reply.thread.checkout != receipt.checkout
+                        || super::harnesses::harness_of(&reply.thread) != *harness
+                        || reply.thread.model.provider != *provider
+                        || reply.thread.model.model_id != *model_id
+                    {
+                        return Err(host::Error::Protocol(
+                            "Admission returned a different thread, checkout, model or harness."
+                                .into(),
+                        ));
+                    }
+                    Some(reply)
+                } else {
+                    None
+                };
+                Ok::<_, host::Error>((Some(receipt), reply))
+            }
+            .await;
+            (refreshed, result)
         });
         cx.spawn_in(window, async move |this, cx| {
-            let result = task.await;
+            let (refreshed, result) = task.await;
             let _ = this.update_in(cx, |this, window, cx| {
+                if this.host.connection.epoch == epoch
+                    && let (Some(old), Some(new)) = (&captured_expected, &refreshed)
+                {
+                    this.refresh_checkout_identity(old, new, cx);
+                }
                 if this.host.connection.epoch == epoch { this.finish_build_watch(&created.request_id, build_generation); }
                 if created.draft_id.is_some() {
                     this.finish_draft_creation(created, epoch, result, window, cx);
