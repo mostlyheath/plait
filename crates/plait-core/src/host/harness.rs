@@ -85,6 +85,13 @@ pub enum Request {
         harness: HarnessId,
         protocol_version: u32,
     },
+    /// Install the version Plait is tested with into the host's own folder; the
+    /// person's own copy still wins. Older hosts reject it as `invalid_request`.
+    /// The reply is the whole list, that harness checked again.
+    InstallHarness {
+        harness: HarnessId,
+        protocol_version: u32,
+    },
 }
 
 impl Request {
@@ -112,6 +119,13 @@ impl Request {
 
     pub fn set_up_harness(harness: HarnessId) -> Self {
         Self::SetUpHarness {
+            harness,
+            protocol_version: 4,
+        }
+    }
+
+    pub fn install_harness(harness: HarnessId) -> Self {
+        Self::InstallHarness {
             harness,
             protocol_version: 4,
         }
@@ -192,6 +206,12 @@ pub struct Harness {
     /// The mode new threads start in; `None` for Pi.
     #[serde(default)]
     pub default_mode: Option<String>,
+    /// The version the host can install itself, when it has a build for its platform.
+    #[serde(default)]
+    pub installable: Option<String>,
+    /// The copy that runs is the one the host installed, not the person's own.
+    #[serde(default)]
+    pub managed: bool,
 }
 
 impl Harness {
@@ -235,6 +255,10 @@ mod tests {
         assert_eq!(
             serde_json::to_value(Request::set_up_harness(HarnessId::Claude)).unwrap(),
             serde_json::json!({"op": "set_up_harness", "harness": "claude", "protocol_version": 4})
+        );
+        assert_eq!(
+            serde_json::to_value(Request::install_harness(HarnessId::Codex)).unwrap(),
+            serde_json::json!({"op": "install_harness", "harness": "codex", "protocol_version": 4})
         );
     }
 

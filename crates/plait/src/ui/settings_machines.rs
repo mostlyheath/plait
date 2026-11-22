@@ -40,6 +40,7 @@ pub(super) struct MachinesUi {
     pub(super) active: MachineId,
     /// Installing Plait on a machine that lacks it, while that is offered.
     pub(super) install: Option<super::machine_install::MachineInstall>,
+    pub(super) update: Option<super::machine_update::MachineUpdate>,
 }
 
 fn field(
@@ -136,6 +137,7 @@ impl Plait {
         let generation = self.machines.generation;
         self.machines.confirm_remove = None;
         self.machines.install = None;
+        self.machines.update = None;
         let transport = match machine.transport {
             Transport::Local => {
                 self.machines.connecting = None;
@@ -181,7 +183,9 @@ impl Plait {
                 this.machines.connecting = None;
                 match result {
                     Ok(link) => {
-                        this.machines.note = Some((format!("Using {name}."), false));
+                        if this.machines.note.is_none() {
+                            this.machines.note = Some((format!("Using {name}."), false));
+                        }
                         this.save_selected(id.clone(), cx);
                         this.use_machine_client(Client::over_link(link), id, false, window, cx);
                     }
@@ -206,6 +210,12 @@ impl Plait {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        if self.machines.update.as_ref().is_some_and(|state| {
+            state.id == self.machines.active
+                && matches!(state.stage, super::machine_update::Stage::Updating)
+        }) {
+            return true;
+        }
         if self.host_is_local() || std::mem::take(&mut self.machines.fresh_link) {
             return false;
         }
@@ -557,6 +567,7 @@ impl Plait {
                 )
             })
             .children(self.install_panel(cx))
+            .children(self.update_panel(cx))
             .child(if self.machines.form.is_some() {
                 self.machine_form(cx)
             } else {
