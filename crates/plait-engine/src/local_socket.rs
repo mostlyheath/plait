@@ -1,5 +1,33 @@
 //! Verification of local socket peer ownership.
 use std::{io, os::unix::net::UnixStream};
+use std::{
+    os::unix::fs::{FileTypeExt, MetadataExt},
+    path::Path,
+};
+
+pub fn connect(path: &Path) -> io::Result<UnixStream> {
+    let metadata = std::fs::symlink_metadata(path)?;
+    let parent = std::fs::symlink_metadata(
+        path.parent()
+            .ok_or_else(|| io::Error::other("invalid host socket path"))?,
+    )?;
+    let uid = unsafe { libc::geteuid() };
+    if !metadata.file_type().is_socket()
+        || metadata.uid() != uid
+        || metadata.mode() & 0o077 != 0
+        || !parent.is_dir()
+        || parent.uid() != uid
+        || parent.mode() & 0o077 != 0
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "Host socket and parent must be owner-only and owned by this user.",
+        ));
+    }
+    let socket = UnixStream::connect(path)?;
+    require_same_user(&socket)?;
+    Ok(socket)
+}
 
 pub fn require_same_user(socket: &UnixStream) -> io::Result<()> {
     require_user(socket, unsafe { libc::geteuid() })

@@ -9,3 +9,5 @@ pub mod local_socket;
 pub mod worktree_size;
 
 pub use plait_protocol::{display_text, model, patch, wire};
+
+pub mod update;

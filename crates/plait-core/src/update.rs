@@ -7,18 +7,11 @@
 
 pub mod install;
 #[cfg(target_os = "linux")]
-pub mod linux;
+pub use plait_engine::update::linux;
 pub mod setup;
 
-use sha2::{Digest, Sha256};
-use std::{
-    fs,
-    io::{self, Read},
-    path::{Path, PathBuf},
-    process::{Command, Stdio},
-};
-
 pub use plait_protocol::update::*;
+use std::process::{Command, Stdio};
 
 const FEED_LIMIT: u64 = 8 << 20;
 const MANIFEST_LIMIT: u64 = 64 << 10;
@@ -100,14 +93,7 @@ pub fn check(current: Option<&Version>) -> Result<Option<Offer>, Error> {
 
 /// A host archive for another machine, from a release whose signed manifest
 /// this Mac has verified. The machine downloads it and checks `sha256`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HostRelease {
-    pub tag: String,
-    pub build_id: String,
-    pub url: String,
-    pub sha256: String,
-    pub size: u64,
-}
+pub use plait_engine::update::HostRelease;
 
 /// The newest release's host for `platform` (such as `linux-x86_64`), checked
 /// against its signed manifest. Linux hosts have one manifest per platform.
@@ -183,56 +169,7 @@ fn fetch(url: &str, limit: u64) -> Result<Vec<u8>, Error> {
     Ok(output.stdout)
 }
 
-/// Downloads one artifact into `directory` and checks its signed size and digest.
-pub fn download(offer: &Offer, artifact: &Artifact, directory: &Path) -> Result<PathBuf, Error> {
-    fs::create_dir_all(directory)?;
-    let path = directory.join(&artifact.name);
-    if path.is_file() && sha256_file(&path)? == artifact.sha256 {
-        return Ok(path);
-    }
-    let partial = directory.join(format!(".{}.partial", artifact.name));
-    let output = curl()
-        .args([
-            "--max-time",
-            "1800",
-            "--max-filesize",
-            &artifact.size.to_string(),
-        ])
-        .arg("--output")
-        .arg(&partial)
-        .arg(asset_url(&offer.manifest.tag, &artifact.name))
-        .stdout(Stdio::null())
-        .output()?;
-    if !output.status.success() {
-        let _ = fs::remove_file(&partial);
-        return Err(Error::Network(
-            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-        ));
-    }
-    if fs::metadata(&partial)?.len() != artifact.size || sha256_file(&partial)? != artifact.sha256 {
-        let _ = fs::remove_file(&partial);
-        return Err(invalid(format!(
-            "{} does not match its signed digest",
-            artifact.name
-        )));
-    }
-    fs::rename(&partial, &path)?;
-    Ok(path)
-}
-
-pub fn sha256_file(path: &Path) -> io::Result<String> {
-    let mut file = fs::File::open(path)?;
-    let mut hasher = Sha256::new();
-    let mut buffer = vec![0; 1 << 16];
-    loop {
-        let read = file.read(&mut buffer)?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-    }
-    Ok(format!("{:x}", hasher.finalize()))
-}
+pub use plait_engine::update::{download, sha256_file};
 
 #[cfg(test)]
 mod tests {
