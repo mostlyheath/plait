@@ -2143,6 +2143,7 @@ another machine.
   changes, numbered from 1. A thread change alone is not a workspace change. A
   subscriber that cannot keep up is disconnected and subscribes again for a
   fresh view.
+- Workspace writes accept an optional `op_id`: retries with the same ID and input return the first outcome for up to 24 hours.
 - Writes, each committed with a new revision, then announced to subscribers:
   - `workspace_open_project {path}` accepts only an accessible Git working
     tree on this host, and returns its top folder. Opening a hidden project
@@ -2206,7 +2207,7 @@ see its Git."
   stamp.
 - Results over 64 MiB, a helper that fails, and a read over 60 seconds are
   refused without helper diagnostics.
-- `{"op":"git_write","checkout":B64,"identity":{"dev":"D","ino":"I"},"write":OP}`
+- `{"op":"git_write","checkout":B64,"identity":{"dev":"D","ino":"I"},"write":OP}` accepts an optional `op_id` to replay the first outcome for up to 24 hours.
   runs one of the desktop's agreed writes (`WriteOp`: stage, unstage, stage
   or unstage all, a hunk, commit, push, publish, fetch, pull, discard,
   restore, create or switch branch) through `plait-host git-write`. The

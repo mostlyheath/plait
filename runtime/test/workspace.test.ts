@@ -96,3 +96,12 @@ test('bad values are refused without changing anything', async t => {
   const view: any = await workspace.handle({ op: 'workspace_view' });
   assert.equal(view.revision, 0);
 });
+
+test('workspace write retries replay the first revision without notifying again', async t => {
+  const { workspace, notified } = await setup(t);
+  const request = { op: 'host_set_name', name: 'desk', op_id: 'same' };
+  const first = await workspace.handle(request);
+  assert.deepEqual(await workspace.handle(request), first);
+  assert.equal(notified(), 1);
+  await assert.rejects(workspace.handle({ ...request, name: 'other' }), code('conflict'));
+});

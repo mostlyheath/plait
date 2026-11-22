@@ -161,6 +161,8 @@ pub enum Request {
         offset: usize,
     },
     GitWrite {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        op_id: Option<String>,
         #[serde(with = "crate::wire::path")]
         checkout: PathBuf,
         identity: WireIdentity,
@@ -600,9 +602,26 @@ pub fn write(
     expected: DirIdentity,
     op: &WriteOp,
 ) -> Result<WriteOutcome, Error> {
+    write_with_op(
+        client,
+        checkout,
+        expected,
+        op,
+        Some(&crate::host_state::request_id()),
+    )
+}
+
+pub fn write_with_op(
+    client: &Client,
+    checkout: &Path,
+    expected: DirIdentity,
+    op: &WriteOp,
+    op_id: Option<&str>,
+) -> Result<WriteOutcome, Error> {
     let first: Page = client
         .send_within(
             &Request::GitWrite {
+                op_id: op_id.map(str::to_owned),
                 checkout: checkout.to_owned(),
                 identity: expected.into(),
                 write: op.clone(),

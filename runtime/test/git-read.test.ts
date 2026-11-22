@@ -100,3 +100,18 @@ test('only a size read is given the host store, and a client cannot name one', a
   assert.equal('store' in forwarded[1], false);
   code(() => validateGitRead({ ...size, store: checkout }), 'invalid_request');
 });
+
+test('git write retries run the helper once', async t => {
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { Store } = await import('../src/store.ts');
+  const dir = mkdtempSync(join(tmpdir(), 'plait-git-ops-'));
+  const store = new Store(dir);
+  t.after(() => { store.db.close(); rmSync(dir, { recursive: true, force: true }); });
+  let calls = 0;
+  const reads = new GitReads(async input => { calls++; assert.equal('op_id' in (input as object), false); return Buffer.from('{}'); }, Date.now, null, store);
+  const request = { op: 'git_write', op_id: 'retry', checkout, identity: { dev: '1', ino: '2' }, write: {} };
+  assert.deepEqual(await reads.handle(request), await reads.handle(request));
+  assert.equal(calls, 1);
+});

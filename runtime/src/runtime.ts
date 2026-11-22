@@ -137,7 +137,7 @@ export class Runtime {
     this.store.waiters.changed = () => this.changed('#');
     this.records = new Records(this.store, directory, id => this.changed(id));
     this.turnReview = new TurnReview(this.store, this.records, directory);
-    this.gitReads = new GitReads(undefined, undefined, directory);
+    this.gitReads = new GitReads(undefined, undefined, directory, this.store);
     // Each device writes only its own state and nothing subscribes to it, so it announces nothing.
     this.devices = new Devices(this.store, () => {});
     this.workspace = new Workspace(this.store, () => this.changed(WORKSPACE_TOPIC));

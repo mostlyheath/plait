@@ -1,0 +1,30 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { once } from '../src/operations.ts';
+import { HostError, fail } from '../src/protocol.ts';
+import { Store } from '../src/store.ts';
+
+test('operation IDs replay outcomes, refusals and expire on insertion', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'plait-ops-'));
+  const store = new Store(dir);
+  t.after(() => { store.db.close(); rmSync(dir, { recursive: true, force: true }); });
+  let calls = 0; let time = 0;
+  const run = async () => { calls++; return { calls }; };
+  const invoke = (id: string | undefined, input = 1) => once(store, id, 'write', input, run, () => time);
+  assert.deepEqual(await Promise.all([invoke('a'), invoke('a')]), [{ calls: 1 }, { calls: 1 }]);
+  await assert.rejects(invoke('a', 2), (e: unknown) => e instanceof HostError && e.code === 'conflict');
+  let refusals = 0;
+  const refuse = () => { refusals++; return fail('denied', 'No.'); };
+  for (let i = 0; i < 2; i++) await assert.rejects(once(store, 'b', 'write', 1, refuse), (e: unknown) => e instanceof HostError && e.code === 'denied' && e.message === 'No.');
+  assert.equal(refusals, 1);
+  await invoke(undefined); await invoke(undefined); assert.equal(calls, 3);
+  time = 24 * 60 * 60 * 1000 + 1;
+  await invoke('c'); await invoke('a'); assert.equal(calls, 5);
+  await assert.rejects(invoke('bad id'), (e: unknown) => e instanceof HostError && e.code === 'invalid_request');
+  let errors = 0;
+  for (let i = 0; i < 2; i++) await assert.rejects(once(store, 'error', 'write', 1, () => { errors++; throw new Error('internal'); }));
+  assert.equal(errors, 2);
+});
