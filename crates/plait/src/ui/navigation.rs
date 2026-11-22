@@ -1042,8 +1042,11 @@ impl Plait {
             .child(
                 icon_button("new-thread-model", "down", "New thread with another model…")
                     .aria_keyshortcuts(self.shortcut_aria("thread.new_with_model"))
+                    .relative()
+                    .child(self.anchor_probe("new-thread-model"))
                     .on_activate(cx, |this, window, cx| {
                         this.open_draft(window, cx);
+                        this.anchor_next("new-thread-model");
                         this.open_model_picker(ModelPurpose::NewThread, window, cx)
                     }),
             )

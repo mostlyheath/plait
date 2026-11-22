@@ -1,6 +1,7 @@
 pub(crate) mod a11y;
 mod actions;
 mod admission;
+mod anchors;
 mod appearance;
 mod branches;
 mod build_output;
@@ -189,6 +190,11 @@ pub struct Plait {
     approval_keys: live_conversation::ApprovalKeys,
     /// The command palette or model picker, above the workspace.
     overlay: Option<commands::Overlay>,
+    /// Where pickable controls were last drawn, so a picker opens beside its control.
+    anchors:
+        std::rc::Rc<std::cell::RefCell<std::collections::HashMap<&'static str, Bounds<Pixels>>>>,
+    /// The control the next picker belongs to.
+    pending_anchor: Option<Bounds<Pixels>>,
     panels: panels::Panels,
     focus: FocusHandle,
     /// The conversation field that gets focus back after changing views.
@@ -314,6 +320,8 @@ impl Plait {
             worktree_pending: None,
             approval_keys: Default::default(),
             overlay: None,
+            anchors: Default::default(),
+            pending_anchor: None,
             panels: Default::default(),
             focus,
             conversation_focus: None,

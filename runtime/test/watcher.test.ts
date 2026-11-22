@@ -22,8 +22,10 @@ test('workspace watches changes, filters Git objects, and stops hidden projects 
   t.after(async () => { watcher.close(); store.close(); await rm(root, { recursive: true, force: true }); });
   await workspace.handle({ op: 'workspace_open_project', path: repo });
   assert.equal(workspace.view().status[repo], 0);
+  // macOS starts its file event stream shortly after the watch; earlier writes can be missed.
+  await delay(600);
   await writeFile(join(repo, 'file'), 'change');
-  const deadline = Date.now() + 2000;
+  const deadline = Date.now() + 5000;
   while (!notifications && Date.now() < deadline) await delay(20);
   assert.ok(notifications > 0);
   assert.ok(workspace.view().status[repo] > 0);
@@ -62,10 +64,11 @@ test('a busy folder is announced at most once a second, and its last change alwa
   const watcher = new CheckoutWatcher(() => { notifications++; });
   t.after(async () => { watcher.close(); await rm(root, { recursive: true, force: true }); });
   watcher.sync([root]);
+  await delay(600);
   const started = Date.now();
   for (let i = 0; i < 8; i++) { await writeFile(join(root, `out-${i}`), 'x'); await delay(300); }
   const elapsed = Date.now() - started;
-  await delay(1300);
+  await delay(2500);
   assert.ok(notifications >= 2, `expected the last change to be announced, saw ${notifications}`);
   assert.ok(notifications <= Math.ceil(elapsed / 1000) + 1, `too many announcements: ${notifications} in ${elapsed} ms`);
   assert.equal(watcher.status()[root], notifications);

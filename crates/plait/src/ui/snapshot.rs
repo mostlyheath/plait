@@ -54,6 +54,7 @@ mod many_drafts;
 mod mcp;
 mod messages;
 mod mixed_tabs;
+mod pickers;
 mod settings_modal;
 mod showcase;
 mod storage;
