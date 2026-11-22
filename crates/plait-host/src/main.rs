@@ -142,7 +142,10 @@ fn run() -> io::Result<()> {
             linux_service::uninstall()
         };
         #[cfg(not(target_os = "linux"))]
-        return Err(io::Error::other("service commands are Linux-only"));
+        return {
+            let _ = tailnet;
+            Err(io::Error::other("service commands are Linux-only"))
+        };
     }
     if operation == "version" {
         serde_json::to_writer(

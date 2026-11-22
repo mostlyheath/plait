@@ -79,6 +79,9 @@ this frame:
   nodes are refused unless listed by name.
 - The same stream format and limits apply.
 - The client dials `host:port` over the tailnet and needs no SSH.
+- The listener asks `tailscaled` at `/var/run/tailscale/tailscaled.sock`, where
+  Linux installs it. Elsewhere it cannot reach `tailscaled` and refuses to
+  start, so the tailnet listener is a Linux host feature for now.
 - On the host, run `plait-host tailnet allow --me` to allow your login, or
   `plait-host tailnet allow <login>` to allow another login. Tagged nodes also
   require `plait-host tailnet allow-node <name>`. Start the listener with

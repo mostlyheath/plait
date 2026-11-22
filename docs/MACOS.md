@@ -804,7 +804,7 @@ Over SSH:
 
 Over Tailscale, no SSH is needed:
 
-1. On the other machine, with its host running, allow your Tailscale login
+1. On the other machine (a Linux host for now), with its host running, allow your Tailscale login
    with `plait-host tailnet allow --me` and start the listener with
    `plait-host serve --tailnet` (on Linux, `plait-host install-service
    --tailnet` keeps it running). A tagged device must also be allowed by
