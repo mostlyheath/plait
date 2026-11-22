@@ -12,6 +12,7 @@ mod record;
 mod review;
 mod service;
 mod startup;
+mod tailnet;
 mod transport;
 mod update;
 mod worktree;
@@ -84,18 +85,67 @@ fn run() -> io::Result<()> {
         "prune-contained" => return record::prune_contained(),
         _ => {}
     }
-    if operation == "install-service" || operation == "uninstall-service" {
-        if args.next().is_some() {
-            return Err(io::Error::other("service commands take no options"));
+    if operation == "serve" || operation == "tailnet" {
+        let mut store = env::var_os("PLAIT_HOST_STORE")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                PathBuf::from(env::var_os("HOME").unwrap_or_default()).join(".local/share/plait")
+            });
+        let values: Vec<_> = args.collect();
+        if operation == "tailnet" {
+            if values.len() != 2 {
+                return Err(io::Error::other(
+                    "usage: plait-host tailnet allow <login>|--me or allow-node <name>",
+                ));
+            }
+            return tailnet::add(&store, &values[0], &values[1]);
         }
+        let mut port = 7419;
+        let mut enabled = false;
+        let mut iter = values.iter();
+        while let Some(option) = iter.next() {
+            match option.as_str() {
+                "--tailnet" => enabled = true,
+                "--port" => {
+                    port = iter
+                        .next()
+                        .and_then(|v| v.parse::<u16>().ok())
+                        .filter(|p| *p != 0)
+                        .ok_or_else(|| io::Error::other("invalid port"))?
+                }
+                "--store" => {
+                    store = iter
+                        .next()
+                        .ok_or_else(|| io::Error::other("missing store"))?
+                        .into()
+                }
+                _ => return Err(io::Error::other("unknown option")),
+            }
+        }
+        if !enabled || !store.is_absolute() {
+            return Err(io::Error::other(
+                "serve requires --tailnet and an absolute store path",
+            ));
+        }
+        return tailnet::serve(&store, port);
+    }
+    if operation == "install-service" || operation == "uninstall-service" {
+        let tailnet = match (args.next().as_deref(), args.next()) {
+            (None, None) => false,
+            (Some("--tailnet"), None) if operation == "install-service" => true,
+            _ => return Err(io::Error::other("unknown service option")),
+        };
         #[cfg(target_os = "linux")]
         return if operation == "install-service" {
-            linux_service::install()
+            linux_service::install(tailnet)
         } else {
             linux_service::uninstall()
         };
         #[cfg(not(target_os = "linux"))]
-        return Err(io::Error::other("service commands are Linux-only"));
+        return {
+            let _ = tailnet;
+            Err(io::Error::other("service commands are Linux-only"))
+        };
     }
     if operation == "version" {
         serde_json::to_writer(
