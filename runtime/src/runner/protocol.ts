@@ -91,3 +91,26 @@ export class EventSequence {
     this.last = event.seq;
   }
 }
+
+/** Retain events until the server has durably applied them. */
+export class EventBuffer {
+  private events: Event[] = [];
+  private last = 0;
+  private acknowledged = 0;
+  publish(event: Event): void {
+    parseRunnerMessage(event);
+    if (event.seq <= this.last) throw new Error('non-monotonic sequence');
+    this.last = event.seq;
+    this.events.push(event);
+  }
+  ack(seq: number): void {
+    if (!sequence(seq) || seq > this.last) throw new Error('invalid acknowledgement');
+    if (seq <= this.acknowledged) return;
+    this.acknowledged = seq;
+    this.events = this.events.filter(event => event.seq > seq);
+  }
+  after(seq: number): Event[] {
+    if (!sequence(seq) || seq < this.acknowledged || seq > this.last) throw new Error('invalid replay sequence');
+    return this.events.filter(event => event.seq > seq);
+  }
+}
