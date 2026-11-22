@@ -291,7 +291,7 @@ test('a model Claude Code no longer offers, or a signed-out Claude Code, is refu
   const h = await host(t, 'signed-out');
   const entry = (await h.call({ op: 'harnesses' })).result.harnesses.find((candidate: { id: string }) => candidate.id === 'claude');
   assert.equal(entry.state, 'signed_out');
-  assert.match(entry.note, /Sign in with `claude`/);
+  assert.match(entry.note, /Sign in from Settings → Agents, or run `claude auth login`/);
   const refused = await h.call({ op: 'create_thread', checkout: h.root, provider: 'claude', model_id: 'default', request_id: 'c1', harness: 'claude' });
   assert.equal(refused.error?.code, 'model_unavailable');
   const ok = await host(t);

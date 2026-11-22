@@ -3452,12 +3452,37 @@ fn harnesses_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
     harness.update(|plait, _, cx| {
         plait.inject_harnesses(Some(sample_harnesses(
             "signed_out",
-            Some("Run codex login in a terminal, then Refresh in Settings → Agents."),
+            Some("Sign in from Settings → Agents, or run `codex login` on this machine."),
         )));
         plait.sync_composer(cx);
         assert!(!plait.can_submit(), "a signed-out Codex cannot send");
     });
     harness.capture(&format!("composer-codex-signed-out-{suffix}"));
+    // A machine without Codex: the host offers the version Plait is tested with.
+    harness.update(|plait, _, cx| {
+        let mut list = sample_harnesses(
+            "not_installed",
+            Some("Codex was not found. Install Codex 0.169.0 or newer."),
+        );
+        list.harnesses[1].installable = Some("0.169.0".into());
+        plait.inject_harnesses(Some(list));
+        plait.settings_open = true;
+        plait.settings_tab = SettingsTab::Agents;
+        plait.sync_composer(cx);
+    });
+    harness.capture(&format!("harness-install-{suffix}"));
+    harness.update(|plait, _, cx| {
+        let mut list = sample_harnesses(
+            "signed_out",
+            Some("Sign in from Settings → Agents, or run `codex login` on this machine."),
+        );
+        list.harnesses[1].path =
+            Some("/home/sample/.local/share/plait/tools/codex/0.169.0/bin/codex".into());
+        list.harnesses[1].managed = true;
+        plait.inject_harnesses(Some(list));
+        plait.sync_composer(cx);
+    });
+    harness.capture(&format!("harness-sign-in-{suffix}"));
     harness.update(|plait, _, cx| {
         plait.inject_harnesses(Some(sample_harnesses("ready", Some(NEWER))));
         // Codex is the default for new threads. In memory only.

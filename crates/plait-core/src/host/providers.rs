@@ -69,6 +69,12 @@ pub enum Request {
         #[serde(skip_serializing_if = "Option::is_none")]
         method: Option<String>,
     },
+    /// Run Codex's or Claude Code's own sign-in on the host. The reply and the
+    /// status, answer, and cancel operations are a provider sign-in's, with
+    /// provider `harness:<id>`.
+    StartHarnessSignIn {
+        harness: super::harness::HarnessId,
+    },
     SignInStatus {
         sign_in_id: String,
     },
@@ -572,6 +578,12 @@ mod tests {
                     method: None,
                 },
                 r#"{"op":"start_sign_in","provider":"anthropic"}"#,
+            ),
+            (
+                Request::StartHarnessSignIn {
+                    harness: crate::host::harness::HarnessId::Claude,
+                },
+                r#"{"op":"start_harness_sign_in","harness":"claude"}"#,
             ),
             (
                 Request::SignInStatus {
