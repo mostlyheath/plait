@@ -51,6 +51,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS threads(id TEXT PRIMARY KEY, snapshot TEXT NOT NULL, head INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS requests(scope TEXT NOT NULL, id TEXT NOT NULL, hash TEXT NOT NULL, result TEXT NOT NULL, input TEXT, entry INTEGER, anchor INTEGER, PRIMARY KEY(scope,id));
       CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS thread_vcs(thread TEXT PRIMARY KEY, vcs TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS roots(id TEXT PRIMARY KEY, identity TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS postimages(thread_id TEXT NOT NULL, path TEXT NOT NULL, image TEXT NOT NULL, PRIMARY KEY(thread_id,path));
       CREATE TABLE IF NOT EXISTS records(id TEXT PRIMARY KEY, thread TEXT NOT NULL, run_request TEXT NOT NULL, kind TEXT NOT NULL, checkout TEXT NOT NULL,
@@ -296,7 +297,7 @@ export class Store {
     if (row.hash !== digest(input)) fail('conflict', 'Request ID was already used for different input.');
     return JSON.parse(String(row.result));
   }
-  admit(scope: string, id: string, input: unknown, result: unknown, snapshot: Snapshot, root?: FileIdentity, images: string[] = []) {
+  admit(scope: string, id: string, input: unknown, result: unknown, snapshot: Snapshot, root?: FileIdentity, images: string[] = [], vcs?: 'git' | 'folder') {
     // Acceptance and dedup commit before the harness can execute any effect.
     return this.transaction(() => {
       const head = this.head(snapshot.id);
@@ -308,6 +309,7 @@ export class Store {
       }
       const changed = this.save(snapshot);
       if (root) this.db.prepare('INSERT INTO roots VALUES (?,?)').run(snapshot.id, JSON.stringify(root));
+      if (vcs) this.db.prepare('INSERT INTO thread_vcs VALUES (?,?)').run(snapshot.id, vcs);
       this.db.prepare('INSERT INTO requests (scope,id,hash,result,input,anchor) VALUES (?,?,?,?,?,?)').run(scope, id, digest(images.length ? { text: input, images } : input), JSON.stringify(result), JSON.stringify(input), head);
       this.images.attach(snapshot.id, id, images);
       return changed;
@@ -316,3 +318,7 @@ export class Store {
   close() { this.db.close(); }
 }
 export function digest(input: unknown) { return createHash('sha256').update(JSON.stringify(input)).digest('hex'); }
+
+export function threadKind(store: Store, id: string): 'git' | 'folder' {
+  return store.db.prepare('SELECT vcs FROM thread_vcs WHERE thread=?').get(id)?.vcs === 'folder' ? 'folder' : 'git';
+}

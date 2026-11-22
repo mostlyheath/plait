@@ -1,3 +1,4 @@
+import { threadKind } from './store.ts';
 import { Devices } from './devices.ts';
 import { CheckoutWatcher } from './watcher.ts';
 import { queueOperation, queueRequest, queueSettings, CHECKOUT_QUEUE_LIMIT, CHECKOUT_QUEUE_BYTES } from './checkout-queue.ts';
@@ -27,7 +28,7 @@ import { PROTOCOL_VERSIONS, fail, failure, queuedView, summaryView, THINKING_LEV
 import type { ApprovalMode, HarnessId, ModelChoice, Protocol, QueueMode, Request, Snapshot, InputRecord, ThinkingLevel } from './protocol.ts';
 import { Store } from './store.ts';
 import { Records } from './records.ts';
-import { checkout, dirtyPaths, fileAction, identities, acquireCheckout, rootIdentity, checkRoot, pathKey } from './safety.ts';
+import { checkout, projectKind, gitCheckout, dirtyPaths, fileAction, identities, acquireCheckout, rootIdentity, checkRoot, pathKey } from './safety.ts';
 import type { FileIdentity, LeaseHandle } from './safety.ts';
 import { registry } from './tools.ts';
 import { executionEntry, mcpPolicy, setMcpEnabled } from './mcp/policy.ts';
@@ -352,7 +353,7 @@ export class Runtime {
         return { threads: threads.map(summary => summaryView(summary, protocol)) };
       }
       case 'create_thread': {
-        const root = await checkout(String(request.checkout));
+        const { root, vcs } = await projectKind(String(request.checkout));
         if (expectedCheckout) await checkRoot(root, expectedCheckout);
         const choice = { provider: String(request.provider), model_id: String(request.model_id) };
         const requested = request.thinking as ThinkingLevel | undefined;
@@ -377,7 +378,7 @@ export class Runtime {
         // Admission captured the directory before model discovery could yield.
         if (expectedCheckout && (identity.dev !== expectedCheckout.dev || identity.ino !== expectedCheckout.ino)) fail('permission_denied', 'Checkout identity changed. Refresh before starting a thread.');
         if (!expectedCheckout) this.admitWork();
-        this.store.admit('create', String(request.request_id), input, result, snapshot, identity);
+        this.store.admit('create', String(request.request_id), input, result, snapshot, identity, [], vcs);
         this.changed('#');
         return result;
       }
@@ -461,6 +462,7 @@ export class Runtime {
       }
       case 'undo_turn': {
         const snapshot = this.snapshot(String(request.thread_id));
+        if (threadKind(this.store, snapshot.id) === 'folder') fail('unsupported', 'Undo needs a Git repository; this folder is not one.');
         return this.records.undo(snapshot, String(request.record_id), String(request.request_id), request.leave_changed === true, this.active.has(snapshot.checkout));
       }
       case 'history': {
@@ -720,7 +722,7 @@ export class Runtime {
       // The mode belongs to this admission only; the next submission chooses again.
       authorization = new RunAuthorization(mode === 'auto' ? automaticApproval : approvals);
       const session: Session = {
-        snapshot, baseline: [], protected: [], rootIdentity: this.store.rootIdentity(id), buildCache: { store: this.directory, thread: id }, owned: new Map(), inputs: [], requestId,
+        snapshot, vcs: threadKind(this.store, id), baseline: [], protected: [], rootIdentity: this.store.rootIdentity(id), buildCache: { store: this.directory, thread: id }, owned: new Map(), inputs: [], requestId,
         authorization, approvals, mcpApproval: approvals, lease, save, outputs: this.store.outputs, record: image => this.store.record(id, image), steered: new Map(),
       };
       admitted = session;
@@ -925,7 +927,9 @@ export class Runtime {
   async run(session: Session, requestId: string, text: string) {
     const snapshot = session.snapshot;
     let record: string | undefined;
+    const vcs = threadKind(this.store, snapshot.id);
     try {
+      if (vcs === 'git') await gitCheckout(snapshot.checkout);
       if (this.external.resolveHarness(snapshot).kind === 'unknown') unsupportedHarness();
       if (!session.lease) {
         await this.records.settled(snapshot.checkout);
@@ -935,18 +939,18 @@ export class Runtime {
       }
       await this.beginCleanup(session);
       // Before any harness starts: a run the host cannot record does not run.
-      record = await this.capacity.prepare(session.rootIdentity.dev, snapshot.id, session.authorization.signal,
+      if (vcs === 'git') record = await this.capacity.prepare(session.rootIdentity.dev, snapshot.id, session.authorization.signal,
         () => this.records.before(snapshot.id, requestId, snapshot.checkout, session.lease));
       if (session.authorization.signal.aborted) return;
-      const header = await runHeader(snapshot.checkout);
+      const header = await runHeader(snapshot.checkout, vcs);
       const selected = this.external.resolveHarness(snapshot);
       switch (selected.kind) {
         case 'unknown': return unsupportedHarness();
         case 'external': return selected.id === 'codex' ? await this.runCodex(session, requestId, text, header) : await this.runClaude(session, requestId, text, header);
         case 'pi': break;
       }
-      const baseline = await dirtyPaths(snapshot.checkout);
-      session.owned = await restoreOwned(snapshot.checkout, baseline, this.store.owned(snapshot.id), session.rootIdentity, session.lease?.fd, session.lease?.lifecycleFd);
+      const baseline = await dirtyPaths(snapshot.checkout, vcs);
+      session.owned = await restoreOwned(snapshot.checkout, baseline, this.store.owned(snapshot.id), session.rootIdentity, session.lease?.fd, session.lease?.lifecycleFd, vcs);
       session.baseline = baseline.filter(path => !session.owned.has(pathKey(path)));
       session.protected = await identities(snapshot.checkout, session.baseline);
       let instructions = 'You are Plait, a local coding assistant. File tools are the only checkout writers; edits and commands may require the user\'s approval. Commands read the checkout and write only private scratch (HOME/TMPDIR) and this thread\'s private build cache (CARGO_HOME/CARGO_TARGET_DIR), with no external network and a 15 minute limit. Tests may use scratch-local Git repositories and Unix sockets. Use offline locked builds. Unchanged files this thread previously wrote can be edited again. Never modify other dirty or ignored paths, bypass approval, or start daemons. Read project instructions below.\n';
@@ -1019,7 +1023,7 @@ export class Runtime {
       this.changed('#');
       for (const root of this.store.waiters.roots()) this.drainCheckout(root);
       const selected = this.external.resolveHarness(snapshot);
-      switch (selected.kind) {
+      if (vcs === 'git') switch (selected.kind) {
         case 'unknown': break;
         case 'external': if (!snapshot.error) this.worktrees.builds.scheduleSeed(snapshot.checkout, ''); break;
         case 'pi': if (!snapshot.error) this.worktrees.builds.scheduleSeed(snapshot.checkout, session.commandPolicy === 'sandboxed' ? snapshot.id : ''); break;
@@ -1031,7 +1035,7 @@ export class Runtime {
     const snapshot = session.snapshot;
     const id = snapshot.id;
     // Shown on edit approvals only; Codex does not honor Plait's guard on these files.
-    const dirty = new Set(await dirtyPaths(snapshot.checkout).catch(() => [] as string[]));
+    const dirty = new Set(await dirtyPaths(snapshot.checkout, threadKind(this.store, snapshot.id)).catch(() => [] as string[]));
     const lease = await this.codex.acquire();
     session.external = { harness: 'codex', supportsSteer: this.codex.supportsSteer, lease, close() { this.run?.close(); this.entries?.close(); this.lease?.release(); } };
     const model = lease.models.find(candidate => candidate.id === snapshot.model.model_id);
@@ -1065,7 +1069,7 @@ export class Runtime {
     const snapshot = session.snapshot;
     const id = snapshot.id;
     // Shown on edit approvals only; Claude Code does not honor Plait's guard on these files.
-    const dirty = new Set(await dirtyPaths(snapshot.checkout).catch(() => [] as string[]));
+    const dirty = new Set(await dirtyPaths(snapshot.checkout, threadKind(this.store, snapshot.id)).catch(() => [] as string[]));
     const launch = await this.claude.launch();
     const mode = snapshot.harness?.mode ?? this.claude.defaultMode();
     snapshot.harness = { ...snapshot.harness, id: 'claude', version: launch.install.version ?? null, mode };

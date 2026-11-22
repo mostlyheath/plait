@@ -19,7 +19,7 @@ import { readableFolders, skillFile } from './skills.ts';
 import type { SkillEntry } from './skills.ts';
 
 export type ToolState = {
-  snapshot: Snapshot; baseline: string[]; protected: FileIdentity[];
+  snapshot: Snapshot; vcs?: 'git' | 'folder'; baseline: string[]; protected: FileIdentity[];
   authorization: RunAuthorization;
   lease?: LeaseHandle;
   rootIdentity: FileIdentity;
@@ -80,8 +80,8 @@ export function registry(state: ToolState) {
         if (name !== 'command') {
           // File protections apply regardless of how the run obtains permission.
           safePath(args.path, state.baseline);
-          const currentDirty = await dirtyPaths(state.snapshot.checkout);
-          safePath(args.path, await ignoredPaths(state.snapshot.checkout, [args.path]));
+          const currentDirty = await dirtyPaths(state.snapshot.checkout, state.vcs);
+          safePath(args.path, await ignoredPaths(state.snapshot.checkout, [args.path], state.vcs));
           safePath(args.path, currentDirty.filter(path => !state.owned.has(pathKey(path))));
           if (name === 'edit') {
             const current = await fileAction(state.snapshot.checkout, 'inspect', args.path, undefined, state.lease?.fd, state.rootIdentity, state.lease?.lifecycleFd);

@@ -25,7 +25,7 @@ test('a workspace subscriber gets a snapshot, then each change in order', { time
   assert.equal((await request(f.store, { op: 'workspace_open_project', path: f.repo })).ok, true);
   await until(async () => frames.length, n => n >= 2);
   assert.deepEqual([frames[1].event, frames[1].seq, frames[1].workspace.revision], ['workspace', 1, 1]);
-  assert.deepEqual(frames[1].workspace.projects, [{ path: f.repo, hidden: false }]);
+  assert.deepEqual(frames[1].workspace.projects, [{ path: f.repo, hidden: false, vcs: 'git' }]);
 
   await request(f.store, { op: 'workspace_hide_project', path: f.repo, hidden: true });
   await until(async () => frames.length, n => n >= 3);

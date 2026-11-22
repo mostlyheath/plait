@@ -922,6 +922,15 @@ provider ID, an `answer_sign_in` when no input is pending, or a `models.json` th
 host will not rewrite. `internal`: Pi could not store, remove, or reload. Messages
 name the field at fault and never repeat its value.
 
+## Plain folders
+
+A project may be a plain folder when neither it nor any ancestor has a `.git`
+entry. A folder inside a Git repository resolves to the repository root; an
+inaccessible or broken repository is refused. The thread retains its kind even
+if the folder later becomes a repository. Threads, approvals, and file viewing
+work in plain folders. Undo, Changes, History, and worktrees are unavailable.
+Nothing in a plain folder is protected or can be undone.
+
 ## Command policy
 
 Each canonical checkout has a command policy: `trusted`, the default, or
@@ -939,7 +948,7 @@ defaulted to `sandboxed`.
 
 All return `{"checkout":"/canonical/checkout","policy":"sandboxed"}`, with the
 policy now in force for that checkout. `checkout` is an absolute path inside a
-Git working tree and is resolved to its canonical root, as in `list_threads`.
+Git working tree or a plain folder and is resolved to its canonical root, as in `list_threads`.
 `policy` is `sandboxed` or `trusted`; anything else is `invalid_request`. Both
 operations accept the optional `protocol_version` and reply the same way for
 every version. A host without them rejects the unknown operation with
