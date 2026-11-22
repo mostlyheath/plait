@@ -56,7 +56,7 @@ test('findClaude checks an explicit path', async () => {
   assert.equal((await findClaude({ path: '/nonexistent/plait/claude', env: fakeEnv() })).state, 'not_installed');
   assert.equal((await findClaude({ path: 'relative/claude', env: fakeEnv() })).state, 'not_installed');
   assert.deepEqual(await findClaude({ path: FAKE_CLAUDE, env: fakeEnv() }),
-    { state: 'ready', path: FAKE_CLAUDE, version: '2.1.326', message: 'Claude Code 2.1.326 is ready.' });
+    { state: 'ready', path: FAKE_CLAUDE, version: '2.1.326', managed: false, message: 'Claude Code 2.1.326 is ready.' });
   assert.equal((await findClaude({ path: FAKE_CLAUDE, env: fakeEnv({ FAKE_CLAUDE_VERSION: '2.1.100' }) })).state, 'unsupported_version');
   const garbled = await findClaude({ path: FAKE_CLAUDE, env: fakeEnv({ FAKE_CLAUDE_SCENARIO: 'no-version' }) });
   assert.equal(garbled.state, 'error');

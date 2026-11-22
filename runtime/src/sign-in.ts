@@ -62,7 +62,10 @@ function returnsToLoopback(address: string | null): boolean {
  * Pi's messages can quote provider response bodies and token requests. Only the fixed
  * sentences below leave the host; the original text is used to choose one and then dropped.
  */
+export class SignInFailure extends Error {}
+
 function describe(error: unknown): Failure {
+  if (error instanceof SignInFailure) return { code: 'permission_denied', message: error.message };
   const text = error instanceof Error ? error.message : '';
   if (/state mismatch/i.test(text)) return { code: 'invalid_request', message: 'The pasted code belongs to a different sign-in. Start again.' };
   if (/missing authorization code/i.test(text)) return { code: 'invalid_request', message: 'No authorization code was found in the pasted text. Start again.' };
@@ -82,7 +85,7 @@ export class SignIns {
   }
 
   /** `stored` runs after the credential is saved and before the sign-in reports success. */
-  async start(provider: string, method: string | undefined, login: Login, stored: () => Promise<void>): Promise<SignInView> {
+  async start(provider: string, method: string | undefined, login: Login, stored: () => Promise<void>, ttlMs = this.limits.ttlMs): Promise<SignInView> {
     this.sweep();
     // A second attempt replaces the first: the desktop may have lost the earlier ID.
     await this.cancelProvider(provider);
@@ -92,7 +95,7 @@ export class SignIns {
     this.makeRoom();
     const entry: Entry = {
       id: randomUUID(), provider, state: 'starting', url: null, userCode: null, message: null, error: null, method,
-      pending: undefined, stored: false, deadline: Date.now() + this.limits.ttlMs, finished: 0,
+      pending: undefined, stored: false, deadline: Date.now() + ttlMs, finished: 0,
       controller: new AbortController(), timer: undefined, done: Promise.resolve(), waiters: new Set(),
     };
     this.schedule(entry);

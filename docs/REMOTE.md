@@ -31,27 +31,28 @@ with Node, the runtime, and its dependencies included, and a signed manifest
 for it: `update-host-linux-x86_64.json` and `update-host-linux-arm64.json`, in
 the same format as `update-host.json`, each with its own build ID.
 
-## Agent CLIs on a host (agreed, not built)
+## Agent CLIs on a host
 
 Pi is part of the host, so a new machine can run threads with a provider key
 or sign-in alone. For Codex and Claude Code, **Settings → Agents** shows each
 one's state on the connected machine:
 
 - **Not installed · Install.** The host installs the version Plait is tested
-  with into its own folder (`~/.local/share/plait/tools/`), using its bundled
-  Node or the vendor's official installer, never `sudo`. A copy the person
-  installed themselves is found first and always wins. The CLI stays the
-  vendor's software under the vendor's terms, linked before installing.
+  with into its own folder (`~/.local/share/plait/tools/`): it downloads the
+  vendor's npm package for its platform and checks its pinned hash, without
+  `sudo`. A copy you install yourself is found first and always wins. The CLI
+  stays the vendor's software under the vendor's terms, linked beside
+  **Install**.
 - **Sign in.** The host runs the CLI's own sign-in; the app shows its link and
-  code and passes back anything the person pastes. Credentials stay in the
-  CLI's own files on that machine; Plait never reads them.
+  code and passes back the code you paste. Credentials stay in the CLI's own
+  files on that machine; Plait never reads them.
 
 ## Order of work
 
 1. **Built:** Linux host archives and their signed manifests in the release pipeline.
 2. The server-side install script.
 3. **Built:** Installing from the Mac over SSH.
-4. Host-installed CLIs and their sign-in in the app.
+4. **Built:** Host-installed CLIs and their sign-in in the app.
 5. Host updates on Linux: `plait-host update` and from the Mac.
 
 ## Set up a Linux host
