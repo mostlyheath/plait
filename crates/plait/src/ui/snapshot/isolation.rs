@@ -3,11 +3,11 @@
 use super::{Harness, fixture_repository, git, isolated};
 use crate::ui::{Plait, Workspace};
 use plait_core::{
-    git::WriteOp,
     host::ThreadStatus,
     lease::{CHECKOUT_BUSY, LeaseClass, acquire_checkout},
     model::DiffMode,
 };
+use plait_protocol::git::WriteOp;
 use std::{
     path::Path,
     time::{Duration, Instant},

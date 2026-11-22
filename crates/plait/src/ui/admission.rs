@@ -359,12 +359,25 @@ impl Plait {
         let journal = self.session.journal.clone();
         let polling = cx.background_executor().clone();
         let client = self.host_client();
+        let supported = self.host.connection.has_checkout_identity;
+        let local = self.host_is_local();
         let task = cx.background_executor().spawn(async move {
             if let Some(journal) = journal {
                 journal.flush().map_err(host::Error::Protocol)?;
             }
             if let Some(expected) = expected {
-                expected.verify().map_err(host::Error::Protocol)?;
+                if supported {
+                    host::git::identity(
+                        &client,
+                        &expected.root,
+                        Some(plait_protocol::lease::DirIdentity {
+                            dev: expected.device,
+                            ino: expected.inode,
+                        }),
+                    )?;
+                } else if local {
+                    expected.verify().map_err(host::Error::Protocol)?;
+                }
             }
 
             let Request::CreateAdmittedThread {

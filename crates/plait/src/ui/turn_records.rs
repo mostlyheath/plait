@@ -361,17 +361,30 @@ impl Plait {
         self.restore_undo_operation();
         self.remeasure_undo_panel(&attempt.run);
         let client = self.host_client();
+        let supported = self.host.connection.has_checkout_identity;
+        let local = self.host_is_local();
         let task = cx.background_executor().spawn(async move {
             let expected = expected.ok_or_else(|| {
                 host::Error::Protocol("Checkout identity is not verified.".into())
             })?;
-            expected.verify().map_err(|message| {
-                host::Error::Rejected(host::HostError {
-                    retry_after_seconds: None,
-                    code: "checkout_identity_changed".into(),
-                    message,
-                })
-            })?;
+            if supported {
+                host::git::identity(
+                    &client,
+                    &expected.root,
+                    Some(plait_protocol::lease::DirIdentity {
+                        dev: expected.device,
+                        ino: expected.inode,
+                    }),
+                )?;
+            } else if local {
+                expected.verify().map_err(|message| {
+                    host::Error::Rejected(host::HostError {
+                        retry_after_seconds: None,
+                        code: "checkout_identity_changed".into(),
+                        message,
+                    })
+                })?;
+            }
             client.request::<UndoTurnReply>(&request)
         });
         cx.spawn_in(window, async move |this, cx| {
