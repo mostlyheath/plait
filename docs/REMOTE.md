@@ -176,6 +176,10 @@ Decided while building step 4, to reach usable remote threads sooner.
   Worktrees graphs and sizes now come from the host too.
 - **Later.** Projects from several machines in one sidebar at once, as
   described above, follow as their own slice.
+- **Superseded for per-machine state.** Projects, tabs, unread state, and
+  the machine label come from each host under
+  [Host-first Plait](HOST-FIRST.md), not from per-machine lists on the
+  desktop.
 
 ## Remote Git and files
 

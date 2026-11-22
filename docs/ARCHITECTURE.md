@@ -162,6 +162,11 @@ Landlock ABI 9 is one option, not a fixed product requirement.
 
 ## Client/server direction
 
+[Host-first Plait](HOST-FIRST.md) is the agreed next step: every host
+operation is available to any client, the desktop runs no Git and keeps no
+project, tab, or unread state of its own, and clients follow a snapshot and
+numbered events. The sections below describe the current, mixed ownership.
+
 The [roadmap](ROADMAP.md#clientserver-platform-and-installation) agrees a
 client/server platform with independent updates. Plait Server is the product
 boundary represented today by the host and runtime; `plait-core` remains an
@@ -990,7 +995,7 @@ the list. A failed watch is reported as paused updates rather than current data.
 No subscription is polled while idle.
 
 Projects come from host checkout paths and opened folders. Hidden projects stay
-in the host and can be reopened through the palette. Folder availability checks
+in desktop preferences and can be reopened through the palette. Folder availability checks
 run in the background. Successful Git status results normalize a selected
 subdirectory or symlink to its checkout root. Switching projects preserves
 per-thread composers and pending request IDs, changes the repository epoch, and
