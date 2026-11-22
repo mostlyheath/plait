@@ -1,4 +1,5 @@
 //! Bounded logical storage accounting. No Git, symlink following, or reclamation promise.
+pub use plait_protocol::worktree_size::{BUILD_DIRS, DirId, Size};
 use std::{
     collections::HashSet,
     ffi::{CStr, CString},
@@ -12,23 +13,8 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
     time::{Duration, Instant},
 };
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct Size {
-    pub source: u64,
-    pub build: u64,
-    pub incomplete: bool,
-    pub entries: usize,
-}
-impl Size {
-    pub fn total(&self) -> u64 {
-        self.source.saturating_add(self.build)
-    }
-}
 pub const ENTRY_LIMIT: usize = 50_000;
 pub const DEADLINE: Duration = Duration::from_millis(250);
-pub const BUILD_DIRS: &[&str] = &["target", "build", "dist", ".next", "node_modules"];
-/// A directory's device and inode, as the walk compares them.
-pub type DirId = (u64, u64);
 pub fn measure(
     root: &Path,
     cache: Option<&Path>,
