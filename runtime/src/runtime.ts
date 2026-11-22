@@ -10,6 +10,7 @@ import type { ImageData } from './images.ts';
 import { TurnReview } from './turn-review.ts';
 import { GitReads } from './git-read.ts';
 import { Workspace, WORKSPACE_TOPIC } from './workspace.ts';
+import { Folders } from './folders.ts';
 import { LinearService } from './linear/service.ts';
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
@@ -86,6 +87,7 @@ export class Runtime {
   turnReview: TurnReview;
   gitReads: GitReads;
   workspace: Workspace;
+  folders = new Folders();
   devices: Devices;
   private checkoutWatcher: CheckoutWatcher;
   linear: LinearService;
@@ -318,6 +320,7 @@ export class Runtime {
     if (this.turnReview.handles(input)) return this.turnReview.handle(input);
     if (this.gitReads.handles(input)) return this.gitReads.handle(input);
     if (this.devices.handles(input)) return this.devices.handle(input);
+    if (this.folders.handles(input)) return this.folders.handle(input);
     if (this.workspace.handles(input)) return this.workspace.handle(input);
     if (this.linear.handles(input)) return this.linear.handle(input);
     if (this.worktrees.handles(input)) return this.worktrees.handle(input);
