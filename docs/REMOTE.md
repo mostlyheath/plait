@@ -6,36 +6,30 @@ listener. The host owns execution, threads, approvals, Git, files, and recovery;
 closing the window or losing the link does not stop accepted work. See
 [Host](HOST.md) for the protocol and safety contract.
 
-## Installing a remote host (agreed, not built)
+## Install Plait on a remote machine
 
-**From the Mac.** In **Add machine… → SSH**, Plait checks whether the machine
-answers `plait-host version`. If not, it offers **Install Plait on
-_machine_**, over the same SSH connection:
+**From the Mac.** Add the machine in **Settings → Machines** with its SSH
+destination. If connecting fails because Plait is not installed there, Plait
+offers **Install Plait on _machine_**, over the same SSH connection:
 
-1. Plait reads the machine's platform (`uname -sm`): Linux on x86_64 or arm64,
-   or macOS on Apple silicon.
+1. Plait reads the machine's platform (`uname -sm`). Linux on x86_64 or arm64
+   is supported.
 2. Plait fetches that platform's signed host manifest, verifies its signature
    on the Mac, and gives the machine the archive's URL and SHA-256.
 3. The machine downloads the archive itself (`curl` or `wget`), checks the
-   SHA-256, unpacks it under `~/.local/share/plait/host/`, links
+   SHA-256, unpacks it under `~/.local/share/plait-host/releases/`, links
    `~/.local/bin/plait-host`, and starts the user service. Plait then
    connects.
 
-Everything runs as the person; nothing uses `sudo`. Keeping the host running
-after logout needs `loginctl enable-linger`, which may need an administrator;
-Plait says so rather than asking for a password. A failed step names itself,
-shows the machine's own message, and leaves any existing host untouched.
+Everything runs as you; nothing uses `sudo`. Keeping the host running after
+logout needs `loginctl enable-linger`, which may need an administrator; Plait
+says so rather than asking for a password. A failed step names itself, shows
+the machine's message, and leaves any existing host untouched.
 
-**From the machine.** A one-line script does the same steps on the server:
-`curl -fsSL …/install.sh | sh -s -- --host`. Like the Mac script, it checks
-the SHA-256 from the release record; it does not verify the publisher
-signature.
-
-**Archives.** Each release publishes a host archive per platform, with Node,
-the runtime, and its dependencies included, and a signed manifest for it:
-`update-host-linux-x86_64.json` and `update-host-linux-arm64.json`, in the
-same format as `update-host.json`, each with its own build ID. Existing
-manifests are unchanged.
+**Archives.** Each release publishes a Linux host archive per architecture,
+with Node, the runtime, and its dependencies included, and a signed manifest
+for it: `update-host-linux-x86_64.json` and `update-host-linux-arm64.json`, in
+the same format as `update-host.json`, each with its own build ID.
 
 ## Agent CLIs on a host (agreed, not built)
 
@@ -54,9 +48,9 @@ one's state on the connected machine:
 
 ## Order of work
 
-1. Linux host archives and their signed manifests in the release pipeline.
+1. **Built:** Linux host archives and their signed manifests in the release pipeline.
 2. The server-side install script.
-3. Installing from the Mac over SSH.
+3. **Built:** Installing from the Mac over SSH.
 4. Host-installed CLIs and their sign-in in the app.
 5. Host updates on Linux: `plait-host update` and from the Mac.
 
@@ -89,11 +83,11 @@ work on Linux; worktree build-output cloning is macOS-only.
 ## Connect over SSH
 
 In **Settings → Machines**, add a name and an SSH destination. Open a remote
-project by entering its path on that machine. The sidebar's top row names and
+project by browsing that machine's folders. The sidebar's top row names and
 switches machines; the window title names the remote machine.
 
 The client runs `ssh -T` in batch mode and starts `plait-host bridge` as the
-remote user. The bridge connects to the host's owner-only socket; `--store PATH`
+remote user, from PATH or `~/.local/bin`. The bridge connects to the host's owner-only socket; `--store PATH`
 selects a different store. SSH configuration, keys, agent, and `known_hosts`
 apply. Plait does not store a password, and an unknown host key fails. A lost
 connection appears offline and reconnects with backoff; host work continues.

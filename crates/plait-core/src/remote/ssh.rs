@@ -57,7 +57,8 @@ impl Default for SshOptions {
     }
 }
 
-fn arguments(destination: &SshDestination, options: &SshOptions) -> Result<Vec<OsString>, Error> {
+/// The options every Plait SSH command uses, up to and including the destination.
+pub(crate) fn base_arguments(destination: &SshDestination, options: &SshOptions) -> Vec<OsString> {
     let mut args: Vec<OsString> = [
         "-T",
         "-o",
@@ -73,12 +74,18 @@ fn arguments(destination: &SshDestination, options: &SshOptions) -> Result<Vec<O
     if let Some(port) = options.port {
         args.extend([OsString::from("-p"), port.to_string().into()]);
     }
-    args.extend([
-        OsString::from("--"),
-        destination.0.clone().into(),
-        "plait-host".into(),
-        "bridge".into(),
-    ]);
+    args.extend([OsString::from("--"), destination.0.clone().into()]);
+    args
+}
+
+/// Runs the host's bridge. A host installed by Plait lives in `~/.local/bin`,
+/// which a non-interactive SSH shell often leaves off PATH, so that is the
+/// fallback. `sh -c` keeps this the same whatever the login shell is.
+const BRIDGE: &str = "'command -v plait-host >/dev/null 2>&1 && exec plait-host bridge \"$@\"; exec \"$HOME/.local/bin/plait-host\" bridge \"$@\"'";
+
+fn arguments(destination: &SshDestination, options: &SshOptions) -> Result<Vec<OsString>, Error> {
+    let mut args = base_arguments(destination, options);
+    args.extend(["sh".into(), "-c".into(), BRIDGE.into(), "plait-host".into()]);
     if let Some(path) = &options.store {
         use std::os::unix::ffi::OsStrExt;
         if !path.is_absolute()
@@ -241,8 +248,10 @@ mod tests {
                 "ServerAliveCountMax=3",
                 "--",
                 "host",
-                "plait-host",
-                "bridge"
+                "sh",
+                "-c",
+                BRIDGE,
+                "plait-host"
             ]
             .map(OsString::from)
         );
@@ -256,6 +265,50 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    /// OpenSSH joins the remote words with spaces and hands them to the login
+    /// shell. A host that is only in `~/.local/bin` still gets its bridge, with
+    /// a store path whose spaces and quotes stay literal.
+    #[test]
+    fn the_bridge_falls_back_to_the_installed_host() {
+        use std::os::unix::{ffi::OsStrExt, fs::PermissionsExt};
+        let home = std::env::temp_dir().join(format!("plait-bridge-home-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(home.join(".local/bin")).unwrap();
+        let fake = home.join(".local/bin/plait-host");
+        std::fs::write(&fake, "#!/bin/sh\nprintf '%s|' \"$@\"\n").unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let options = SshOptions {
+            store: Some("/tmp/it's store".into()),
+            ..SshOptions::default()
+        };
+        let args = arguments(&SshDestination::new("host").unwrap(), &options).unwrap();
+        let start = args.iter().position(|a| a == "host").unwrap() + 1;
+        let joined = args[start..]
+            .iter()
+            .map(|a| String::from_utf8_lossy(a.as_bytes()).into_owned())
+            .collect::<Vec<_>>()
+            .join(" ");
+        for shell in ["/bin/sh", "/bin/bash", "/bin/zsh"] {
+            if !std::path::Path::new(shell).exists() {
+                continue;
+            }
+            let out = std::process::Command::new(shell)
+                .args(["-c", &joined])
+                .env_clear()
+                .env("HOME", &home)
+                .env("PATH", "/usr/bin:/bin")
+                .output()
+                .unwrap();
+            assert_eq!(
+                String::from_utf8_lossy(&out.stdout),
+                "bridge|--store|/tmp/it's store|",
+                "{shell}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        std::fs::remove_dir_all(home).unwrap();
     }
     #[test]
     fn remote_reconnect_backoff() {

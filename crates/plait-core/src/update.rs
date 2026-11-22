@@ -440,6 +440,56 @@ pub fn check(current: Option<&Version>) -> Result<Option<Offer>, Error> {
     Ok(Some(Offer { manifest, version }))
 }
 
+/// A host archive for another machine, from a release whose signed manifest
+/// this Mac has verified. The machine downloads it and checks `sha256`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HostRelease {
+    pub tag: String,
+    pub build_id: String,
+    pub url: String,
+    pub sha256: String,
+    pub size: u64,
+}
+
+/// The newest release's host for `platform` (such as `linux-x86_64`), checked
+/// against its signed manifest. Linux hosts have one manifest per platform.
+pub fn host_release(platform: &str) -> Result<HostRelease, Error> {
+    let feed = fetch(
+        &format!("https://api.github.com/repos/{REPOSITORY}/releases?per_page=30"),
+        FEED_LIMIT,
+    )?;
+    let candidate = newest(&feed)?.ok_or_else(|| invalid("no release is published yet"))?;
+    let name = if platform.starts_with("macos-") {
+        "update-host.json".to_owned()
+    } else {
+        format!("update-host-{platform}.json")
+    };
+    let bytes = fetch(&asset_url(&candidate.tag, &name), MANIFEST_LIMIT)
+        .map_err(|_| invalid(format!("the newest release has no host for {platform} yet")))?;
+    let signature = fetch(&asset_url(&candidate.tag, &format!("{name}.sig")), 1024)?;
+    let manifest = verify_component(&bytes, &signature, &public_key()?, Component::Host)?;
+    host_release_from(&manifest, platform)
+}
+
+fn host_release_from(manifest: &ComponentManifest, platform: &str) -> Result<HostRelease, Error> {
+    let artifact = manifest
+        .artifacts
+        .get(platform)
+        .ok_or_else(|| invalid(format!("the release has no host for {platform}")))?;
+    let build_id = manifest
+        .build_id
+        .clone()
+        .filter(|id| valid_build_id(id))
+        .ok_or_else(|| invalid("invalid host build"))?;
+    Ok(HostRelease {
+        tag: manifest.tag.clone(),
+        build_id,
+        url: asset_url(&manifest.tag, &artifact.name),
+        sha256: artifact.sha256.clone(),
+        size: artifact.size,
+    })
+}
+
 fn curl() -> Command {
     let mut command = Command::new(if cfg!(target_os = "macos") {
         "/usr/bin/curl"
