@@ -41,7 +41,7 @@ fn scenes() -> [Scene; 5] {
             |h| {
                 workstation(h);
             },
-            &["Use workstation", "Remove workstation…", "Add SSH machine…"],
+            &["Use workstation", "Remove workstation…", "Add machine…"],
         ),
         (
             "machines-form-error",

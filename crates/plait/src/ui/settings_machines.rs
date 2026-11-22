@@ -6,7 +6,10 @@ use gpui::{prelude::*, *};
 use plait_core::{
     host::Client,
     machines::{MachineId, Transport},
-    remote::ssh::{self, SshDestination, SshOptions},
+    remote::{
+        ssh::{self, SshDestination, SshOptions},
+        tailnet,
+    },
 };
 use std::path::PathBuf;
 
@@ -16,6 +19,7 @@ pub(super) struct MachineForm {
     pub port: Entity<TextField>,
     pub store: Entity<TextField>,
     pub error: Option<String>,
+    pub tailnet: bool,
 }
 
 #[derive(Default)]
@@ -96,7 +100,7 @@ impl Plait {
         self.machines.generation += 1;
         let generation = self.machines.generation;
         self.machines.confirm_remove = None;
-        let (destination, port, store) = match machine.transport {
+        let transport = match machine.transport {
             Transport::Local => {
                 self.machines.connecting = None;
                 self.machines.note = None;
@@ -104,19 +108,7 @@ impl Plait {
                 self.use_machine_client(Client::local_or_unavailable(), true, window, cx);
                 return;
             }
-            Transport::Ssh {
-                destination,
-                port,
-                store,
-            } => (destination, port, store),
-            Transport::Tailnet { .. } => {
-                self.machines.note = Some((
-                    "Tailnet machines are not supported yet. Use SSH for now.".into(),
-                    true,
-                ));
-                cx.notify();
-                return;
-            }
+            remote => remote,
         };
         self.machines.connecting = Some(id.clone());
         self.machines.note = None;
@@ -124,14 +116,24 @@ impl Plait {
         if cfg!(test) {
             return;
         }
-        let options = SshOptions {
-            port,
-            store,
-            ..Default::default()
-        };
-        let task = cx
-            .background_executor()
-            .spawn(async move { ssh::connect(&destination, options) });
+        let task = cx.background_executor().spawn(async move {
+            match transport {
+                Transport::Ssh {
+                    destination,
+                    port,
+                    store,
+                } => ssh::connect(
+                    &destination,
+                    SshOptions {
+                        port,
+                        store,
+                        ..Default::default()
+                    },
+                ),
+                Transport::Tailnet { host, port } => tailnet::connect(&host, port),
+                Transport::Local => unreachable!(),
+            }
+        });
         let name = machine.name.clone();
         cx.spawn_in(window, async move |this, cx| {
             let result = task.await;
@@ -182,6 +184,7 @@ impl Plait {
             port: field("SSH port", "22", cx),
             store: field("Plait store on that machine", "Default", cx),
             error: None,
+            tailnet: false,
         });
         cx.notify();
     }
@@ -197,7 +200,24 @@ impl Plait {
             read(&form.port),
             read(&form.store),
         );
+        let tailnet = form.tailnet;
         let transport = (|| {
+            if tailnet {
+                let port = if port.is_empty() {
+                    7419
+                } else {
+                    port.parse::<u16>()
+                        .ok()
+                        .filter(|p| *p > 0)
+                        .ok_or("The port is a number from 1 to 65535.")?
+                };
+                let transport = Transport::Tailnet {
+                    host: destination,
+                    port,
+                };
+                transport.validate()?;
+                return Ok(transport);
+            }
             let destination =
                 SshDestination::new(destination).map_err(|error| error.to_string())?;
             let port = if port.is_empty() {
@@ -278,14 +298,69 @@ impl Plait {
             .rounded_md()
             .border_1()
             .border_color(rgb(colors().border))
+            .child(
+                row()
+                    .gap_2()
+                    .child(
+                        button(
+                            "machine-kind-ssh",
+                            if form.tailnet { "SSH" } else { "SSH ✓" },
+                        )
+                        .on_activate(cx, |this, _, cx| {
+                            if let Some(form) = &mut this.machines.form {
+                                form.tailnet = false;
+                            }
+                            cx.notify();
+                        }),
+                    )
+                    .child(
+                        button(
+                            "machine-kind-tailnet",
+                            if form.tailnet {
+                                "Tailnet ✓"
+                            } else {
+                                "Tailnet"
+                            },
+                        )
+                        .on_activate(cx, |this, _, cx| {
+                            if let Some(form) = &mut this.machines.form {
+                                form.tailnet = true;
+                            }
+                            cx.notify();
+                        }),
+                    ),
+            )
             .child(labelled("Name", &form.name))
-            .child(labelled("SSH destination", &form.destination))
-            .child(labelled("Port (optional)", &form.port))
-            .child(labelled("Plait store on that machine (optional)", &form.store))
+            .child(labelled(
+                if form.tailnet {
+                    "Tailnet host"
+                } else {
+                    "SSH destination"
+                },
+                &form.destination,
+            ))
+            .child(labelled(
+                if form.tailnet {
+                    "Port (default 7419)"
+                } else {
+                    "Port (optional)"
+                },
+                &form.port,
+            ))
+            .when(!form.tailnet, |el| {
+                el.child(labelled(
+                    "Plait store on that machine (optional)",
+                    &form.store,
+                ))
+            })
             .child(
                 tag(
                     "machine-form-help",
-                    "Plait runs `ssh <destination> plait-host bridge` with your own SSH keys. That machine needs Plait's host running (`plait-host run`).",
+                    if form.tailnet {
+                        "On the host, allow your login and run plait-host serve --tailnet."
+                    } else {
+                        "Plait runs SSH with your own keys. The host needs plait-host run."
+                    },
                     colors().subtle,
                 )
                 .line_height(px(18.)),
@@ -300,10 +375,13 @@ impl Plait {
                         toned_button("add-machine-save", "Add", Tone::Primary)
                             .on_activate(cx, |this, _, cx| this.add_machine(cx)),
                     )
-                    .child(button("add-machine-cancel", "Cancel").on_activate(cx, |this, _, cx| {
-                        this.machines.form = None;
-                        cx.notify();
-                    })),
+                    .child(button("add-machine-cancel", "Cancel").on_activate(
+                        cx,
+                        |this, _, cx| {
+                            this.machines.form = None;
+                            cx.notify();
+                        },
+                    )),
             )
     }
 
@@ -444,7 +522,7 @@ impl Plait {
                 self.machine_form(cx)
             } else {
                 row().child(
-                    button("add-machine", "Add SSH machine…")
+                    button("add-machine", "Add machine…")
                         .on_activate(cx, |this, _, cx| this.open_machine_form(cx)),
                 )
             })

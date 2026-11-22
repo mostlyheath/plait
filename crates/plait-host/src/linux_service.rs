@@ -56,7 +56,7 @@ pub fn unit_text(executable: &Path, node_dir: Option<&Path>) -> io::Result<Strin
     ))
 }
 
-fn unit_path() -> io::Result<PathBuf> {
+fn unit_path_for(unit: &str) -> io::Result<PathBuf> {
     let base = match env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {
         Some(path) => PathBuf::from(path),
         None => {
@@ -67,7 +67,7 @@ fn unit_path() -> io::Result<PathBuf> {
     if !base.is_absolute() {
         return Err(io::Error::other("configuration directory must be absolute"));
     }
-    Ok(base.join("systemd/user").join(UNIT))
+    Ok(base.join("systemd/user").join(unit))
 }
 
 /// Refuses a symlink at the unit file or the two folders this command
@@ -125,7 +125,12 @@ fn node_directory() -> io::Result<PathBuf> {
     Err(io::Error::other("node was not found on PATH"))
 }
 
-pub fn install() -> io::Result<()> {
+pub fn install(tailnet: bool) -> io::Result<()> {
+    let unit = if tailnet {
+        "plait-host-tailnet.service"
+    } else {
+        UNIT
+    };
     let executable = env::current_exe()?;
     let runtime = crate::installation::runtime_paths(&executable)?;
     let node_dir = if runtime.node == "node" {
@@ -133,8 +138,16 @@ pub fn install() -> io::Result<()> {
     } else {
         None
     };
-    let text = unit_text(&executable, node_dir.as_deref())?;
-    let path = unit_path()?;
+    let mut text = unit_text(&executable, node_dir.as_deref())?;
+    if tailnet {
+        text = text
+            .replace(
+                "Description=Plait host",
+                "Description=Plait tailnet listener",
+            )
+            .replace(" run-user", " serve --tailnet");
+    }
+    let path = unit_path_for(unit)?;
     reject_symlinks(&path)?;
     let parent = path
         .parent()
@@ -145,7 +158,7 @@ pub fn install() -> io::Result<()> {
         .duration_since(UNIX_EPOCH)
         .map_err(io::Error::other)?
         .as_nanos();
-    let temp = parent.join(format!(".{UNIT}.{}.{nonce}.tmp", std::process::id()));
+    let temp = parent.join(format!(".{unit}.{}.{nonce}.tmp", std::process::id()));
     let result = (|| {
         let mut file = OpenOptions::new()
             .write(true)
@@ -163,8 +176,8 @@ pub fn install() -> io::Result<()> {
     result?;
     println!("Wrote {}", path.display());
     systemctl(&["daemon-reload"])?;
-    systemctl(&["enable", "--now", UNIT])?;
-    println!("Enabled and started {UNIT}");
+    systemctl(&["enable", "--now", unit])?;
+    println!("Enabled and started {unit}");
     if let Some(user) = env::var_os("USER")
         && let Ok(output) = Command::new("loginctl")
             .arg("show-user")
@@ -183,7 +196,7 @@ pub fn install() -> io::Result<()> {
 
 pub fn uninstall() -> io::Result<()> {
     systemctl(&["disable", "--now", UNIT])?;
-    let path = unit_path()?;
+    let path = unit_path_for(UNIT)?;
     reject_symlinks(&path)?;
     match fs::read_to_string(&path) {
         Ok(text) if text.lines().any(|line| line == DESCRIPTION) => {
