@@ -74,19 +74,9 @@ pub(super) fn walk(repo: &Path, out: Option<&Path>, suffix: &str, width: f32, he
         let theme = if light { "light" } else { "dark" };
         install(&mut h, 4);
         h.capture(&format!("worktrees-graph-{theme}-{suffix}"));
-        // A remote host: its graph, but no sizes, which measure this Mac's disk.
+        // A remote host: its own graph and sizes; Finder and Terminal are off.
         h.update(|p, _, cx| {
             p.host_local = false;
-            let rows = p.worktrees.rows.clone();
-            p.worktrees.sizes = rows
-                .iter()
-                .map(|_| {
-                    Some(Err(
-                        "Sizes are measured only for this Mac's checkouts.".into()
-                    ))
-                })
-                .collect();
-            p.worktrees.prepare();
             cx.notify();
         });
         h.capture(&format!("worktrees-remote-{theme}-{suffix}"));
@@ -887,11 +877,11 @@ fn removal_prompt_freezes_choices_and_identity_across_resort_and_refresh() {
     drop(h);
     let _ = std::fs::remove_dir_all(scratch);
 }
-/// A remote host's checkout paths name another machine's disk, so sizes are
-/// marked unavailable rather than measured on this Mac.
+/// A remote host's checkout paths name another machine's disk, so its sizes
+/// are measured by that host, never on this Mac.
 #[core::prelude::v1::test]
-fn a_remote_host_measures_nothing_here() {
-    if !isolated("worktrees_view::a_remote_host_measures_nothing_here") {
+fn a_remote_host_measures_its_own_worktrees() {
+    if !isolated("worktrees_view::a_remote_host_measures_its_own_worktrees") {
         return;
     }
     let scratch =
@@ -901,7 +891,11 @@ fn a_remote_host_measures_nothing_here() {
     h.connect(&repo, false);
     install(&mut h, 4);
     h.update(|p, _, cx| {
+        // The scene leaves an earlier read cancelled; this is a fresh one.
+        p.worktrees.cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        // The test's host has no socket; this Mac would measure the fixture.
         p.host_local = false;
+        p.worktrees.rows[0].path = repo.clone();
         p.worktrees.sizes[1] = Some(Err("The checkout folder is missing.".into()));
         for i in [0, 2, 3] {
             p.worktrees.sizes[i] = None;
@@ -914,10 +908,14 @@ fn a_remote_host_measures_nothing_here() {
             .unwrap();
         let generation = p.worktrees.generation;
         p.measure_worktrees(stamp, generation, cx);
+    });
+    h.settle();
+    h.update(|p, _, _| {
         for i in [0, 2, 3] {
             assert!(
-                matches!(&p.worktrees.sizes[i], Some(Err(why)) if why.contains("this Mac")),
-                "row {i} was not marked unavailable"
+                matches!(&p.worktrees.sizes[i], Some(Err(_))),
+                "row {i} was measured on this Mac: {:?}",
+                p.worktrees.sizes[i]
             );
         }
         assert_eq!(

@@ -81,7 +81,7 @@ export class Runtime {
   /** The checkout as each run found and left it, in the host's own store. */
   records: Records;
   turnReview: TurnReview;
-  gitReads = new GitReads();
+  gitReads: GitReads;
   linear: LinearService;
   worktrees: Worktrees;
   admissions: Admissions;
@@ -131,6 +131,7 @@ export class Runtime {
     this.store.waiters.changed = () => this.changed('#');
     this.records = new Records(this.store, directory, id => this.changed(id));
     this.turnReview = new TurnReview(this.store, this.records, directory);
+    this.gitReads = new GitReads(undefined, undefined, directory);
     this.linear = new LinearService(this.store, directory);
     this.records.start();
     this.codex = new CodexHarness(this.store);

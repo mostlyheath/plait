@@ -24,6 +24,7 @@ const reads: Record<string, string[]> = {
   graph: ['heads'],
   file: ['path'],
   file_stamp: ['path'],
+  worktree_size: ['worktree', 'worktree_identity', 'thread', 'removed', 'others', 'build_directories'],
 };
 const operations = new Set(['git_read', 'git_read_page', 'git_write']);
 const digits = (value: unknown) => typeof value === 'string' && /^[0-9]{1,20}$/.test(value);
@@ -68,13 +69,18 @@ export class GitReads {
   private documents = new Map<string, Document>();
   private helper: Helper;
   private now: () => number;
-  constructor(helper: Helper = runHelper, now = Date.now) { this.helper = helper; this.now = now; }
+  /** Base64 of the host store; only the runtime names it, for a worktree's retained build output. */
+  private store: string | null;
+  constructor(helper: Helper = runHelper, now = Date.now, store: string | null = null) {
+    this.helper = helper; this.now = now; this.store = store === null ? null : Buffer.from(store).toString('base64');
+  }
   handles(input: unknown) { return !!input && typeof input === 'object' && operations.has(String((input as { op?: unknown }).op)); }
   async handle(input: unknown) {
     const request = validateGitRead(input);
     this.expire();
     if (request.op === 'git_read_page') return this.page(String(request.token), Number(request.offset));
     const { op, ...forward } = request;
+    if (forward.read === 'worktree_size') forward.store = this.store;
     const write = op === 'git_write';
     let bytes: Buffer;
     try { bytes = await this.helper(forward, write ? 'git-write' : 'git-read'); } catch {

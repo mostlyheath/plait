@@ -824,7 +824,7 @@ here. That machine's host runs the Git and reads the files, and staging,
 commits, push, pull, fetch, discard and its undo, and branch changes run
 there with that machine's Git configuration and credentials. Open in Editor,
 Terminal, and Show in Finder are not available, because they would open this
-Mac's files, and Worktrees shows no sizes. A host older than this app says
+Mac's files. A host older than this app says
 "Update this machine's host to see its Git." Choose **Open repository…**
 and enter an absolute path on that machine to add a remote project. The host
 checks the checkout when you create a thread. The live remote check remains outstanding. The window's header names the machine in use.

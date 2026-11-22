@@ -89,3 +89,14 @@ test('a Git write names its identity and runs the write helper', async () => {
   const failing = new GitReads(async () => { throw new Error('/secret'); });
   await assert.rejects(failing.handle(valid), (e: HostError) => e.code === 'git_write_failed' && e.message.includes('Refresh'));
 });
+
+test('only a size read is given the host store, and a client cannot name one', async () => {
+  const forwarded: any[] = [];
+  const reads = new GitReads(async input => { forwarded.push(input); return Buffer.from('{}'); }, Date.now, '/host/store');
+  const size = { op: 'git_read', read: 'worktree_size', checkout, identity: null, worktree: checkout, worktree_identity: null, thread: 't', removed: false, others: [], build_directories: [] };
+  await reads.handle(size);
+  await reads.handle({ op: 'git_read', read: 'status', checkout, identity: null });
+  assert.equal(forwarded[0].store, Buffer.from('/host/store').toString('base64'));
+  assert.equal('store' in forwarded[1], false);
+  code(() => validateGitRead({ ...size, store: checkout }), 'invalid_request');
+});

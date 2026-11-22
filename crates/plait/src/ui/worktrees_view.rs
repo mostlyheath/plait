@@ -11,7 +11,7 @@ use plait_core::{
     tabs::{ReadStamp, TabTarget},
     worktree_graph::{self, Graph},
     worktree_removal::{self, Choices},
-    worktree_size::{self, Cache, Key, Size},
+    worktree_size::{Cache, Key, Size},
 };
 use std::{
     path::PathBuf,
@@ -203,8 +203,6 @@ impl View {
         self.hovered = None;
     }
 }
-const REMOTE_SIZE: &str = "Sizes are measured only for this Mac's checkouts.";
-
 fn size_label(size: Option<&Result<Size, String>>) -> String {
     match size {
         None => "Measuring".into(),
@@ -686,20 +684,6 @@ impl Plait {
         generation: u64,
         cx: &mut Context<Self>,
     ) {
-        // A remote host's paths name another machine's disk; measuring them here
-        // would read this Mac's files, or nothing.
-        if !self.host_is_local() {
-            for size in self
-                .worktrees
-                .sizes
-                .iter_mut()
-                .filter(|size| size.is_none())
-            {
-                *size = Some(Err(REMOTE_SIZE.into()));
-            }
-            self.sort_worktree_lanes(self.worktrees.sort_size, cx);
-            return;
-        }
         let pending: Vec<_> = self
             .worktrees
             .rows
@@ -723,23 +707,28 @@ impl Plait {
             .collect();
         let cancelled = self.worktrees.cancelled.clone();
         let store = self.tabs.host.store.clone();
+        // A remote host measures its own disk and store.
+        let backend = self.repository_backend();
+        let project = self.visible_project_checkout().to_owned();
         let task = cx.background_executor().spawn(async move {
             let mut results = Vec::new();
-            for (i, key, thread, removed) in pending {
+            for (i, key, thread, _) in pending {
                 if cancelled.load(Ordering::Acquire) {
                     break;
                 }
-                let cache = thread.map(|id| store.join("build-cache").join(id));
-                let size = if removed {
-                    worktree_size::measure_retained_cache(cache.as_deref(), &cancelled)
-                } else {
-                    let others = checkouts
-                        .iter()
-                        .filter(|(path, _)| *path != key.root)
-                        .map(|(_, id)| *id)
-                        .collect();
-                    worktree_size::measure_verified(&key, cache.as_deref(), &others, &cancelled)
-                };
+                let others = checkouts
+                    .iter()
+                    .filter(|(path, _)| *path != key.root)
+                    .map(|(_, id)| *id)
+                    .collect();
+                let size = backend.worktree_size(
+                    &project,
+                    &key,
+                    thread.as_deref(),
+                    &others,
+                    &store,
+                    &cancelled,
+                );
                 results.push((i, key, size));
             }
             results
