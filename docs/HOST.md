@@ -2220,6 +2220,12 @@ check for a `.git` file or directory without running Git; checks stop after two
 seconds and remaining markers are false. Missing, unreadable, and non-directory
 paths return `not_found`, `permission_denied`, and `invalid_request`, respectively.
 
+The `checkout_cleanup`, `command_policy`, `agent_resources`, `create_thread`,
+and `list_threads` requests also accept an optional `identity` object with
+string `dev` and `ino`. When present, a mismatch returns `invalid_request`
+with “This folder changed since it was opened.” Omitting it preserves the
+previous behavior. `list_threads` requires a checkout when identity is given.
+
 ## Checkout Git reads for remote desktops
 
 These additive, read-only operations omit `protocol_version`. They let a
@@ -2237,6 +2243,10 @@ see its Git."
   `others`, `build_directories`). For `worktree_size` the runtime adds the
   host store, so a thread's retained build output is measured there; a
   client cannot send a store, and a thread must be an id.
+  `main_checkout` returns the base64 path of the first worktree, including
+  for an unborn repository. `identity` returns `{root, identity}` with the
+  canonical root as a base64 path and its device/inode identity, using no Git
+  process. `main_checkout` currently requires a UTF-8 checkout path.
   Any other field is refused.
 - The reply is `{total, data, token}`: `data` is base64 of the first part of
   the serialized outcome, and `token` is null when `data` is all of it.
@@ -2247,7 +2257,7 @@ see its Git."
 - The outcome is `{"ok":{"identity":{dev,ino},"result":R}}`, with the same
   result the desktop's local read returns, or `{"error":{"message":M}}` with
   the same message. Paths inside results are base64 of their bytes.
-- The `plait-host git-read` helper runs the read with the desktop's hardened
+- Except for `main_checkout` and `identity`, the `plait-host git-read` helper runs the read with the desktop's hardened
   Git builder and limits. It refuses a relative path, a folder that is not
   the top of its work tree, and a checkout whose device or inode differs from
   `identity` or changes during the read. Files are opened beneath the

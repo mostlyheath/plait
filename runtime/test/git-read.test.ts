@@ -115,3 +115,25 @@ test('git write retries run the helper once', async t => {
   assert.deepEqual(await reads.handle(request), await reads.handle(request));
   assert.equal(calls, 1);
 });
+
+test('identity resolves symlinks and main checkout works for unborn and linked trees', async t => {
+  const base = await realpath(await mkdtemp(join(tmpdir(), 'plait-identity-')));
+  t.after(() => rm(base, { recursive: true, force: true }));
+  const root = join(base, 'repo'); const linked = join(base, 'linked'); const alias = join(base, 'alias');
+  const { mkdir, symlink } = await import('node:fs/promises');
+  await mkdir(root); await symlink(root, alias);
+  const git = (...args: string[]) => execFileSync('/usr/bin/git', ['-C', root, '-c', 'user.name=Test', '-c', 'user.email=test@invalid', ...args]);
+  git('init', '-q');
+  const reads = new GitReads();
+  const read = async (kind: string, path: string) => {
+    const reply: any = await reads.handle({ op: 'git_read', read: kind, checkout: Buffer.from(path).toString('base64') });
+    return JSON.parse(Buffer.from(reply.data, 'base64').toString());
+  };
+  const found = await read('identity', alias);
+  assert.equal(Buffer.from(found.ok.result.root, 'base64').toString(), root);
+  assert.deepEqual(found.ok.result.identity, found.ok.identity);
+  assert.equal(Buffer.from((await read('main_checkout', root)).ok.result, 'base64').toString(), root);
+  await writeFile(join(root, 'file'), 'content'); git('add', '.'); git('commit', '-qm', 'first');
+  git('worktree', 'add', '-qb', 'linked', linked);
+  assert.equal(Buffer.from((await read('main_checkout', linked)).ok.result, 'base64').toString(), root);
+});
