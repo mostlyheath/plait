@@ -371,10 +371,7 @@ impl Plait {
             self.state.repository.refresh();
             self.pump(cx);
         }
-        if changed
-            .iter()
-            .any(|path| *path == self.workspace.file_viewer.root)
-        {
+        if changed.contains(&self.workspace.file_viewer.root) {
             self.check_file(cx);
         }
     }
