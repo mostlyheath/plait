@@ -70,7 +70,8 @@ SHA-256 against it, installs the host and its bundled Node and runtime under
 `~/.local/share/plait-host`, links `~/.local/bin/plait-host`, and starts a
 systemd user service. It does not verify the publisher signature; the install
 from the Mac does. If a different build is already installed, it leaves the
-switch to the updater. Git is required for repository operations.
+switch to the updater. The installer replaces a source-built host after checking
+that no runs are active. Git is required for repository operations.
 
 Alternatively, install Rust, Node, npm, and Git and build from a source checkout:
 
