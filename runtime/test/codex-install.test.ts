@@ -49,7 +49,7 @@ test('findCodex reports a missing explicit path', async () => {
 
 test('findCodex checks the version of an explicit path', async () => {
   assert.deepEqual(await findCodex({ path: FAKE_CODEX, env: fakeEnv() }),
-    { state: 'ready', path: FAKE_CODEX, version: '0.169.0', message: 'Codex 0.169.0 is ready.' });
+    { state: 'ready', path: FAKE_CODEX, version: '0.169.0', managed: false, message: 'Codex 0.169.0 is ready.' });
   const old = await findCodex({ path: FAKE_CODEX, env: fakeEnv({ FAKE_CODEX_VERSION: '0.150.0' }) });
   assert.equal(old.state, 'unsupported_version');
   assert.equal(old.version, '0.150.0');

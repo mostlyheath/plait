@@ -16,10 +16,11 @@ for evidence and limits.
 
 ### Next
 
-- Install a remote host from the Mac or with a script, and install missing
-  agent CLIs on a host; see [installing a remote host](REMOTE.md#installing-a-remote-host-agreed-not-built).
+- Split `plait-core` into `plait-protocol`, `plait-engine`, and `plait-client`
+  so clients link only the protocol and client layers; see [Architecture](ARCHITECTURE.md#crate-boundaries-agreed-not-built).
 - Show several independent machines in one sidebar.
-- Publish Linux host releases and support in-app host updates on Linux.
+- Update Linux hosts in place, from the machine and from the Mac. Prebuilt
+  Linux hosts are published with each release and install from the Mac.
 - Complete independent client and host releases and update flows.
 - Let accepted runs survive a host restart, with runners separate from the
   request server.
@@ -46,7 +47,7 @@ Milestone IDs identify scope, not build order.
 | --- | --- | --- |
 | M1 — Native foundation | GPUI desktop, navigation, conversation, Git reads | Maintenance |
 | M2 / M2.5 — Daily use | Durable host runs, approvals, history, settings, tabs, optional worktrees | Independent updates and installed first-launch acceptance |
-| M3 — Remote execution | SSH and Tailscale, Linux trusted commands and user service, remote Git and files | Linux releases and updates, live verification, containment |
+| M3 — Remote execution | SSH and Tailscale, prebuilt Linux hosts installed from the Mac, Linux trusted commands and user service, remote Git and files | Linux host updates, live verification, containment |
 | M4 — Development tools | Git review and agreed writes, file viewer, editor and terminal handoffs | Further review features |
 | M5 — Previews | — | Planned previews; scope requires agreement |
 | M6 — Multiple machines | One machine per window, host-owned workspace and machine switching | Several machines in one sidebar |

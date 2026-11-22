@@ -147,7 +147,7 @@ export function failure(error: unknown): Failure {
       && error.retryAfterSeconds! > 0 && error.retryAfterSeconds! <= 86_400 ? { retry_after_seconds: error.retryAfterSeconds } : {}) }
     : { code: 'internal', message: 'Host operation failed. No credentials or provider details are exposed.' };
 }
-const fields: Record<string, string[]> = {
+const fields: Record<string, string[]> = { install_harness: ['harness'], start_harness_sign_in: ['harness'],
   status: [], set_default_model: ['provider', 'model_id'], list_threads: ['checkout'],
   create_thread: ['checkout', 'provider', 'model_id', 'request_id'],
   submit: ['thread_id', 'request_id', 'text'], stop: ['thread_id'],

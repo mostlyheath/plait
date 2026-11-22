@@ -6,6 +6,8 @@
 //! network and file work must run on the caller's background executor.
 
 pub mod install;
+#[cfg(target_os = "linux")]
+pub mod linux;
 pub mod setup;
 
 use ed25519_dalek::{Signature, VerifyingKey};

@@ -113,6 +113,7 @@ export type CodexDependencies = {
   start(path: string, env: NodeJS.ProcessEnv): Promise<AppServer>;
   now(): number;
   idleMs: number;
+  directory?: string;
 };
 const defaults: CodexDependencies = {
   find: findCodex,
@@ -156,6 +157,7 @@ export class CodexHarness {
     this.store.setSetting(PATH_SETTING, path ?? null);
     this.check = undefined; this.latest = undefined;
   }
+  invalidate() { this.check = undefined; this.latest = undefined; }
   /** The list entry, from a recent check unless `fresh`. */
   async entry(fresh = false): Promise<HarnessEntry> { return (await this.checked(fresh)).entry; }
   /** A model this Codex offers, or a refusal the client can show. */
@@ -266,11 +268,11 @@ export class CodexHarness {
     return check;
   }
   /** Finds the install and reads its version; starts nothing. */
-  private async probe(): Promise<Probe> {
+  async probe(): Promise<Probe> {
     const at = this.deps.now();
     const configured = this.path();
     const env = await this.deps.environment();
-    return { at, env, install: await this.deps.find(configured === undefined ? { env } : { path: configured, env }) };
+    return { at, env, install: await this.deps.find(configured === undefined ? { env, directory: this.deps.directory } : { path: configured, env }) };
   }
   private base(install: CodexInstall) {
     return {
@@ -289,7 +291,7 @@ export class CodexHarness {
     const base = this.base(install);
     try {
       if (await codexAccount(server) === 'signed_out') {
-        return { install, env, models: [], at, entry: { ...base, state: 'signed_out', note: 'Sign in with `codex login` in a terminal, then Refresh.', models: [] } };
+        return { install, env, models: [], at, entry: { ...base, state: 'signed_out', note: 'Sign in from Settings → Agents, or run `codex login` on this machine.', models: [] } };
       }
       const models = await codexModels(server);
       return { install, env, models, at, entry: { ...base, state: 'ready', note: install.untested ? install.message : null, models: models.map(wireModel) } };

@@ -1,3 +1,5 @@
+import { harnessLogin } from './harness-sign-in.ts';
+import { installable, installTool, managedPath } from './agent-tools.ts';
 import { threadKind } from './store.ts';
 import { Devices } from './devices.ts';
 import { CheckoutWatcher } from './watcher.ts';
@@ -148,7 +150,7 @@ export class Runtime {
     this.workspace.setWatcher(this.checkoutWatcher);
     this.linear = new LinearService(this.store, directory);
     this.records.start();
-    this.codex = new CodexHarness(this.store);
+    this.codex = new CodexHarness(this.store, { directory: join(directory, 'tools') });
     this.claude = new ClaudeHarness(this.store, { sdk: sdkDirectory(directory), cwd: directory });
     this.worktrees = new Worktrees(this.store, directory, (request, id) => this.prepareWorktreeThread(request, id), () => this.changed('#'), root => this.active.has(root) || this.records.busy(root), () => this.admitWork(), {
       made: (tree, creation) => this.workspace.madeWorktree(tree.path, tree.parent.root, tree.branch, creation, tree.identity),
@@ -230,7 +232,9 @@ export class Runtime {
   /** Every harness, Pi first. */
   private async harnesses(fresh?: HarnessId, protocol: Protocol = 4) {
     const [codex, claude] = await Promise.all([this.codex.entry(fresh === 'codex'), this.claude.entry(fresh === 'claude')]);
-    return { harnesses: [PI_ENTRY, codex, claude].map(entry => protocol >= 6 ? { ...entry, models: entry.models?.map(model => ({ ...model, image_input: entry.id === 'codex' ? this.codex.imageInput(model.model_id) : 'unknown' })) ?? null } : entry) };
+    const [codexPath, claudePath] = await Promise.all([managedPath('codex', join(this.directory, 'tools')), managedPath('claude', join(this.directory, 'tools'))]);
+    const managedPaths = { codex: codexPath, claude: claudePath };
+    return { harnesses: [PI_ENTRY, codex, claude].map(entry => ({ ...entry, installable: entry.id === 'pi' ? null : installable(entry.id), managed: entry.id !== 'pi' && !!entry.path && entry.path === managedPaths[entry.id] && !this.externalHarness(entry.id).path() })).map(entry => protocol >= 6 ? { ...entry, models: entry.models?.map(model => ({ ...model, image_input: entry.id === 'codex' ? this.codex.imageInput(model.model_id) : 'unknown' })) ?? null } : entry) };
   }
   /** The mode list of a harness that has its own modes; Pi has none. */
   private modes(harness: HarnessId | undefined) {
@@ -383,6 +387,24 @@ export class Runtime {
         return result;
       }
       case 'harnesses': return this.harnesses(undefined, protocol);
+      case 'start_harness_sign_in': {
+        if (request.harness !== 'codex' && request.harness !== 'claude') fail('invalid_request', 'Only Codex and Claude Code support this sign-in.');
+        if (!this.providers) fail('unavailable', 'Sign-in is unavailable.');
+        const harness = request.harness;
+        const probe = await (harness === 'codex' ? this.codex.probe() : this.claude.probe());
+        if (!probe.install.path || probe.install.state !== 'ready') fail('model_unavailable', probe.install.message);
+        return { sign_in: await this.providers.signIns.start(`harness:${harness}`, undefined, harnessLogin(harness, probe.install.path, probe.env), async () => {
+          if (harness === 'codex') this.codex.invalidate(); else this.claude.forget();
+          this.changed('#');
+        }, 900_000) };
+      }
+      case 'install_harness': {
+        if (request.harness !== 'codex' && request.harness !== 'claude') fail('invalid_request', 'Only Codex and Claude Code can be installed.');
+        await installTool(request.harness, { directory: join(this.directory, 'tools') });
+        if (request.harness === 'claude') await this.claude.setUp();
+        // Like the other harness operations, the reply is the whole list, this harness checked again.
+        return this.harnesses(request.harness, protocol);
+      }
       case 'set_harness_path': {
         if (request.harness === 'pi') fail('invalid_request', 'Pi runs inside the host, not from a chosen path.');
         this.externalHarness(request.harness as 'codex' | 'claude').setPath(request.path as string | undefined);
