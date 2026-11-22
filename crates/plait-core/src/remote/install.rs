@@ -130,6 +130,47 @@ pub fn install(
     })
 }
 
+/// Result reported by the remote host updater.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Updated {
+    Current,
+    Active { version: String },
+}
+
+fn parse_update(output: &str) -> Result<Updated, Error> {
+    for line in output.lines().rev() {
+        if let Some(rest) = line.strip_prefix("Host ") {
+            if let Some((version, path)) = rest.split_once(" is active: ")
+                && !version.trim().is_empty()
+                && !path.trim().is_empty()
+            {
+                return Ok(Updated::Active {
+                    version: version.to_owned(),
+                });
+            }
+            if rest
+                .strip_suffix(" is current.")
+                .is_some_and(|build| !build.trim().is_empty())
+            {
+                return Ok(Updated::Current);
+            }
+        }
+    }
+    Err(Error::Transport(
+        "The host update did not report a result.".into(),
+    ))
+}
+
+/// Blocking. Asks the installed host to update itself on the machine.
+pub fn update(destination: &SshDestination, options: &SshOptions) -> Result<Updated, Error> {
+    let output = run_script(
+        destination,
+        options,
+        r#"p=$(command -v plait-host || echo "$HOME/.local/bin/plait-host"); exec "$p" update"#,
+    )?;
+    parse_update(&output)
+}
+
 /// Runs `script` with `sh -s` on the machine and returns what it printed. A
 /// failure reports the script's own reason, or SSH's.
 fn run_script(
@@ -156,19 +197,14 @@ fn run_script(
         .map_err(|e| Error::Transport(format!("SSH failed: {e}")))?;
     let stderr = String::from_utf8_lossy(&output.stderr);
     if !output.status.success() {
-        let reason = stderr
+        let line = stderr
             .lines()
-            .find_map(|line| line.strip_prefix("plait-install-error: "))
-            .map(str::to_owned)
-            .unwrap_or_else(|| {
-                stderr
-                    .trim()
-                    .lines()
-                    .last()
-                    .unwrap_or("SSH failed.")
-                    .to_owned()
-            });
-        return Err(Error::Transport(reason));
+            .rev()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .unwrap_or("SSH failed.");
+        let reason = line.strip_prefix("plait-install-error: ").unwrap_or(line);
+        return Err(Error::Transport(reason.chars().take(300).collect()));
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
@@ -177,6 +213,59 @@ fn run_script(
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn update_output_is_parsed() {
+        assert_eq!(
+            parse_update("Host abc is current.\n").unwrap(),
+            Updated::Current
+        );
+        assert_eq!(
+            parse_update("Host v1 is available (running old).\nHost v1 is active: /path\n")
+                .unwrap(),
+            Updated::Active {
+                version: "v1".into()
+            }
+        );
+        assert!(parse_update("Host v1 is available (running old).\n").is_err());
+    }
+
+    #[test]
+    fn update_uses_ssh_and_reports_refusal() {
+        let home = std::env::temp_dir().join(format!("plait-update-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(home.join("bin")).unwrap();
+        let host = home.join("bin/plait-host");
+        let options = fake_ssh(&home);
+        let destination = SshDestination::new("machine").unwrap();
+        for (script, expected) in [
+            (
+                "echo 'Host v1 is active: /host'",
+                Some(Updated::Active {
+                    version: "v1".into(),
+                }),
+            ),
+            ("echo 'Host abc is current.'", Some(Updated::Current)),
+            ("echo '2 active runs' >&2; exit 1", None),
+        ] {
+            std::fs::write(
+                &host,
+                format!("#!/bin/sh\n[ \"$1\" = update ] || exit 2\n{script}\n"),
+            )
+            .unwrap();
+            std::fs::set_permissions(&host, std::fs::Permissions::from_mode(0o755)).unwrap();
+            match expected {
+                Some(value) => assert_eq!(update(&destination, &options).unwrap(), value),
+                None => assert!(
+                    update(&destination, &options)
+                        .unwrap_err()
+                        .to_string()
+                        .contains("2 active runs")
+                ),
+            }
+        }
+        std::fs::remove_dir_all(home).unwrap();
+    }
 
     #[test]
     fn platforms_map_to_published_archives() {

@@ -84,7 +84,7 @@ A source-built service uses the Node on the current PATH. The host stores data
 in `~/.local/share/plait`. Run `plait-host run` for a foreground host, or
 `plait-host uninstall-service` to remove the service. Without lingering, the
 user service stops at logout; `loginctl enable-linger $USER` keeps it running.
-Installed Linux hosts update with `plait-host update`; source builds update by rebuilding.
+Installed Linux hosts update with `plait-host update`; source builds update by rebuilding. Settings → Machines can check for and apply host updates over SSH.
 
 Linux runs trusted commands and trusted MCP servers as the host user. It
 refuses the sandboxed command policy; see [Linux sandbox](LINUX-SANDBOX.md).
