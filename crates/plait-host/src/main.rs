@@ -48,6 +48,14 @@ fn run() -> io::Result<()> {
     if operation == "lock-fd" {
         return lease::acquire(args.collect());
     }
+    if operation == "runner-lock-fd" {
+        return lease::runner_lock();
+    }
+    if operation == "runner-peer-fd" {
+        use std::os::fd::FromRawFd;
+        let socket = unsafe { std::os::unix::net::UnixStream::from_raw_fd(3) };
+        return plait_core::local_socket::require_same_user(&socket);
+    }
     if operation == "cleanup" {
         return lease::cleanup_operation(args.collect());
     }
