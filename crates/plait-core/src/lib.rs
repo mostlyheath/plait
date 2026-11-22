@@ -2,7 +2,7 @@
 //!
 //! Blocking Git and host operations must run on the caller's background executor.
 
-pub mod build_output;
+pub use plait_engine::build_output;
 pub mod checkout_state;
 pub mod compose;
 pub mod connections;
@@ -10,13 +10,13 @@ pub mod conversation_find;
 pub mod diff;
 pub mod file_view;
 pub mod fuzzy;
-pub mod git;
+pub use plait_engine::git;
 pub mod handoff;
 pub mod highlight;
 pub mod host;
 pub mod host_state;
 pub mod images;
-pub mod lease;
+pub use plait_engine::lease;
 pub mod linear_issues;
 pub mod linear_settings;
 pub mod local_socket;
@@ -50,4 +50,4 @@ pub mod navigation;
 pub mod display_text;
 pub mod worktree_graph;
 pub mod worktree_removal;
-pub mod worktree_size;
+pub use plait_engine::worktree_size;
