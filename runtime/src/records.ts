@@ -74,6 +74,11 @@ export function helper<T>(operation: 'record' | 'prune' | 'undo' | 'review', inp
   });
 }
 
+/** Captures immutable artifacts; indexing the result remains the caller's job. */
+function capture(directory: string, checkout: string, id: string, before: string | undefined, undo: boolean, lease?: LeaseHandle) {
+  return helper<Made>('record', { checkout, store: directory, id, ...(before ? { before } : {}), ...(undo ? { undo: true } : {}) }, lease);
+}
+
 type UndoOutcome = { state: 'blocked' | 'applying' | 'undone' | 'incomplete'; applied: number; changed_since: string[]; not_covered: Uncovered[]; before: Made; after: Made | null };
 
 export class Records {
@@ -338,7 +343,7 @@ export class Records {
 
   private make(checkout: string, id: string, before: string | undefined, lease?: LeaseHandle) {
     const undo = this.store.db.prepare("SELECT 1 FROM records WHERE id=? AND kind='undo'").get(id) !== undefined;
-    return helper<Made>('record', { checkout, store: this.directory, id, ...(before ? { before } : {}), ...(undo ? { undo: true } : {}) }, lease);
+    return capture(this.directory, checkout, id, before, undo, lease);
   }
   /** A read pins immutable record blobs against pruning without touching the recorder index. */
   read<T>(work: () => Promise<T>): Promise<T> {
