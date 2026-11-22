@@ -2,6 +2,7 @@
 //! owns a remote checkout. Both run the same `git` and `file_view` functions;
 //! only a remote one crosses the link.
 use super::*;
+use crate::ownership::CheckoutKeyExt;
 use crate::{
     file_view::{self, Opened, Stamp},
     git::{LineCount, log::GraphCommit},

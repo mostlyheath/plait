@@ -2,6 +2,8 @@
 use super::theme::ButtonAction;
 use super::{Plait, settings, settings_agent::AgentState, settings_policy::PolicyState};
 use gpui::{prelude::*, *};
+use plait_core::ownership::CheckoutKeyExt;
+use plait_core::ownership::HostKeyExt;
 use std::path::{Path, PathBuf};
 
 pub(super) struct ProjectSettings {

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/plait", "crates/plait-core", "crates/plait-protocol", "crates/plait-host"]
+members = ["crates/plait", "crates/plait-core", "crates/plait-engine", "crates/plait-protocol", "crates/plait-host"]
 default-members = ["crates/plait"]
 resolver = "3"
 

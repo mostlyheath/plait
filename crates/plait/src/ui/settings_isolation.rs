@@ -5,6 +5,7 @@ use plait_core::host::{
     self,
     admission::{self, Request},
 };
+use plait_core::ownership::CheckoutKeyExt;
 impl Plait {
     pub(super) fn prepare_isolation_settings(&mut self, cx: &mut Context<Self>) {
         let key = (
