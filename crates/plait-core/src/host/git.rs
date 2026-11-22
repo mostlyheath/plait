@@ -21,9 +21,12 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 pub const OLDER_HOST: &str = "Update this machine's host to see its Git.";
+/// The runtime stops a read after 60 seconds; wait a little longer for its answer.
+const READ_WAIT: Duration = Duration::from_secs(65);
 /// The most a client reassembles; a larger result is refused, not truncated.
 pub const RESULT_LIMIT: usize = 64 * 1024 * 1024;
 
@@ -281,11 +284,14 @@ pub fn read<T: DeserializeOwned>(
     read: Read,
 ) -> Result<Remote<T>, Error> {
     let first: Page = client
-        .send(&Request::GitRead {
-            checkout: checkout.to_owned(),
-            identity: expected.map(Into::into),
-            read,
-        })
+        .send_within(
+            &Request::GitRead {
+                checkout: checkout.to_owned(),
+                identity: expected.map(Into::into),
+                read,
+            },
+            READ_WAIT,
+        )
         .map_err(|e| {
             if needs_host_update(&e) {
                 Error::Protocol(OLDER_HOST.into())

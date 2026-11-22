@@ -239,8 +239,8 @@ The client accepts replies up to 1 MiB; local reads allow more. So:
   agent and keys, and its Git credential helpers. Prompts stay off, so a
   missing credential fails with Git's own message. The link does not forward
   this Mac's SSH agent.
-- Discard backups are kept in the host's store, and **Restore** asks the
-  host for them, so undo works after the desktop reconnects.
+- A discard saves the file as an unreferenced blob in the repository's own
+  object store, which is on the host, so **Restore** works there unchanged.
 - A write is not tied to the view's epoch, as locally. If the link drops
   during a write, the host finishes it, and the desktop rereads status when
   it reconnects rather than assuming either outcome.
