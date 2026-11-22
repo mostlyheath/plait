@@ -1186,6 +1186,7 @@ pub mod cleanup;
 pub mod device;
 pub mod folders;
 pub mod git;
+pub mod graph;
 pub mod harness;
 pub mod identity;
 pub mod linear;

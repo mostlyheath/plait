@@ -444,7 +444,9 @@ fn watch_workspace(
 
 /// A workspace event when the revision or status changed.
 fn workspace_event(previous: &Value, current: &Value, seq: u64) -> Option<Value> {
-    (current["revision"] != previous["revision"] || current["status"] != previous["status"])
+    (current["revision"] != previous["revision"]
+        || current["status"] != previous["status"]
+        || current["graph_revision"] != previous["graph_revision"])
         .then(|| json!({"event": "workspace", "seq": seq, "workspace": current}))
 }
 
@@ -518,6 +520,16 @@ mod tests {
         assert_eq!(
             workspace_event(&view(3), &view(4), 1),
             Some(json!({"event": "workspace", "seq": 1, "workspace": view(4)}))
+        );
+    }
+
+    #[test]
+    fn workspace_event_reports_graph_changes() {
+        let before = json!({"revision": 3, "graph_revision": 1});
+        let after = json!({"revision": 3, "graph_revision": 2});
+        assert_eq!(
+            workspace_event(&before, &after, 1),
+            Some(json!({"event": "workspace", "seq": 1, "workspace": after}))
         );
     }
 

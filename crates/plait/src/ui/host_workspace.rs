@@ -485,6 +485,7 @@ mod tests {
     fn view() -> View {
         View {
             schema: 1,
+            graph_revision: 0,
             host: HostIdentity {
                 id: "h".into(),
                 name: "workstation".into(),

@@ -115,7 +115,7 @@ export class Workspace {
     const seen = db.prepare('SELECT * FROM workspace_seen ORDER BY updated_at DESC, thread_id').all().map(row => ({
       thread_id: String(row.thread_id), updated_at: Number(row.updated_at), state: String(row.state), unread: Number(row.unread) === 1,
     }));
-    return { schema: 1, host: this.identity(), revision: Number(this.store.setting('workspace_revision') ?? 0), projects, worktrees, seen, status: this.watcher?.status() ?? {} };
+    return { schema: 1, host: this.identity(), revision: Number(this.store.setting('workspace_revision') ?? 0), graph_revision: Number(this.store.setting('graph_revision') ?? 0), projects, worktrees, seen, status: this.watcher?.status() ?? {} };
   }
 
   async handle(input: unknown) {

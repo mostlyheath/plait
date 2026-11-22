@@ -26,6 +26,7 @@ const columns = [
   // Null for Pi, so threads saved before version 4 need no backfill.
   ['threads', 'harness', 'TEXT'],
   ['threads', 'records_revision', 'INTEGER NOT NULL DEFAULT 0'],
+  ['threads', 'has_assistant', 'INTEGER'], ['threads', 'error_code', 'TEXT'],
   ['records', 'undoes', 'TEXT'],
 ];
 const summary = (row: Row): Summary => ({
@@ -53,6 +54,17 @@ export class Store {
       CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS thread_vcs(thread TEXT PRIMARY KEY, vcs TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS roots(id TEXT PRIMARY KEY, identity TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS graph_nodes(id TEXT PRIMARY KEY, project TEXT NOT NULL, checkout TEXT NOT NULL,
+        lifecycle TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'build', pinned_root INTEGER NOT NULL DEFAULT 0,
+        auto_start TEXT NOT NULL DEFAULT 'manual', blocked_by_failure TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS graph_drafts(node_id TEXT PRIMARY KEY, title TEXT NOT NULL, prompt TEXT NOT NULL,
+        placement TEXT NOT NULL, harness TEXT NOT NULL, provider TEXT NOT NULL, model_id TEXT NOT NULL,
+        thinking TEXT, mode TEXT, approval TEXT NOT NULL DEFAULT 'ask', seed_text TEXT);
+      CREATE TABLE IF NOT EXISTS graph_edges(id TEXT PRIMARY KEY, kind TEXT NOT NULL, from_node TEXT NOT NULL,
+        to_node TEXT NOT NULL, source_message_id TEXT, target_request_id TEXT, metadata TEXT, created_at INTEGER NOT NULL);
+      CREATE UNIQUE INDEX IF NOT EXISTS graph_edges_unique ON graph_edges(kind,from_node,to_node,COALESCE(source_message_id,''));
+      CREATE INDEX IF NOT EXISTS graph_edges_from ON graph_edges(from_node,kind);
+      CREATE INDEX IF NOT EXISTS graph_edges_to ON graph_edges(to_node,kind);
       CREATE TABLE IF NOT EXISTS postimages(thread_id TEXT NOT NULL, path TEXT NOT NULL, image TEXT NOT NULL, PRIMARY KEY(thread_id,path));
       CREATE TABLE IF NOT EXISTS records(id TEXT PRIMARY KEY, thread TEXT NOT NULL, run_request TEXT NOT NULL, kind TEXT NOT NULL, checkout TEXT NOT NULL,
         before TEXT, commit_id TEXT, tree TEXT, head TEXT, head_ref TEXT, state TEXT NOT NULL, not_covered TEXT, not_covered_total INTEGER,
@@ -87,6 +99,14 @@ export class Store {
       }
     });
     this.backfill();
+    if (!this.db.prepare("SELECT value FROM settings WHERE key='graph_thread_cols_v1'").get()) this.transaction(() => {
+      const update = this.db.prepare('UPDATE threads SET has_assistant=?, error_code=? WHERE id=?');
+      for (const row of this.db.prepare('SELECT id,snapshot FROM threads WHERE has_assistant IS NULL').iterate()) {
+        const snapshot = JSON.parse(String(row.snapshot)) as Snapshot;
+        update.run(snapshot.messages.some(message => message.role === 'assistant') ? 1 : 0, snapshot.error?.code ?? null, row.id);
+      }
+      this.db.prepare("INSERT INTO settings(key,value) VALUES ('graph_thread_cols_v1','1')").run();
+    });
     this.waiters = new CheckoutQueue(this);
     for (const snapshot of this.recoverable()) {
       if (snapshot.status === 'running' || snapshot.status === 'awaiting_approval') {
@@ -150,10 +170,10 @@ export class Store {
     };
     // A thread never changes harness, so its column is written once and never compared.
     const harness = snapshot.harness && snapshot.harness.id !== 'pi' ? snapshot.harness.id : null;
-    this.db.prepare(`INSERT INTO threads (id,snapshot,head,checkout,status,model,title,archived,pending,created_at,updated_at,harness) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+    this.db.prepare(`INSERT INTO threads (id,snapshot,head,checkout,status,model,title,archived,pending,created_at,updated_at,harness,has_assistant,error_code) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(id) DO UPDATE SET snapshot=excluded.snapshot,head=MAX(threads.head,excluded.head),checkout=excluded.checkout,status=excluded.status,
-      model=excluded.model,title=excluded.title,archived=excluded.archived,pending=excluded.pending,created_at=excluded.created_at,updated_at=excluded.updated_at,harness=excluded.harness`)
-      .run(snapshot.id, JSON.stringify(boundSnapshot(snapshot)), head, snapshot.checkout, next.status, next.model, next.title, next.archived, next.pending, snapshot.created_at, next.updated_at, harness);
+      model=excluded.model,title=excluded.title,archived=excluded.archived,pending=excluded.pending,created_at=excluded.created_at,updated_at=excluded.updated_at,harness=excluded.harness,has_assistant=MAX(COALESCE(threads.has_assistant,0),excluded.has_assistant),error_code=excluded.error_code`)
+      .run(snapshot.id, JSON.stringify(boundSnapshot(snapshot)), head, snapshot.checkout, next.status, next.model, next.title, next.archived, next.pending, snapshot.created_at, next.updated_at, harness, snapshot.messages.some(message => message.role === 'assistant') ? 1 : 0, snapshot.error?.code ?? null);
     return !previous || (Object.keys(next) as (keyof typeof next)[]).some(key => previous[key] !== next[key]);
   }
   private input(id: string, row: Row): InputRecord {

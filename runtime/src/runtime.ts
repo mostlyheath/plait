@@ -1,3 +1,4 @@
+import { Graph } from './graph.ts';
 import { harnessLogin } from './harness-sign-in.ts';
 import { installable, installTool, managedPath } from './agent-tools.ts';
 import { threadKind } from './store.ts';
@@ -90,6 +91,7 @@ export class Runtime {
   turnReview: TurnReview;
   gitReads: GitReads;
   workspace: Workspace;
+  private graph: Graph;
   folders = new Folders();
   devices: Devices;
   private checkoutWatcher: CheckoutWatcher;
@@ -139,6 +141,7 @@ export class Runtime {
   constructor(directory: string, models: Models, authenticated: Set<string>) {
     this.directory = directory; this.models = models; this.authenticated = authenticated;
     this.store = new Store(directory);
+    this.graph = new Graph(this.store, () => this.changed(WORKSPACE_TOPIC), (id, work) => this.read(id, work));
     this.store.waiters.changed = () => this.changed('#');
     this.records = new Records(this.store, directory, id => this.changed(id));
     this.turnReview = new TurnReview(this.store, this.records, directory);
@@ -298,6 +301,7 @@ export class Runtime {
     return this.store.images.data(thread, this.store.images.forRequest(thread, request));
   }
   async handle(input: unknown, expectedCheckout?: FileIdentity): Promise<unknown> {
+    if (this.graph.handles(input)) return this.graph.handle(input);
     const op = input && typeof input === 'object' ? (input as { op?: unknown }).op : undefined;
     if (op === 'host_info' || op === 'drain_for_update' || op === 'cancel_drain') {
       if (Array.isArray(input) || Object.keys(input as object).some(key => key !== 'op')) fail('invalid_request', 'Unknown operation or field.');

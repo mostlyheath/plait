@@ -24,7 +24,7 @@ built. [Host](HOST.md) defines the implemented contract.
 | --- | --- |
 | Projects, hidden projects, worktree ownership, project settings | Host, shared |
 | Threads, turns, records, undo and redo | Host, shared |
-| Prompt tree | Host, planned |
+| Prompt tree | Host graph model and operations built; views and scheduling planned |
 | Git, files, worktree sizes | Host; status changes pushed |
 | Unread and observed activity | Host, shared |
 | Tabs, layout, selection, bookmarks | Host, per device |
@@ -55,19 +55,9 @@ its 20 ms gate. This is not an installed Mac measurement. See
 
 ## The prompt tree
 
-**Planned exploration:** mockups precede agreement on the model and view. The
-working model is:
-
-- A node is a prompt and its answering turn, with a parent it continues.
-- Editing, rewinding, forking into a worktree, retrying, or undoing branches
-  instead of overwriting history.
-- Each node links its before and after records, worktree, and any commits.
-- Undo and redo move the thread's position and restore eligible changed files;
-  the client shows and compares branches.
-
-Open questions: whether retries and edits are siblings or distinct branch
-kinds, how the tree spans worktrees, and how to handle files changed since a
-branch was recorded.
+The agreed graph models threads and drafts as nodes, with fork and dependency
+edges. The host model and graph operations are built. Scheduling dependent
+work, conversation actions, and graph views are planned.
 
 ## Order of work
 
@@ -77,7 +67,7 @@ branch was recorded.
    retain compatibility fallback for an older local host.
 3. **Built:** per-device tabs, layout, and selection on the host.
 4. **Built:** operation IDs for writes and replay of their first outcome.
-5. **Planned:** prompt-tree exploration, then an agreed model and view.
+5. **Built:** host graph model and operations. **Planned:** scheduling, conversation actions, and graph views.
 6. **Planned:** several independent machines in one sidebar.
 7. **Planned:** runners that survive host restart, separate from the request
    server.

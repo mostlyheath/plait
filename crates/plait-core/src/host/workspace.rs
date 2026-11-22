@@ -50,6 +50,8 @@ pub struct View {
     pub host: HostIdentity,
     pub revision: u64,
     #[serde(default)]
+    pub graph_revision: u64,
+    #[serde(default)]
     pub status: BTreeMap<PathBuf, u64>,
     pub projects: Vec<Project>,
     pub worktrees: Vec<Worktree>,

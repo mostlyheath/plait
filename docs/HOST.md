@@ -2151,6 +2151,20 @@ raw bytes remain in the patch. Complete page validation and patch preparation
 run off the UI thread. These operations provide no staging,
 attribution proof, or reviewed baseline, and make no change to undo semantics.
 
+## Thread graph
+
+The versionless `graph` operation reads at most 500 nodes and 2,000 edges, excludes archived threads, and reports `truncated` when the result is capped. It is optionally scoped by
+`project`. `create_draft`, `fork_thread`, `set_dependencies`, `set_node_kind`,
+and `delete_draft` mutate the graph and return its revision. Writes accept an
+optional `op_id`. Dependencies are limited to 500 per request and cannot form
+cycles; requests are limited to 65,000 bytes. Fork seeds are capped at 24 KiB.
+Starting a fork immediately is not yet supported.
+
+Node statuses are `needs_you`, `failed`, `discussing`, `building`, `queued`,
+`waiting`, `draft`, and `done`. Clients should tolerate new statuses and fields.
+Older hosts answer `invalid_request` for these operations. Graph mutations notify
+workspace subscribers; fetch `graph` to read the changed graph.
+
 ## Workspace
 
 The first step of [Host-first Plait](HOST-FIRST.md). These additive
@@ -2160,7 +2174,7 @@ this Mac's saved lists for this Mac, and only what the window opened for
 another machine.
 
 - `{"op":"workspace_view"}` returns `{schema:1, host, revision, projects,
-  worktrees, seen, status}`.
+  worktrees, seen, status, graph_revision}`.
   - `host` is `{id, name, platform}`. The ID is stable for the store and
     is the same one turn review reports. The name defaults to the machine's
     hostname, and `{"op":"host_set_name","name":N}` changes it.
@@ -2175,7 +2189,7 @@ another machine.
     with at most 1000 entries.
 - `{"op":"workspace_subscribe"}` replies with the same view, then sends
   `{"event":"workspace","seq":N,"workspace":VIEW}` each time the revision or status
-  changes, numbered from 1. A thread change alone is not a workspace change. A
+  changes or the graph changes, numbered from 1. A thread change alone is not a workspace change. A
   subscriber that cannot keep up is disconnected and subscribes again for a
   fresh view.
 - Workspace writes accept an optional `op_id`: retries with the same ID and input return the first outcome for up to 24 hours.

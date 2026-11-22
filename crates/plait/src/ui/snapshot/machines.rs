@@ -213,6 +213,7 @@ fn machines_snapshots() {
             p.machines.fresh_link = true;
             let generation = p.host_workspace_generation();
             let view = plait_core::host::workspace::View {
+                graph_revision: 0,
                 schema: 1,
                 host: plait_core::host::workspace::HostIdentity {
                     id: "scene-host".into(),
@@ -419,6 +420,7 @@ fn a_remote_window_shows_only_its_hosts_workspace() {
         let generation = p.host_workspace_generation();
         let view = View {
             schema: 1,
+            graph_revision: 0,
             host: HostIdentity {
                 id: "host-1".into(),
                 name: "arthur".into(),
@@ -466,6 +468,7 @@ fn a_watched_change_rereads_the_open_checkout() {
         let open = p.state.repository.path().to_owned();
         let view = |count: u64| View {
             schema: 1,
+            graph_revision: 0,
             host: HostIdentity {
                 id: "this-mac".into(),
                 name: "mac".into(),
@@ -532,6 +535,7 @@ fn switching_machines_puts_the_previous_tabs_away() {
         let generation = p.host_workspace_generation();
         let view = View {
             schema: 1,
+            graph_revision: 0,
             host: HostIdentity {
                 id: "host-2".into(),
                 name: "arthur".into(),
