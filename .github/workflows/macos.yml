@@ -185,6 +185,37 @@ jobs:
             target/release-inputs
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
+  # Packaged on pull requests too, so a broken Linux archive fails before a release.
+  linux-host:
+    needs: plan
+    if: needs.plan.outputs.release == 'true' || needs.plan.outputs.test == 'true'
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build and package host
+        run: |
+          rustup toolchain install --profile minimal --no-self-update
+          cargo build --release --locked -p plait-host
+          python3 scripts/package_linux_host.py --arch ${{ matrix.arch }} --out dist
+          python3 scripts/smoke_linux_host.py dist/*.tar.gz
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: plait-host-linux-${{ matrix.arch }}-${{ github.sha }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 14
+
   # The real-window check drives the package this run built. It is advisory:
   # publishing does not wait for it, and its failures do not fail the run.
   acceptance:
@@ -240,7 +271,7 @@ jobs:
   # The preview's number is taken only here, when everything before it passed:
   # a build that fails uses up no number and leaves no tag behind.
   publish:
-    needs: [plan, package]
+    needs: [plan, package, linux-host]
     runs-on: ubuntu-24.04
     permissions:
       actions: read
@@ -257,6 +288,8 @@ jobs:
       - name: Download the tested build and verify every checksum
         run: |
           gh run download "$GITHUB_RUN_ID" -n "$ARTIFACT" -D release
+          gh run download "$GITHUB_RUN_ID" -n "plait-host-linux-x86_64-$GITHUB_SHA" -D release
+          gh run download "$GITHUB_RUN_ID" -n "plait-host-linux-arm64-$GITHUB_SHA" -D release
           (cd release && sha256sum -c ./*.sha256)
       - name: Build the update signing tool
         run: |
@@ -274,7 +307,7 @@ jobs:
           # Signing refuses a key that does not match the one built into Plait.
           # Schema 1 for current apps, and one manifest per component for the
           # independent updates in docs/RELEASING.md. Each is checked as a client would.
-          for manifest in release/update.json release/update-client.json release/update-host.json; do
+          for manifest in release/update.json release/update-client.json release/update-host.json release/update-host-linux-*.json; do
             test -f "$manifest" || continue
             target/debug/examples/update-key sign "$key" "$manifest"
             target/debug/examples/update-key verify "$manifest"
@@ -297,7 +330,8 @@ jobs:
             'The installed coding/reconnect test uses a scripted provider and real sandboxed Cargo commands, not a live model.' \
             '' \
             'The attached installed-client images show that labeled test, not a personal-account session.' \
-            'See docs/GUIDE.md, docs/SELF-HOSTING.md, and docs/VERIFICATION.md at this tag for setup and limits.' > notes.md
+            'Linux hosts (x86_64, arm64): Plait-Host-*-linux-*.tar.gz, each with its own signed update-host-linux-*.json. See docs/REMOTE.md.' \
+            'See docs/GUIDE.md, docs/REMOTE.md, and docs/VERIFICATION.md at this tag for setup and limits.' > notes.md
           # The tag is created with the release, on the commit this run built.
           gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" --prerelease --draft \
             --title "Plait $RELEASE_TAG — local preview" --notes-file notes.md --generate-notes \

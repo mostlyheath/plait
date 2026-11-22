@@ -1,4 +1,6 @@
 import json
+import io
+import tarfile
 import sys
 from unittest.mock import patch
 import tempfile
@@ -82,6 +84,35 @@ class UpdateManifestTest(unittest.TestCase):
                 self.assertFalse((root / "update.json").exists())
                 other = "host" if expected == "client" else "client"
                 self.assertFalse((root / f"update-{other}.json").exists())
+
+    def test_linux_manifests_preserve_existing_shapes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.release(root)
+            with patch.object(sys, "argv", ["update_manifest.py", directory, "v0.1.0"]):
+                main()
+            before = {name: (root / name).read_bytes() for name in ("update.json", "update-host.json")}
+            self.assertFalse((root / "update-host-linux-arm64.json").exists())
+            for arch in ("x86_64", "arm64"):
+                build_id = "0.1.0-" + ("a" if arch == "x86_64" else "b") * 20
+                metadata = json.dumps({"build_id": build_id, "version": "0.1.0", "revision": "1eb61f1259dd", "component": "host", "platform": f"linux-{arch}"}).encode()
+                path = root / f"Plait-Host-0.1.0-1eb61f1259dd-linux-{arch}.tar.gz"
+                with tarfile.open(path, "w:gz") as tar:
+                    info = tarfile.TarInfo(f"{build_id}/component.json")
+                    info.size = len(metadata)
+                    tar.addfile(info, io.BytesIO(metadata))
+            with patch.object(sys, "argv", ["update_manifest.py", directory, "v0.1.0"]):
+                main()
+            for name, data in before.items():
+                self.assertEqual((root / name).read_bytes(), data)
+            for arch, digit in (("x86_64", "a"), ("arm64", "b")):
+                result = json.loads((root / f"update-host-linux-{arch}.json").read_text())
+                self.assertEqual(result["build_id"], "0.1.0-" + digit * 20)
+                self.assertEqual(list(result["artifacts"]), [f"linux-{arch}"])
+            (root / "Plait-Host-0.1.0-1eb61f1259dd-macos-arm64.tar.gz").unlink()
+            with patch.object(sys, "argv", ["update_manifest.py", directory, "v0.1.0"]):
+                main()
+            self.assertTrue((root / "update-host-linux-x86_64.json").is_file())
 
 
 if __name__ == "__main__":

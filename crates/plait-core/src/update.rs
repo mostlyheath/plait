@@ -725,6 +725,19 @@ mod tests {
                 value.as_object_mut().unwrap().remove(field);
             }
         }
+        value["artifacts"] = serde_json::json!({"linux-x86_64": {
+            "name": "host.tar.gz", "sha256": "a".repeat(64), "size": 10
+        }});
+        let linux_bytes = serde_json::to_vec(&value).unwrap();
+        assert!(
+            verify_component(
+                &linux_bytes,
+                sign(&linux_bytes).as_bytes(),
+                &key.verifying_key(),
+                Component::Host,
+            )
+            .is_ok()
+        );
         let legacy = manifest("0.1.0");
         assert!(
             verify_component(

@@ -193,6 +193,8 @@ locally with `open dist/Plait.app --args /absolute/path/to/repository`.
 | `Plait-Installer-…-macos-arm64.pkg` | Legacy system-wide installer (client and host) |
 | `Plait-Client-…-macos-arm64.pkg` | Legacy system-wide client-only package (`/Applications/Plait.app`) |
 | `Plait-Host-…-macos-arm64.pkg` | Legacy system-wide host-only package (`/Library/Application Support/Plait/Host`) |
+| `Plait-Host-…-linux-{x86_64,arm64}.tar.gz` and `.sha256` | Linux host, bundled Node and runtime, and checksums |
+| `update-host-linux-{x86_64,arm64}.json` and `.sig` | Signed Linux host update manifests |
 | `Plait-Release-….json` and `.sha256` | Component metadata and artifact checksums |
 
 **Signing status:** The client and Rust host are ad-hoc signed, and bundled Node

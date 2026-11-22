@@ -11,6 +11,7 @@ import hashlib
 import json
 import re
 import sys
+import tarfile
 from pathlib import Path
 
 PLATFORM = "macos-arm64"
@@ -55,7 +56,7 @@ def build(release, tag):
     }
 
 
-def build_component(release, tag, component):
+def build_component(release, tag, component, platform=PLATFORM):
     records = list(release.glob("Plait-Release-*.json"))
     if len(records) != 1:
         raise ValueError("Expected exactly one component release record")
@@ -66,11 +67,11 @@ def build_component(release, tag, component):
     if not re.fullmatch(r"v" + re.escape(version) + r"(?:-preview\.[1-9][0-9]*)?", tag):
         raise ValueError("Release tag must match the packaged component version")
     prefix, suffix = ("Plait", "zip") if component == "client" else ("Plait-Host", "tar.gz")
-    path = release / f"{prefix}-{version}-{revision}-{PLATFORM}.{suffix}"
+    path = release / f"{prefix}-{version}-{revision}-{platform}.{suffix}"
     manifest = {
         "schema_version": 2, "component": component, "version": tag[1:],
         "tag": tag, "revision": revision, "protocol": COMPATIBILITY["protocol"].copy(),
-        "artifacts": {PLATFORM: artifact(path)},
+        "artifacts": {platform: artifact(path)},
     }
     if component == "host":
         manifest.update(build_id=record["host"]["build_id"], capabilities=[],
@@ -84,6 +85,27 @@ def build_client(release, tag):
 
 def build_host(release, tag):
     return build_component(release, tag, "host")
+
+
+def build_linux_host(release, tag, arch):
+    # Reuse the existing validation and common host compatibility fields.
+    platform = f"linux-{arch}"
+    base = build_component(release, tag, "host", platform)
+    version = base["version"].split("-preview.")[0]
+    path = release / f"Plait-Host-{version}-{base['revision']}-{platform}.tar.gz"
+    with tarfile.open(path, "r:gz") as tar:
+        roots = {member.name.split("/")[0] for member in tar.getmembers()}
+        if len(roots) != 1:
+            raise ValueError("Expected one Linux host archive root")
+        root = roots.pop()
+        member = tar.getmember(f"{root}/component.json")
+        if not member.isfile() or member.size > 65536:
+            raise ValueError("Invalid Linux host component metadata")
+        metadata = json.load(tar.extractfile(member))
+    if metadata.get("build_id") != root or metadata.get("component") != "host" or metadata.get("version") != version or metadata.get("revision") != base["revision"] or metadata.get("platform") != platform:
+        raise ValueError("Linux host metadata does not match the release")
+    base.update(build_id=root, artifacts={platform: artifact(path)})
+    return base
 
 
 def main():
@@ -106,6 +128,10 @@ def main():
         manifests["update-host.json"] = build_host(release, tag)
     if client.is_file() and host.is_file():
         manifests["update.json"] = build(release, tag)
+    for arch in ("x86_64", "arm64"):
+        linux = release / f"Plait-Host-{record['host']['version']}-{revision}-linux-{arch}.tar.gz"
+        if linux.is_file():
+            manifests[f"update-host-linux-{arch}.json"] = build_linux_host(release, tag, arch)
     if not manifests:
         raise ValueError("No component artifacts found")
     for name, manifest in manifests.items():
