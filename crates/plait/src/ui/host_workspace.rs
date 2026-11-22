@@ -34,6 +34,8 @@ pub(super) struct HostWorkspace {
     generation: u64,
     watch: Option<WatchLease>,
     importing: bool,
+    /// The stream failed for a reason other than an older host.
+    failed: bool,
 }
 
 /// The host's view as the sidebar's lists. Mute is this device's choice.
@@ -188,6 +190,14 @@ impl Plait {
         self.host_workspace.generation
     }
 
+    pub(super) fn host_workspace_started(&self) -> bool {
+        self.host_workspace.generation > 0
+    }
+
+    pub(super) fn host_workspace_failed(&self) -> bool {
+        self.host_workspace.failed
+    }
+
     /// The machine's own name, once its host has said it.
     pub(super) fn host_identity(&self) -> Option<&HostIdentity> {
         match &self.host_workspace.source {
@@ -273,8 +283,9 @@ impl Plait {
             let mut views = match task.await {
                 Ok(views) => views,
                 Err(error) => {
-                    let _ =
-                        this.update(cx, |this, cx| this.workspace_failed(generation, &error, cx));
+                    let _ = this.update_in(cx, |this, window, cx| {
+                        this.workspace_failed(generation, &error, window, cx)
+                    });
                     return;
                 }
             };
@@ -299,7 +310,7 @@ impl Plait {
                     .update_in(cx, |this, window, cx| match result {
                         Ok(view) => this.apply_workspace(generation, view, window, cx),
                         Err(error) => {
-                            this.workspace_failed(generation, &error, cx);
+                            this.workspace_failed(generation, &error, window, cx);
                             false
                         }
                     })
@@ -316,6 +327,7 @@ impl Plait {
         &mut self,
         generation: u64,
         error: &host_api::Error,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if self.host_workspace.generation != generation {
@@ -324,7 +336,11 @@ impl Plait {
         self.host_workspace.watch = None;
         if workspace::needs_host_update(error) {
             self.host_workspace.source = Source::Legacy;
+        } else {
+            self.host_workspace.failed = true;
         }
+        // Tabs wait for the workspace; without one, they use this Mac's file.
+        self.try_restore_tabs(window, cx);
         self.rebuild_projects(cx);
         cx.notify();
     }
@@ -350,6 +366,11 @@ impl Plait {
         workspace.revision = view.revision;
         workspace.status = view.status.clone();
         workspace.source = Source::Host(view.host);
+        workspace.failed = false;
+        if !self.tabs.persistence.host_loaded && !self.tabs.persistence.host_loading {
+            self.tabs.persistence.host_loading = true;
+            self.load_host_tabs(window, cx);
+        }
         self.rebuild_projects(cx);
         self.adopt_host_project(window, cx);
         self.reread_changed(&changed, cx);

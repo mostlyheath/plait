@@ -382,3 +382,58 @@ fn a_watched_change_rereads_the_open_checkout() {
     drop(h);
     std::fs::remove_dir_all(scratch).unwrap();
 }
+
+/// Each machine keeps its own tabs: switching puts this one's away and starts
+/// empty, and restoring waits for the new host's copy for this device.
+#[core::prelude::v1::test]
+fn switching_machines_puts_the_previous_tabs_away() {
+    if !isolated("machines::switching_machines_puts_the_previous_tabs_away") {
+        return;
+    }
+    use plait_core::host::workspace::{HostIdentity, View};
+    let scratch = std::env::temp_dir().join(format!("plait-machine-tabs-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    let mut h = Harness::new(&repo, None, 900., 600.);
+    h.connect(&repo, false);
+    h.update(|p, window, cx| {
+        assert!(!p.tabs.model.tabs().is_empty(), "the fixture opens a tab");
+        let remote = plait_core::machines::MachineId::new("workstation").unwrap();
+        let client = p.host_client();
+        p.use_machine_client(client, remote, false, window, cx);
+        assert!(
+            p.tabs.model.tabs().is_empty(),
+            "this Mac's tabs followed the window"
+        );
+        assert!(!p.tabs.persistence.restored);
+        // The new host names itself: its tabs for this device are read before any restore.
+        p.host.connection.connecting = false;
+        p.host.connection.connected = true;
+        p.machines.fresh_link = true;
+        let generation = p.host_workspace_generation();
+        let view = View {
+            schema: 1,
+            host: HostIdentity {
+                id: "host-2".into(),
+                name: "arthur".into(),
+                platform: "linux".into(),
+            },
+            revision: 0,
+            projects: Vec::new(),
+            worktrees: Vec::new(),
+            seen: Vec::new(),
+            status: Default::default(),
+        };
+        assert!(p.apply_workspace(generation, view, window, cx));
+        assert!(
+            p.tabs.persistence.host_loading,
+            "the host's tabs were not asked for"
+        );
+        p.try_restore_tabs(window, cx);
+        assert!(
+            !p.tabs.persistence.restored,
+            "restored before the host's tabs arrived"
+        );
+    });
+    drop(h);
+    std::fs::remove_dir_all(scratch).unwrap();
+}

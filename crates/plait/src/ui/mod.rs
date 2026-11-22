@@ -248,6 +248,7 @@ impl Plait {
             self.host.connection.threads.clear();
             self.navigation.available.clear();
             self.host_workspace = Default::default();
+            self.switch_machine_tabs(window, cx);
             self.rebuild_projects(cx);
         }
         // This client was just made: the reconnect below must not make another.
