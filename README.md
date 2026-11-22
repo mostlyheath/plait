@@ -202,9 +202,9 @@ The latest preview is on the
 changes the app publishes the next one.
 
 - **Mac app, with early remote hosts.** A window can work with another
-  machine's host over SSH or Tailscale, including a Linux host; there,
-  Changes, History, and Files are not available yet. See
-  [Remote hosts](docs/REMOTE.md).
+  machine's host over SSH or Tailscale, including a Linux host, with its
+  threads, Changes, History, and Files. Opening that machine's files in an
+  editor or terminal is not available. See [Remote hosts](docs/REMOTE.md).
 - **Agent harnesses.** A thread runs on Pi, built in, or in your own Codex or
   Claude Code, with its own sign-in and permissions; Claude Code needs a
   one-time setup in Settings → Agents. Other harnesses are planned (M7).

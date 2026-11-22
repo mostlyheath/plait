@@ -818,11 +818,14 @@ The window remembers the machine it used and reconnects at launch without
 waiting for it. **Reconnect** makes a new connection. **Remove…** forgets
 a machine; its host and threads stay on that machine.
 
-On a remote machine, threads, approvals, Stop, the queue, models, and history
-work as they do here. Changes, History, Files, and Open in Editor or
-Terminal or Show in Finder are not available there yet. **Worktrees** lists
-that machine's worktrees and can remove them, without the commit graph or
-sizes, which are read with this Mac's Git and disk. Choose **Open repository…**
+On a remote machine, threads, approvals, Stop, the queue, models, history,
+Changes, History, Files, the branch picker, and Worktrees work as they do
+here. That machine's host runs the Git and reads the files, and staging,
+commits, push, pull, fetch, discard and its undo, and branch changes run
+there with that machine's Git configuration and credentials. Open in Editor,
+Terminal, and Show in Finder are not available, because they would open this
+Mac's files, and Worktrees shows no sizes. A host older than this app says
+"Update this machine's host to see its Git." Choose **Open repository…**
 and enter an absolute path on that machine to add a remote project. The host
 checks the checkout when you create a thread. The live remote check remains outstanding. The window's header names the machine in use.
 

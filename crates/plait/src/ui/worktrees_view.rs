@@ -205,19 +205,6 @@ impl View {
 }
 const REMOTE_SIZE: &str = "Sizes are measured only for this Mac's checkouts.";
 
-/// The commit graph is read with this Mac's Git, so only for this Mac's host.
-/// A remote host's lanes show without commits until remote Git reads exist.
-fn local_graph(
-    local: bool,
-    main: &std::path::Path,
-    heads: &[String],
-) -> Result<(Vec<plait_core::git::log::GraphCommit>, bool), host::Error> {
-    if !local {
-        return Ok((Vec::new(), false));
-    }
-    plait_core::git::log::graph(main, heads).map_err(host::Error::Protocol)
-}
-
 fn size_label(size: Option<&Result<Size, String>>) -> String {
     match size {
         None => "Measuring".into(),
@@ -416,7 +403,8 @@ impl Plait {
         let cancelled = self.worktrees.cancelled.clone();
         self.worktrees.reading = true;
         let client = self.host_client();
-        let local = self.host_is_local();
+        // A remote host draws its own checkouts' graph.
+        let backend = self.repository_backend();
         let task = cx.background_executor().spawn(async move {
             let inventory = worktree::inventory(&client, root)?;
             if cancelled.load(Ordering::Acquire) {
@@ -427,7 +415,9 @@ impl Plait {
                 .iter()
                 .filter_map(|row| row.head.clone())
                 .collect::<Vec<_>>();
-            let (commits, more) = local_graph(local, &inventory.checkouts[0].path, &heads)?;
+            let (commits, more) = backend
+                .graph(&inventory.checkouts[0].path, &heads)
+                .map_err(host::Error::Protocol)?;
             let graph = worktree_graph::layout(&inventory.checkouts, commits, more);
             Ok((inventory.checkouts, graph, inventory.seed_bytes))
         });
@@ -552,7 +542,8 @@ impl Plait {
         let mut rows = self.worktrees.rows.clone();
         self.worktrees.reading = true;
         let client = self.host_client();
-        let local = self.host_is_local();
+        // A remote host draws its own checkouts' graph.
+        let backend = self.repository_backend();
         let task = cx.background_executor().spawn(async move {
             let row = worktree::inventory_row(&client, root, path, main)?;
             if cancelled.load(Ordering::Acquire) {
@@ -567,7 +558,9 @@ impl Plait {
                 .iter()
                 .filter_map(|row| row.head.clone())
                 .collect::<Vec<_>>();
-            let (commits, more) = local_graph(local, &rows[0].path, &heads)?;
+            let (commits, more) = backend
+                .graph(&rows[0].path, &heads)
+                .map_err(host::Error::Protocol)?;
             let graph = worktree_graph::layout(&rows, commits, more);
             Ok((rows, graph))
         });
@@ -863,19 +856,5 @@ impl Plait {
             window,
             cx,
         );
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::local_graph;
-
-    #[test]
-    fn a_remote_graph_runs_no_local_git() {
-        // A path that is not a repository here would fail if Git ran.
-        let missing = std::path::Path::new("/nonexistent/remote/checkout");
-        let (commits, more) = local_graph(false, missing, &["a".repeat(40)]).unwrap();
-        assert!(commits.is_empty() && !more);
-        assert!(local_graph(true, missing, &["a".repeat(40)]).is_err());
     }
 }

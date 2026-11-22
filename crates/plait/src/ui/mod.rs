@@ -220,6 +220,10 @@ impl Plait {
     fn host_is_local(&self) -> bool {
         self.host_local
     }
+    /// Where the selected machine's checkouts are read and changed.
+    pub(super) fn repository_backend(&self) -> plait_core::state::Backend {
+        plait_core::state::Backend::for_host(self.host_is_local(), self.host_client())
+    }
     #[allow(dead_code)]
     fn use_machine_client(
         &mut self,
@@ -363,14 +367,13 @@ impl Plait {
     }
 
     fn pump(&mut self, cx: &mut Context<Self>) {
-        if !self.host_is_local() {
-            return;
-        }
         let Some(job) = self.state.next_repository_job() else {
             return;
         };
+        // A remote machine's checkouts are read and changed by its host.
+        let backend = self.repository_backend();
         let task = cx.background_executor().spawn(async move {
-            let reply = job.run();
+            let reply = job.run_on(&backend);
             (job, reply)
         });
         cx.spawn(async move |this, cx| {
@@ -1400,13 +1403,6 @@ impl Render for Plait {
                                 self.worktrees_view(wide, cx)
                             } else if self.issues_visible() {
                                 self.issues_tab(wide, cx)
-                            } else if !self.host_is_local()
-                                && matches!(
-                                    self.workspace.tab,
-                                    Workspace::Changes | Workspace::History | Workspace::Files
-                                )
-                            {
-                                remote_unavailable().into_any_element()
                             } else if self.workspace.tab == Workspace::History {
                                 self.history_view(wide, cx).into_any_element()
                             } else if self.workspace.tab == Workspace::Files {
@@ -1450,22 +1446,9 @@ pub fn menus(cx: &mut App) {
     cx.on_action(|_: &Quit, cx| cx.quit());
 }
 
+/// Handoffs open this Mac's apps on this Mac's paths, so a remote checkout has none.
 const REMOTE_UNAVAILABLE: &str =
-    "Changes, History, and Files are not available on a remote machine yet.";
-
-fn remote_unavailable() -> gpui::Div {
-    theme::column()
-        .flex_1()
-        .justify_center()
-        .items_center()
-        .p_6()
-        .child(
-            gpui::div()
-                .text_size(gpui::px(12.))
-                .text_color(gpui::rgb(theme::colors().muted))
-                .child(REMOTE_UNAVAILABLE),
-        )
-}
+    "Editor, Terminal, and Finder open this Mac's files, not another machine's.";
 
 fn valid_remote_path(path: &str) -> bool {
     !path.is_empty() && path.starts_with('/') && !path.chars().any(char::is_control)

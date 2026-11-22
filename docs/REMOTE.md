@@ -1,6 +1,6 @@
 # Remote hosts
 
-**Agreed design for M3. Built: transport framing, the bridge, SSH and tailnet transports, one remote machine per window, and the Linux user service.** The maintainer chose the direction:
+**Agreed design for M3. Built: transport framing, the bridge, SSH and tailnet transports, one remote machine per window, remote Git and files, and the Linux user service.** The maintainer chose the direction:
 reach a Plait host on another machine over SSH or over a tailnet, with this
 Linux workstation as the first remote host, and remote threads before remote
 Git. [HOST.md](HOST.md) remains the contract for what is implemented.
@@ -150,9 +150,9 @@ machine's loopback.
   (connected, connecting, offline) and the time since it was last seen.
   Tabs, alerts, and notification tags are scoped by machine.
 - **First remote slice.** Remote threads have their conversation,
-  approvals, Stop, queue, models, and history. Changes, History, Files, and
-  the editor and terminal handoffs are shown as unavailable for remote
-  checkouts, with the reason, until remote Git is built.
+  approvals, Stop, queue, models, and history. Remote Git, below, adds
+  Changes, History, and Files; the editor and terminal handoffs stay
+  unavailable for remote checkouts, with the reason.
 
 ### First desktop slice: one machine at a time
 
@@ -170,21 +170,19 @@ Decided while building step 4, to reach usable remote threads sooner.
   - The folder picker, the client-side checkout checks, and first-launch
     setup apply only to this Mac.
   - A remote project is opened by typing its path on that machine.
-- **Git views.** Changes, History, Files, and the editor and terminal
-  handoffs say they are unavailable on a remote machine until remote Git is
-  built.
-  Worktrees lists the host's worktrees and removes them through the host, but
-  draws no commit graph and measures no sizes, because both read this Mac's
-  Git and disk.
+- **Git views.** At first, Changes, History, and Files said they were
+  unavailable on a remote machine. [Remote Git](#remote-git-and-files)
+  replaced that. The editor and terminal handoffs remain unavailable.
+  Worktrees measures no sizes there, because sizes read this Mac's disk.
 - **Later.** Projects from several machines in one sidebar at once, as
   described above, follow as their own slice.
 
-## Remote Git and files (next slice)
+## Remote Git and files
 
-**Agreed design, not built.** A remote checkout gets the same Changes,
-History, Files, branch picker, Worktrees graph, and agreed Git writes as a
-local one, run by the host on its own machine. The desktop's local path is
-unchanged.
+**Built, except Worktrees sizes; the live check remains.** A remote checkout
+gets the same Changes, History, Files, branch picker, Worktrees graph, and
+agreed Git writes as a local one, run by the host on its own machine. The
+desktop's local path is unchanged.
 
 ### Where the Git runs
 
@@ -262,10 +260,12 @@ The client accepts replies up to 1 MiB; local reads allow more. So:
 1. **Built:** host read operations with paging, and their tests: results
    equal to local reads, paging, identity changes, symlinked files,
    non-UTF-8 names, and an older host.
-2. Desktop backends for Changes, History, the branch picker, Files, the
-   composer file list, line counts, and the Worktrees graph and sizes.
-3. **Built on the host:** `git_write`, including network writes, under the
-   checkout's leases. The desktop uses it in step 2.
+2. **Built:** a desktop backend per machine for Changes, History, the
+   branch picker, Files, the composer file list, line counts, the Worktrees
+   graph, and writes. Worktrees sizes still need a host read that measures
+   the host's store too.
+3. **Built:** `git_write` on the host, including network writes, under the
+   checkout's leases.
 4. The live check from a Mac to the Linux host.
 
 ## Order of work

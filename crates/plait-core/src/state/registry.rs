@@ -40,18 +40,26 @@ impl CheckoutRegistry {
 
 pub struct RepositoryJob {
     pub owner: CheckoutId,
-    expected: Option<CheckoutKey>,
-    host: Option<HostKey>,
-    view: u64,
+    pub(super) expected: Option<CheckoutKey>,
+    pub(super) host: Option<HostKey>,
+    pub(super) view: u64,
     pub job: Job,
 }
 
 pub struct RepositoryReply {
-    identity: Option<CheckoutKey>,
-    reply: Reply,
+    pub(super) identity: Option<CheckoutKey>,
+    pub(super) reply: Reply,
 }
 
 impl RepositoryJob {
+    /// Blocking. Runs on this Mac or on the checkout's host.
+    pub fn run_on(&self, backend: &super::backend::Backend) -> RepositoryReply {
+        match backend {
+            super::backend::Backend::Local => self.run(),
+            super::backend::Backend::Host(client) => self.run_remote(client),
+        }
+    }
+
     /// Blocking. The target is checked before any Git operation and again before
     /// its reply can be installed; a root replacement is never a cache hit.
     pub fn run(&self) -> RepositoryReply {
@@ -115,7 +123,7 @@ impl RepositoryJob {
 }
 
 impl Job {
-    fn failure(&self, error: String) -> Reply {
+    pub(super) fn failure(&self, error: String) -> Reply {
         match self {
             Self::Status { .. } => Reply::Status(Err(error)),
             Self::Diff { .. } => Reply::Diff(Err(error)),

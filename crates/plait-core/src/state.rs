@@ -1,4 +1,6 @@
+mod backend;
 mod registry;
+pub use backend::Backend;
 pub use registry::{CheckoutId, CheckoutRegistry, RepositoryJob, RepositoryReply};
 
 pub use crate::{
