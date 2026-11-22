@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context';
@@ -15,7 +15,7 @@ test('executor runs a plain Pi turn without Runtime', async () => {
   faux.setResponses([fauxAssistantMessage('Hello from Pi.')]); models.setProvider(faux.provider);
   const directory = await mkdtemp(join(tmpdir(), 'plait-executor-'));
   const executor = new TurnExecutor();
-  const input = { sessionFile: join(directory, 'session.sqlite'), checkout: process.cwd(), model: { provider: 'faux', modelId: 'faux-1' }, maxTurns: 10, vcs: 'folder' as const, priorOwned: [] };
+  const input = { sessionFile: join(directory, 'session.sqlite'), checkout: process.cwd(), model: { provider: 'faux', modelId: 'faux-1' }, maxTurns: 10, vcs: 'folder' as const, priorOwned: [], directory, threadId: 'thread', trusted: false, header: '', mcpSettings: {} };
   const state = { authorization: { active: true } } as ToolState;
   const { harness, root } = await executor.open(input, { models, state, retry: { enabled: false, maxRetries: 0, baseDelayMs: 0 }, registry: () => createRegistry() });
   try {
@@ -31,4 +31,23 @@ test('executor runs a plain Pi turn without Runtime', async () => {
     assert.match(JSON.stringify(page), /Hello from Pi/);
     assert.equal(started, true); assert.deepEqual(events, [{ type: 'phase', phase: 'running' }]);
   } finally { await harness.close(context); await rm(directory, { recursive: true, force: true }); }
+});
+
+test('executor includes discovered instructions with MCP disabled', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'plait-executor-resources-'));
+  try {
+    const agentDir = join(directory, 'agent');
+    await mkdir(agentDir);
+    await writeFile(join(agentDir, 'AGENTS.md'), 'Follow this instruction.');
+    const input = { sessionFile: join(directory, 'session.sqlite'), checkout: directory,
+      model: { provider: 'faux', modelId: 'faux-1' }, maxTurns: 10, vcs: 'folder' as const,
+      priorOwned: [], directory, threadId: 'thread', trusted: false, header: '', mcpSettings: {}, agentDir };
+    const state = { rootIdentity: { dev: '1', ino: '2' } } as ToolState;
+    const instructions = await new TurnExecutor().resources(input, state, {
+      observe() { assert.fail('disabled MCP must not observe'); },
+      remember() { assert.fail('disabled MCP must not register labels'); },
+    });
+    assert.match(instructions, /Follow this instruction\./);
+    assert.equal(state.mcp, undefined);
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });
