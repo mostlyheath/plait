@@ -1,3 +1,4 @@
+import { Devices } from './devices.ts';
 import { queueOperation, queueRequest, queueSettings, CHECKOUT_QUEUE_LIMIT, CHECKOUT_QUEUE_BYTES } from './checkout-queue.ts';
 import { runHeader } from './safety.ts';
 import { Worktrees, type Create as WorktreeCreate } from './worktrees.ts';
@@ -84,6 +85,7 @@ export class Runtime {
   turnReview: TurnReview;
   gitReads: GitReads;
   workspace: Workspace;
+  devices: Devices;
   linear: LinearService;
   worktrees: Worktrees;
   admissions: Admissions;
@@ -134,6 +136,8 @@ export class Runtime {
     this.records = new Records(this.store, directory, id => this.changed(id));
     this.turnReview = new TurnReview(this.store, this.records, directory);
     this.gitReads = new GitReads(undefined, undefined, directory);
+    // Each device writes only its own state and nothing subscribes to it, so it announces nothing.
+    this.devices = new Devices(this.store, () => {});
     this.workspace = new Workspace(this.store, () => this.changed(WORKSPACE_TOPIC));
     this.linear = new LinearService(this.store, directory);
     this.records.start();
@@ -309,6 +313,7 @@ export class Runtime {
     if (handlesCleanup(input)) return this.checkoutCleanup(input);
     if (this.turnReview.handles(input)) return this.turnReview.handle(input);
     if (this.gitReads.handles(input)) return this.gitReads.handle(input);
+    if (this.devices.handles(input)) return this.devices.handle(input);
     if (this.workspace.handles(input)) return this.workspace.handle(input);
     if (this.linear.handles(input)) return this.linear.handle(input);
     if (this.worktrees.handles(input)) return this.worktrees.handle(input);
