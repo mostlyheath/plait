@@ -701,6 +701,10 @@ impl Plait {
             .border_color(rgb(colors().edge))
             .rounded_md()
             .bg(rgb(colors().panel));
+        // The machine list opens under the row that names the machine.
+        if id == "machines" {
+            return div().into_any_element();
+        }
         if let Some(path) = id.strip_prefix("project:") {
             let checkout = PathBuf::from(path);
             let select = checkout.clone();
@@ -1045,6 +1049,63 @@ impl Plait {
             )
     }
 
+    /// Which machine this window works on, and the way to another.
+    fn machine_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let machine = self.machine_label();
+        let (state, tint) = if self.host.connection.connecting {
+            ("Connecting", colors().muted)
+        } else if self.host.connection.connected {
+            ("Connected", colors().mint)
+        } else {
+            ("Offline", colors().amber)
+        };
+        nav_row(
+            "machine-switcher",
+            format!("{machine}, {state}. Switch machine…"),
+            self.navigation.menu.as_deref() == Some("machines"),
+        )
+        .child(icon("machine"))
+        .child(title(machine).text_color(rgb(colors().text)))
+        .child(dot(tint))
+        .child(icon("down"))
+        .on_activate(cx, |this, _, cx| {
+            this.navigation.menu = match this.navigation.menu.as_deref() {
+                Some("machines") => None,
+                _ => Some("machines".into()),
+            };
+            cx.notify();
+        })
+    }
+
+    /// The machines this device knows, and where to manage them.
+    fn machine_menu(&self, panel: Div, cx: &mut Context<Self>) -> Div {
+        let mut panel = panel.child(tag("machine-menu-heading", "Machines", colors().muted));
+        for (index, machine) in self.preferences.value.machines.list().iter().enumerate() {
+            let id = &machine.id;
+            let label = if id == &self.machines.active {
+                format!("{} ✓", machine.name)
+            } else {
+                machine.name.clone()
+            };
+            let id = id.clone();
+            panel = panel.child(button(("machine-use", index), label).on_activate(
+                cx,
+                move |this, window, cx| {
+                    this.navigation.menu = None;
+                    this.use_machine(id.clone(), window, cx);
+                },
+            ));
+        }
+        panel.child(button("machine-manage", "Manage machines…").on_activate(
+            cx,
+            |this, window, cx| {
+                this.navigation.menu = None;
+                this.settings_tab = super::settings::SettingsTab::Machines;
+                this.show_settings(true, window, cx);
+            },
+        ))
+    }
+
     fn actions(&self, cx: &mut Context<Self>) -> impl IntoElement {
         column()
             .flex_shrink_0()
@@ -1052,6 +1113,18 @@ impl Plait {
             .pt(px((CHROME_HEIGHT - ROW_HEIGHT) / 2.))
             .pb_1()
             .gap(px(1.))
+            .child(self.machine_row(cx))
+            .when(self.navigation.menu.as_deref() == Some("machines"), |el| {
+                let panel = column()
+                    .my_1()
+                    .p_2()
+                    .gap_1()
+                    .border_1()
+                    .border_color(rgb(colors().edge))
+                    .rounded_md()
+                    .bg(rgb(colors().panel));
+                el.child(self.machine_menu(panel, cx))
+            })
             .child(self.new_thread_row(cx))
             .child(
                 nav_row("open-repository", "Open repository…", false)

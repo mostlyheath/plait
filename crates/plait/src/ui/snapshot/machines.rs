@@ -116,6 +116,53 @@ fn machines_snapshots() {
         h.capture(&format!("remote-changes-{suffix}"));
         h.update(|p, window, cx| p.open_repository(&super::super::OpenRepository, window, cx));
         h.capture(&format!("remote-path-{suffix}"));
+        // A remote machine's own projects, named by its host, with the switcher open.
+        let mut h = Harness::new(&repo, Some(&output), width, height);
+        h.connect(&repo, false);
+        let mut existing = None;
+        h.update(|p, _, _| {
+            existing = p
+                .preferences
+                .value
+                .machines
+                .list()
+                .iter()
+                .find(|m| m.name == "workstation")
+                .map(|m| m.id.clone());
+        });
+        let id = existing.unwrap_or_else(|| workstation(&mut h));
+        h.update(|p, window, cx| {
+            p.settings_open = false;
+            let client = p.host_client();
+            p.use_machine_client(client, id.clone(), false, window, cx);
+            p.host.connection.connecting = false;
+            p.host.connection.connected = true;
+            p.machines.fresh_link = true;
+            let generation = p.host_workspace_generation();
+            let view = plait_core::host::workspace::View {
+                schema: 1,
+                host: plait_core::host::workspace::HostIdentity {
+                    id: "scene-host".into(),
+                    name: "workstation".into(),
+                    platform: "linux".into(),
+                },
+                revision: 1,
+                projects: ["/srv/api", "/srv/web"]
+                    .into_iter()
+                    .map(|path| plait_core::host::workspace::Project {
+                        path: path.into(),
+                        hidden: false,
+                    })
+                    .collect(),
+                worktrees: Vec::new(),
+                seen: Vec::new(),
+                status: Default::default(),
+            };
+            p.apply_workspace(generation, view, window, cx);
+            p.navigation.menu = Some("machines".into());
+            cx.notify();
+        });
+        h.capture(&format!("remote-switcher-{suffix}"));
     }
     std::fs::remove_dir_all(scratch).unwrap();
 }
@@ -325,6 +372,114 @@ fn a_remote_window_shows_only_its_hosts_workspace() {
         assert!(!p.state.projects[0].machines[0].local);
         // This Mac's saved lists are untouched.
         assert_eq!(p.preferences.value.navigation.opened, mac);
+    });
+    drop(h);
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
+/// A change the host saw in the open checkout makes it read again; nothing polls.
+#[core::prelude::v1::test]
+fn a_watched_change_rereads_the_open_checkout() {
+    if !isolated("machines::a_watched_change_rereads_the_open_checkout") {
+        return;
+    }
+    use plait_core::host::workspace::{HostIdentity, Project, View};
+    let scratch = std::env::temp_dir().join(format!("plait-watched-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    let mut h = Harness::new(&repo, None, 900., 600.);
+    h.connect(&repo, false);
+    h.settle();
+    h.update(|p, window, cx| {
+        let open = p.state.repository.path().to_owned();
+        let view = |count: u64| View {
+            schema: 1,
+            host: HostIdentity {
+                id: "this-mac".into(),
+                name: "mac".into(),
+                platform: "macos".into(),
+            },
+            revision: 1,
+            projects: vec![Project {
+                path: open.clone(),
+                hidden: false,
+            }],
+            worktrees: Vec::new(),
+            seen: Vec::new(),
+            status: [(open.clone(), count)].into_iter().collect(),
+        };
+        let generation = p.host_workspace_generation();
+        assert!(p.apply_workspace(generation, view(0), window, cx));
+        // Drain the reread the first view asks for.
+        while p.state.next_repository_job().is_some() {}
+        p.state.repository.data.snapshot = plait_core::state::Load::Empty;
+        assert!(p.apply_workspace(generation, view(0), window, cx));
+        assert!(
+            p.state.next_repository_job().is_none(),
+            "an unchanged counter reread"
+        );
+        assert!(p.apply_workspace(generation, view(1), window, cx));
+        assert!(
+            matches!(
+                p.state.repository.snapshot(),
+                plait_core::state::Load::Loading
+            ),
+            "a moved counter did not reread the open checkout"
+        );
+    });
+    drop(h);
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
+/// Each machine keeps its own tabs: switching puts this one's away and starts
+/// empty, and restoring waits for the new host's copy for this device.
+#[core::prelude::v1::test]
+fn switching_machines_puts_the_previous_tabs_away() {
+    if !isolated("machines::switching_machines_puts_the_previous_tabs_away") {
+        return;
+    }
+    use plait_core::host::workspace::{HostIdentity, View};
+    let scratch = std::env::temp_dir().join(format!("plait-machine-tabs-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    let mut h = Harness::new(&repo, None, 900., 600.);
+    h.connect(&repo, false);
+    h.update(|p, window, cx| {
+        assert!(!p.tabs.model.tabs().is_empty(), "the fixture opens a tab");
+        let remote = plait_core::machines::MachineId::new("workstation").unwrap();
+        let client = p.host_client();
+        p.use_machine_client(client, remote, false, window, cx);
+        assert!(
+            p.tabs.model.tabs().is_empty(),
+            "this Mac's tabs followed the window"
+        );
+        assert!(!p.tabs.persistence.restored);
+        // The new host names itself: its tabs for this device are read before any restore.
+        p.host.connection.connecting = false;
+        p.host.connection.connected = true;
+        p.machines.fresh_link = true;
+        let generation = p.host_workspace_generation();
+        let view = View {
+            schema: 1,
+            host: HostIdentity {
+                id: "host-2".into(),
+                name: "arthur".into(),
+                platform: "linux".into(),
+            },
+            revision: 0,
+            projects: Vec::new(),
+            worktrees: Vec::new(),
+            seen: Vec::new(),
+            status: Default::default(),
+        };
+        assert!(p.apply_workspace(generation, view, window, cx));
+        assert!(
+            p.tabs.persistence.host_loading,
+            "the host's tabs were not asked for"
+        );
+        p.try_restore_tabs(window, cx);
+        assert!(
+            !p.tabs.persistence.restored,
+            "restored before the host's tabs arrived"
+        );
     });
     drop(h);
     std::fs::remove_dir_all(scratch).unwrap();

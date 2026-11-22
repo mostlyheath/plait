@@ -40,6 +40,38 @@ pub fn set(client: &Client, device: &str, revision: u64, state: &Value) -> Resul
     Ok(reply.revision)
 }
 
+/// One JSON document kept under `field` in this device's state, as bytes, so
+/// a caller that stores its own encoding need not parse it here.
+pub fn get_field(
+    client: &Client,
+    device: &str,
+    field: &str,
+) -> Result<(u64, Option<Vec<u8>>), Error> {
+    let (revision, state) = get(client, device)?;
+    let bytes = state
+        .as_ref()
+        .and_then(|state| state.get(field))
+        .map(serde_json::to_vec)
+        .transpose()
+        .map_err(|_| Error::Protocol("The host sent unreadable device state.".into()))?;
+    Ok((revision, bytes))
+}
+
+/// Replaces this device's state with `field` holding the JSON document `bytes`.
+pub fn set_field(
+    client: &Client,
+    device: &str,
+    revision: u64,
+    field: &str,
+    bytes: &[u8],
+) -> Result<u64, Error> {
+    let document: Value = serde_json::from_slice(bytes)
+        .map_err(|_| Error::Protocol("Device state must be JSON.".into()))?;
+    let mut state = serde_json::Map::new();
+    state.insert(field.into(), document);
+    set(client, device, revision, &Value::Object(state))
+}
+
 pub fn is_conflict(error: &Error) -> bool {
     matches!(error, Error::Rejected(error) if error.code == "conflict")
 }
