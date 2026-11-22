@@ -31,7 +31,7 @@ fn choice_flow() {
     let done = stop.clone();
     let main = root.clone();
     let server = std::thread::spawn(move || {
-        let parent = plait_core::git::worktree::worktree_parent(&main).unwrap();
+        let parent = worktree_fixture::parent(&main);
         let mut receipt = Value::Null;
         let mut snapshot = Value::Null;
         let mut lost = false;
@@ -58,13 +58,7 @@ fn choice_flow() {
                 "create_admitted_thread" => {
                     if receipt.is_null() {
                         let id = "12345678-1234-4abc-8abc-123456789abc";
-                        let tree = plait_core::git::worktree::create_managed_worktree(
-                            &parent,
-                            id,
-                            None,
-                            |_| Ok(()),
-                        )
-                        .unwrap();
+                        let tree = worktree_fixture::create(&parent, id);
                         snapshot = json!({"id":id,"checkout":tree.path,"model":{"provider":request["provider"],"model_id":request["model_id"]},"status":"idle","messages":[],"live_text":"","tools":[],"pending_approval":null,"error":null,"truncated":false,"harness":{"id":request["harness"],"mode":request["mode"],"version":null,"reported":null}});
                         receipt = json!({"schema":1,"admission":{"request_id":request["request_id"],"state":"ready","thread_id":id,"checkout":tree.path,"worktree":tree,"source_thread_id":null,"error":null}});
                     }
@@ -201,7 +195,7 @@ fn concurrent_drafts() {
     let done = stop.clone();
     let main = root.clone();
     let server = std::thread::spawn(move || {
-        let parent = plait_core::git::worktree::worktree_parent(&main).unwrap();
+        let parent = worktree_fixture::parent(&main);
         let mut first = String::new();
         let mut tree = None;
         let mut ready = false;
@@ -243,15 +237,7 @@ fn concurrent_drafts() {
                             "bbbbbbbb-1234-4abc-8abc-123456789abc"
                         };
                         if request_id == first && tree.is_none() {
-                            tree = Some(
-                                plait_core::git::worktree::create_managed_worktree(
-                                    &parent,
-                                    id,
-                                    None,
-                                    |_| Ok(()),
-                                )
-                                .unwrap(),
-                            );
+                            tree = Some(worktree_fixture::create(&parent, id));
                         }
                         let checkout = if request_id == first {
                             tree.as_ref().unwrap().path.clone()
@@ -389,7 +375,7 @@ fn scripted_busy_host(
     mut lose_first: bool,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
-        let parent = plait_core::git::worktree::worktree_parent(&root).unwrap();
+        let parent = worktree_fixture::parent(&root);
         let mut receipt = Value::Null;
         let mut snapshot = Value::Null;
         while !done.load(Ordering::Relaxed) {
@@ -415,13 +401,7 @@ fn scripted_busy_host(
                 "create_admitted_thread" => {
                     if receipt.is_null() {
                         let id = "22345678-1234-4abc-8abc-123456789abc";
-                        let tree = plait_core::git::worktree::create_managed_worktree(
-                            &parent,
-                            id,
-                            None,
-                            |_| Ok(()),
-                        )
-                        .unwrap();
+                        let tree = worktree_fixture::create(&parent, id);
                         snapshot = json!({"id":id,"checkout":tree.path,"model":{"provider":request["provider"],"model_id":request["model_id"]},"status":"idle","messages":[],"live_text":"","tools":[],"pending_approval":null,"error":null,"truncated":false,"harness":{"id":request["harness"],"mode":request["mode"],"version":null,"reported":null}});
                         receipt = json!({"schema":1,"admission":{"request_id":request["request_id"],"state":"ready","thread_id":id,"checkout":tree.path,"worktree":tree,"source_thread_id":null,"error":null}});
                     }

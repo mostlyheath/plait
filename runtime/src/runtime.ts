@@ -313,7 +313,7 @@ export class Runtime {
             build_id = typeof metadata.build_id === 'string' ? metadata.build_id : null;
           }
         } catch { /* Development hosts have no packaged metadata. */ }
-        return { schema: 1, release, build_id, protocol_min: PROTOCOL_VERSIONS[0], protocol_max: PROTOCOL_VERSIONS[PROTOCOL_VERSIONS.length - 1], capabilities: ['drain_v1'], storage_schema: 1 };
+        return { schema: 1, release, build_id, protocol_min: PROTOCOL_VERSIONS[0], protocol_max: PROTOCOL_VERSIONS[PROTOCOL_VERSIONS.length - 1], capabilities: ['drain_v1', 'checkout_identity_v1'], storage_schema: 1 };
       }
       if (op === 'drain_for_update') {
         this.draining = true;
@@ -445,7 +445,9 @@ export class Runtime {
         if (this.snapshot(id).harness?.id === 'codex') await this.codex.entry();
         return { thread: this.snapshot(id) };
       }
-      case 'submit': return this.submit(String(request.thread_id), String(request.request_id), String(request.text),
+      case 'submit':
+        await verifyExpectedIdentity(this.snapshot(String(request.thread_id)).checkout, request.identity);
+        return this.submit(String(request.thread_id), String(request.request_id), String(request.text),
         request.approval === 'auto' ? 'auto' : 'ask', request.when_busy as QueueMode | undefined, request.images as string[] | undefined);
       case 'stop': {
         const id = String(request.thread_id);
@@ -816,6 +818,7 @@ export class Runtime {
     }
     const id = String(request.thread_id); const snapshot = this.snapshot(id);
     if (request.op === 'submit_checkout') return this.gate(`queue:${id}`, async () => {
+      await verifyExpectedIdentity(this.snapshot(id).checkout, request.identity);
       if (this.external.resolveHarness(this.snapshot(id)).kind === 'unknown') unsupportedHarness();
       const images = request.images ?? []; const approval = request.approval ?? 'ask';
       const previous = this.store.waiters.get(id,request.request_id);

@@ -22,7 +22,7 @@ export function queueRequest(input: unknown): Record<string, any> {
   if (!queueOperation(input) || Array.isArray(input)) fail('invalid_request', 'Unknown checkout queue operation.');
   const value = input as Record<string, any>;
   const fields: Record<string,string[]> = {
-    checkout_queue_info: [], submit_checkout: ['thread_id','request_id','text','approval','images'],
+    checkout_queue_info: [], submit_checkout: ['thread_id','request_id','text','approval','images','identity'],
     checkout_queue: ['thread_id'], cancel_checkout_wait: ['thread_id','request_id'], resume_checkout_queue: ['thread_id'],
     watch_threads_queue: ['archived'], list_threads_queue: ['archived','checkout','limit','cursor'],
   };

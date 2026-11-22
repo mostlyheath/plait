@@ -22,6 +22,8 @@ pub enum CommandPolicy {
 pub enum Request {
     CommandPolicy {
         checkout: PathBuf,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        identity: Option<super::git::WireIdentity>,
     },
     SetCommandPolicy {
         checkout: PathBuf,
@@ -114,6 +116,7 @@ mod tests {
     #[test]
     fn requests_and_replies_match_the_documented_json() {
         let read = Request::CommandPolicy {
+            identity: None,
             checkout: "/absolute/checkout".into(),
         };
         assert_eq!(

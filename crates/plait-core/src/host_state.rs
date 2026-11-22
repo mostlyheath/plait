@@ -18,6 +18,7 @@ use std::{path::PathBuf, sync::Arc};
 pub struct HostConnection {
     pub epoch: u64,
     pub connected: bool,
+    pub has_checkout_identity: bool,
     pub connecting: bool,
     pub error: Option<String>,
     pub status: Option<Status>,
@@ -29,6 +30,17 @@ pub struct HostConnection {
 }
 
 impl HostConnection {
+    pub fn checkout_identity(
+        &self,
+        key: Option<&CheckoutKey>,
+    ) -> Option<crate::host::git::WireIdentity> {
+        key.filter(|_| self.has_checkout_identity)
+            .map(|key| crate::host::git::WireIdentity {
+                dev: key.device.to_string(),
+                ino: key.inode.to_string(),
+            })
+    }
+
     /// The negotiated protocol; version 1 until a status reply says otherwise.
     pub fn protocol(&self) -> u32 {
         self.status
@@ -165,6 +177,7 @@ impl HostState {
     pub fn reconnect(&mut self) -> u64 {
         self.connection.epoch += 1;
         self.connection.connected = false;
+        self.connection.has_checkout_identity = false;
         self.connection.connecting = true;
         self.connection.error = None;
         if self.connection.saving {
@@ -298,6 +311,7 @@ impl PendingSubmit {
     pub fn request(&self, thread_id: &str) -> Request {
         if self.checkout_wait {
             return Request::SubmitCheckout {
+                identity: None,
                 thread_id: thread_id.into(),
                 request_id: self.request_id.clone(),
                 text: self.text.clone(),
@@ -1012,5 +1026,33 @@ mod tests {
         assert!(state.thread.decided_approvals.is_empty());
         assert!(!state.connection.saving);
         assert!(state.connection.save_message.is_some());
+    }
+}
+
+#[cfg(test)]
+mod checkout_capability_tests {
+    use super::*;
+    #[test]
+    fn identity_is_sent_only_when_supported() {
+        let key = CheckoutKey {
+            host: None,
+            root: "/repo".into(),
+            device: 7,
+            inode: 9,
+        };
+        let mut connection = HostConnection::default();
+        let request = |connection: &HostConnection| Request::ListThreads {
+            checkout: key.root.clone(),
+            identity: connection.checkout_identity(Some(&key)),
+        };
+        assert_eq!(
+            serde_json::to_value(request(&connection)).unwrap(),
+            serde_json::json!({"op":"list_threads","checkout":"/repo"})
+        );
+        connection.has_checkout_identity = true;
+        assert_eq!(
+            serde_json::to_value(request(&connection)).unwrap()["identity"],
+            serde_json::json!({"dev":"7","ino":"9"})
+        );
     }
 }

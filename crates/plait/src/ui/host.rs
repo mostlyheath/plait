@@ -47,19 +47,35 @@ impl Plait {
         complete: impl FnOnce(&mut Self, Result<T, host::Error>, &mut Window, &mut Context<Self>)
         + 'static,
     ) {
+        let supported = self.host.connection.has_checkout_identity;
+        if let Request::ListThreads { checkout, identity }
+        | Request::CreateThread {
+            checkout, identity, ..
+        } = &mut request
+        {
+            *identity = self.host.connection.checkout_identity(
+                self.state
+                    .checkout_key()
+                    .filter(|key| key.root == *checkout),
+            );
+        }
         let epoch = self.host.connection.epoch;
         let identity = self.host.identity.clone();
         let acknowledgement = matches!(
             request,
             Request::Submit { .. } | Request::SubmitCheckout { .. } | Request::CreateThread { .. }
         );
-        let expected = if let Request::Submit { thread_id, .. }
-        | Request::SubmitCheckout { thread_id, .. } = &request
-        {
-            self.host.expected_checkout(thread_id).cloned()
-        } else {
-            None
+        let expected = match &request {
+            Request::Submit { thread_id, .. } | Request::SubmitCheckout { thread_id, .. } => {
+                self.host.expected_checkout(thread_id).cloned()
+            }
+            _ => None,
         };
+        if let Request::Submit { identity, .. } | Request::SubmitCheckout { identity, .. } =
+            &mut request
+        {
+            *identity = self.host.connection.checkout_identity(expected.as_ref());
+        }
         let persist = matches!(
             request,
             Request::Submit { .. } | Request::SubmitCheckout { .. }
@@ -94,47 +110,68 @@ impl Plait {
         let journal = self.session.journal.clone();
         let client = self.host_client();
         let local = self.host_is_local();
+        let is_status =
+            self.host.connection.connecting && matches!(request, Request::Status { .. });
         let task = cx.background_executor().spawn(async move {
-            let image_pins = image_pins.map_err(host::Error::Protocol)?;
-            let result = (|| {
-                if persist {
-                    let journal = journal.ok_or_else(|| {
-                        std::io::Error::other(
-                            "Desktop recovery is unavailable. Submission was not sent.",
-                        )
-                    })?;
-                    journal.flush().map_err(std::io::Error::other)?;
+            let capability = if is_status {
+                Some(
+                    host::release::host_info(&client)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|info| {
+                            info.capabilities
+                                .iter()
+                                .any(|c| c == "checkout_identity_v1")
+                        }),
+                )
+            } else {
+                None
+            };
+            let image_pins = image_pins.map_err(host::Error::Protocol);
+            let result = image_pins.and_then(|image_pins| {
+                let result = (|| {
+                    if persist {
+                        let journal = journal.ok_or_else(|| {
+                            std::io::Error::other(
+                                "Desktop recovery is unavailable. Submission was not sent.",
+                            )
+                        })?;
+                        journal.flush().map_err(std::io::Error::other)?;
+                    }
+                    if local && !supported {
+                        if let Request::ListThreads { checkout, .. }
+                        | Request::CreateThread { checkout, .. } = &mut request
+                        {
+                            *checkout = std::fs::canonicalize(&*checkout)?;
+                        }
+                        if let Some(expected) = &expected {
+                            expected.verify().map_err(host::Error::Protocol)?;
+                        }
+                    }
+                    if let Some((thread, images)) = uploads {
+                        client.upload_images(&thread, &images)?;
+                    }
+                    client.request(&request)
+                })();
+                let collect = image_pins.is_some();
+                drop(image_pins);
+                if collect && let Err(error) = plait_core::images::collect() {
+                    eprintln!("Plait draft images: {error}");
                 }
-                // Remote checkout identity is checked by the host.
-                if local
-                    && let Request::ListThreads { checkout }
-                    | Request::CreateThread { checkout, .. } = &mut request
-                {
-                    *checkout = std::fs::canonicalize(&*checkout)?;
-                }
-                if local && let Some(expected) = &expected {
-                    expected.verify().map_err(host::Error::Protocol)?;
-                }
-
-                if let Some((thread, images)) = uploads {
-                    client.upload_images(&thread, &images)?;
-                }
-                client.request(&request)
-            })();
-            let collect = image_pins.is_some();
-            drop(image_pins);
-            if collect && let Err(error) = plait_core::images::collect() {
-                eprintln!("Plait draft images: {error}");
-            }
-            result
+                result
+            });
+            (result, capability)
         });
         cx.spawn_in(window, async move |this, cx| {
-            let result = task.await;
+            let (result, capability) = task.await;
             let _ = this.update_in(cx, |this, window, cx| {
                 if this.host.identity != identity
                     || (!acknowledgement && this.host.connection.epoch != epoch)
                 {
                     return;
+                }
+                if let Some(capability) = capability {
+                    this.host.connection.has_checkout_identity = capability;
                 }
                 complete(this, result, window, cx);
                 this.sync_composer(cx);
@@ -225,7 +262,10 @@ impl Plait {
         }
         let checkout = self.host.creation.checkout.clone();
         self.host_request::<host::ThreadsReply>(
-            Request::ListThreads { checkout },
+            Request::ListThreads {
+                checkout,
+                identity: None,
+            },
             window,
             cx,
             |this, result, window, cx| match result {

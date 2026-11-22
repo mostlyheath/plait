@@ -46,19 +46,13 @@ fn host_defaults_and_grouping() {
             };
             let result = match request["op"].as_str().unwrap() {
                 "worktree_info" => {
-                    json!({"schema":1,"worktree_threads_v1":true,"parent":plait_core::git::worktree::worktree_parent(&root).unwrap()})
+                    json!({"schema":1,"worktree_threads_v1":true,"parent":worktree_fixture::parent(&root)})
                 }
                 "create_worktree_thread" => {
                     let index = observed.lock().unwrap().len() + 1;
                     let id = format!("{index:08x}-1234-4abc-8abc-123456789abc");
-                    let parent = serde_json::from_value(request["parent"].clone()).unwrap();
-                    let tree = plait_core::git::worktree::create_managed_worktree(
-                        &parent,
-                        &id,
-                        None,
-                        |_| Ok(()),
-                    )
-                    .unwrap();
+                    let parent = worktree_fixture::parent(&root);
+                    let tree = worktree_fixture::create(&parent, &id);
                     observed.lock().unwrap().push(request.clone());
                     snapshot = json!({"id":id,"checkout":tree.path,"model":{"provider":request["provider"],"model_id":request["model_id"]},"status":"idle","messages":[],"live_text":"","tools":[],"pending_approval":null,"error":null,"truncated":false,"harness":{"id":request["harness"],"version":null,"mode":request["mode"],"reported":null}});
                     json!({"schema":1,"operation":{"request_id":request["request_id"],"thread_id":id,"state":"ready","worktree":tree,"error":null}})

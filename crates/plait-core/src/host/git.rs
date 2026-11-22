@@ -136,6 +136,42 @@ fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<Remote<T>, Error> {
     }
 }
 
+/// Canonical checkout path and identity reported by the host.
+#[derive(Debug, Deserialize)]
+pub struct CheckoutIdentity {
+    #[serde(with = "crate::wire::path")]
+    pub root: PathBuf,
+    pub identity: WireIdentity,
+}
+
+pub fn identity(
+    c: &Client,
+    root: &Path,
+    expected: Option<DirIdentity>,
+) -> Result<Remote<CheckoutIdentity>, Error> {
+    let result: Remote<CheckoutIdentity> = read(c, root, expected, Read::Identity)?;
+    if result.result.identity.parse().map_err(Error::Protocol)? != result.identity {
+        return Err(Error::Protocol(
+            "Host returned inconsistent checkout identity.".into(),
+        ));
+    }
+    Ok(result)
+}
+
+pub fn main_checkout(
+    c: &Client,
+    root: &Path,
+    expected: Option<DirIdentity>,
+) -> Result<Remote<PathBuf>, Error> {
+    #[derive(Deserialize)]
+    struct PathResult(#[serde(with = "crate::wire::path")] PathBuf);
+    let result: Remote<PathResult> = read(c, root, expected, Read::MainCheckout)?;
+    Ok(Remote {
+        identity: result.identity,
+        result: result.result.0,
+    })
+}
+
 /// Typed reads, so callers cannot pair a read with the wrong result type.
 pub fn status(c: &Client, root: &Path, id: Option<DirIdentity>) -> Result<Remote<Snapshot>, Error> {
     read(c, root, id, Read::Status)

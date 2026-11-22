@@ -10,7 +10,6 @@ use plait_core::host::{
     self, CancelWatch,
     build_output::{self, Info, Kind, Phase, Progress, Request},
 };
-use plait_core::ownership::CheckoutKeyExt;
 use std::{collections::BTreeMap, path::PathBuf};
 
 #[derive(Default)]
@@ -89,8 +88,11 @@ impl Plait {
         let root = key.1.clone();
         self.build_output.busy = true;
         let client = self.host_client();
+        let supported = self.host.connection.has_checkout_identity;
+        let local = self.host_is_local();
         let task = cx.background_executor().spawn(async move {
-            let identity = Self::identify_settings_checkout(&root, expected)?;
+            let identity =
+                Self::identify_settings_checkout(&client, &root, supported, local, expected)?;
 
             let info = if let Some(paths) = paths {
                 let info = previous.ok_or_else(|| {
@@ -108,7 +110,13 @@ impl Plait {
             } else {
                 build_output::info(&client, identity.root.clone(), refresh)?
             };
-            identity.verify().map_err(host::Error::Protocol)?;
+            Self::identify_settings_checkout(
+                &client,
+                &identity.root,
+                supported,
+                local,
+                Some(identity.clone()),
+            )?;
             Ok::<_, host::Error>((info, identity))
         });
         cx.spawn(async move |this, cx| {

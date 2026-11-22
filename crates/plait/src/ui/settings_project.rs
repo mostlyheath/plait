@@ -2,8 +2,6 @@
 use super::theme::ButtonAction;
 use super::{Plait, settings, settings_agent::AgentState, settings_policy::PolicyState};
 use gpui::{prelude::*, *};
-use plait_core::ownership::CheckoutKeyExt;
-use plait_core::ownership::HostKeyExt;
 use std::path::{Path, PathBuf};
 
 pub(super) struct ProjectSettings {
@@ -28,21 +26,48 @@ impl Plait {
             .and_then(|project| project.identity.as_ref())
     }
 
-    /// Blocking identity work uses the same core checkout key as repository jobs.
+    /// Resolve and verify the checkout on the host that owns it.
     pub(super) fn identify_settings_checkout(
+        client: &plait_core::host::Client,
         checkout: &Path,
+        supported: bool,
+        local: bool,
         expected: Option<plait_core::ownership::CheckoutKey>,
     ) -> Result<plait_core::ownership::CheckoutKey, plait_core::host::Error> {
-        use plait_core::ownership::{CheckoutKey, HostKey};
-        let identity = match expected {
-            Some(identity) => identity,
-            None => CheckoutKey::resolve(HostKey::local(), checkout)
+        if !supported {
+            use plait_core::ownership::{CheckoutKeyExt, HostKeyExt};
+            let identity = match expected {
+                Some(key) => key,
+                None if local => plait_core::ownership::CheckoutKey::resolve(
+                    plait_core::ownership::HostKey::local(),
+                    checkout,
+                )
                 .map_err(plait_core::host::Error::Protocol)?,
-        };
-        identity
-            .verify()
-            .map_err(plait_core::host::Error::Protocol)?;
-        Ok(identity)
+                None => plait_core::ownership::CheckoutKey {
+                    host: None,
+                    root: checkout.to_owned(),
+                    device: 0,
+                    inode: 0,
+                },
+            };
+            if local {
+                identity
+                    .verify()
+                    .map_err(plait_core::host::Error::Protocol)?;
+            }
+            return Ok(identity);
+        }
+        let id = expected.as_ref().map(|key| plait_core::lease::DirIdentity {
+            dev: key.device,
+            ino: key.inode,
+        });
+        let read = plait_core::host::git::identity(client, checkout, id)?;
+        Ok(plait_core::ownership::CheckoutKey {
+            host: expected.and_then(|key| key.host),
+            root: read.result.root,
+            device: read.identity.dev,
+            inode: read.identity.ino,
+        })
     }
 
     pub(super) fn remember_settings_checkout_key(
