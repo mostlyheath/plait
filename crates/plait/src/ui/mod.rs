@@ -1,6 +1,7 @@
 pub(crate) mod a11y;
 mod actions;
 mod admission;
+mod remote_browser;
 mod anchors;
 mod appearance;
 mod branches;
@@ -195,6 +196,8 @@ pub struct Plait {
         std::rc::Rc<std::cell::RefCell<std::collections::HashMap<&'static str, Bounds<Pixels>>>>,
     /// The control the next picker belongs to.
     pending_anchor: Option<Bounds<Pixels>>,
+    /// Whether the open remote-folder picker's host can list folders.
+    remote_browser: Option<std::rc::Rc<std::cell::Cell<bool>>>,
     panels: panels::Panels,
     focus: FocusHandle,
     /// The conversation field that gets focus back after changing views.
@@ -322,6 +325,7 @@ impl Plait {
             overlay: None,
             anchors: Default::default(),
             pending_anchor: None,
+            remote_browser: None,
             panels: Default::default(),
             focus,
             conversation_focus: None,
@@ -624,7 +628,7 @@ impl Plait {
             return;
         }
         if !self.host_is_local() {
-            self.open_remote_path(window, cx);
+            self.open_remote_browser(window, cx);
             return;
         }
         self.picker_open = true;
