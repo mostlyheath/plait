@@ -536,7 +536,7 @@ impl Plait {
             .child(
                 tag(
                     "machines-intro",
-                    "Work with threads on another machine's Plait host. Remote machines run threads, approvals, and Stop; Changes, History, and Files are not available there yet.",
+                    "Work on another machine through its Plait host: its projects, threads, Changes, History, and Files. Each window works with one machine; switch from the top of the sidebar.",
                     colors().muted,
                 )
                 .line_height(px(18.)),
