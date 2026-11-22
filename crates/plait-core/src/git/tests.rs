@@ -2212,3 +2212,40 @@ fn a_killed_worktree_removal_keeps_the_lease_until_git_exits() {
     assert!(!tree.path.exists());
     fs::remove_dir_all(scratch).unwrap();
 }
+
+#[test]
+fn a_plain_folder_reads_as_plain_with_its_files_but_a_repository_never_does() {
+    let root = std::env::temp_dir().join(format!("plait-plain-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("notes/deep")).unwrap();
+    std::fs::create_dir_all(root.join(".hidden")).unwrap();
+    std::fs::write(root.join("notes/a.md"), "a").unwrap();
+    std::fs::write(root.join("notes/deep/b.md"), "b").unwrap();
+    std::fs::write(root.join(".hidden/c"), "c").unwrap();
+    std::fs::write(root.join("top.txt"), "t").unwrap();
+    assert!(super::plain_folder(&root));
+    let snapshot = super::status(&root).unwrap();
+    assert!(snapshot.plain && snapshot.changes.is_empty());
+    assert_eq!(snapshot.root, root.canonicalize().unwrap());
+    let files = super::files(&root).unwrap();
+    assert_eq!(files.paths, ["notes/a.md", "notes/deep/b.md", "top.txt"]);
+    assert!(
+        super::line_counts(&root, &["top.txt".into()])
+            .unwrap()
+            .is_empty()
+    );
+    // A limit stops the walk and says so.
+    let clipped = super::plain_files(&root, 2, std::time::Duration::from_secs(2));
+    assert!(clipped.truncated && clipped.paths.len() == 2);
+    // An empty stray `.git` folder is no repository, as Git itself decides.
+    std::fs::create_dir_all(root.join(".git")).unwrap();
+    assert!(super::plain_folder(&root.join("notes")));
+    // With HEAD it marks a repository, even a broken one: never plain.
+    std::fs::write(root.join(".git/HEAD"), "garbage").unwrap();
+    assert!(!super::plain_folder(&root.join("notes")));
+    assert!(
+        super::status(&root.join("notes")).is_err(),
+        "a broken repository read as plain"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}

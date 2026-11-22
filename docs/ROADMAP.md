@@ -89,6 +89,16 @@ Git metadata. The file viewer is read-only, bounded, and does not follow
 symlinks out of the checkout. Filesystem and Git work stays off the UI thread.
 Editor and terminal handoffs use configured commands.
 
+**Plain folders (agreed).** A project can be a folder that is not a Git
+repository. Threads, approvals, and the file viewer work there; Changes,
+History, branches, worktrees, turn records, and undo need Git and say so.
+A folder is plain only when no repository marker (a `.git` file, or a `.git`
+folder with `HEAD`) exists at it or above it, so a broken repository is
+refused rather than treated as plain. A thread's kind is fixed when it is
+created. Nothing in a plain folder is protected as already changed, and
+nothing an agent changes there can be undone. Plait does not initialize
+repositories.
+
 Worktrees are optional and begin at a captured commit, without copying dirty
 work. Removal verifies identity and safety, preserves branches and history,
 and refuses uncommitted or unknown ignored files. Publication uncertainty

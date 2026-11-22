@@ -6,7 +6,7 @@ import { hostname } from 'node:os';
 import { isAbsolute } from 'node:path';
 import { fail } from './protocol.ts';
 import { once } from './operations.ts';
-import { checkout } from './safety.ts';
+import { projectKind } from './safety.ts';
 import type { Store } from './store.ts';
 import type { CheckoutWatcher } from './watcher.ts';
 
@@ -92,6 +92,7 @@ export class Workspace {
       CREATE TABLE IF NOT EXISTS workspace_projects(path TEXT PRIMARY KEY, hidden INTEGER NOT NULL DEFAULT 0, added_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS workspace_worktrees(folder TEXT PRIMARY KEY, main TEXT NOT NULL, branch TEXT NOT NULL, creation_id TEXT, identity TEXT);
       CREATE TABLE IF NOT EXISTS workspace_seen(thread_id TEXT PRIMARY KEY, updated_at INTEGER NOT NULL, state TEXT NOT NULL, unread INTEGER NOT NULL);`);
+    if (!store.db.prepare('PRAGMA table_info(workspace_projects)').all().some(row => row.name === 'vcs')) store.db.exec("ALTER TABLE workspace_projects ADD COLUMN vcs TEXT NOT NULL DEFAULT 'git'");
   }
   handles(input: unknown) { return !!input && typeof input === 'object' && Object.hasOwn(operations, String((input as { op?: unknown }).op)); }
 
@@ -104,8 +105,8 @@ export class Workspace {
 
   view() {
     const db = this.store.db;
-    const projects = db.prepare('SELECT path,hidden FROM workspace_projects ORDER BY added_at,path').all()
-      .map(row => ({ path: String(row.path), hidden: Number(row.hidden) === 1 }));
+    const projects = db.prepare('SELECT path,hidden,vcs FROM workspace_projects ORDER BY added_at,path').all()
+      .map(row => ({ path: String(row.path), hidden: Number(row.hidden) === 1, vcs: String(row.vcs) }));
     const worktrees = db.prepare('SELECT * FROM workspace_worktrees ORDER BY folder').all().map(row => ({
       folder: String(row.folder), main: String(row.main), branch: String(row.branch),
       creation_id: row.creation_id == null ? null : String(row.creation_id),
@@ -128,15 +129,15 @@ export class Workspace {
     switch (request.op) {
       case 'workspace_view': case 'workspace_subscribe': return this.view();
       case 'workspace_open_project': {
-        // Only a Git checkout on this host can be opened, so a typo never becomes a project.
-        const root = await checkout(path(request.path));
-        this.write(() => this.store.db.prepare('INSERT INTO workspace_projects VALUES (?,0,?) ON CONFLICT(path) DO UPDATE SET hidden=0').run(root, Date.now()));
+        // Resolve and validate the project before saving it.
+        const { root, vcs } = await projectKind(path(request.path));
+        this.write(() => this.store.db.prepare('INSERT INTO workspace_projects(path,hidden,added_at,vcs) VALUES (?,0,?,?) ON CONFLICT(path) DO UPDATE SET hidden=0,vcs=excluded.vcs').run(root, Date.now(), vcs));
         return { path: root, revision: this.revision() };
       }
       case 'workspace_hide_project': {
         if (typeof request.hidden !== 'boolean') fail('invalid_request', 'Invalid hidden.');
         const target = path(request.path);
-        this.write(() => this.store.db.prepare('INSERT INTO workspace_projects VALUES (?,?,?) ON CONFLICT(path) DO UPDATE SET hidden=excluded.hidden').run(target, request.hidden ? 1 : 0, Date.now()));
+        this.write(() => this.store.db.prepare('INSERT INTO workspace_projects(path,hidden,added_at) VALUES (?,?,?) ON CONFLICT(path) DO UPDATE SET hidden=excluded.hidden').run(target, request.hidden ? 1 : 0, Date.now()));
         return { revision: this.revision() };
       }
       case 'workspace_set_worktree': {
@@ -175,9 +176,9 @@ export class Workspace {
     if (this.store.setting(key)) return { imported: false, revision: this.revision() };
     this.write(() => {
       const now = Date.now();
-      const add = this.store.db.prepare('INSERT INTO workspace_projects VALUES (?,?,?) ON CONFLICT(path) DO NOTHING');
+      const add = this.store.db.prepare('INSERT INTO workspace_projects(path,hidden,added_at) VALUES (?,?,?) ON CONFLICT(path) DO NOTHING');
       projects.forEach((p, i) => add.run(p, 0, now + i));
-      const hide = this.store.db.prepare('INSERT INTO workspace_projects VALUES (?,1,?) ON CONFLICT(path) DO UPDATE SET hidden=1');
+      const hide = this.store.db.prepare('INSERT INTO workspace_projects(path,hidden,added_at) VALUES (?,1,?) ON CONFLICT(path) DO UPDATE SET hidden=1');
       hidden.forEach((p, i) => hide.run(p, now + projects.length + i));
       for (const row of worktrees) this.putWorktree(row, false);
       for (const entry of entries) this.putSeen(entry, false);

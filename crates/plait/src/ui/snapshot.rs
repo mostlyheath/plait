@@ -610,6 +610,7 @@ fn pin_read_times(repository: &mut plait_core::state::RepositoryState, wide: boo
             } else {
                 STATUS_NARROW_MS
             }),
+            plain: false,
         });
     }
     let selected = &repository.view.changes.selected;
@@ -7036,10 +7037,11 @@ fn sending_does_not_wait_for_a_git_status() {
     if !isolated("sending_does_not_wait_for_a_git_status") {
         return;
     }
-    // A folder that is not a repository: its Git status read fails.
+    // A broken repository: its Git status read fails, so its identity stays unread.
     let root = std::env::temp_dir().join(format!("plait-send-plain-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(root.join(".git")).unwrap();
+    std::fs::write(root.join(".git/HEAD"), "garbage").unwrap();
     let checkout = root.canonicalize().unwrap();
     let mut harness = Harness::new(&checkout, None, 900., 600.);
     harness.connect(&checkout, false);

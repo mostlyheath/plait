@@ -262,3 +262,31 @@ test('a run start waits for an in-flight placement probe instead of colliding wi
   await until(()=>!h.runtime.sessions.has(created.result.thread.id));
   assert.equal(h.runtime.snapshot(created.result.thread.id).status,'idle',JSON.stringify(h.runtime.snapshot(created.result.thread.id).error));
 });
+
+test('plain folder threads keep their kind and run Pi without records', async t => {
+  const h = await pi(t, [
+    fauxAssistantMessage([fauxToolCall('write', { path: 'created.txt', content: 'hello' }, { id: 'write' })], { stopReason: 'toolUse' }),
+    fauxAssistantMessage('done'), fauxAssistantMessage('done'),
+  ]);
+  const folder = join(h.base, 'plain'); await mkdir(folder);
+  const info: any = await h.runtime.reply({ op: 'admission_info', checkout: folder });
+  assert.equal(info.result.parent, null); assert.equal(info.result.refusal, 'Worktrees need a Git repository.');
+  assert.equal(info.result.auto_worktree, false);
+  const isolation = await h.runtime.reply({ op: 'set_project_isolation', checkout: folder, identity: info.result.identity, auto_worktree: true });
+  assert.equal(isolation.error?.message, 'Worktrees need a Git repository.');
+  const created: any = await h.runtime.reply({ protocol_version: 6, op: 'create_thread', checkout: folder, request_id: 'plain', provider: 'faux', model_id: 'faux-1' });
+  assert.equal(created.ok, true, JSON.stringify(created)); const id = created.result.thread.id;
+  const run = async (request_id: string) => {
+    const reply = await h.runtime.reply({ protocol_version: 6, op: 'submit', thread_id: id, request_id, text: 'go', approval: 'auto' });
+    assert.equal(reply.ok, true, JSON.stringify(reply)); await until(() => !h.runtime.sessions.has(id));
+    assert.equal(h.runtime.snapshot(id).status, 'idle', JSON.stringify(h.runtime.snapshot(id).error));
+  };
+  await run('run1'); assert.equal(await readFile(join(folder, 'created.txt'), 'utf8'), 'hello');
+  await exec('/usr/bin/git', ['init', '-q', folder]); await run('run2');
+  assert.equal(h.runtime.store.db.prepare('SELECT vcs FROM thread_vcs WHERE thread=?').get(id)?.vcs, 'folder');
+  assert.equal(h.runtime.store.db.prepare('SELECT count(*) AS n FROM records WHERE thread=?').get(id)?.n, 0);
+  const undo = await h.runtime.reply({ protocol_version: 6, op: 'undo_turn', thread_id: id, record_id: 'missing', request_id: 'undo' });
+  assert.equal(undo.error?.code, 'unsupported'); assert.equal(undo.error?.message, 'Undo needs a Git repository; this folder is not one.');
+  const review: any = await h.runtime.reply({ op: 'turn_review_info', thread_id: id });
+  assert.equal(review.result.features.record_diff, false);
+});

@@ -99,7 +99,7 @@ pub(super) const ACTIONS: &[AppAction] = &[
     entry("thread.new_with_model", "New Thread with Model…", "File", Some("cmd-shift-n"), Item, || Box::new(NewThreadWithModel)),
     entry("thread.new_worktree", "New Thread in Worktree", "File", Some("cmd-alt-n"), Item, || Box::new(NewWorktreeThread)),
     entry("thread.switch_model", "Change Thread Model…", "File", Some("cmd-shift-m"), Item, || Box::new(SwitchThreadModel)),
-    entry("repository.open", "Open Repository…", "File", Some("cmd-o"), Group, || Box::new(OpenRepository)),
+    entry("repository.open", "Open Project…", "File", Some("cmd-o"), Group, || Box::new(OpenRepository)),
     entry("project.worktrees", "Worktrees", "File", None, Item, || Box::new(super::worktrees_view::Worktrees)),
     entry("project.issues", "Linear Issues", "File", None, Item, || Box::new(super::issues_view::Issues)),
     entry("project.settings", "Project Settings…", "File", None, Item, || Box::new(ProjectSettings)),

@@ -376,7 +376,7 @@ impl Plait {
         })
     }
 
-    /// The sidebar's projects, most recently active first, then Open repository….
+    /// The sidebar's projects, most recently active first, then Open project….
     pub(super) fn open_draft_projects(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.draft_locked().is_some() {
             return;
@@ -415,7 +415,7 @@ impl Plait {
         items.push(
             Item::new(
                 "draft-open-repository",
-                "Open repository…",
+                "Open project…",
                 Command::Action(Box::new(OpenRepository)),
             )
             .detail("Choose a folder on this Mac")

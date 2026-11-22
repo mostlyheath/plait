@@ -2,7 +2,7 @@
 import { resourceFailure, type RunCapacity } from './run-capacity.ts';
 import { cleanupHelper } from './cleanup.ts';
 import { randomUUID } from 'node:crypto';
-import { acquireCheckout, checkout, checkRoot, rootIdentity, type FileIdentity } from './safety.ts';
+import { acquireCheckout, checkout, projectKind, checkRoot, rootIdentity, type FileIdentity } from './safety.ts';
 import { fail, failure, HostError, HARNESSES, THINKING_LEVELS, type Snapshot, type Failure, type HarnessId, type ThinkingLevel, type ApprovalMode } from './protocol.ts';
 import { worktreeHelper, type Worktrees, type Parent, type Managed, type Create } from './worktrees.ts';
 import type { Store } from './store.ts';
@@ -76,6 +76,7 @@ export class Admissions {
       const info = await this.info(request.checkout);
       if (canonical(info.project_identity) !== canonical(request.identity)) fail('permission_denied', 'Project identity changed. Refresh its settings.');
       await checkRoot(info.project, info.project_identity);
+      if (request.auto_worktree && (await projectKind(info.checkout)).vcs === 'folder') fail('worktree_unavailable', 'Worktrees need a Git repository.');
       this.store.setSetting(policyKey(info.project, info.project_identity), request.auto_worktree ? 'worktree' : 'ask');
       return { ...info, auto_worktree: request.auto_worktree };
     }
@@ -94,7 +95,8 @@ export class Admissions {
     const root = await checkout(path); const identity = await rootIdentity(root);
     await requireCleanup(root);
     let parent: Parent | null = null; let refusal: string | null = null;
-    try { parent = await worktreeHelper<Parent>({ action: 'parent', root }); }
+    if ((await projectKind(root)).vcs === 'folder') refusal = 'Worktrees need a Git repository.';
+    else try { parent = await worktreeHelper<Parent>({ action: 'parent', root }); }
     catch (error) { refusal = error instanceof Error ? error.message : 'Worktree base is unavailable.'; }
     let busy = this.busy(root);
     if (!busy) {
@@ -110,7 +112,7 @@ export class Admissions {
     if (parent && (parent.root !== root || canonical(parent.identity) !== canonical(identity))) fail('permission_denied', 'Checkout identity changed. Refresh before starting a thread.');
     const project = parent?.main ?? root; const project_identity = parent?.main_identity ?? identity;
     return { schema: 1, worktree_at_start_v1: true, linked_continuation_v1: true, queue: true, strict_reader: false,
-      checkout: root, identity, project, project_identity, busy, auto_worktree: this.store.setting(policyKey(project, project_identity)) === 'worktree', parent, refusal };
+      checkout: root, identity, project, project_identity, busy, auto_worktree: refusal === 'Worktrees need a Git repository.' ? false : this.store.setting(policyKey(project, project_identity)) === 'worktree', parent, refusal };
   }
   /** Settles when no placement probe holds this checkout's lease. */
   probing(root: string): Promise<void> { return (this.probes.get(root) ?? Promise.resolve(false)).then(() => {}, () => {}); }
