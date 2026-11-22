@@ -5,10 +5,18 @@ import { join } from 'node:path';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux';
 import { Runtime } from '../src/runtime.ts';
+import type { TurnEvent } from '../src/turn-executor.ts';
 import { acquireCheckout } from '../src/safety.ts';
 import { exec, setup } from './support/safety.ts';
 
 class TestRuntime extends Runtime {
+  events: TurnEvent['type'][] = [];
+  override createTurnSink(...args: Parameters<Runtime['createTurnSink']>) {
+    const sink = super.createTurnSink(...args);
+    return new Proxy(sink, { get: (target, key, receiver) => key === 'emit'
+      ? (event: TurnEvent) => { this.events.push(event.type); return Reflect.apply(target.emit, target, [event]); }
+      : Reflect.get(target, key, receiver) });
+  }
   override async resources() { return { skills: [], templates: [], problems: [], mcpServers: [], mcpEntries: new Map() }; }
 }
 type Responses = Parameters<ReturnType<typeof fauxProvider>['setResponses']>[0];
@@ -113,4 +121,30 @@ test('stop during approval settles the run and releases the checkout', async t =
   const records = await h.records(); assert.equal(records.length, 1); assert.equal(records[0].state, 'ready'); assert.deepEqual(records[0].paths, []);
   const lease = await acquireCheckout(h.root); await lease.close();
   assert.ok(h.statuses.includes('awaiting_approval')); assert.equal(h.statuses.at(-1), 'stopped'); assert.ok(h.notices.includes('#'));
+});
+
+test('Pi sink preserves event order for plain and approval turns', async t => {
+  const plain = await fixture(t, [fauxAssistantMessage('Hello.')]);
+  await plain.submit('plain', 'Hello'); await plain.settled();
+  const plainEvents = plain.runtime.events;
+  assert.equal(plainEvents[0], 'record_before');
+  assert.ok(plainEvents.indexOf('phase') > plainEvents.indexOf('record_before'));
+  assert.ok(plainEvents.includes('live'));
+  for (let i = 0; i < plainEvents.length; i++) if (plainEvents[i] === 'live') assert.equal(plainEvents[i + 1], 'commit');
+  assert.deepEqual(plainEvents.slice(-2), ['record_after', 'finished']);
+  assert.ok(!plainEvents.includes('approval_needed'));
+
+  const approval = await fixture(t, [write('approved.txt', 'yes'), fauxAssistantMessage('Done.')]);
+  await approval.submit('approval', 'Write', { approval: 'ask' });
+  await approval.until(() => !!approval.runtime.snapshot(approval.id).pending_approval);
+  const pending = approval.runtime.snapshot(approval.id).pending_approval!;
+  await approval.call({ op: 'approve', thread_id: approval.id, approval_id: pending.id, allow: true });
+  await approval.settled();
+  const events = approval.runtime.events;
+  assert.equal(events[0], 'record_before');
+  assert.ok(events.indexOf('phase') > events.indexOf('record_before'));
+  assert.ok(events.indexOf('approval_needed') > events.indexOf('phase'));
+  assert.equal(events.filter(event => event === 'approval_needed').length, 2);
+  for (let i = 0; i < events.length; i++) if (events[i] === 'live') assert.equal(events[i + 1], 'commit');
+  assert.deepEqual(events.slice(-2), ['record_after', 'finished']);
 });

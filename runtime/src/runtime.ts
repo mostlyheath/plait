@@ -38,7 +38,8 @@ import { McpRun, eligible, fingerprint, nameKey } from './mcp/tools.ts';
 import type { Observation } from './mcp/tools.ts';
 import { discover, expandInput, report, skillsPrompt } from './skills.ts';
 import type { ToolState } from './tools.ts';
-import { MAX_TURNS, update } from './transcript.ts';
+import { MAX_TURNS } from './transcript.ts';
+import { InProcessSink, type TurnSink } from './turn-executor.ts';
 import { historyPage, historyText } from './history.ts';
 import type { HistorySource } from './history.ts';
 import { customTitle } from './text.ts';
@@ -66,6 +67,7 @@ type Session = ToolState & {
   /** The person's prompt templates, found when the run started. */
   templates?: TemplateEntry[];
   external?: ExternalRun;
+  sink?: TurnSink;
 };
 type Query = { minEntryId?: number; maxEntryId?: number; order: 'ascending' | 'descending' };
 /** Inputs one thread may hold behind its run. */
@@ -214,7 +216,8 @@ export class Runtime {
     const proof = lease.cleanup!;
     await proof.wait();
     if (!proof.reason() && record !== undefined) {
-      await this.records.after(record, lease);
+      if (session.sink) await session.sink.emit({ type: 'record_after', records: this.records, record, lease });
+      else await this.records.after(record, lease);
       await proof.wait();
     }
     const reason = proof.reason();
@@ -689,9 +692,8 @@ export class Runtime {
     session.watch.start(async call => {
       if (call.kind !== 'value') return;
       await this.syncInputs(session);
-      update(snapshot, call.value, session.inputs, this.models.getModel(snapshot.model.provider, snapshot.model.model_id)?.contextWindow ?? null);
-      for (const tool of snapshot.tools) if (tool.name.startsWith('mcp__')) tool.name = this.store.setting(nameKey(snapshot.id, tool.name)) ?? tool.name;
-      this.save(snapshot, Math.max(0, ...call.value.entries.map(entry => Number(entry.id))));
+      session.sink!.emit({ type: 'live', projection: call.value, inputs: session.inputs, contextWindow: this.models.getModel(snapshot.model.provider, snapshot.model.model_id)?.contextWindow ?? null });
+      session.sink!.emit({ type: 'commit', head: Math.max(0, ...call.value.entries.map(entry => Number(entry.id))) });
     });
   }
   async submit(id: string, requestId: string, text: string, mode: ApprovalMode = 'ask', whenBusy?: QueueMode, images: string[] = []) {
@@ -749,13 +751,18 @@ export class Runtime {
       await this.admissions.probing(snapshot.checkout);
       if (!this.records.busy(snapshot.checkout)) lease = await acquireCheckout(snapshot.checkout, 'writer');
       const save = () => this.save(snapshot);
-      const approvals = new InteractiveApproval(snapshot, save);
+      let sink: TurnSink | undefined;
+      const approvals = new InteractiveApproval(snapshot, () => { if (sink) sink.emit({ type: 'approval_needed' }); else save(); });
       // The mode belongs to this admission only; the next submission chooses again.
       authorization = new RunAuthorization(mode === 'auto' ? automaticApproval : approvals);
       const session: Session = {
         snapshot, vcs: threadKind(this.store, id), baseline: [], protected: [], rootIdentity: this.store.rootIdentity(id), buildCache: { store: this.directory, thread: id }, owned: new Map(), inputs: [], requestId,
         authorization, approvals, mcpApproval: approvals, lease, save, outputs: this.store.outputs, record: image => this.store.record(id, image), steered: new Map(),
       };
+      if (this.external.resolveHarness(snapshot).kind === 'pi') {
+        sink = this.createTurnSink(snapshot, () => this.capacity.phases.set(snapshot.id, 'running'), () => session.save());
+        session.sink = sink;
+      }
       admitted = session;
       await this.beginCleanup(session);
       // Read once here: the run keeps this policy, and a later change waits for the next run.
@@ -955,6 +962,9 @@ export class Runtime {
     await session.harness?.close(context);
     session.root = undefined;
   }
+  createTurnSink(snapshot: Snapshot, phase: () => void, finish: () => void): TurnSink {
+    return new InProcessSink(snapshot, this.store, head => this.save(snapshot, head), phase, finish);
+  }
   async run(session: Session, requestId: string, text: string) {
     const snapshot = session.snapshot;
     let record: string | undefined;
@@ -970,8 +980,11 @@ export class Runtime {
       }
       await this.beginCleanup(session);
       // Before any harness starts: a run the host cannot record does not run.
-      if (vcs === 'git') record = await this.capacity.prepare(session.rootIdentity.dev, snapshot.id, session.authorization.signal,
-        () => this.records.before(snapshot.id, requestId, snapshot.checkout, session.lease));
+      if (vcs === 'git') {
+        const capture = () => this.capacity.prepare(session.rootIdentity.dev, snapshot.id, session.authorization.signal,
+          () => this.records.before(snapshot.id, requestId, snapshot.checkout, session.lease));
+        record = session.sink ? await session.sink.emit({ type: 'record_before', capacity: this.capacity, records: this.records, dev: session.rootIdentity.dev, requestId, signal: session.authorization.signal, lease: session.lease }) : await capture();
+      }
       if (session.authorization.signal.aborted) return;
       const header = await runHeader(snapshot.checkout, vcs);
       const selected = this.external.resolveHarness(snapshot);
@@ -1026,7 +1039,7 @@ export class Runtime {
       if (session.authorization.signal.aborted) return;
       session.authorization.activate();
       const submission = await session.root!.submit(await this.draft(session, requestId, text), context);
-      session.started = true; this.capacity.phases.set(snapshot.id, 'running');
+      session.started = true; session.sink!.emit({ type: 'phase', phase: 'running' });
       await this.steer(session);
       await submission.wait(context);
       await session.root!.waitForIdle(context);
@@ -1049,7 +1062,8 @@ export class Runtime {
       this.capacity.phases.delete(snapshot.id);
       // Idle means a following submit can acquire the checkout immediately.
       if (snapshot.status !== 'stopped' && snapshot.status !== 'interrupted') snapshot.status = snapshot.error ? 'error' : 'idle';
-      session.save(); this.sessions.delete(snapshot.id);
+      if (session.sink) session.sink.emit({ type: 'finished' }); else session.save();
+      this.sessions.delete(snapshot.id);
       if (snapshot.status === 'error' || snapshot.status === 'interrupted') this.store.waiters.hold(snapshot.id);
       this.changed('#');
       for (const root of this.store.waiters.roots()) this.drainCheckout(root);
