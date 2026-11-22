@@ -23,7 +23,7 @@ case "$(uname -s)" in
             echo 'Linux command-sandbox acceptance is blocked. See docs/LINUX-SANDBOX.md.' >&2
             exit 1
         fi
-        packages=(-p plait-core -p plait-host)
+        packages=(-p plait-core -p plait-protocol -p plait-host)
         echo 'Checking Linux headless development. Native UI and Linux command execution are not validated.'
         ;;
     *)
@@ -38,6 +38,12 @@ if [[ $(uname -s) == Darwin ]]; then
     bash scripts/acceptance-macos.sh --self-test
 else
     python3 -m unittest discover -s scripts/acceptance -p 'test_*.py'
+fi
+# The protocol dependency closure must stay free of platform I/O and UI crates.
+protocol_dependencies=$(cargo tree --locked -p plait-protocol --edges normal --prefix none)
+if grep -Evq '^(plait-protocol|base64|serde|serde_core|serde_derive|serde_json|proc-macro2|unicode-ident|quote|syn|itoa|memchr|zmij|unicode-properties) v' <<< "$protocol_dependencies"; then
+    echo 'Protocol dependency is not on the I/O-free allowlist; review it before adding it.' >&2
+    exit 1
 fi
 # The daemon and shared core must stay independent of desktop dependencies.
 dependencies=$(cargo tree --locked -p plait-core -p plait-host --edges normal,build,dev --prefix none)
