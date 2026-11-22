@@ -30,6 +30,9 @@ import { describeApproval } from './approval.ts';
 import { escapeDisplay } from './text.ts';
 import type { AuthorizationPolicy, EffectCall } from './authorization.ts';
 
+// ToolState used during a turn: snapshot (id, checkout), vcs, baseline, protected,
+// authorization, lease, rootIdentity, buildCache, outputs, owned, record,
+// commandPolicy, skills, forget, loginEnvironment, mcp, and mcpApproval.
 export type PiTurnInput = {
   sessionFile: string; checkout: string; model: { provider: string; modelId: string };
   maxTurns: number; vcs: 'git' | 'folder'; priorOwned: Postimage[];
