@@ -112,6 +112,10 @@ fn notice(key: &'static str, text: String) -> Vec<Item> {
     vec![Item::new(key, text, Command::BrowseRemote(PathBuf::new())).enabled(false)]
 }
 
+fn reply_is_current(generation: u64, current: u64, epoch: u64, current_epoch: u64) -> bool {
+    generation == current && epoch == current_epoch
+}
+
 impl Plait {
     /// Opens the picker on the remote machine's home folder.
     pub(super) fn open_remote_browser(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -160,6 +164,7 @@ impl Plait {
             palette
         });
         self.remote_browser = Some(browsable);
+        self.remote_listing = None;
         self.present(palette, None, window, cx);
         self.browse_remote(None, cx);
     }
@@ -169,37 +174,62 @@ impl Plait {
         let Some(palette) = self.overlay.as_ref().map(|overlay| overlay.palette.clone()) else {
             return;
         };
+        self.remote_browser_generation = self.remote_browser_generation.wrapping_add(1);
+        let generation = self.remote_browser_generation;
+        let epoch = self.host.connection.epoch;
         let machine = self.machine_label();
+        let initial = self.remote_listing.is_none();
         palette.update(cx, |palette, cx| {
-            palette.clear_query(cx);
-            palette.set_items(
-                notice("reading", format!("Reading folders on {machine}…")),
-                cx,
-            );
+            if initial {
+                palette.set_items(
+                    notice("reading", format!("Reading folders on {machine}…")),
+                    cx,
+                );
+            }
+            palette.set_note(Some(format!("Reading folders on {machine}…").into()), cx);
         });
         let client = self.host_client();
+        let retry = path.clone();
         let task = cx
             .background_executor()
             .spawn(async move { folders::browse(&client, path.as_deref(), false) });
-        let browsable = self.remote_browser.clone();
-        cx.spawn(async move |_, cx| {
+        cx.spawn(async move |this, cx| {
             let result = task.await;
-            let items = match result {
-                Ok(listing) => browse_items(&listing),
-                Err(error) if folders::needs_host_update(&error) => {
-                    if let Some(browsable) = browsable {
-                        browsable.set(false);
-                    }
-                    notice(
-                        "older-host",
-                        format!("Update {machine}'s host to browse its folders. Type a path to open one."),
-                    )
+            let _ = this.update(cx, |this, cx| {
+                if !reply_is_current(generation, this.remote_browser_generation, epoch, this.host.connection.epoch)
+                    || !this.overlay.as_ref().is_some_and(|overlay| overlay.palette == palette) {
+                    return;
                 }
-                Err(error) => notice("failed", error.to_string()),
-            };
-            palette.update(cx, |palette, cx| palette.set_items(items, cx));
-        })
-        .detach();
+                match result {
+                    Ok(listing) => {
+                        let items = browse_items(&listing);
+                        this.remote_listing = Some(listing);
+                        palette.update(cx, |palette, cx| {
+                            palette.clear_query(cx);
+                            palette.set_note(None, cx);
+                            palette.set_items(items, cx);
+                        });
+                    }
+                    Err(error) if folders::needs_host_update(&error) => {
+                        if let Some(browsable) = &this.remote_browser { browsable.set(false); }
+                        palette.update(cx, |palette, cx| {
+                            palette.set_items(notice("older-host", format!("Update {machine}'s host to browse its folders. Type a path to open one.")), cx);
+                            palette.set_note(None, cx);
+                        });
+                    }
+                    Err(error) => {
+                        let mut items = this.remote_listing.as_ref().map(browse_items).unwrap_or_default();
+                        let failed_query = retry.as_ref().map(|path| path.display().to_string()).unwrap_or_default();
+                        let target = if failed_query.is_empty() { "Home folder" } else { &failed_query };
+                        items.insert(0, Item::new("retry", "Retry", Command::BrowseRemote(retry.unwrap_or_default())).detail(target.to_owned()));
+                        palette.update(cx, |palette, cx| {
+                            palette.set_recovery_items(items, &failed_query, cx);
+                            palette.set_note(Some(error.to_string().into()), cx);
+                        });
+                    }
+                }
+            });
+        }).detach();
     }
 }
 
@@ -207,6 +237,13 @@ impl Plait {
 mod tests {
     use super::*;
     use plait_core::host::folders::Entry;
+
+    #[core::prelude::v1::test]
+    fn stale_requests_and_old_connections_cannot_replace_a_listing() {
+        assert!(reply_is_current(2, 2, 4, 4));
+        assert!(!reply_is_current(1, 2, 4, 4));
+        assert!(!reply_is_current(2, 2, 3, 4));
+    }
 
     fn listing(git: bool) -> Listing {
         Listing {
