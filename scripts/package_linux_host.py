@@ -70,7 +70,27 @@ def stage_node(host, arch, supplied):
     return config["version"]
 
 
-def package(arch, out, node_archive, allow_dirty):
+def release_version(tag):
+    if not tag:
+        return None
+    match = re.fullmatch(r"v([0-9]+\.[0-9]+\.[0-9]+(?:-preview\.[1-9][0-9]*)?)", tag)
+    if not match:
+        raise ValueError(f"Unrecognized release tag: {tag}")
+    return match.group(1)
+
+
+def build_host(revision, tag):
+    version = release_version(tag)
+    env = os.environ.copy()
+    env["PLAIT_BUILD_REVISION"] = revision
+    env.pop("PLAIT_RELEASE_VERSION", None)
+    if version is not None:
+        env["PLAIT_RELEASE_VERSION"] = version
+    run("cargo", "build", "--release", "--locked", "-p", "plait-host", cwd=ROOT, env=env)
+    return version
+
+
+def package(arch, out, node_archive, allow_dirty, tag=None):
     revision = subprocess.check_output(["git", "rev-parse", "--short=12", "HEAD"], cwd=ROOT, text=True).strip()
     dirty = subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True)
     if dirty:
@@ -80,8 +100,12 @@ def package(arch, out, node_archive, allow_dirty):
     with (ROOT / "crates/plait-host/Cargo.toml").open("rb") as file:
         version = tomllib.load(file)["package"]["version"]
     name = archive_name(version, revision, arch)
+    release = build_host(revision, tag)
     binary = ROOT / "target/release/plait-host"
     check_elf(binary, arch)
+    reported = json.loads(subprocess.check_output([str(binary), "version"], text=True))
+    if reported.get("revision") != revision or reported.get("release") != release:
+        raise ValueError("Host build version does not match packaging revision and release")
     out.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as directory:
         host = Path(directory) / "host"
@@ -117,8 +141,9 @@ def main():
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--node-archive", type=Path)
     parser.add_argument("--allow-dirty", action="store_true")
+    parser.add_argument("--release-tag", help="release tag to embed in the host")
     args = parser.parse_args()
-    package(args.arch, args.out, args.node_archive, args.allow_dirty)
+    package(args.arch, args.out, args.node_archive, args.allow_dirty, args.release_tag)
 
 
 if __name__ == "__main__":
