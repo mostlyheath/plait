@@ -11,7 +11,11 @@ fn picker_snapshots() {
     std::fs::create_dir_all(&output).unwrap();
     let scratch = std::env::temp_dir().join(format!("plait-picker-shots-{}", std::process::id()));
     let repo = fixture_repository(&scratch);
-    for (width, height, suffix) in [(1380., 860., "wide"), (900., 600., "narrow")] {
+    for (width, height, suffix) in [
+        (1380., 860., "wide"),
+        (900., 600., "narrow"),
+        (900., 320., "short"),
+    ] {
         let mut h = Harness::new(&repo, Some(&output), width, height);
         h.connect(&repo, false);
         h.update(|p, window, cx| p.open_draft(window, cx));
@@ -50,9 +54,26 @@ fn picker_snapshots() {
             };
             let palette = p.overlay.as_ref().unwrap().palette.clone();
             let items = super::super::remote_browser::browse_items(&listing);
-            palette.update(cx, |palette, cx| palette.set_items(items, cx));
+            palette.update(cx, |palette, cx| {
+                palette.set_note(None, cx);
+                palette.set_items(items, cx);
+            });
         });
         h.capture(&format!("picker-remote-folders-{suffix}"));
+        h.update(|p, _, cx| {
+            let palette = p.overlay.as_ref().unwrap().palette.clone();
+            palette.update(cx, |palette, cx| {
+                palette.set_query("/unreadable", cx);
+                let items = vec![super::super::palette::Item::new(
+                    "retry",
+                    "Retry",
+                    super::super::commands::Command::BrowseRemote("/unreadable".into()),
+                )];
+                palette.set_recovery_items(items, "/unreadable", cx);
+                palette.set_note(Some("Could not read folder: permission denied".into()), cx);
+            });
+        });
+        h.capture(&format!("picker-remote-error-{suffix}"));
     }
     std::fs::remove_dir_all(scratch).unwrap();
 }

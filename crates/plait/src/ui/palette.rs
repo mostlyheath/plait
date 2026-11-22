@@ -510,6 +510,25 @@ impl Palette {
         cx.notify();
     }
 
+    /// Keep recovery actions reachable while preserving an unsuccessful query.
+    pub fn set_recovery_items(
+        &mut self,
+        items: Vec<Item>,
+        failed_query: &str,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_items(items, cx);
+        if self.field.read(cx).text() != failed_query {
+            return;
+        }
+        self.rows = arrange(&self.entries[..self.base], "");
+        self.selected = start(&self.rows, &self.entries, None);
+        if let Some(row) = self.selected {
+            self.scroll.scroll_to_item(row, ScrollStrategy::Nearest);
+        }
+        cx.notify();
+    }
+
     /// Empty the search field, as when the picker shows another folder.
     pub fn clear_query(&mut self, cx: &mut Context<Self>) {
         if !self.field.read(cx).text().is_empty() {
@@ -807,7 +826,7 @@ impl Palette {
         }
     }
 
-    fn list(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn list(&self, max_height: Option<Pixels>, cx: &mut Context<Self>) -> AnyElement {
         if self.items.is_empty() {
             return message(self.options.empty.clone());
         }
@@ -837,7 +856,12 @@ impl Palette {
                 )
                 .track_scroll(&self.scroll)
                 .w_full()
-                .h(px(ROW_HEIGHT * count.min(VISIBLE_ROWS) as f32)),
+                .h(max_height.map_or(
+                    px(ROW_HEIGHT * count.min(VISIBLE_ROWS) as f32),
+                    |height| {
+                        px(ROW_HEIGHT * count.min(VISIBLE_ROWS) as f32).min(height.max(px(0.)))
+                    },
+                )),
             )
             .into_any_element()
     }
@@ -926,6 +950,15 @@ impl Render for Palette {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _above = super::theme::AboveModal::enter();
         let searching = !self.field.read(cx).text().trim().is_empty();
+        let place = self
+            .anchor
+            .map(|anchor| anchored_place(anchor, window.viewport_size()));
+        // Search field, padding, border and footer occupy fixed space.
+        let viewport = window.viewport_size();
+        let top = px(72.).min((viewport.height * 0.15).max(px(16.)));
+        let max_panel = (viewport.height - top - px(24.)).max(px(0.));
+        let list_height =
+            Some((place.as_ref().map_or(max_panel, |place| place.height) - px(88.)).max(px(0.)));
         let panel = column()
             .id("palette")
             .role(Role::Dialog)
@@ -969,7 +1002,7 @@ impl Render for Palette {
             .border_color(rgb(colors().edge))
             .bg(rgb(colors().rail))
             .child(div().p_2().child(self.field.clone()))
-            .child(self.list(cx))
+            .child(self.list(list_height, cx))
             .child(self.footer(searching));
         // A full-window layer: it blocks the workspace behind and dims it,
         // because the panel has no shadow to lift it.
@@ -980,17 +1013,16 @@ impl Render for Palette {
             .size_full()
             .occlude()
             .bg(rgba(colors().scrim));
-        let Some(anchor) = self.anchor else {
+        let Some(place) = place else {
             return layer
                 .flex()
                 .flex_col()
                 .items_center()
                 .px_6()
-                .pt(px(72.))
+                .pt(top)
                 .pb_6()
-                .child(panel);
+                .child(panel.max_h(max_panel));
         };
-        let place = anchored_place(anchor, window.viewport_size());
         let panel = panel.max_w(place.width).max_h(place.height);
         let positioned = div()
             .absolute()
@@ -1029,16 +1061,20 @@ fn anchored_place(anchor: Bounds<Pixels>, window: Size<Pixels>) -> Place {
     let room_above = anchor.top() - px(MARGIN + GAP);
     let room_below = window.height - anchor.bottom() - px(MARGIN + GAP);
     let above = room_above > room_below;
+    let min_h = px(160.).min((window.height - px(2. * MARGIN)).max(px(0.)));
+    let height = room_above.max(room_below).max(min_h);
+    let edge = if above {
+        window.height - anchor.top() + px(GAP)
+    } else {
+        anchor.bottom() + px(GAP)
+    }
+    .min((window.height - px(MARGIN) - height).max(px(MARGIN)));
     Place {
         left,
         width,
         above,
-        edge: if above {
-            window.height - anchor.top() + px(GAP)
-        } else {
-            anchor.bottom() + px(GAP)
-        },
-        height: if above { room_above } else { room_below }.max(px(160.)),
+        edge,
+        height,
     }
 }
 
@@ -1066,6 +1102,11 @@ mod tests {
         // Near the right edge it moves left to stay inside the window.
         let right = Bounds::new(point(px(1150.), px(740.)), size(px(40.), px(24.)));
         assert_eq!(anchored_place(right, window).left, px(1200. - 480. - 16.));
+        let short = size(px(600.), px(220.));
+        let middle = Bounds::new(point(px(200.), px(98.)), size(px(100.), px(24.)));
+        let place = anchored_place(middle, short);
+        assert_eq!(place.height, px(160.));
+        assert!(place.edge + place.height <= short.height - px(16.));
         // A narrow window shrinks the picker but keeps the margin.
         let narrow = anchored_place(chip, size(px(400.), px(800.)));
         assert_eq!(narrow.width, px(368.));

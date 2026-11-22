@@ -403,7 +403,7 @@ impl Plait {
 
             // Browsing a remote machine's folders keeps the picker open.
             PaletteEvent::Run(Command::BrowseRemote(path)) => {
-                self.browse_remote(Some(path.clone()), cx)
+                self.browse_remote((!path.as_os_str().is_empty()).then(|| path.clone()), cx)
             }
             PaletteEvent::Run(command) => {
                 // Restore focus first, so an action runs where the user was.
