@@ -2116,6 +2116,39 @@ raw bytes remain in the patch. Complete page validation and patch preparation
 run off the UI thread. These operations provide no staging,
 attribution proof, or reviewed baseline, and make no change to undo semantics.
 
+## Checkout Git reads for remote desktops
+
+These additive, read-only operations omit `protocol_version`. They let a
+desktop on another machine read a checkout on this host. The desktop does
+not use them yet; [Remote hosts](REMOTE.md#remote-git-and-files-next-slice)
+describes the planned views. An older host rejects them with
+`invalid_request`, which the client reports as "Update this machine's host to
+see its Git."
+
+- `{"op":"git_read","checkout":B64,"identity":null|{"dev":"D","ino":"I"},"read":KIND,...}`
+  runs one read. `checkout` is base64 of the absolute path's bytes. `KIND`
+  and its fields are `status`, `files`, `branches`, `diff` (`change`,
+  `mode`), `log` (`tip`, `skip`, `limit`), `show` (`id`), `line_counts`
+  (`paths`), `graph` (`heads`), `file` (`path`), and `file_stamp` (`path`).
+  Any other field is refused.
+- The reply is `{total, data, token}`: `data` is base64 of the first part of
+  the serialized outcome, and `token` is null when `data` is all of it.
+  `{"op":"git_read_page","token":T,"offset":N}` returns the part starting at
+  byte `N`. Pages are at most 600 KiB before encoding. Tokens expire two
+  minutes after their last use, at most four are kept, and the last page ends
+  one. An expired token is `not_found`.
+- The outcome is `{"ok":{"identity":{dev,ino},"result":R}}`, with the same
+  result the desktop's local read returns, or `{"error":{"message":M}}` with
+  the same message. Paths inside results are base64 of their bytes.
+- The `plait-host git-read` helper runs the read with the desktop's hardened
+  Git builder and limits. It refuses a relative path, a folder that is not
+  the top of its work tree, and a checkout whose device or inode differs from
+  `identity` or changes during the read. Files are opened beneath the
+  checkout without following symlinks. A file over 8 MiB returns only its
+  stamp.
+- Results over 64 MiB, a helper that fails, and a read over 60 seconds are
+  refused without helper diagnostics.
+
 ## Linear
 
 These additive host operations let the desktop manage Linear sign-in, read

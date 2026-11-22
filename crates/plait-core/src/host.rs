@@ -1175,6 +1175,7 @@ pub mod agent;
 pub mod build_output;
 pub mod checkout_queue;
 pub mod cleanup;
+pub mod git;
 pub mod harness;
 pub mod identity;
 pub mod linear;
@@ -1190,12 +1191,22 @@ impl Client {
     /// as provider sign-in. The encoded request can hold a secret, so it is
     /// overwritten once written and never appears in an error.
     pub fn send<R: Serialize, T: DeserializeOwned>(&self, request: &R) -> Result<T, Error> {
+        self.send_within(request, Duration::from_secs(20))
+    }
+
+    /// `send` for an operation the host may take longer to answer, such as a
+    /// Git read that runs several bounded commands.
+    pub fn send_within<R: Serialize, T: DeserializeOwned>(
+        &self,
+        request: &R,
+        wait: Duration,
+    ) -> Result<T, Error> {
         let mut bytes = serde_json::to_vec(request)
             .map_err(|_| Error::Protocol("Cannot encode host request.".into()))?;
         let result = self.send_encoded(&bytes);
         bytes.fill(0);
         std::hint::black_box(&bytes);
-        decode(&result?.next(Some(Instant::now() + Duration::from_secs(20)))?)
+        decode(&result?.next(Some(Instant::now() + wait))?)
     }
 
     fn send_encoded(&self, bytes: &[u8]) -> Result<Frames, Error> {

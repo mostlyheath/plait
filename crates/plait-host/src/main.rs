@@ -3,6 +3,7 @@ mod build_output;
 mod command;
 mod files;
 mod fingerprint;
+mod git_read;
 mod installation;
 mod lease;
 #[cfg(target_os = "linux")]
@@ -66,6 +67,7 @@ fn run() -> io::Result<()> {
     match operation.as_str() {
         "record" => return record::run(),
         "review" => return review::run(),
+        "git-read" => return git_read::run(),
         "worktree" => return worktree::run(),
         "build-output" => return build_output::run(),
         "worktree-git" => return worktree::git_run(),

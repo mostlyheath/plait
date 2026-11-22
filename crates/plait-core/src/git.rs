@@ -349,6 +349,17 @@ fn stop_group(group: Option<i32>, shared: bool) {
     }
 }
 
+/// The top of the work tree containing `path`, as Git reports it.
+pub fn toplevel(path: &Path) -> Result<PathBuf> {
+    let root = command(
+        path,
+        &[OsStr::new("rev-parse"), OsStr::new("--show-toplevel")],
+        STATUS_LIMIT,
+    )?;
+    let root = root.bytes.strip_suffix(b"\n").unwrap_or(&root.bytes);
+    Ok(path_from_bytes(root))
+}
+
 pub fn status(path: &Path) -> Result<Snapshot> {
     let start = Instant::now();
     let root = command(
@@ -588,7 +599,7 @@ fn untracked(root: &Path, change: &Change, start: Instant) -> Result<Diff> {
 pub const FILE_LIST_LIMIT: usize = 200_000;
 
 /// Files a prompt can name: tracked, plus untracked files that are not ignored.
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FileList {
     /// Checkout-relative paths with `/` separators, sorted and unique.
     pub paths: Vec<String>,

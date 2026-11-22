@@ -17,7 +17,7 @@ pub const BRANCH_LIMIT: usize = 500;
 const SWITCH_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// One local branch.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Branch {
     /// The short name, such as `main` or `feature/login`.
     pub name: String,
@@ -30,7 +30,7 @@ pub struct Branch {
 }
 
 /// Local branches, most recently committed first.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Branches {
     pub list: Vec<Branch>,
     /// More branches exist than `BRANCH_LIMIT`.
