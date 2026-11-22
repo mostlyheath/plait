@@ -12,7 +12,20 @@ This is the planning order, not a claim that every item is in progress.
 whose relative priority still needs a decision; design proposals are marked.
 **Later** separates conditional work from proposals that need scope agreement.
 
-### Now — installation, then alerts, Antigravity, and Linear
+### Now — host-first Plait
+
+- **The host owns everything; the desktop reads what it streams.** Agreed in
+  [Host-first Plait](HOST-FIRST.md) after remote hosts showed that projects,
+  tabs, unread state, and this Mac's Git lived on the desktop, so a remote
+  window showed this Mac's projects and could not say which machine it was
+  on. Agreed decisions: this Mac's Git and file reads also go through its
+  host, behind a speed check; tabs and layout are kept per device on the
+  host; the prompt tree is explored with mockups before it is built. Work
+  follows its [order of work](HOST-FIRST.md#order-of-work), starting with
+  host identity and the workspace stream. The remote-UI fixes proposed
+  before this decision are superseded by it.
+
+### Done recently — installation, alerts, and Linear
 
 Deliver each as a separate change. Installation comes first, with independent
 client/server lifecycles. These priorities precede the remaining M9 review

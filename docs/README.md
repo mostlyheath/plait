@@ -24,6 +24,7 @@ are not available. Linux hosts can run trusted commands and trusted MCP servers;
 
 - [Roadmap](ROADMAP.md): milestones, scope, and performance goals.
 - [Antigravity through ACP](ACP.md): agreed adapter contract, not implemented.
-- [Remote hosts](REMOTE.md): agreed design for SSH and tailnet hosts, not implemented.
+- [Host-first Plait](HOST-FIRST.md): agreed direction; the host owns all state and the desktop reads its stream. Not built.
+- [Remote hosts](REMOTE.md): SSH and tailnet hosts, built for one machine per window.
 - [Linux sandbox](LINUX-SANDBOX.md): the open containment decision and enablement gates.
 - [ADEMark plan](ADEMARK.md): measurement requirements, not a published benchmark result.
