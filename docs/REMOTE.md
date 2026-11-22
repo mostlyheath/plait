@@ -62,12 +62,22 @@ one's state on the connected machine:
 
 ## Set up a Linux host
 
-Download the archive and its `.sha256` file for your Linux architecture from
-[Releases](https://github.com/heath0xFF/plait/releases), verify it with
-`sha256sum -c`, and extract it. Run `<build-id>/bin/plait-host install-service`
-from its permanent location. The archive includes Node and the runtime.
+Install from the Mac (above), or run the installer on the machine as your
+normal user (x86_64 or arm64). It needs Python 3, curl or wget, and a SHA-256
+utility:
 
-Alternatively, install Rust, Node, npm, and Git on the host and build from a source checkout:
+```sh
+curl --proto '=https' -fsSL https://raw.githubusercontent.com/heath0xFF/plait/main/scripts/install.sh | bash -s -- --host
+```
+
+It reads the release's `update-host-linux-<arch>.json`, checks the archive's
+SHA-256 against it, installs the host and its bundled Node and runtime under
+`~/.local/share/plait-host`, links `~/.local/bin/plait-host`, and starts a
+systemd user service. It does not verify the publisher signature; the install
+from the Mac does. If a different build is already installed, it leaves the
+switch to the updater. Git is required for repository operations.
+
+Alternatively, install Rust, Node, npm, and Git and build from a source checkout:
 
 ```sh
 cargo build --release -p plait-host
@@ -75,11 +85,11 @@ cargo build --release -p plait-host
 target/release/plait-host install-service
 ```
 
-A source-built systemd user service uses the Node on the current PATH; an archived host uses its bundled Node. The host stores data in
-`~/.local/share/plait`. Run `plait-host run` for a foreground host, or
+A source-built service uses the Node on the current PATH. The host stores data
+in `~/.local/share/plait`. Run `plait-host run` for a foreground host, or
 `plait-host uninstall-service` to remove the service. Without lingering, the
 user service stops at logout; `loginctl enable-linger $USER` keeps it running.
-Linux host release archives include Node and the runtime; in-app Linux host updates are planned.
+In-app Linux host updates are planned.
 
 Linux runs trusted commands and trusted MCP servers as the host user. It
 refuses the sandboxed command policy; see [Linux sandbox](LINUX-SANDBOX.md).
