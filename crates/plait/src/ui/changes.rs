@@ -382,7 +382,9 @@ impl Plait {
                             ),
                     )
                     .when(!compact, |el| el.child(self.review_scope_button(cx)))
-                    .child(if count == 0 {
+                    .child(if count == 0 && snapshot.plain {
+                        empty("Not a Git repository", super::PLAIN_FOLDER).into_any_element()
+                    } else if count == 0 {
                         empty(
                             "Working tree clean",
                             "There are no staged, unstaged, or untracked changes.",

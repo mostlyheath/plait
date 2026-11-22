@@ -1130,10 +1130,10 @@ impl Plait {
             })
             .child(self.new_thread_row(cx))
             .child(
-                nav_row("open-repository", "Open repository…", false)
+                nav_row("open-repository", "Open project…", false)
                     .aria_keyshortcuts(self.shortcut_aria("repository.open"))
                     .child(icon("folder"))
-                    .child(title("Open repository…").text_color(rgb(colors().text)))
+                    .child(title("Open project…").text_color(rgb(colors().text)))
                     .child(tag(
                         "open-repository-shortcut",
                         self.shortcut_label("repository.open"),

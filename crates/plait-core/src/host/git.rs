@@ -272,9 +272,12 @@ fn run_checked(input: &HelperInput) -> Result<(DirIdentity, serde_json::Value), 
     {
         return Err("Checkout identity changed.".into());
     }
-    let top = git::toplevel(root)?;
-    if identity(&top)? != before {
-        return Err("Open the top folder of the checkout.".into());
+    // A plain folder has no work tree; its identity checks still apply.
+    if !git::plain_folder(root) {
+        let top = git::toplevel(root)?;
+        if identity(&top)? != before {
+            return Err("Open the top folder of the checkout.".into());
+        }
     }
     let result = match &input.read {
         Read::WorktreeSize { .. } => value(measure_size(input)),

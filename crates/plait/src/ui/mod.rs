@@ -233,6 +233,15 @@ impl Plait {
     fn host_is_local(&self) -> bool {
         self.host_local
     }
+    /// The open project is a plain folder, as its last status read found.
+    pub(super) fn plain_folder_open(&self) -> bool {
+        self.state
+            .repository
+            .snapshot()
+            .ready()
+            .is_some_and(|snapshot| snapshot.plain)
+    }
+
     /// Where the selected machine's checkouts are read and changed. A host
     /// that keeps a workspace reads its own checkouts, this Mac's included;
     /// an older local host leaves this Mac's Git to the desktop.
@@ -637,7 +646,7 @@ impl Plait {
             directories: true,
             multiple: false,
             // Opening only reads the folder; threads and Git writes come later, by choice.
-            prompt: Some("Open repository".into()),
+            prompt: Some("Open project".into()),
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = prompt.await;
@@ -1442,6 +1451,18 @@ impl Render for Plait {
                                 self.worktrees_view(wide, cx)
                             } else if self.issues_visible() {
                                 self.issues_tab(wide, cx)
+                            } else if self.plain_folder_open()
+                                && matches!(
+                                    self.workspace.tab,
+                                    Workspace::Changes | Workspace::History
+                                )
+                            {
+                                theme::column()
+                                    .flex_1()
+                                    .justify_center()
+                                    .items_center()
+                                    .child(theme::empty("Not a Git repository", PLAIN_FOLDER))
+                                    .into_any_element()
                             } else if self.workspace.tab == Workspace::History {
                                 self.history_view(wide, cx).into_any_element()
                             } else if self.workspace.tab == Workspace::Files {
@@ -1484,6 +1505,9 @@ pub fn menus(cx: &mut App) {
     actions::install(cx, &actions::KeyOverrides::new());
     cx.on_action(|_: &Quit, cx| cx.quit());
 }
+
+/// What a plain folder does without: everything built on Git.
+pub(super) const PLAIN_FOLDER: &str = "This folder is not a Git repository. Threads and files work here; Changes, History, branches, worktrees, and undo need Git. Nothing an agent changes here can be undone.";
 
 /// Handoffs open this Mac's apps on this Mac's paths, so a remote checkout has none.
 const REMOTE_UNAVAILABLE: &str =

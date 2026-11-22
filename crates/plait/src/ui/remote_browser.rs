@@ -1,6 +1,7 @@
 //! Opening a project on another machine by browsing its folders, through its
-//! host, in the picker. A repository opens; any other folder opens to show
-//! what is inside. A typed absolute path goes straight to that folder.
+//! host, in the picker. Any folder can be opened; a repository opens in one
+//! step from the list, and another folder opens to show what is inside. A
+//! typed absolute path goes straight to that folder.
 use super::{
     Plait,
     commands::Command,
@@ -15,23 +16,27 @@ use std::{
     rc::Rc,
 };
 
-/// The picker's rows for one folder: open it when it is a repository, go up,
-/// then its repositories and its other folders.
+/// The picker's rows for one folder: open it, go up, then its repositories
+/// and its other folders.
 pub(super) fn browse_items(listing: &Listing) -> Vec<Item> {
     let mut items = Vec::new();
     let here = listing.path.display().to_string();
-    if listing.git {
-        items.push(
-            Item::new(
-                "open-here",
-                format!("Open {}", folder_name(&listing.path)),
-                open(&listing.path),
-            )
-            .detail(here.clone())
-            .section("This folder")
-            .glyph("folder", colors().mint),
-        );
-    }
+    // A folder that is not a repository opens too, without Git's features.
+    let (detail, tint) = if listing.git {
+        (here.clone(), colors().mint)
+    } else {
+        (format!("{here} · not a Git repository"), colors().subtle)
+    };
+    items.push(
+        Item::new(
+            "open-here",
+            format!("Open {}", folder_name(&listing.path)),
+            open(&listing.path),
+        )
+        .detail(detail)
+        .section("This folder")
+        .glyph("folder", tint),
+    );
     if let Some(parent) = &listing.parent {
         items.push(
             Item::new(
@@ -83,13 +88,6 @@ pub(super) fn browse_items(listing: &Listing) -> Vec<Item> {
             )
             .section("Folders")
             .enabled(false),
-        );
-    }
-    if items.is_empty() {
-        items.push(
-            Item::new("empty", "No folders here", browse(&listing.path))
-                .detail(here)
-                .enabled(false),
         );
     }
     items
@@ -238,15 +236,19 @@ mod tests {
     fn a_repository_opens_and_a_folder_opens_to_its_contents() {
         let items = browse_items(&listing(false));
         // The parent is the home folder, so there is no separate home row.
-        assert_eq!(keys(&items), ["up", "folder:api", "folder:notes"]);
+        assert_eq!(
+            keys(&items),
+            ["open-here", "up", "folder:api", "folder:notes"]
+        );
+        assert!(items[0].detail.contains("not a Git repository"));
         assert!(
-            matches!(&items[1].command, Command::OpenRemoteProject(p) if p == "/home/me/code/api")
+            matches!(&items[2].command, Command::OpenRemoteProject(p) if p == "/home/me/code/api")
         );
         assert!(
-            matches!(&items[2].command, Command::BrowseRemote(p) if p == Path::new("/home/me/code/notes"))
+            matches!(&items[3].command, Command::BrowseRemote(p) if p == Path::new("/home/me/code/notes"))
         );
         assert!(
-            matches!(&items[0].command, Command::BrowseRemote(p) if p == Path::new("/home/me"))
+            matches!(&items[1].command, Command::BrowseRemote(p) if p == Path::new("/home/me"))
         );
     }
 
@@ -264,7 +266,7 @@ mod tests {
         root.parent = None;
         root.home = "/".into();
         root.entries.clear();
-        assert_eq!(keys(&browse_items(&root)), ["empty"]);
+        assert_eq!(keys(&browse_items(&root)), ["open-here"]);
         let mut many = listing(false);
         many.truncated = true;
         assert!(!browse_items(&many).last().unwrap().enabled);

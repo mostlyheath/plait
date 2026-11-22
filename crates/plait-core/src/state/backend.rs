@@ -275,6 +275,7 @@ mod tests {
             tracking: None,
             changes: Vec::new(),
             elapsed: std::time::Duration::ZERO,
+            plain: false,
         }
     }
 

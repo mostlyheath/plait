@@ -31,6 +31,10 @@ pub struct LineCount {
 /// Staged and unstaged changes together, against HEAD, for `paths` relative to
 /// `root`. Paths without changes are left out; the order of `paths` is kept.
 pub fn line_counts(root: &Path, paths: &[PathBuf]) -> Result<Vec<LineCount>> {
+    // A plain folder has no HEAD to count against.
+    if super::plain_folder(root) {
+        return Ok(Vec::new());
+    }
     let paths = &paths[..paths.len().min(PATH_LIMIT)];
     if paths.is_empty() {
         return Ok(Vec::new());

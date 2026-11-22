@@ -63,7 +63,9 @@ Choose **Use** to connect in the background; if connecting fails, Plait stays on
 
 **Which machine you are on:** The sidebar's top row names the machine and shows whether it is connected; click it to switch machines or open **Manage machines…**. The window title names a remote machine, and the workspace header shows `project / machine · branch`. A remote machine's name comes from its host (its hostname unless renamed); while it connects, the name you saved is shown.
 
-**Each machine's own projects:** Hosts supporting the workspace stream ([HOST.md](HOST.md#workspace)) keep their own opened and hidden projects, worktree ownership, and read/unread state. On this Mac, existing desktop lists import into this Mac's host once. Switching machines shows that machine's projects. Choose **Open repository…** (`Cmd-O`) to pick a folder on this Mac or enter an absolute checkout path on a remote machine.
+**Each machine's own projects:** Hosts supporting the workspace stream ([HOST.md](HOST.md#workspace)) keep their own opened and hidden projects, worktree ownership, and read/unread state. On this Mac, existing desktop lists import into this Mac's host once. Switching machines shows that machine's projects. Choose **Open project…** (`Cmd-O`) to pick a folder on this Mac, or browse another machine's folders through its host (repositories open in one step; a typed absolute path also works).
+
+**Plain folders:** A folder that is not a Git repository opens too. Threads, approvals, and the file viewer work there; Changes, History, branches, worktrees, and undo need Git and say so. Nothing an agent changes in a plain folder can be undone, and no file is protected as already changed.
 
 ## Projects, threads, tabs, and drafts
 

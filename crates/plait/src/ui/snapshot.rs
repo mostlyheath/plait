@@ -610,6 +610,7 @@ fn pin_read_times(repository: &mut plait_core::state::RepositoryState, wide: boo
             } else {
                 STATUS_NARROW_MS
             }),
+            plain: false,
         });
     }
     let selected = &repository.view.changes.selected;
