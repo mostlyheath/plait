@@ -120,7 +120,7 @@ why. Do not replace a failed security assertion with a skip.
 
 ## References
 
-- [Local host contract](HOST.md)
+- [Host contract](HOST.md)
 - [Architecture](ARCHITECTURE.md)
 - [Linux Landlock userspace API](https://docs.kernel.org/userspace-api/landlock.html),
   especially pathname Unix sockets, ABI versions, and current limitations

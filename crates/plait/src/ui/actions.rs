@@ -2,7 +2,7 @@
 //!
 //! The table is the single source for key bindings, the menu bar, the command
 //! palette's entries and shortcut hints, and the keyboard table in
-//! docs/MACOS.md (a test compares them). Shortcuts are bound only by `bind`,
+//! docs/SHORTCUTS.md (a test compares them). Shortcuts are bound only by `bind`,
 //! which takes a map of action ID to keystroke, so a saved keymap can replace
 //! any default without touching the table.
 //!
@@ -727,7 +727,7 @@ fn documented(keystroke: &str) -> String {
     parts.collect::<Vec<_>>().join("-")
 }
 
-/// The default shortcuts as the Markdown table in docs/MACOS.md. The nine
+/// The default shortcuts as the Markdown table in docs/SHORTCUTS.md. The nine
 /// jumps are one row there, as they are in the shortcut editor.
 #[cfg(test)]
 fn keyboard_table() -> String {
@@ -916,11 +916,11 @@ mod tests {
 
     #[test]
     fn the_documented_keyboard_table_is_this_table() {
-        let documentation = include_str!("../../../../docs/MACOS.md");
+        let documentation = include_str!("../../../../docs/SHORTCUTS.md");
         let table = keyboard_table();
         assert!(
             documentation.contains(&table),
-            "docs/MACOS.md is out of date. Replace its application shortcut table with:\n\n{table}"
+            "docs/SHORTCUTS.md is out of date. Replace its application shortcut table with:\n\n{table}"
         );
     }
 }

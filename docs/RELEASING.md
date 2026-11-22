@@ -20,7 +20,7 @@ update manifest, and publishes the next preview. Nobody tags by hand.
    test, including migration to the prebuilt per-user install, and the publish
    job writes `update.json`, signs it, and publishes the release with the app
    archive, host archive, packages, DMG, and checksums. The
-   [native acceptance check](VERIFICATION.md#native-acceptance-check) drives
+   [native acceptance check](VERIFICATION.md#scenes-and-native-checks) drives
    the same package in a job of its own; it is advisory, and publishing does
    not wait for it.
 
@@ -77,7 +77,7 @@ the signing secret can sign updates; review them like release code.
 ## Independent client and server releases
 
 **Agreed contract; host operations in step 2 are built.** It implements the roadmap's
-[independent release contract](ROADMAP.md#independent-release-contract).
+[independent release contract](ROADMAP.md#host-and-release-boundaries).
 Today one signed `update.json` describes the app and its host together, and
 the in-app update replaces both.
 
@@ -167,3 +167,44 @@ the in-app update replaces both.
    the `plait-host update` options, each with scenes.
 6. A cross-version check on CI, pairing the current client with the previous
    release's host and the reverse, and documentation.
+
+## Packaging and signing
+
+Building macOS distribution artifacts requires an Apple Silicon Mac with rustup,
+Python 3, Node/npm, and full Xcode with Metal:
+
+```sh
+bash scripts/check.sh --require-command-sandbox
+bash scripts/build-macos.sh
+```
+
+`scripts/build-macos.sh` compiles the locked workspace, generates Rust license
+notices with pinned `cargo-about` 0.9.3, verifies the pinned Node **26.12.0**
+download checksum, installs locked production npm dependencies without
+lifecycle scripts, and validates Mach-O architecture, system-only dynamic links,
+signatures, property lists, package contents, and archives. Building never
+installs into `/Applications` or starts a LaunchAgent. Inspect a built app
+locally with `open dist/Plait.app --args /absolute/path/to/repository`.
+
+| Artifact | Purpose |
+| --- | --- |
+| `Plait-…-macos-arm64.dmg` | `Plait.app`, Applications shortcut, migration script, and instructions |
+| `Plait-…-macos-arm64.zip` | App bundle with its bundled host archive and per-user install script |
+| `Plait-Installer-…-macos-arm64.pkg` | Legacy system-wide installer (client and host) |
+| `Plait-Client-…-macos-arm64.pkg` | Legacy system-wide client-only package (`/Applications/Plait.app`) |
+| `Plait-Host-…-macos-arm64.pkg` | Legacy system-wide host-only package (`/Library/Application Support/Plait/Host`) |
+| `Plait-Release-….json` and `.sha256` | Component metadata and artifact checksums |
+
+**Signing status:** The client and Rust host are ad-hoc signed, and bundled Node
+keeps its upstream signature. Releases are **not** Developer ID signed or
+notarized ([Issue #6](https://github.com/heath0xFF/plait/issues/6)). Update
+manifest signatures cover update verification only; standalone artifact
+checksums detect corruption rather than publisher identity.
+
+Workflow runs upload `plait-macos-arm64-…` artifacts (14-day retention) before
+the publish job creates the immutable GitHub prerelease. Per-user installs place
+immutable host releases under `~/Library/Application Support/Plait/Host/releases/<build-id>/`
+(with `installed.json` and `~/Library/LaunchAgents/dev.plait.host.plist`);
+legacy system-wide packages use `/Library/Application Support/Plait/Host/` and
+`/Library/LaunchAgents/dev.plait.host.plist`. Threads, caches, and credentials
+live outside program files.

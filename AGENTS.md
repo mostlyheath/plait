@@ -5,7 +5,7 @@
   No web UI, embedded terminal, or mandatory worktrees.
 - Keep models and Git free of GPUI. State owns transitions; UI owns presentation.
 - Run all filesystem and Git work on the background executor, never in render.
-- Git reads in the app stay hardened: disable optional locks, external diff,
+- Git reads through the host stay hardened: disable optional locks, external diff,
   textconv, and filters. Git writes are limited to what docs/ROADMAP.md agrees
   (staging by file or hunk, unstaging, committing, push, publish, fetch,
   fast-forward pull, confirmed, undoable discard, creating and switching
@@ -25,7 +25,7 @@
 - Test parsers, async result guards, and repository edge cases.
 - Run cargo fmt --all -- --check, cargo clippy --workspace --all-targets -- -D warnings,
   and cargo test --workspace. Build and inspect the native app after UI changes.
-- Run builds and tests directly. Rex is optional and not a build dependency.
+- Run builds and tests directly.
 - Do not run `scripts/acceptance-macos.sh` while a person is using this Mac: it
   takes over the pointer and keyboard. It runs on CI for each release build.
 - Work on a branch. `main` changes only through a pull request whose checks

@@ -297,7 +297,7 @@ jobs:
             'The installed coding/reconnect test uses a scripted provider and real sandboxed Cargo commands, not a live model.' \
             '' \
             'The attached installed-client images show that labeled test, not a personal-account session.' \
-            'See docs/MACOS.md, docs/SELF-HOSTING.md, and docs/VERIFICATION.md at this tag for setup and limits.' > notes.md
+            'See docs/GUIDE.md, docs/SELF-HOSTING.md, and docs/VERIFICATION.md at this tag for setup and limits.' > notes.md
           # The tag is created with the release, on the commit this run built.
           gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" --prerelease --draft \
             --title "Plait $RELEASE_TAG — local preview" --notes-file notes.md --generate-notes \
