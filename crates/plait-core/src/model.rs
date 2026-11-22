@@ -1,6 +1,7 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 /// An independent execution environment. Before M3 only this computer exists.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Machine {
     pub name: String,
     pub local: bool,

@@ -2120,7 +2120,9 @@ attribution proof, or reviewed baseline, and make no change to undo semantics.
 
 The first step of [Host-first Plait](HOST-FIRST.md). These additive
 operations omit `protocol_version`; an older host answers `invalid_request`.
-The desktop does not use them yet.
+The desktop reads its sidebar from this stream. With an older host it uses
+this Mac's saved lists for this Mac, and only what the window opened for
+another machine.
 
 - `{"op":"workspace_view"}` returns `{schema:1, host, revision, projects,
   worktrees, seen}`.
