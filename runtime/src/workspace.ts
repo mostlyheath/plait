@@ -7,6 +7,7 @@ import { isAbsolute } from 'node:path';
 import { fail } from './protocol.ts';
 import { checkout } from './safety.ts';
 import type { Store } from './store.ts';
+import type { CheckoutWatcher } from './watcher.ts';
 
 /** The reserved notification name: the workspace changed. */
 export const WORKSPACE_TOPIC = '%';
@@ -77,6 +78,12 @@ export function validateWorkspace(input: unknown): Record<string, unknown> & { o
 export class Workspace {
   private store: Store;
   private changed: () => void;
+  private watcher?: CheckoutWatcher;
+  setWatcher(watcher: CheckoutWatcher) { this.watcher = watcher; this.syncWatcher(); }
+  private syncWatcher() {
+    const view = this.view();
+    this.watcher?.sync([...view.projects.filter(project => !project.hidden).map(project => project.path), ...view.worktrees.map(tree => tree.folder)]);
+  }
   constructor(store: Store, changed: () => void) {
     this.store = store; this.changed = changed;
     store.db.exec(`
@@ -105,7 +112,7 @@ export class Workspace {
     const seen = db.prepare('SELECT * FROM workspace_seen ORDER BY updated_at DESC, thread_id').all().map(row => ({
       thread_id: String(row.thread_id), updated_at: Number(row.updated_at), state: String(row.state), unread: Number(row.unread) === 1,
     }));
-    return { schema: 1, host: this.identity(), revision: Number(this.store.setting('workspace_revision') ?? 0), projects, worktrees, seen };
+    return { schema: 1, host: this.identity(), revision: Number(this.store.setting('workspace_revision') ?? 0), projects, worktrees, seen, status: this.watcher?.status() ?? {} };
   }
 
   async handle(input: unknown) {
@@ -200,6 +207,7 @@ export class Workspace {
       this.store.setSetting('workspace_revision', String(this.revision() + 1));
       this.store.db.exec('COMMIT');
     } catch (error) { this.store.db.exec('ROLLBACK'); throw error; }
+    this.syncWatcher();
     this.changed();
   }
 }

@@ -2125,18 +2125,22 @@ this Mac's saved lists for this Mac, and only what the window opened for
 another machine.
 
 - `{"op":"workspace_view"}` returns `{schema:1, host, revision, projects,
-  worktrees, seen}`.
+  worktrees, seen, status}`.
   - `host` is `{id, name, platform}`. The ID is stable for the store and
     is the same one turn review reports. The name defaults to the machine's
     hostname, and `{"op":"host_set_name","name":N}` changes it.
   - `projects` lists `{path, hidden}` in the order they were opened.
   - `worktrees` lists `{folder, main, branch, creation_id, identity}`:
     which project each worktree belongs to.
+  - `status` maps watched checkout paths to in-memory change counters, starting
+    at zero when a watch starts. The host watches visible projects and listed
+    worktrees, up to 64 folders; failed watches are omitted. Counters signal
+    that Git status may have changed and reset when the host restarts.
   - `seen` lists `{thread_id, updated_at, state, unread}`, newest first,
     with at most 1000 entries.
 - `{"op":"workspace_subscribe"}` replies with the same view, then sends
-  `{"event":"workspace","seq":N,"workspace":VIEW}` each time the revision
-  moves, numbered from 1. A thread change alone is not a workspace change. A
+  `{"event":"workspace","seq":N,"workspace":VIEW}` each time the revision or status
+  changes, numbered from 1. A thread change alone is not a workspace change. A
   subscriber that cannot keep up is disconnected and subscribes again for a
   fresh view.
 - Writes, each committed with a new revision, then announced to subscribers:

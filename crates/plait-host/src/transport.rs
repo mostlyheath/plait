@@ -413,7 +413,7 @@ fn watch_threads(
     Ok(())
 }
 
-/// Sends the workspace again whenever its revision moves, numbered from 1 after
+/// Sends the workspace again whenever its revision or status changes, numbered from 1 after
 /// the snapshot. A client that cannot keep up is disconnected by the write
 /// timeout and subscribes again for a fresh snapshot.
 fn watch_workspace(
@@ -423,7 +423,7 @@ fn watch_workspace(
     initial: &Value,
 ) -> io::Result<()> {
     let view = json!({"op": "workspace_view"});
-    let mut revision = initial["result"]["revision"].clone();
+    let mut previous = initial["result"].clone();
     let mut seq = 0u64;
     while subscription.wait(&socket)? {
         let reply = sidecar
@@ -433,18 +433,18 @@ fn watch_workspace(
         if reply["ok"] != true {
             return send(&mut socket, &reply);
         }
-        if let Some(event) = workspace_event(&revision, &reply["result"], seq + 1) {
+        if let Some(event) = workspace_event(&previous, &reply["result"], seq + 1) {
             seq += 1;
-            revision = reply["result"]["revision"].clone();
+            previous = reply["result"].clone();
             send(&mut socket, &event)?;
         }
     }
     Ok(())
 }
 
-/// A workspace event when the revision moved.
+/// A workspace event when the revision or status changed.
 fn workspace_event(previous: &Value, current: &Value, seq: u64) -> Option<Value> {
-    (current["revision"] != *previous)
+    (current["revision"] != previous["revision"] || current["status"] != previous["status"])
         .then(|| json!({"event": "workspace", "seq": seq, "workspace": current}))
 }
 
@@ -514,10 +514,20 @@ mod tests {
     #[test]
     fn workspace_events_follow_the_revision_and_are_numbered() {
         let view = |revision: u64| json!({"revision": revision, "projects": []});
-        assert_eq!(workspace_event(&json!(3), &view(3), 1), None);
+        assert_eq!(workspace_event(&view(3), &view(3), 1), None);
         assert_eq!(
-            workspace_event(&json!(3), &view(4), 1),
+            workspace_event(&view(3), &view(4), 1),
             Some(json!({"event": "workspace", "seq": 1, "workspace": view(4)}))
+        );
+    }
+
+    #[test]
+    fn workspace_event_reports_status_only_changes() {
+        let before = json!({"revision": 3, "status": {"/repo": 0}});
+        let after = json!({"revision": 3, "status": {"/repo": 1}});
+        assert_eq!(
+            workspace_event(&before, &after, 2),
+            Some(json!({"event": "workspace", "seq": 2, "workspace": after}))
         );
     }
 
