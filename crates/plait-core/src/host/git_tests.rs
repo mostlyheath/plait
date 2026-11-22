@@ -1,4 +1,5 @@
 use super::*;
+use crate::git::WriteOutcome;
 use std::{
     io::{BufRead, BufReader, Write},
     os::unix::{fs::PermissionsExt, net::UnixListener},
@@ -355,4 +356,123 @@ fn an_older_host_is_named_and_pages_are_requested_through_the_client() {
     assert_eq!(seen[2]["op"], "git_read_page");
     assert_eq!(seen[2]["offset"], 1500);
     let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn every_write_survives_the_wire() {
+    use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+    let odd = PathBuf::from(OsString::from_vec(b"caf\xe9.rs".to_vec()));
+    for op in [
+        WriteOp::Stage(vec![odd.clone(), "b.rs".into()]),
+        WriteOp::Unstage(vec![odd.clone()]),
+        WriteOp::StageAll,
+        WriteOp::UnstageAll,
+        WriteOp::Commit {
+            message: "Fix the parser\n\nBody".into(),
+        },
+        WriteOp::Push,
+        WriteOp::Publish,
+        WriteOp::Fetch,
+        WriteOp::Pull,
+        WriteOp::Hunk {
+            path: odd.clone(),
+            from: DiffMode::Unstaged,
+            index: 2,
+            header: "@@ -1 +1 @@".into(),
+        },
+        WriteOp::Discard {
+            path: odd.clone(),
+            untracked: false,
+            hunk: Some((0, "@@ -1 +1 @@".into())),
+        },
+        WriteOp::Restore(git::Backup {
+            path: odd.clone(),
+            blob: "a".repeat(40),
+            executable: true,
+        }),
+        WriteOp::CreateBranch("topic".into()),
+        WriteOp::SwitchBranch("main".into()),
+    ] {
+        let mut value = serde_json::to_value(Request::GitWrite {
+            checkout: "/repo".into(),
+            identity: WireIdentity {
+                dev: "1".into(),
+                ino: "2".into(),
+            },
+            write: op.clone(),
+        })
+        .unwrap();
+        assert_eq!(value["op"], "git_write");
+        value.as_object_mut().unwrap().remove("op");
+        let input: WriteInput = serde_json::from_value(value).unwrap();
+        assert_eq!(input.write, op);
+    }
+}
+
+fn write_here(repo: &Path, identity: DirIdentity, op: WriteOp) -> Result<WriteOutcome, String> {
+    let input = WriteInput {
+        checkout: repo.into(),
+        identity: identity.into(),
+        write: op,
+    };
+    match serde_json::from_slice::<Outcome<WriteOutcome>>(&execute_write(&input)).unwrap() {
+        Outcome::Ok { result, .. } => Ok(result),
+        Outcome::Error { message } => Err(message),
+    }
+}
+
+#[test]
+fn writes_run_on_the_host_checkout_with_its_identity() {
+    let repo = repository("write");
+    let id = local_identity(&repo);
+    write_here(&repo, id, WriteOp::Stage(vec!["new.txt".into()])).unwrap();
+    let staged = git::status(&repo).unwrap();
+    assert!(
+        staged
+            .changes
+            .iter()
+            .any(|c| c.path == Path::new("new.txt") && c.staged())
+    );
+
+    // A discard saves the file in the repository, so restoring it works here too.
+    let discarded = write_here(
+        &repo,
+        id,
+        WriteOp::Discard {
+            path: "src/lib.rs".into(),
+            untracked: false,
+            hunk: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(repo.join("src/lib.rs")).unwrap(),
+        "fn one() {}\n"
+    );
+    write_here(&repo, id, WriteOp::Restore(discarded.backup.unwrap())).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(repo.join("src/lib.rs")).unwrap(),
+        "fn one() {}\nfn two() {}\n"
+    );
+
+    let wrong = DirIdentity {
+        dev: id.dev,
+        ino: id.ino.wrapping_add(1),
+    };
+    assert_eq!(
+        write_here(&repo, wrong, WriteOp::StageAll).unwrap_err(),
+        "Checkout identity changed."
+    );
+    let sub = local_identity(&repo.join("src"));
+    let refused = write_here(&repo.join("src"), sub, WriteOp::StageAll).unwrap_err();
+    assert!(refused.contains("top folder"), "{refused}");
+    let status = git::status(&repo).unwrap();
+    assert!(
+        !status
+            .changes
+            .iter()
+            .any(|c| c.path == Path::new("src/lib.rs") && c.staged()),
+        "a refused write staged something"
+    );
+    let _ = std::fs::remove_dir_all(repo.parent().unwrap());
 }

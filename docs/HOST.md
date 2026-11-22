@@ -2148,6 +2148,20 @@ see its Git."
   stamp.
 - Results over 64 MiB, a helper that fails, and a read over 60 seconds are
   refused without helper diagnostics.
+- `{"op":"git_write","checkout":B64,"identity":{"dev":"D","ino":"I"},"write":OP}`
+  runs one of the desktop's agreed writes (`WriteOp`: stage, unstage, stage
+  or unstage all, a hunk, commit, push, publish, fetch, pull, discard,
+  restore, create or switch branch) through `plait-host git-write`. The
+  identity is required. The checkout must be the top of its work tree, and
+  the write takes the same checkout leases as a desktop write on this
+  machine, so it is refused while a thread writes there. The reply has the
+  same shape, with the write's outcome. A discard's backup is a blob in the
+  repository's object store, so `restore` works on the host unchanged.
+- A write runs with the host's environment: its Git configuration, hooks,
+  credential helpers, and `SSH_AUTH_SOCK` if the host has one. Prompts are
+  off, so a missing credential fails with Git's own message. A write is
+  stopped after 240 seconds; a helper that fails reports only "The host could
+  not finish this change. Refresh to see the checkout as it is."
 
 ## Linear
 
