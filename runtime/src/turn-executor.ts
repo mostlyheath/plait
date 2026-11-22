@@ -28,16 +28,42 @@ import type { Postimage } from './safety.ts';
 import type { ThinkingLevel } from './protocol.ts';
 import { describeApproval } from './approval.ts';
 import { escapeDisplay } from './text.ts';
-import type { AuthorizationPolicy, EffectCall } from './authorization.ts';
+import { RunAuthorization, type AuthorizationPolicy, type EffectCall } from './authorization.ts';
+import { automaticApproval } from './approval.ts';
+import type { FileIdentity } from './safety.ts';
+import type { BuildCache } from './build-cache.ts';
+import type { CommandOutputs } from './tool-output.ts';
+import type { LoginEnvironment } from './command/login-environment.ts';
+import type { CommandPolicy } from './command/policy.ts';
+import type { SkillEntry } from './skills.ts';
 
-// ToolState used during a turn: snapshot (id, checkout), vcs, baseline, protected,
-// authorization, lease, rootIdentity, buildCache, outputs, owned, record,
-// commandPolicy, skills, forget, loginEnvironment, mcp, and mcpApproval.
 export type PiTurnInput = {
   sessionFile: string; checkout: string; model: { provider: string; modelId: string };
   maxTurns: number; vcs: 'git' | 'folder'; priorOwned: Postimage[];
+  baseline?: string[]; protected?: FileIdentity[]; rootIdentity?: FileIdentity; commandPolicy?: CommandPolicy; skills?: SkillEntry[]; approvalMode?: 'auto' | 'manual';
   directory: string; threadId: string; trusted: boolean; header: string; mcpSettings: Record<string, string>; agentDir?: string;
 };
+
+export type PiTurnResources = {
+  lease?: LeaseHandle; buildCache: BuildCache; outputs: CommandOutputs;
+  loginEnvironment?: Promise<LoginEnvironment>; mcp?: McpRun;
+};
+
+/** The sink and approval policy belong to the executor, not serialized turn data. */
+export function toolStateFor(input: PiTurnInput, resources: PiTurnResources, context: {
+  sink: TurnSink; approval: AuthorizationPolicy; authorization?: RunAuthorization;
+}): ToolState {
+  if (!input.rootIdentity) throw new Error('Pi turn requires a checkout identity.');
+  return {
+    snapshot: { id: input.threadId, checkout: input.checkout }, vcs: input.vcs,
+    baseline: input.baseline ?? [], protected: input.protected ?? [], rootIdentity: input.rootIdentity,
+    authorization: context.authorization ?? new RunAuthorization(input.approvalMode === 'auto' ? automaticApproval : context.approval),
+    mcpApproval: context.approval, commandPolicy: input.commandPolicy, skills: input.skills,
+    ...resources, owned: new Map(input.priorOwned.map(image => [pathKey(image.path), image])),
+    record: image => context.sink.emit({ type: 'postimage', image }),
+    forget: path => context.sink.emit({ type: 'forget', path }),
+  };
+}
 
 export type TurnInput = {
   root: Conversation;
@@ -113,8 +139,9 @@ export class TurnExecutor implements AuthorizationPolicy {
     state.protected = await identities(input.checkout, state.baseline);
   }
 
-  async resources(input: PiTurnInput, state: ToolState, callbacks: PiTurnCallbacks): Promise<{ instructions: string; templates: TemplateEntry[] }> {
-    const resources = await discover(input.checkout, input.trusted, { protect: [input.directory], agentDir: input.agentDir });
+  // `load` is the server's discovery: tests and hosts can point it at another agent folder.
+  async resources(input: PiTurnInput, state: ToolState, callbacks: PiTurnCallbacks, load: typeof discover = discover): Promise<{ instructions: string; templates: TemplateEntry[] }> {
+    const resources = await load(input.checkout, input.trusted, { protect: [input.directory], agentDir: input.agentDir });
     state.skills = resources.skills;
     const settings = { setting: (key: string) => input.mcpSettings[key] ?? null, setSetting: () => {} };
     const servers = mcpPolicy(settings, input.checkout, state.rootIdentity, resources.mcpServers ?? [], resources.mcpEntries ?? new Map());
@@ -187,6 +214,8 @@ export type TurnEvent =
   | { type: 'approval_settled'; id: string }
   | { type: 'record_before'; capacity: RunCapacity; records: Records; dev: string; requestId: string; signal: AbortSignal; lease?: LeaseHandle }
   | { type: 'record_after'; records: Records; record: string; lease: LeaseHandle }
+  | { type: 'postimage'; image: Postimage }
+  | { type: 'forget'; path: string }
   | { type: 'finished' };
 
 export interface TurnSink {
@@ -227,6 +256,8 @@ export class InProcessSink implements TurnSink {
       case 'record_before': return event.capacity.prepare(event.dev, this.snapshot.id, event.signal,
         () => event.records.before(this.snapshot.id, event.requestId, this.snapshot.checkout, event.lease));
       case 'record_after': return event.records.after(event.record, event.lease);
+      case 'postimage': this.store.record(this.snapshot.id, event.image); break;
+      case 'forget': this.store.forget(this.snapshot.id, event.path); break;
       case 'finished': this.finish(); break;
     }
   }

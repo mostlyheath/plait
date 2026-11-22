@@ -56,6 +56,7 @@ import { ClaudeRun } from './claude/run.ts';
 import { sdkDirectory } from './claude/sdk.ts';
 
 type Session = ToolState & {
+  snapshot: Snapshot;
   harness?: Harness; root?: Conversation; watch?: ConversationWatch; finished?: Promise<void>;
   inputs: InputRecord[]; requestId: string; approvals: InteractiveApproval; save(): void;
   /** Set once the run's own input is in the conversation store; steering needs a run to join. */
@@ -739,9 +740,9 @@ export class Runtime {
         snapshot, vcs: threadKind(this.store, id), baseline: [], protected: [], rootIdentity: this.store.rootIdentity(id), buildCache: { store: this.directory, thread: id }, owned: new Map(), inputs: [], requestId,
         authorization, approvals, mcpApproval: executor ?? approvals, lease, save, outputs: this.store.outputs, record: image => this.store.record(id, image), steered: new Map(),
       };
-      if (this.external.resolveHarness(snapshot).kind === 'pi') {
+      if (executor) {
         sink = this.createTurnSink(snapshot, () => this.capacity.phases.set(snapshot.id, 'running'), () => session.save());
-        session.sink = sink; session.executor = executor; executor!.connect(sink);
+        session.sink = sink; session.executor = executor; executor.connect(sink);
       }
       admitted = session;
       await this.beginCleanup(session);
@@ -977,6 +978,7 @@ export class Runtime {
       const input: PiTurnInput = { sessionFile: join(this.directory, `${snapshot.id}.sqlite`), checkout: snapshot.checkout,
         model: { provider: snapshot.model.provider, modelId: snapshot.model.model_id }, maxTurns: this.maxTurns,
         vcs, priorOwned: this.store.owned(snapshot.id), directory: this.directory, threadId: snapshot.id,
+        baseline: session.baseline, protected: session.protected, rootIdentity: session.rootIdentity, commandPolicy: session.commandPolicy,
         trusted: session.commandPolicy === 'trusted', header,
         mcpSettings: Object.fromEntries(this.store.db.prepare("SELECT key, value FROM settings WHERE key LIKE 'mcp_server:%'").all().map(row => [String(row.key), String(row.value)])) };
       await executor.prepare(input, session);
@@ -991,7 +993,7 @@ export class Runtime {
           if (this.store.setting(key) === null) this.store.setSetting(key, label);
           for (const tool of snapshot.tools) if (tool.name === name) tool.name = label;
         },
-      });
+      }, (checkout, trusted) => this.resources(checkout, trusted));
       session.templates = resources.templates;
       await this.open(session, executor, input);
       // The thread's current model, thinking level, and turn limit apply from this run.

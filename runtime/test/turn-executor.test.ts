@@ -8,7 +8,10 @@ import { createModels } from '@earendil-works/pi-ai/models';
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai/providers/faux';
 import { createRegistry, defineTool, defineExtension } from '@earendil-works/pi-durable';
 import type { ToolState } from '../src/tools.ts';
-import { TurnExecutor, type TurnEvent, type TurnSink } from '../src/turn-executor.ts';
+import type { CommandOutputs } from '../src/tool-output.ts';
+import { rootIdentity } from '../src/safety.ts';
+import { setup } from './support/safety.ts';
+import { TurnExecutor, toolStateFor, type TurnEvent, type TurnSink } from '../src/turn-executor.ts';
 
 test('executor runs a plain Pi turn without Runtime', async () => {
   const models = createModels(); const faux = fauxProvider({ tokensPerSecond: 1e8 });
@@ -93,4 +96,32 @@ test('executor handles write approvals through commands without Runtime', async 
     assert.notEqual(approvals[0].approval.id, approvals[1].approval.id);
     assert.equal(events.filter(event => event.type === 'approval_settled').length, 2);
   } finally { await harness.close(context); await rm(directory, { recursive: true, force: true }); }
+});
+
+
+test('plain turn state sends a write postimage to its sink', async t => {
+  const { root: checkout, base: directory } = await setup(t);
+  const executor = new TurnExecutor();
+  const events: TurnEvent[] = [];
+  const sink = { emit(event: TurnEvent) { events.push(event); } } as TurnSink;
+  executor.connect(sink);
+  const input = { sessionFile: join(directory, 'session.sqlite'), checkout,
+    model: { provider: 'faux', modelId: 'faux-1' }, maxTurns: 10, vcs: 'folder' as const,
+    priorOwned: [], rootIdentity: await rootIdentity(checkout), approvalMode: 'auto' as const,
+    directory, threadId: 'thread', trusted: false, header: '', mcpSettings: {} };
+  const state = toolStateFor(input, { buildCache: { store: directory, thread: 'thread' }, outputs: {} as CommandOutputs },
+    { sink, approval: executor });
+  const models = createModels(); const faux = fauxProvider({ tokensPerSecond: 1e8 });
+  faux.setResponses([fauxAssistantMessage([fauxToolCall('write', { path: 'new.txt', content: 'hello' }, { id: 'write' })], { stopReason: 'toolUse' }), fauxAssistantMessage('done')]);
+  models.setProvider(faux.provider);
+  const { harness, root } = await executor.open(input, { models, state, retry: { enabled: false, maxRetries: 0, baseDelayMs: 0 } });
+  try {
+    await executor.run({ root, instructions: 'Write the file.', model: input.model, thinkingLevel: null, maxTurns: 10,
+      signal: state.authorization.signal }, sink, {
+      activate() { state.authorization.activate(); }, async draft() { return { type: 'input', requestId: 'one', content: 'Write' }; },
+      started() {}, async steer() {},
+    });
+    const postimage = events.find(event => event.type === 'postimage');
+    assert.equal(postimage?.image.path, 'new.txt');
+  } finally { await harness.close(context); }
 });
