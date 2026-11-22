@@ -1,7 +1,9 @@
 // Additive Git and file reads, and Git writes, for a remote desktop. The Rust helper runs the
 // desktop's own hardened reads; this keeps its result and serves it in pages,
 // because one reply is limited to 1 MiB.
-import { spawn } from 'node:child_process';
+import { spawn, execFile } from 'node:child_process';
+import { realpath, stat } from 'node:fs/promises';
+import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import { once } from './operations.ts';
 import type { Store } from './store.ts';
@@ -18,7 +20,7 @@ const KEEP_MS = 120_000;
 const DOCUMENTS = 4;
 
 const reads: Record<string, string[]> = {
-  status: [], files: [], branches: [],
+  status: [], files: [], branches: [], main_checkout: [], identity: [],
   diff: ['change', 'mode'],
   log: ['tip', 'skip', 'limit'],
   show: ['id'],
@@ -91,7 +93,7 @@ export class GitReads {
     if (forward.read === 'worktree_size') forward.store = this.store;
     const write = op === 'git_write';
     let bytes: Buffer;
-    try { bytes = await this.helper(forward, write ? 'git-write' : 'git-read'); } catch {
+    try { bytes = forward.read === 'identity' || forward.read === 'main_checkout' ? await localRead(forward) : await this.helper(forward, write ? 'git-write' : 'git-read'); } catch {
       fail(write ? 'git_write_failed' : 'git_read_failed', write ? 'The host could not finish this change. Refresh to see the checkout as it is.' : 'The host could not read this checkout.');
     }
     if (bytes.length > RESULT_LIMIT) fail('git_read_limit', 'This read is too large to show.');
@@ -140,4 +142,33 @@ function runHelper(input: unknown, operation: 'git-read' | 'git-write'): Promise
       resolve(Buffer.concat(chunks));
     });
   });
+}
+
+// These reads are implemented here until the host helper supports their wire types.
+async function localRead(request: Record<string, unknown>): Promise<Buffer> {
+  try {
+    const path = Buffer.from(String(request.checkout), 'base64');
+    if (path[0] !== 47 || path.includes(0)) throw new Error('Invalid path');
+    const root = await realpath(path, { encoding: 'buffer' });
+    const info = await stat(root, { bigint: true });
+    if (!info.isDirectory()) throw new Error('Not a directory');
+    const identity = { dev: String(info.dev), ino: String(info.ino) };
+    const expected = request.identity as typeof identity | null | undefined;
+    if (expected && (expected.dev !== identity.dev || expected.ino !== identity.ino)) throw new Error('Checkout identity changed.');
+    let result: unknown = { root: root.toString('base64'), identity };
+    if (request.read === 'main_checkout') {
+      const cwd = new TextDecoder('utf-8', { fatal: true }).decode(root);
+      const { stdout } = await promisify(execFile)('/usr/bin/git', ['-c', 'core.fsmonitor=false', '-c', 'core.untrackedCache=false', '-c', 'diff.external=', '-c', 'core.hooksPath=/dev/null', 'worktree', 'list', '--porcelain', '-z'], {
+        env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', HOME: '/nonexistent', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C' }, cwd, encoding: 'buffer', timeout: 10_000, maxBuffer: 1048576,
+      });
+      const end = stdout.indexOf(0);
+      if (end < 10 || !stdout.subarray(0, 9).equals(Buffer.from('worktree '))) throw new Error('Invalid worktree list');
+      result = stdout.subarray(9, end).toString('base64');
+    }
+    const after = await stat(root, { bigint: true });
+    if (after.dev !== info.dev || after.ino !== info.ino || !(await realpath(path, { encoding: 'buffer' })).equals(root)) throw new Error('Checkout identity changed.');
+    return Buffer.from(JSON.stringify({ ok: { identity, result } }));
+  } catch {
+    return Buffer.from(JSON.stringify({ error: { message: 'The host could not read this checkout.' } }));
+  }
 }

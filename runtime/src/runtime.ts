@@ -30,7 +30,7 @@ import { PROTOCOL_VERSIONS, fail, failure, queuedView, summaryView, THINKING_LEV
 import type { ApprovalMode, HarnessId, ModelChoice, Protocol, QueueMode, Request, Snapshot, InputRecord, ThinkingLevel } from './protocol.ts';
 import { Store } from './store.ts';
 import { Records } from './records.ts';
-import { checkout, projectKind, gitCheckout, dirtyPaths, fileAction, identities, acquireCheckout, rootIdentity, checkRoot, pathKey } from './safety.ts';
+import { checkout, projectKind, gitCheckout, dirtyPaths, fileAction, identities, acquireCheckout, rootIdentity, checkRoot, verifyExpectedIdentity, pathKey } from './safety.ts';
 import type { FileIdentity, LeaseHandle } from './safety.ts';
 import { registry } from './tools.ts';
 import { executionEntry, mcpPolicy, setMcpEnabled } from './mcp/policy.ts';
@@ -174,6 +174,7 @@ export class Runtime {
   private async checkoutCleanup(input: unknown) {
     const request = validateCleanup(input);
     const root = await checkout(request.checkout);
+    await verifyExpectedIdentity(root, request.identity);
     if (request.op === 'stop_checkout_cleanup') {
       const reply = await cleanupHelper('stop', root, request.token);
       if (reply.cleanup === null) this.cleanupResolved(root);
@@ -346,8 +347,13 @@ export class Runtime {
         this.model(choice); this.store.setDefault(choice); return { default_model: choice };
       }
       case 'list_threads': {
-        if (protocol < 3) return { threads: this.store.list(await checkout(String(request.checkout))) };
+        if (protocol < 3) {
+          const root = await checkout(String(request.checkout));
+          await verifyExpectedIdentity(root, request.identity);
+          return { threads: this.store.list(root) };
+        }
         const root = request.checkout === undefined ? undefined : await checkout(String(request.checkout));
+        if (root) await verifyExpectedIdentity(root, request.identity);
         const page = this.store.summaries({ checkout: root, limit: Number(request.limit ?? 100), cursor: request.cursor as string | undefined, archived: request.archived === true });
         return { ...page, threads: page.threads.map(summary => summaryView(summary, protocol)) };
       }
@@ -359,6 +365,7 @@ export class Runtime {
       case 'create_thread': {
         const { root, vcs } = await projectKind(String(request.checkout));
         if (expectedCheckout) await checkRoot(root, expectedCheckout);
+        await verifyExpectedIdentity(root, request.identity);
         const choice = { provider: String(request.provider), model_id: String(request.model_id) };
         const requested = request.thinking as ThinkingLevel | undefined;
         const harness = (request.harness ?? 'pi') as HarnessId;
@@ -379,6 +386,7 @@ export class Runtime {
         }
         const result = { thread: snapshot };
         const identity = await rootIdentity(root);
+        await verifyExpectedIdentity(root, request.identity);
         // Admission captured the directory before model discovery could yield.
         if (expectedCheckout && (identity.dev !== expectedCheckout.dev || identity.ino !== expectedCheckout.ino)) fail('permission_denied', 'Checkout identity changed. Refresh before starting a thread.');
         if (!expectedCheckout) this.admitWork();
@@ -612,6 +620,7 @@ export class Runtime {
   async agentResources(request: Request) {
     const root = await checkout(String(request.checkout));
     const identity = await rootIdentity(root);
+    await verifyExpectedIdentity(root, request.identity);
     const trusted = commandPolicy(this.store, root, identity) === 'trusted';
     const found = await this.resources(root, trusted, true);
     if (request.op === 'set_mcp_server') {

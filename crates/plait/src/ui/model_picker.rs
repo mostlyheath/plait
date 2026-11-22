@@ -33,22 +33,14 @@ pub(super) enum ModelPurpose {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct PickerStamp {
     connected: bool,
-    models: Vec<(ModelChoice, String, bool)>,
+    models: u64,
     default: Option<ModelChoice>,
     choosing: Option<ModelChoice>,
     saving: bool,
     message: Option<String>,
-    favorites: Vec<ModelKey>,
+    favorites: u64,
     /// The harness list generation, so a new list or state shows at once.
     harnesses: u64,
-}
-
-/// Equality over every catalog field a picker row displays, including availability.
-fn catalog_stamp(models: &[Model]) -> Vec<(ModelChoice, String, bool)> {
-    models
-        .iter()
-        .map(|m| (m.choice(), m.name.clone(), m.authenticated))
-        .collect()
 }
 
 /// The identifier shown beside a model's display name.
@@ -193,12 +185,12 @@ impl Plait {
         let status = self.host.connection.status.as_ref();
         PickerStamp {
             connected: self.host.connection.connected,
-            models: status.map_or_else(Vec::new, |status| catalog_stamp(&status.models)),
+            models: self.host.connection.catalog_revision,
             default: status.and_then(|status| status.default_model.clone()),
             choosing: self.host.connection.settings_model.clone(),
             saving: self.host.connection.saving,
             message: self.host.connection.save_message.clone(),
-            favorites: self.preferences.value.favorite_models.clone(),
+            favorites: self.preferences.favorites_revision,
             harnesses: self.harnesses.generation,
         }
     }
@@ -565,9 +557,28 @@ impl Plait {
 #[cfg(test)]
 mod tests {
     // Named imports: a glob would bring in GPUI's own `test` attribute.
-    use super::{
-        Item, Model, ModelChoice, Preferences, catalog_stamp, picker_items, usable_models,
-    };
+    use super::{Item, Model, ModelChoice, PickerStamp, Preferences, picker_items, usable_models};
+
+    #[test]
+    fn picker_stamp_tracks_catalog_and_favorite_revisions() {
+        let stamp = PickerStamp {
+            connected: true,
+            models: 1,
+            default: None,
+            choosing: None,
+            saving: false,
+            message: None,
+            favorites: 1,
+            harnesses: 0,
+        };
+        assert_eq!(stamp, stamp.clone());
+        let mut changed = stamp.clone();
+        changed.models += 1;
+        assert_ne!(stamp, changed);
+        changed = stamp.clone();
+        changed.favorites += 1;
+        assert_ne!(stamp, changed);
+    }
 
     fn model(provider: &str, model_id: &str, authenticated: bool) -> Model {
         Model {
@@ -714,19 +725,5 @@ mod tests {
         preferences.toggle_favorite(&choice("google", "gemini"));
         preferences.record_recent(&choice("router", "vendor/opus"));
         assert_eq!(order(&preferences), vec!["vendor/opus", "sol", "luna"]);
-    }
-    #[test]
-    fn catalog_changes_refresh_open_pickers_even_at_the_same_size() {
-        let before = catalog();
-        let mut after = before.clone();
-        after[0].authenticated = false;
-        assert_ne!(catalog_stamp(&before), catalog_stamp(&after));
-        after = before.clone();
-        after[0].name = "Renamed model".into();
-        assert_ne!(catalog_stamp(&before), catalog_stamp(&after));
-        after = before.clone();
-        after.swap(0, 1);
-        assert_ne!(catalog_stamp(&before), catalog_stamp(&after));
-        assert_eq!(catalog_stamp(&before), catalog_stamp(&before));
     }
 }

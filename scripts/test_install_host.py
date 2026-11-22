@@ -1,24 +1,16 @@
-import functools
 import hashlib
-import http.server
 import json
 import os
 from pathlib import Path
 import subprocess
 import tarfile
 import tempfile
-import threading
 import unittest
 
 ROOT = Path(__file__).resolve().parent.parent
 BUILD = '1.2.3-' + 'a' * 20
 REVISION = 'b' * 40
 TAG = 'v1.2.3-preview.1'
-
-
-class QuietHandler(http.server.SimpleHTTPRequestHandler):
-    def log_message(self, *args):
-        pass
 
 
 class HostInstallTests(unittest.TestCase):
@@ -34,12 +26,22 @@ class HostInstallTests(unittest.TestCase):
         self.bin.mkdir()
         (self.bin / 'uname').write_text('#!/bin/sh\n[ "$1" = -s ] && echo Linux || echo "${TEST_ARCH:-x86_64}"\n')
         (self.bin / 'loginctl').write_text('#!/bin/sh\necho Linger=no\n')
+        (self.bin / 'systemctl').write_text(
+            '#!/bin/sh\necho "$*" >> "$HOME/systemctl-calls"\n'
+            '[ "$2" = is-active ] && [ -n "${TEST_EXECSTART:-}" ] && exit 0\n'
+            '[ "$2" = show ] && { echo "{ path=$TEST_EXECSTART ; }"; exit 0; }\n'
+            '[ "$2" = is-active ] && exit 3\nexit 0\n')
+        (self.bin / 'curl').write_text(
+            '#!/bin/sh\nwhile [ "$#" -gt 0 ]; do\n'
+            '  case "$1" in https://*) url=$1 ;; --output) shift; output=$1 ;; esac\n'
+            '  shift\ndone\ncp "$TEST_ASSETS/${url#https://fixture/}" "$output"\n')
         for path in self.bin.iterdir():
             path.chmod(0o755)
         source = self.root / 'source' / BUILD
         (source / 'bin').mkdir(parents=True)
         host = source / 'bin/plait-host'
-        host.write_text('#!/bin/sh\nprintf "%s\\n" "$@" >> "$HOME/calls"\n')
+        host.write_text('#!/bin/sh\nprintf "%s\\n" "$@" >> "$HOME/calls"\n'
+                        '[ "$1" = active-runs ] && echo "${TEST_ACTIVE_RUNS:-0}"\nexit 0\n')
         host.chmod(0o755)
         (source / 'bin/node').write_text('node')
         (source / 'runtime').mkdir()
@@ -53,22 +55,14 @@ class HostInstallTests(unittest.TestCase):
         self.manifest = {'schema_version': 2, 'component': 'host', 'tag': TAG, 'build_id': BUILD,
                          'artifacts': {'linux-x86_64': {'name': self.name, 'sha256': self.digest}}}
         self.write_manifest()
-        (self.assets / 'releases').write_text(json.dumps([{'tag_name': TAG}]))
-        handler = functools.partial(QuietHandler, directory=str(self.assets))
-        self.server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), handler)
-        threading.Thread(target=self.server.serve_forever, daemon=True).start()
-        self.addCleanup(self.server.server_close)
-        self.addCleanup(self.server.shutdown)
-        address = f'http://127.0.0.1:{self.server.server_port}'
+        (self.assets / 'releases?per_page=1').write_text(json.dumps([{'tag_name': TAG}]))
         script = (ROOT / 'scripts/install.sh').read_text()
-        script = script.replace('https://api.github.com/repos/$repository', address)
-        script = script.replace('https://github.com/$repository/releases/download', address + '/download')
-        # The fixture server is plain HTTP on loopback; the real script refuses anything but HTTPS.
-        script = script.replace("--proto '=https' --proto-redir '=https' ", '')
+        script = script.replace('https://api.github.com/repos/$repository', 'https://fixture')
+        script = script.replace('https://github.com/$repository/releases/download', 'https://fixture/download')
         self.script = self.root / 'install.sh'
         self.script.write_text(script)
         self.env = {**os.environ, 'HOME': str(self.home), 'USER': 'test',
-                    'PATH': str(self.bin) + ':/usr/bin:/bin'}
+                    'PATH': str(self.bin) + ':/usr/bin:/bin', 'TEST_ASSETS': str(self.assets)}
 
     def write_manifest(self):
         (self.release / 'update-host-linux-x86_64.json').write_text(json.dumps(self.manifest))
@@ -113,6 +107,44 @@ class HostInstallTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('plait-host update', result.stderr)
         self.assertFalse((old.parent.parent / BUILD).exists())
+
+    def source_link(self):
+        source = self.root / 'checkout/target/release/plait-host'
+        source.parent.mkdir(parents=True)
+        source.write_text('source')
+        link = self.home / '.local/bin/plait-host'
+        link.parent.mkdir(parents=True)
+        link.symlink_to(source)
+        return link, source
+
+    def test_source_migration_restarts_services(self):
+        link, source = self.source_link()
+        self.env['TEST_EXECSTART'] = str(source)
+        tailnet = self.home / '.config/systemd/user/plait-host-tailnet.service'
+        tailnet.parent.mkdir(parents=True)
+        tailnet.write_text('unit')
+        result = self.run_install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(link.resolve(), self.home / '.local/share/plait-host/releases' / BUILD / 'bin/plait-host')
+        calls = (self.home / 'systemctl-calls').read_text()
+        self.assertIn('--user restart plait-host.service', calls)
+        self.assertIn('--user restart plait-host-tailnet.service', calls)
+        self.assertIn('data in ~/.local/share/plait was kept', result.stdout)
+
+    def test_source_migration_refuses_active_runs(self):
+        link, source = self.source_link()
+        self.env['TEST_ACTIVE_RUNS'] = '2'
+        result = self.run_install()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('2 active runs', result.stderr)
+        self.assertEqual(link.resolve(), source)
+        self.assertNotIn('restart', (self.home / 'systemctl-calls').read_text())
+
+    def test_running_source_service_without_link_is_migrated(self):
+        self.env['TEST_EXECSTART'] = str(self.root / 'checkout/target/release/plait-host')
+        result = self.run_install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('--user restart plait-host.service', (self.home / 'systemctl-calls').read_text())
 
     def test_unsupported_architecture(self):
         self.env['TEST_ARCH'] = 'riscv64'

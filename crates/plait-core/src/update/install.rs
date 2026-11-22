@@ -178,6 +178,7 @@ pub fn agent_plist(program: &Path) -> String {
 	<key>Label</key><string>{LABEL}</string>
 	<key>ProgramArguments</key><array><string>{program}</string><string>run-user</string></array>
 	<key>RunAtLoad</key><true/>
+	<key>AbandonProcessGroup</key><true/>
 	<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
 	<key>ThrottleInterval</key><integer>10</integer>
 	<key>ProcessType</key><string>Standard</string>
@@ -552,6 +553,7 @@ mod tests {
         let plist = agent_plist(Path::new("/Users/a&b/<Host>/bin/plait-host"));
         assert!(plist.contains("<string>/Users/a&amp;b/&lt;Host&gt;/bin/plait-host</string>"));
         assert!(plist.contains("<string>run-user</string>"));
+        assert!(plist.contains("<key>AbandonProcessGroup</key><true/>"));
     }
 
     #[test]

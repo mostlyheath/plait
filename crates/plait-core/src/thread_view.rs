@@ -66,6 +66,7 @@ pub struct SelectedThreadState {
     pub watch_epoch: u64,
     pub selected: Option<String>,
     pub snapshot: Option<Arc<Snapshot>>,
+    pub live_preview_clipped: bool,
     pub submitting: bool,
     pub controlling: bool,
     pub decided_approvals: HashSet<String>,
@@ -78,6 +79,7 @@ impl SelectedThreadState {
         self.watch_epoch += 1;
         self.selected = id;
         self.snapshot = None;
+        self.live_preview_clipped = false;
         self.controlling = false;
         self.watch_epoch
     }
@@ -86,6 +88,7 @@ impl SelectedThreadState {
     pub fn disconnected(&mut self) {
         self.watch_epoch += 1;
         self.snapshot = None;
+        self.live_preview_clipped = false;
         self.submitting = false;
         self.controlling = false;
         self.decided_approvals.clear();

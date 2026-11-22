@@ -1,7 +1,7 @@
 import { LINUX_SANDBOX_UNAVAILABLE } from './platform.ts';
 import { fail } from '../protocol.ts';
 import type { Request } from '../protocol.ts';
-import { checkout, rootIdentity } from '../safety.ts';
+import { checkout, rootIdentity, verifyExpectedIdentity } from '../safety.ts';
 import type { FileIdentity } from '../safety.ts';
 
 /**
@@ -49,6 +49,7 @@ export async function commandPolicyOperation(settings: Settings, request: Reques
   if (policy === 'sandboxed' && process.platform === 'linux') fail('invalid_request', LINUX_SANDBOX_UNAVAILABLE);
   const root = await checkout(String(request.checkout));
   const identity = await rootIdentity(root);
+  await verifyExpectedIdentity(root, request.identity);
   if (policy) setCommandPolicy(settings, root, identity, policy);
   return { checkout: root, policy: commandPolicy(settings, root, identity) };
 }

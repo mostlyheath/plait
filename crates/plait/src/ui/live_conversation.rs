@@ -282,19 +282,49 @@ impl Plait {
             "Copy message source"
         })
         .on_activate(cx, {
-            let text = message.text.clone();
-            move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(text.clone()))
+            let snapshot = self
+                .workspace
+                .history
+                .display
+                .as_ref()
+                .or(self.host.thread.snapshot.as_ref())
+                .cloned();
+            let id = message.id.clone();
+            move |_, _, cx| {
+                if let Some(message) = snapshot
+                    .as_ref()
+                    .and_then(|snapshot| snapshot.messages.iter().find(|message| message.id == id))
+                {
+                    cx.write_to_clipboard(ClipboardItem::new_string(message.text.clone()));
+                }
+            }
         });
         // The author stays visible even when the copy action is hidden.
         let id = (
             ElementId::from("live-message"),
             SharedString::from(message.id.clone()),
         );
-        let label = format!(
-            "{} message: {}",
-            if user { "Your" } else { "Plait" },
-            message.text
-        );
+        let label = self
+            .workspace
+            .formatted
+            .message_labels
+            .get(&message.id)
+            .filter(|_| {
+                self.workspace
+                    .formatted
+                    .messages
+                    .get(&message.id)
+                    .is_some_and(|parsed| parsed.source == message.text)
+            })
+            .map(SharedString::from)
+            .unwrap_or_else(|| {
+                format!(
+                    "{} message: {}",
+                    if user { "Your" } else { "Plait" },
+                    message.text
+                )
+                .into()
+            });
         column()
             .id(id)
             .role(Role::Group)
@@ -506,7 +536,21 @@ impl Plait {
         column()
             .id("live-stream")
             .role(Role::Group)
-            .aria_label(format!("Plait is writing: {text}"))
+            .aria_label(
+                self.workspace
+                    .formatted
+                    .live_label
+                    .as_ref()
+                    .filter(|_| {
+                        self.workspace
+                            .formatted
+                            .live
+                            .as_ref()
+                            .is_some_and(|parsed| parsed.source == text)
+                    })
+                    .map(SharedString::from)
+                    .unwrap_or_else(|| format!("Plait is writing: {text}").into()),
+            )
             .audited()
             .w_full()
             .min_w_0()
@@ -516,14 +560,7 @@ impl Plait {
             .into_any_element()
     }
 
-    fn reasoning(
-        &self,
-        id: &str,
-        text: &str,
-        index: usize,
-        live: bool,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    fn reasoning(&self, id: &str, index: usize, live: bool, cx: &mut Context<Self>) -> AnyElement {
         let open = live || self.workspace.history.expanded.contains(id);
         let site = Site {
             owner: if live {
@@ -573,9 +610,29 @@ impl Plait {
                         row_group(index),
                     )
                     .on_activate(cx, {
-                        let text = text.to_owned();
+                        let snapshot = self
+                            .workspace
+                            .history
+                            .display
+                            .as_ref()
+                            .or(self.host.thread.snapshot.as_ref())
+                            .cloned();
+                        let id = id.to_owned();
                         move |_, _, cx| {
-                            cx.write_to_clipboard(ClipboardItem::new_string(text.clone()))
+                            if let Some(snapshot) = &snapshot {
+                                let text = if live {
+                                    Some(&snapshot.live_reasoning)
+                                } else {
+                                    snapshot
+                                        .messages
+                                        .iter()
+                                        .find(|message| message.id == id)
+                                        .map(|message| &message.reasoning)
+                                };
+                                if let Some(text) = text {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
+                                }
+                            }
                         }
                     }),
                 )
@@ -640,12 +697,8 @@ impl Plait {
             Row::Message(message) if request => (self.live_message(message, index, cx), 24., 8.),
             Row::Message(message) => (self.live_message(message, index, cx), 16., 8.),
             Row::Streaming(text) => (self.live_stream(text, index, cx), 16., 8.),
-            Row::Reasoning(message) => (
-                self.reasoning(&message.id, &message.reasoning, index, false, cx),
-                6.,
-                3.,
-            ),
-            Row::LiveReasoning(text) => (self.reasoning("live", text, index, true, cx), 6., 3.),
+            Row::Reasoning(message) => (self.reasoning(&message.id, index, false, cx), 6., 3.),
+            Row::LiveReasoning(_) => (self.reasoning("live", index, true, cx), 6., 3.),
             Row::Tool(tool) => match self.tool_row(tool, index, cx) {
                 Some(content) => (content, 1., 1.),
                 // Folded into a closed group: the row stays, with no height.
@@ -1244,8 +1297,7 @@ Tone::Filled,
             }
             if self.workspace.history.enabled
                 && snapshot.status.busy()
-                && (snapshot.live_text.encode_utf16().count() >= 16_383
-                    || snapshot.live_reasoning.encode_utf16().count() >= 16_383)
+                && self.host.thread.live_preview_clipped
             {
                 main = main.child(
                     div().px_6().child(

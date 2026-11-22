@@ -383,16 +383,13 @@ impl Plait {
         range: Range<usize>,
         text: StyledText,
         by_line: bool,
+        spans: &[(Range<usize>, plait_core::markdown::Style)],
     ) -> Selectable {
-        let links = block
-            .spans
+        let links = spans
             .iter()
-            .filter(|(span, _)| span.start < range.end && range.start < span.end)
             .filter_map(|(span, style)| {
                 let url = block.links.get(usize::from(style.link?))?;
-                let local = span.start.max(range.start) - range.start
-                    ..span.end.min(range.end) - range.start;
-                Some((local, SharedString::from(url.clone())))
+                Some((span.clone(), SharedString::from(url.clone())))
             })
             .collect();
         Selectable {
