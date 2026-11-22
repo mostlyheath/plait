@@ -211,6 +211,9 @@ fn write_checked(input: &WriteInput) -> Result<(DirIdentity, WriteOutcome), Stri
         return Err("The checkout path must be absolute.".into());
     }
     let expected = input.identity.parse()?;
+    if identity(&input.checkout)? != expected {
+        return Err("Checkout identity changed.".into());
+    }
     if git::toplevel(&input.checkout).and_then(|top| identity(&top))? != expected {
         return Err("Open the top folder of the checkout.".into());
     }

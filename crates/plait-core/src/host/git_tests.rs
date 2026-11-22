@@ -459,7 +459,10 @@ fn writes_run_on_the_host_checkout_with_its_identity() {
         dev: id.dev,
         ino: id.ino.wrapping_add(1),
     };
-    assert!(write_here(&repo, wrong, WriteOp::StageAll).is_err());
+    assert_eq!(
+        write_here(&repo, wrong, WriteOp::StageAll).unwrap_err(),
+        "Checkout identity changed."
+    );
     let sub = local_identity(&repo.join("src"));
     let refused = write_here(&repo.join("src"), sub, WriteOp::StageAll).unwrap_err();
     assert!(refused.contains("top folder"), "{refused}");
