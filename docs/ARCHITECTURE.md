@@ -10,7 +10,7 @@ rules, and operation details. [REMOTE.md](REMOTE.md) covers remote setup.
 The agreed split, in progress:
 
 - `plait-protocol` (built, growing): wire data and serialization with no platform
-  I/O, including host request and snapshot data, update manifests and their signature
+  I/O, including host requests, snapshots and provider data, update manifests and their signature
   check, and remote frame encoding. Both host and clients use it.
 - `plait-engine` (planned): Git, leases, records, and build output. Only
   `plait-host` will link it.

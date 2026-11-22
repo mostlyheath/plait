@@ -1,8 +1,18 @@
 //! Host wire data and serialization.
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+pub mod agent;
 pub mod checkout_queue;
+pub mod folders;
 pub mod harness;
+pub mod history;
+pub mod linear;
+pub mod providers;
+pub mod release;
+pub mod review;
+pub mod sign_in;
+pub mod threads;
+pub mod workspace;
 
 pub const REQUEST_LIMIT: usize = 64 * 1024;
 /// Newest protocol this client speaks. Version 2 adds ordered tools and approval modes.

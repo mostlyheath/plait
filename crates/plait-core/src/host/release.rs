@@ -1,77 +1,41 @@
 //! Versionless host release information and update draining.
 use super::{Client, Error};
-use serde::{Deserialize, Serialize};
-#[derive(Serialize)]
-#[serde(tag = "op", rename_all = "snake_case")]
-pub enum Request {
-    HostInfo,
-    DrainForUpdate,
-    CancelDrain,
-}
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct HostInfo {
-    pub schema: u32,
-    #[serde(deserialize_with = "nullable")]
-    pub release: Option<String>,
-    #[serde(deserialize_with = "nullable")]
-    pub build_id: Option<String>,
-    pub protocol_min: u32,
-    pub protocol_max: u32,
-    pub capabilities: Vec<String>,
-    pub storage_schema: u32,
-}
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DrainReply {
-    pub draining: bool,
-    pub active_runs: u64,
-}
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CancelReply {
-    pub draining: bool,
-}
-fn nullable<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
-    Option::deserialize(d)
-}
+pub use plait_protocol::host::release::{CancelReply, DrainReply, HostInfo, Request};
+
 fn invalid() -> Error {
     Error::Protocol("Invalid host release reply.".into())
 }
-impl HostInfo {
-    fn verified(self) -> Result<Self, Error> {
-        if self.schema != 1
-            || self.protocol_min > self.protocol_max
-            || self.capabilities.len() > 64
-            || self
-                .capabilities
-                .iter()
-                .any(|s| s.len() > 64 || !s.is_ascii())
-        {
-            return Err(invalid());
-        }
-        Ok(self)
+fn verified_info(info: HostInfo) -> Result<HostInfo, Error> {
+    let self_ = info;
+    if self_.schema != 1
+        || self_.protocol_min > self_.protocol_max
+        || self_.capabilities.len() > 64
+        || self_
+            .capabilities
+            .iter()
+            .any(|s| s.len() > 64 || !s.is_ascii())
+    {
+        return Err(invalid());
     }
+    Ok(self_)
 }
-impl DrainReply {
-    fn verified(self) -> Result<Self, Error> {
-        if !self.draining || self.active_runs > 9_007_199_254_740_991 {
-            return Err(invalid());
-        }
-        Ok(self)
+fn verified_drain(info: DrainReply) -> Result<DrainReply, Error> {
+    let self_ = info;
+    if !self_.draining || self_.active_runs > 9_007_199_254_740_991 {
+        return Err(invalid());
     }
+    Ok(self_)
 }
-impl CancelReply {
-    fn verified(self) -> Result<Self, Error> {
-        if self.draining {
-            return Err(invalid());
-        }
-        Ok(self)
+fn verified_cancel(info: CancelReply) -> Result<CancelReply, Error> {
+    let self_ = info;
+    if self_.draining {
+        return Err(invalid());
     }
+    Ok(self_)
 }
 fn info_result(result: Result<HostInfo, Error>) -> Result<Option<HostInfo>, Error> {
     match result {
-        Ok(info) => info.verified().map(Some),
+        Ok(info) => verified_info(info).map(Some),
         Err(Error::Rejected(e)) if e.code == "invalid_request" => Ok(None),
         Err(e) => Err(e),
     }
@@ -80,14 +44,10 @@ pub fn host_info(client: &Client) -> Result<Option<HostInfo>, Error> {
     info_result(client.send(&Request::HostInfo))
 }
 pub fn drain(client: &Client) -> Result<DrainReply, Error> {
-    client
-        .send::<_, DrainReply>(&Request::DrainForUpdate)?
-        .verified()
+    verified_drain(client.send::<_, DrainReply>(&Request::DrainForUpdate)?)
 }
 pub fn cancel_drain(client: &Client) -> Result<CancelReply, Error> {
-    client
-        .send::<_, CancelReply>(&Request::CancelDrain)?
-        .verified()
+    verified_cancel(client.send::<_, CancelReply>(&Request::CancelDrain)?)
 }
 #[cfg(test)]
 mod tests {
@@ -105,12 +65,7 @@ mod tests {
     #[test]
     fn release_replies_are_checked() {
         let info = json!({"schema":1,"release":null,"build_id":null,"protocol_min":1,"protocol_max":6,"capabilities":["drain_v1"],"storage_schema":1});
-        assert!(
-            serde_json::from_value::<HostInfo>(info.clone())
-                .unwrap()
-                .verified()
-                .is_ok()
-        );
+        assert!(verified_info(serde_json::from_value::<HostInfo>(info.clone()).unwrap()).is_ok());
         for (key, value) in [
             ("schema", json!(2)),
             ("protocol_min", json!(7)),
@@ -120,41 +75,38 @@ mod tests {
         ] {
             let mut bad = info.clone();
             bad[key] = value;
-            assert!(
-                serde_json::from_value::<HostInfo>(bad)
-                    .unwrap()
-                    .verified()
-                    .is_err()
-            );
+            assert!(verified_info(serde_json::from_value::<HostInfo>(bad).unwrap()).is_err());
         }
         let mut extra = info;
         extra["extra"] = json!(1);
         assert!(serde_json::from_value::<HostInfo>(extra).is_err());
         assert!(
-            serde_json::from_value::<DrainReply>(json!({"draining":true,"active_runs":1}))
-                .unwrap()
-                .verified()
-                .is_ok()
+            verified_drain(
+                serde_json::from_value::<DrainReply>(json!({"draining":true,"active_runs":1}))
+                    .unwrap()
+            )
+            .is_ok()
         );
         assert!(
-            serde_json::from_value::<DrainReply>(
-                json!({"draining":true,"active_runs":9007199254740992u64})
+            verified_drain(
+                serde_json::from_value::<DrainReply>(
+                    json!({"draining":true,"active_runs":9007199254740992u64})
+                )
+                .unwrap()
             )
-            .unwrap()
-            .verified()
             .is_err()
         );
         assert!(
-            serde_json::from_value::<CancelReply>(json!({"draining":false}))
-                .unwrap()
-                .verified()
-                .is_ok()
+            verified_cancel(
+                serde_json::from_value::<CancelReply>(json!({"draining":false})).unwrap()
+            )
+            .is_ok()
         );
         assert!(
-            serde_json::from_value::<CancelReply>(json!({"draining":true}))
-                .unwrap()
-                .verified()
-                .is_err()
+            verified_cancel(
+                serde_json::from_value::<CancelReply>(json!({"draining":true})).unwrap()
+            )
+            .is_err()
         );
         assert_eq!(
             serde_json::to_value(Request::HostInfo).unwrap(),

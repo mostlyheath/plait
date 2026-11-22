@@ -1,23 +1,9 @@
 //! Read-only folder browsing on a host. Older hosts reject the additive operation.
 use super::{Client, Error};
-use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use serde::Serialize;
+use std::path::Path;
 
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
-pub struct Listing {
-    pub path: PathBuf,
-    pub parent: Option<PathBuf>,
-    pub home: PathBuf,
-    pub git: bool,
-    pub entries: Vec<Entry>,
-    pub truncated: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
-pub struct Entry {
-    pub name: String,
-    pub git: bool,
-}
+pub use plait_protocol::host::folders::{Entry, Listing};
 
 #[derive(Serialize)]
 struct Request<'a> {

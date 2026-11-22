@@ -282,8 +282,8 @@ impl Frames {
     }
 }
 
-mod history;
-mod threads;
+pub mod history;
+pub mod threads;
 mod watch;
 pub use history::{HistoryField, HistoryItem, HistoryPage, HistoryText, More};
 pub use threads::ThreadWatch;
