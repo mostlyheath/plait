@@ -62,7 +62,12 @@ one's state on the connected machine:
 
 ## Set up a Linux host
 
-Install Rust, Node, npm, and Git on the host. From a source checkout:
+Download the archive and its `.sha256` file for your Linux architecture from
+[Releases](https://github.com/heath0xFF/plait/releases), verify it with
+`sha256sum -c`, and extract it. Run `<build-id>/bin/plait-host install-service`
+from its permanent location. The archive includes Node and the runtime.
+
+Alternatively, install Rust, Node, npm, and Git on the host and build from a source checkout:
 
 ```sh
 cargo build --release -p plait-host
@@ -70,11 +75,11 @@ cargo build --release -p plait-host
 target/release/plait-host install-service
 ```
 
-The systemd user service uses the Node on the current PATH and stores data in
+A source-built systemd user service uses the Node on the current PATH; an archived host uses its bundled Node. The host stores data in
 `~/.local/share/plait`. Run `plait-host run` for a foreground host, or
 `plait-host uninstall-service` to remove the service. Without lingering, the
 user service stops at logout; `loginctl enable-linger $USER` keeps it running.
-Linux host release archives and in-app Linux host updates are planned.
+Linux host release archives include Node and the runtime; in-app Linux host updates are planned.
 
 Linux runs trusted commands and trusted MCP servers as the host user. It
 refuses the sandboxed command policy; see [Linux sandbox](LINUX-SANDBOX.md).
