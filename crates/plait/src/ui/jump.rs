@@ -34,6 +34,7 @@ pub(super) enum PreferenceGroup {
 #[derive(Default)]
 pub(super) struct PreferenceState {
     pub value: Preferences,
+    pub favorites_revision: u64,
     pub loaded: bool,
     writable: bool,
     writes: preferences::SaveQueue,
@@ -46,6 +47,15 @@ pub(super) struct PreferenceState {
     group: Option<PreferenceGroup>,
     /// `note` reports a problem, not progress.
     failed: bool,
+}
+
+impl PreferenceState {
+    fn replace_value(&mut self, value: Preferences) {
+        if self.value.favorite_models != value.favorite_models {
+            self.favorites_revision = self.favorites_revision.wrapping_add(1);
+        }
+        self.value = value;
+    }
 }
 
 impl Plait {
@@ -111,7 +121,7 @@ impl Plait {
                                 state.revision += 1;
                                 state.writes.queue(state.revision, merged.clone());
                             }
-                            state.value = merged;
+                            state.replace_value(merged);
                         }
                         Err(error) => {
                             state.writable = false;
@@ -168,7 +178,7 @@ impl Plait {
             return;
         }
         super::actions::install(cx, &value.keymap);
-        state.value = value.clone();
+        state.replace_value(value.clone());
         state.revision += 1;
         state.group = Some(group);
         state.failed = state.path.is_none();
@@ -271,5 +281,27 @@ impl Plait {
                 self.preference_note(Some(PreferenceGroup::Keyboard)),
                 |el, note| el.child(tag("keyboard-preference-note", note, colors().subtle)),
             )
+    }
+}
+
+#[cfg(test)]
+mod favorite_revision_tests {
+    use super::PreferenceState;
+    use plait_core::host::ModelChoice;
+
+    #[test]
+    fn revision_changes_only_when_favorites_change() {
+        let mut state = PreferenceState::default();
+        state.replace_value(state.value.clone());
+        assert_eq!(state.favorites_revision, 0);
+        let mut value = state.value.clone();
+        value.toggle_favorite(&ModelChoice {
+            provider: "p".into(),
+            model_id: "m".into(),
+        });
+        state.replace_value(value.clone());
+        assert_eq!(state.favorites_revision, 1);
+        state.replace_value(value);
+        assert_eq!(state.favorites_revision, 1);
     }
 }
