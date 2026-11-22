@@ -12,7 +12,8 @@ rules, and operation details. [REMOTE.md](REMOTE.md) covers remote setup.
   runs or sample data.
 - `crates/plait-core` owns GPUI-independent models, state transitions, host
   clients, recovery, Git and file operations. It checks that asynchronous
-  results still belong to the selected checkout and request.
+  results still belong to the selected checkout and request. Its planned split
+  is described in [Crate boundaries](#crate-boundaries-agreed-not-built).
 - `crates/plait-host` owns the host process and transport boundary, peer
   checks, and filesystem and process helpers. It can outlive a desktop window.
 - `runtime/` owns durable agent execution and adapters for Pi, Codex, and
@@ -21,6 +22,22 @@ rules, and operation details. [REMOTE.md](REMOTE.md) covers remote setup.
 State owns transitions; UI owns presentation. Filesystem and Git work runs on
 background executors, never during render. The host owns accepted work, so
 closing a client or a subscription does not cancel a run.
+
+## Crate boundaries (agreed, not built)
+
+- `plait-protocol` will contain wire types, versioning, and capabilities, with
+  no I/O. Both host and clients will use it.
+- `plait-engine` will own Git, leases, records, and build output. Only
+  `plait-host` will link it.
+- `plait-client` will provide transports, the host client, snapshot mirror,
+  event stream, and GPUI-free view models, reusable by future clients such as
+  an iOS app.
+- `plait` will handle GPUI rendering on top of `plait-client`.
+
+Neither the desktop nor `plait-client` will link `plait-engine`; everything a
+client needs from a machine will go through a host. CI will enforce this
+dependency direction. Today `plait-core` holds all three layers, and the
+desktop still reads some Git directly. The move will happen in steps.
 
 ## Host-first data flow
 
