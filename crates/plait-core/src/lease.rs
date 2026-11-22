@@ -60,11 +60,7 @@ pub const COMMON_METADATA_WAIT: Duration = Duration::from_secs(5);
 /// Maximum wait accepted by CLI callers for the shared metadata lock.
 pub const MAX_COMMON_METADATA_WAIT: Duration = Duration::from_secs(15);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct DirIdentity {
-    pub dev: u64,
-    pub ino: u64,
-}
+pub use plait_protocol::lease::DirIdentity;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LeaseClass {

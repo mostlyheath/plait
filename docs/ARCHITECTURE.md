@@ -5,6 +5,13 @@ The desktop is Rust and GPUI; the host is Rust with a TypeScript runtime
 sidecar. [HOST.md](HOST.md) defines the host protocol, persistence, safety
 rules, and operation details. [REMOTE.md](REMOTE.md) covers remote setup.
 
+## Crate boundaries
+
+`plait-protocol` holds shared wire data and serialization helpers without platform
+I/O dependencies. `plait-core` re-exports migrated types for existing callers.
+The separation of host operations into `plait-engine` and client state into
+`plait-client` is planned; those responsibilities remain in `plait-core` today.
+
 ## Boundaries
 
 - `crates/plait` owns native presentation, input, focus, and dispatch of
