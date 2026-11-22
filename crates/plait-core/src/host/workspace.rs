@@ -62,23 +62,35 @@ enum Request<'a> {
     WorkspaceView,
     WorkspaceSubscribe,
     WorkspaceOpenProject {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        op_id: Option<&'a str>,
         path: &'a Path,
     },
     WorkspaceHideProject {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        op_id: Option<&'a str>,
         path: &'a Path,
         hidden: bool,
     },
     WorkspaceSetWorktree {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        op_id: Option<&'a str>,
         #[serde(flatten)]
         worktree: &'a Worktree,
     },
     WorkspaceForgetWorktree {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        op_id: Option<&'a str>,
         folder: &'a Path,
     },
     WorkspaceMarkSeen {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        op_id: Option<&'a str>,
         entries: &'a [Seen],
     },
     WorkspaceImport {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        op_id: Option<&'a str>,
         device: &'a str,
         projects: &'a [PathBuf],
         hidden: &'a [PathBuf],
@@ -86,6 +98,8 @@ enum Request<'a> {
         seen: &'a [Seen],
     },
     HostSetName {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        op_id: Option<&'a str>,
         name: &'a str,
     },
 }
@@ -105,31 +119,76 @@ struct Revision {
 
 /// Opens a project the host has checked is a Git checkout; returns its top folder.
 pub fn open_project(client: &Client, path: &Path) -> Result<PathBuf, Error> {
+    open_project_with_op(client, path, Some(&crate::host_state::request_id()))
+}
+
+pub fn open_project_with_op(
+    client: &Client,
+    path: &Path,
+    op_id: Option<&str>,
+) -> Result<PathBuf, Error> {
     #[derive(Deserialize)]
     struct Opened {
         path: PathBuf,
     }
-    let opened: Opened = client.send(&Request::WorkspaceOpenProject { path })?;
+    let opened: Opened = client.send(&Request::WorkspaceOpenProject { path, op_id })?;
     Ok(opened.path)
 }
 
 pub fn hide_project(client: &Client, path: &Path, hidden: bool) -> Result<u64, Error> {
-    let reply: Revision = client.send(&Request::WorkspaceHideProject { path, hidden })?;
+    hide_project_with_op(client, path, hidden, Some(&crate::host_state::request_id()))
+}
+
+pub fn hide_project_with_op(
+    client: &Client,
+    path: &Path,
+    hidden: bool,
+    op_id: Option<&str>,
+) -> Result<u64, Error> {
+    let reply: Revision = client.send(&Request::WorkspaceHideProject {
+        path,
+        hidden,
+        op_id,
+    })?;
     Ok(reply.revision)
 }
 
 pub fn set_worktree(client: &Client, worktree: &Worktree) -> Result<u64, Error> {
-    let reply: Revision = client.send(&Request::WorkspaceSetWorktree { worktree })?;
+    set_worktree_with_op(client, worktree, Some(&crate::host_state::request_id()))
+}
+
+pub fn set_worktree_with_op(
+    client: &Client,
+    worktree: &Worktree,
+    op_id: Option<&str>,
+) -> Result<u64, Error> {
+    let reply: Revision = client.send(&Request::WorkspaceSetWorktree { worktree, op_id })?;
     Ok(reply.revision)
 }
 
 pub fn forget_worktree(client: &Client, folder: &Path) -> Result<u64, Error> {
-    let reply: Revision = client.send(&Request::WorkspaceForgetWorktree { folder })?;
+    forget_worktree_with_op(client, folder, Some(&crate::host_state::request_id()))
+}
+
+pub fn forget_worktree_with_op(
+    client: &Client,
+    folder: &Path,
+    op_id: Option<&str>,
+) -> Result<u64, Error> {
+    let reply: Revision = client.send(&Request::WorkspaceForgetWorktree { folder, op_id })?;
     Ok(reply.revision)
 }
 
 pub fn mark_seen(client: &Client, entries: &[Seen]) -> Result<u64, Error> {
-    let reply: Revision = client.send(&Request::WorkspaceMarkSeen { entries })?;
+    mark_seen_with_op(client, entries, Some(&crate::host_state::request_id()))
+}
+
+pub fn mark_seen_with_op(
+    client: &Client,
+    entries: &[Seen],
+    op_id: Option<&str>,
+) -> Result<u64, Error> {
+    let reply: Revision = client.send(&Request::WorkspaceMarkSeen { entries, op_id })?;
     Ok(reply.revision)
 }
 
@@ -144,11 +203,20 @@ pub struct Import<'a> {
 }
 
 pub fn import(client: &Client, lists: &Import<'_>) -> Result<bool, Error> {
+    import_with_op(client, lists, Some(&crate::host_state::request_id()))
+}
+
+pub fn import_with_op(
+    client: &Client,
+    lists: &Import<'_>,
+    op_id: Option<&str>,
+) -> Result<bool, Error> {
     #[derive(Deserialize)]
     struct Imported {
         imported: bool,
     }
     let reply: Imported = client.send(&Request::WorkspaceImport {
+        op_id,
         device: lists.device,
         projects: lists.projects,
         hidden: lists.hidden,
@@ -159,11 +227,19 @@ pub fn import(client: &Client, lists: &Import<'_>) -> Result<bool, Error> {
 }
 
 pub fn set_host_name(client: &Client, name: &str) -> Result<HostIdentity, Error> {
+    set_host_name_with_op(client, name, Some(&crate::host_state::request_id()))
+}
+
+pub fn set_host_name_with_op(
+    client: &Client,
+    name: &str,
+    op_id: Option<&str>,
+) -> Result<HostIdentity, Error> {
     #[derive(Deserialize)]
     struct Named {
         host: HostIdentity,
     }
-    let reply: Named = client.send(&Request::HostSetName { name })?;
+    let reply: Named = client.send(&Request::HostSetName { name, op_id })?;
     Ok(reply.host)
 }
 
@@ -238,6 +314,18 @@ fn parse_event(line: &[u8], seq: &mut u64) -> Result<View, Error> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn operation_id_is_optional_in_write_requests() {
+        for id in [None, Some("retry_1")] {
+            let value = serde_json::to_value(super::Request::HostSetName {
+                name: "host",
+                op_id: id,
+            })
+            .unwrap();
+            assert_eq!(value.get("op_id").and_then(|v| v.as_str()), id);
+        }
+    }
+
     use super::*;
 
     const VIEW: &str = r#"{"schema":1,"host":{"id":"h","name":"workstation","platform":"linux"},"revision":2,"projects":[{"path":"/srv/a","hidden":false}],"worktrees":[],"seen":[]}"#;
@@ -255,8 +343,11 @@ mod tests {
             creation_id: Some("c".into()),
             identity: None,
         };
-        let value =
-            serde_json::to_value(Request::WorkspaceSetWorktree { worktree: &tree }).unwrap();
+        let value = serde_json::to_value(Request::WorkspaceSetWorktree {
+            worktree: &tree,
+            op_id: None,
+        })
+        .unwrap();
         assert_eq!(value["op"], "workspace_set_worktree");
         assert_eq!(value["folder"], "/w/t");
         assert!(value.get("protocol_version").is_none());

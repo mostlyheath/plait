@@ -395,6 +395,7 @@ fn every_write_survives_the_wire() {
         WriteOp::SwitchBranch("main".into()),
     ] {
         let mut value = serde_json::to_value(Request::GitWrite {
+            op_id: None,
             checkout: "/repo".into(),
             identity: WireIdentity {
                 dev: "1".into(),
@@ -516,4 +517,21 @@ fn a_worktree_is_measured_with_the_hosts_own_store() {
     );
     assert!(message(size(None, false, None)).contains("store"));
     let _ = std::fs::remove_dir_all(repo.parent().unwrap());
+}
+
+#[test]
+fn write_request_operation_id_is_optional() {
+    for id in [None, Some("retry_1".to_owned())] {
+        let value = serde_json::to_value(Request::GitWrite {
+            op_id: id.clone(),
+            checkout: "/repo".into(),
+            identity: WireIdentity {
+                dev: "1".into(),
+                ino: "2".into(),
+            },
+            write: WriteOp::CreateBranch("topic".into()),
+        })
+        .unwrap();
+        assert_eq!(value.get("op_id").and_then(|v| v.as_str()), id.as_deref());
+    }
 }

@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
 import { isAbsolute } from 'node:path';
 import { fail } from './protocol.ts';
+import { once } from './operations.ts';
 import { checkout } from './safety.ts';
 import type { Store } from './store.ts';
 import type { CheckoutWatcher } from './watcher.ts';
@@ -26,7 +27,8 @@ const operations: Record<string, string[]> = {
   workspace_import: ['device', 'projects', 'hidden', 'worktrees', 'seen'],
   host_set_name: ['name'],
 };
-const optional = new Set(['creation_id', 'identity']);
+const optional = new Set(['creation_id', 'identity', 'op_id']);
+for (const op of Object.keys(operations)) if (!['workspace_view', 'workspace_subscribe'].includes(op)) operations[op].push('op_id');
 
 type Worktree = { folder: string; main: string; branch: string; creation_id: string | null; identity: { dev: string; ino: string } | null };
 type Seen = { thread_id: string; updated_at: number; state: string; unread: boolean };
@@ -117,6 +119,12 @@ export class Workspace {
 
   async handle(input: unknown) {
     const request = validateWorkspace(input);
+    if (request.op === 'workspace_view' || request.op === 'workspace_subscribe') return this.view();
+    const { op_id, ...inputWithoutId } = request;
+    return once(this.store, op_id, request.op, inputWithoutId, () => this.writeRequest(request));
+  }
+
+  private async writeRequest(request: Record<string, unknown> & { op: string }) {
     switch (request.op) {
       case 'workspace_view': case 'workspace_subscribe': return this.view();
       case 'workspace_open_project': {

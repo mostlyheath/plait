@@ -106,6 +106,14 @@ device marks it read on the others.
   with the ADEMark harness against the direct path. The local backend is
   removed only when this holds; until then it remains the fallback.
 
+**Speed check:** Run `scripts/speed-check.sh [checkout]` (defaulting to this
+repository) to compare direct Git and file reads with a scratch local host.
+It fails when any host median adds more than 20 ms. Results depend on the
+machine; use a representative large checkout for the removal decision.
+On a Linux workstation, against this repository, the host added 8–15 ms at
+the median (status 63 → 75 ms, diff 4 → 13 ms, file read 0.1 → 8 ms), within
+the gate. The Mac is measured before release.
+
 ## Intents
 
 - Every write carries `op_id`, a client-made unique ID. The host records
