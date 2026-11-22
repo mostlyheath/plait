@@ -3,6 +3,8 @@
 // because one reply is limited to 1 MiB.
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { once } from './operations.ts';
+import type { Store } from './store.ts';
 import { fail } from './protocol.ts';
 
 /** Raw bytes per page; base64 makes that 800 KiB, under the reply limit. */
@@ -44,7 +46,7 @@ export function validateGitRead(input: unknown): Record<string, unknown> & { op:
     return request;
   }
   if (request.op === 'git_write') {
-    if (Object.keys(request).some(key => !['op', 'checkout', 'identity', 'write'].includes(key))) fail('invalid_request', 'Unknown operation or field.');
+    if (Object.keys(request).some(key => !['op', 'checkout', 'identity', 'write', 'op_id'].includes(key))) fail('invalid_request', 'Unknown operation or field.');
     if (!base64(request.checkout)) fail('invalid_request', 'Invalid checkout.');
     if (!identityValid(request.identity)) fail('invalid_request', 'Invalid checkout identity.');
     if (request.write === undefined || request.write === null) fail('invalid_request', 'Missing write.');
@@ -71,15 +73,21 @@ export class GitReads {
   private now: () => number;
   /** Base64 of the host store; only the runtime names it, for a worktree's retained build output. */
   private store: string | null;
-  constructor(helper: Helper = runHelper, now = Date.now, store: string | null = null) {
-    this.helper = helper; this.now = now; this.store = store === null ? null : Buffer.from(store).toString('base64');
+  private operationStore?: Store;
+  constructor(helper: Helper = runHelper, now = Date.now, store: string | null = null, operationStore?: Store) {
+    this.operationStore = operationStore; this.helper = helper; this.now = now; this.store = store === null ? null : Buffer.from(store).toString('base64');
   }
   handles(input: unknown) { return !!input && typeof input === 'object' && operations.has(String((input as { op?: unknown }).op)); }
   async handle(input: unknown) {
     const request = validateGitRead(input);
     this.expire();
     if (request.op === 'git_read_page') return this.page(String(request.token), Number(request.offset));
-    const { op, ...forward } = request;
+    const { op, op_id, ...forward } = request;
+    if (op === 'git_write' && this.operationStore) return once(this.operationStore, op_id, op, forward, () => this.execute(op, forward));
+    if (op_id !== undefined) fail('invalid_request', 'Operation IDs require a host store.');
+    return this.execute(op, forward);
+  }
+  private async execute(op: string, forward: Record<string, unknown>) {
     if (forward.read === 'worktree_size') forward.store = this.store;
     const write = op === 'git_write';
     let bytes: Buffer;

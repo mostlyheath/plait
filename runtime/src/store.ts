@@ -315,4 +315,4 @@ export class Store {
   }
   close() { this.db.close(); }
 }
-function digest(input: unknown) { return createHash('sha256').update(JSON.stringify(input)).digest('hex'); }
+export function digest(input: unknown) { return createHash('sha256').update(JSON.stringify(input)).digest('hex'); }
