@@ -71,7 +71,8 @@ fn sign(key: &Path, manifest: &Path) -> io::Result<()> {
 }
 
 /// The check a client runs on this file: schema 1 for `update.json`, the
-/// component manifests for `update-client.json` and `update-host.json`.
+/// component manifests for `update-client.json` and every `update-host*.json`,
+/// including the per-platform Linux host manifests.
 fn check(
     manifest: &Path,
     bytes: &[u8],
@@ -81,7 +82,9 @@ fn check(
     use plait_core::update::{Component, verify, verify_component};
     let component = match manifest.file_name().and_then(|name| name.to_str()) {
         Some("update-client.json") => Some(Component::Client),
-        Some("update-host.json") => Some(Component::Host),
+        Some(name) if name.starts_with("update-host") && name.ends_with(".json") => {
+            Some(Component::Host)
+        }
         _ => None,
     };
     match component {
