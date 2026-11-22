@@ -457,6 +457,7 @@ mod tests {
                 state: "Ready".into(),
                 unread: true,
             }],
+            status: Default::default(),
         }
     }
 
