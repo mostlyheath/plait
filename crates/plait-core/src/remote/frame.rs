@@ -1,55 +1,18 @@
-//! Bounded framing for a multiplexed remote link.
+//! Stream I/O for bounded remote frames.
+pub use plait_protocol::frame::{ERROR_LIMIT, Frame, Kind, REPLY_LIMIT, REQUEST_LIMIT};
 use std::io::{self, Read, Write};
 
-pub const REQUEST_LIMIT: usize = 64 * 1024;
-pub const REPLY_LIMIT: usize = 1024 * 1024;
-pub const ERROR_LIMIT: usize = 1024;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u8)]
-pub enum Kind {
-    Open = 1,
-    Frame = 2,
-    Close = 3,
-    Error = 4,
-    Ping = 5,
+pub trait FrameIo: Sized {
+    fn write_to(&self, writer: &mut impl Write) -> io::Result<()>;
+    fn read_from(reader: &mut impl Read) -> io::Result<Option<Self>>;
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub struct Frame {
-    pub stream: u32,
-    pub kind: Kind,
-    pub payload: Vec<u8>,
-}
-
-fn invalid() -> io::Error {
-    io::Error::new(io::ErrorKind::InvalidData, "invalid remote frame")
-}
-
-fn validate(stream: u32, kind: Kind, length: usize) -> io::Result<()> {
-    let limit = match kind {
-        Kind::Open => REQUEST_LIMIT,
-        Kind::Frame => REPLY_LIMIT,
-        Kind::Error => ERROR_LIMIT,
-        Kind::Close | Kind::Ping => 0,
-    };
-    if length > limit || (stream == 0) != (kind == Kind::Ping) {
-        return Err(invalid());
-    }
-    Ok(())
-}
-
-impl Frame {
-    pub fn write_to(&self, writer: &mut impl Write) -> io::Result<()> {
-        validate(self.stream, self.kind, self.payload.len())?;
-        writer.write_all(&self.stream.to_be_bytes())?;
-        writer.write_all(&[self.kind as u8])?;
-        writer.write_all(&(self.payload.len() as u32).to_be_bytes())?;
-        writer.write_all(&self.payload)
+impl FrameIo for Frame {
+    fn write_to(&self, writer: &mut impl Write) -> io::Result<()> {
+        writer.write_all(&self.encode()?)
     }
 
-    /// Returns `None` only for EOF at a frame boundary.
-    pub fn read_from(reader: &mut impl Read) -> io::Result<Option<Self>> {
+    fn read_from(reader: &mut impl Read) -> io::Result<Option<Self>> {
         let mut header = [0u8; 9];
         loop {
             match reader.read(&mut header[..1]) {
@@ -60,17 +23,7 @@ impl Frame {
             }
         }
         reader.read_exact(&mut header[1..])?;
-        let stream = u32::from_be_bytes([header[0], header[1], header[2], header[3]]);
-        let kind = match header[4] {
-            1 => Kind::Open,
-            2 => Kind::Frame,
-            3 => Kind::Close,
-            4 => Kind::Error,
-            5 => Kind::Ping,
-            _ => return Err(invalid()),
-        };
-        let length = u32::from_be_bytes([header[5], header[6], header[7], header[8]]) as usize;
-        validate(stream, kind, length)?;
+        let (stream, kind, length) = Self::parse_header(header)?;
         let mut payload = vec![0; length];
         reader.read_exact(&mut payload)?;
         Ok(Some(Self {

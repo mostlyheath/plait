@@ -1,4 +1,5 @@
 //! Multiplex an authenticated stdio connection onto owner-only local sockets.
+use plait_core::remote::frame::FrameIo;
 use plait_core::{
     local_socket,
     remote::frame::{Frame, Kind, REPLY_LIMIT},
