@@ -7,6 +7,7 @@ import { RunCapacity, resourceError, resourceFailure } from './run-capacity.ts';
 import type { ImageData } from './images.ts';
 import { TurnReview } from './turn-review.ts';
 import { GitReads } from './git-read.ts';
+import { Workspace, WORKSPACE_TOPIC } from './workspace.ts';
 import { LinearService } from './linear/service.ts';
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
@@ -82,6 +83,7 @@ export class Runtime {
   records: Records;
   turnReview: TurnReview;
   gitReads: GitReads;
+  workspace: Workspace;
   linear: LinearService;
   worktrees: Worktrees;
   admissions: Admissions;
@@ -132,11 +134,15 @@ export class Runtime {
     this.records = new Records(this.store, directory, id => this.changed(id));
     this.turnReview = new TurnReview(this.store, this.records, directory);
     this.gitReads = new GitReads(undefined, undefined, directory);
+    this.workspace = new Workspace(this.store, () => this.changed(WORKSPACE_TOPIC));
     this.linear = new LinearService(this.store, directory);
     this.records.start();
     this.codex = new CodexHarness(this.store);
     this.claude = new ClaudeHarness(this.store, { sdk: sdkDirectory(directory), cwd: directory });
-    this.worktrees = new Worktrees(this.store, directory, (request, id) => this.prepareWorktreeThread(request, id), () => this.changed('#'), root => this.active.has(root) || this.records.busy(root), () => this.admitWork());
+    this.worktrees = new Worktrees(this.store, directory, (request, id) => this.prepareWorktreeThread(request, id), () => this.changed('#'), root => this.active.has(root) || this.records.busy(root), () => this.admitWork(), {
+      made: (tree, creation) => this.workspace.madeWorktree(tree.path, tree.parent.root, tree.branch, creation, tree.identity),
+      removed: folder => this.workspace.removedWorktree(folder),
+    });
     this.admissions = new Admissions(this.store, this.worktrees, this.capacity, (input, identity) => this.handle(input, identity), root => this.active.has(root) || this.records.busy(root) || this.store.waiters.line(root).some(waiter => waiter.kind === 'checkout' || waiter.state === 'waiting'), () => this.admitWork());
   }
   /** Validate the selected harness before reserving filesystem effects. */
@@ -303,6 +309,7 @@ export class Runtime {
     if (handlesCleanup(input)) return this.checkoutCleanup(input);
     if (this.turnReview.handles(input)) return this.turnReview.handle(input);
     if (this.gitReads.handles(input)) return this.gitReads.handle(input);
+    if (this.workspace.handles(input)) return this.workspace.handle(input);
     if (this.linear.handles(input)) return this.linear.handle(input);
     if (this.worktrees.handles(input)) return this.worktrees.handle(input);
     if (handlesAdmission(input)) return this.admissions.handle(input);

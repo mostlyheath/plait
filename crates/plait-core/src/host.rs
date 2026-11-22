@@ -1192,6 +1192,7 @@ pub mod providers;
 pub mod release;
 pub mod review;
 pub mod sign_in;
+pub mod workspace;
 pub mod worktree;
 
 impl Client {

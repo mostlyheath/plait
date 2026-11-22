@@ -22,8 +22,8 @@ export function forwardChanges(source: ChangeSource, output: Writable): () => vo
     if (pending.has('*')) return;
     pending.add(id);
     // Overflow invalidates all watches instead of losing a change or growing a queue.
-    // `#` is the one reserved name: some thread summary changed.
-    if (pending.size > 64 || (id !== '#' && !/^[A-Za-z0-9_-]{1,128}$/.test(id))) {
+    // Reserved names: `#` some thread summary changed, `%` the workspace changed.
+    if (pending.size > 64 || (id !== '#' && id !== '%' && !/^[A-Za-z0-9_-]{1,128}$/.test(id))) {
       pending.clear(); pending.add('*');
     }
     schedule();

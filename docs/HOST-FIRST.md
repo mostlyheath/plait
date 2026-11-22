@@ -147,7 +147,9 @@ machine's connection state.
 Each step ships on its own and keeps older clients and hosts working.
 
 1. **Host identity and the workspace stream**, with projects, hidden
-   projects, worktree ownership, and unread state moved to the host. This
+   projects, worktree ownership, and unread state moved to the host. *The
+   host side is built ([Workspace](HOST.md#workspace)); the desktop does not
+   use it yet.* This
    Mac's existing lists are imported into its own host once. The desktop
    shows the machine it is on from the host's identity.
 2. **Git and files through the host**, with the checkout watcher and the

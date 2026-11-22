@@ -10,6 +10,8 @@ use std::{
 
 /// The reserved name the runtime sends when any thread summary changed.
 pub(super) const THREADS: &str = "#";
+/// The workspace changed: projects, worktree ownership, or seen state.
+pub(super) const WORKSPACE: &str = "%";
 
 #[derive(Default)]
 pub(super) struct Notifications {
@@ -156,6 +158,7 @@ pub(super) fn relay(reader: impl Read, notifications: &Notifications) -> io::Res
         if line.is_empty()
             || (line != b"*"
                 && line != THREADS.as_bytes()
+                && line != WORKSPACE.as_bytes()
                 && !line
                     .iter()
                     .all(|byte| byte.is_ascii_alphanumeric() || b"_-".contains(byte)))

@@ -2116,6 +2116,44 @@ raw bytes remain in the patch. Complete page validation and patch preparation
 run off the UI thread. These operations provide no staging,
 attribution proof, or reviewed baseline, and make no change to undo semantics.
 
+## Workspace
+
+The first step of [Host-first Plait](HOST-FIRST.md). These additive
+operations omit `protocol_version`; an older host answers `invalid_request`.
+The desktop does not use them yet.
+
+- `{"op":"workspace_view"}` returns `{schema:1, host, revision, projects,
+  worktrees, seen}`.
+  - `host` is `{id, name, platform}`. The ID is stable for the store and
+    is the same one turn review reports. The name defaults to the machine's
+    hostname, and `{"op":"host_set_name","name":N}` changes it.
+  - `projects` lists `{path, hidden}` in the order they were opened.
+  - `worktrees` lists `{folder, main, branch, creation_id, identity}`:
+    which project each worktree belongs to.
+  - `seen` lists `{thread_id, updated_at, state, unread}`, newest first,
+    with at most 1000 entries.
+- `{"op":"workspace_subscribe"}` replies with the same view, then sends
+  `{"event":"workspace","seq":N,"workspace":VIEW}` each time the revision
+  moves, numbered from 1. A thread change alone is not a workspace change. A
+  subscriber that cannot keep up is disconnected and subscribes again for a
+  fresh view.
+- Writes, each committed with a new revision, then announced to subscribers:
+  - `workspace_open_project {path}` accepts only an accessible Git working
+    tree on this host, and returns its top folder. Opening a hidden project
+    shows it again.
+  - `workspace_hide_project {path, hidden}`.
+  - `workspace_set_worktree {folder, main, branch, creation_id?, identity?}`
+    and `workspace_forget_worktree {folder}`. The host also records a
+    worktree it creates itself, and forgets it when it removes it.
+  - `workspace_mark_seen {entries}` takes up to 1000 entries. An entry older
+    than the one kept for a thread is ignored, so a late write never marks a
+    thread unread again.
+  - `workspace_import {device, projects, hidden, worktrees, seen}` merges a
+    device's lists once. A repeat from the same device changes nothing and
+    returns `imported:false`.
+- Paths are absolute, at most 4096 bytes, without control characters; IDs
+  match `[A-Za-z0-9_-]{1,128}`; a request is at most 65,000 bytes.
+
 ## Checkout Git reads for remote desktops
 
 These additive, read-only operations omit `protocol_version`. They let a
