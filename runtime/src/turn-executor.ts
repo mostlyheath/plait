@@ -5,6 +5,40 @@ import type { RunCapacity } from './run-capacity.ts';
 import type { LeaseHandle } from './safety.ts';
 import { nameKey } from './mcp/tools.ts';
 import { update } from './transcript.ts';
+import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context';
+import type { Conversation, SubmissionDraft } from '@earendil-works/pi-durable';
+import type { ThinkingLevel } from './protocol.ts';
+
+export type TurnInput = {
+  root: Conversation;
+  instructions: string;
+  model: { provider: string; modelId: string };
+  thinkingLevel: ThinkingLevel | null;
+  maxTurns: number;
+  signal: AbortSignal;
+};
+
+export interface TurnCommands {
+  activate(): void;
+  draft(): Promise<SubmissionDraft>;
+  started(): void;
+  steer(): Promise<void>;
+}
+
+/** Runs the configured Pi conversation; the caller retains its session and cleanup. */
+export class TurnExecutor {
+  async run(input: TurnInput, sink: TurnSink, commands: TurnCommands): Promise<void> {
+    await input.root.configure({ instructions: input.instructions, model: input.model,
+      thinkingLevel: input.thinkingLevel, maxTurns: input.maxTurns }, context);
+    if (input.signal.aborted) return;
+    commands.activate();
+    const submission = await input.root.submit(await commands.draft(), context);
+    commands.started(); sink.emit({ type: 'phase', phase: 'running' });
+    await commands.steer();
+    await submission.wait(context);
+    await input.root.waitForIdle(context);
+  }
+}
 
 type Projection = Parameters<typeof update>[1];
 

@@ -39,7 +39,7 @@ import type { Observation } from './mcp/tools.ts';
 import { discover, expandInput, report, skillsPrompt } from './skills.ts';
 import type { ToolState } from './tools.ts';
 import { MAX_TURNS } from './transcript.ts';
-import { InProcessSink, type TurnSink } from './turn-executor.ts';
+import { InProcessSink, TurnExecutor, type TurnSink } from './turn-executor.ts';
 import { historyPage, historyText } from './history.ts';
 import type { HistorySource } from './history.ts';
 import { customTitle } from './text.ts';
@@ -1032,17 +1032,15 @@ export class Runtime {
       instructions += skillsPrompt(session.skills);
       await this.open(session);
       // The thread's current model, thinking level, and turn limit apply from this run.
-      await session.root!.configure({
-        instructions, model: { provider: snapshot.model.provider, modelId: snapshot.model.model_id },
+      await new TurnExecutor().run({ root: session.root!, instructions,
+        model: { provider: snapshot.model.provider, modelId: snapshot.model.model_id },
         thinkingLevel: snapshot.thinking_level ?? null, maxTurns: this.maxTurns,
-      }, context);
-      if (session.authorization.signal.aborted) return;
-      session.authorization.activate();
-      const submission = await session.root!.submit(await this.draft(session, requestId, text), context);
-      session.started = true; session.sink!.emit({ type: 'phase', phase: 'running' });
-      await this.steer(session);
-      await submission.wait(context);
-      await session.root!.waitForIdle(context);
+        signal: session.authorization.signal }, session.sink!, {
+        activate: () => session.authorization.activate(),
+        draft: () => this.draft(session, requestId, text),
+        started: () => { session.started = true; },
+        steer: () => this.steer(session),
+      });
     } catch (error) {
       if (snapshot.status !== 'stopped' && snapshot.status !== 'interrupted') {
         snapshot.error = resourceFailure(error) ?? failure(error);
