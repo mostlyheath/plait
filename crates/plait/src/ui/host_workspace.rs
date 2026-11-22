@@ -29,6 +29,8 @@ pub(super) struct HostWorkspace {
     /// The host's lists, or, for an older remote host, only what this window opened.
     pub(super) lists: navigation::Preferences,
     pub(super) revision: u64,
+    /// The host's change counters for the checkouts it watches.
+    status: std::collections::BTreeMap<PathBuf, u64>,
     generation: u64,
     watch: Option<WatchLease>,
     importing: bool,
@@ -71,6 +73,18 @@ pub(super) fn lists_from(view: &View, mute: bool) -> navigation::Preferences {
         }
     }
     lists
+}
+
+/// Checkouts whose counter moved or that started being watched.
+pub(super) fn changed_checkouts(
+    before: &std::collections::BTreeMap<PathBuf, u64>,
+    after: &std::collections::BTreeMap<PathBuf, u64>,
+) -> Vec<PathBuf> {
+    after
+        .iter()
+        .filter(|(path, count)| before.get(*path) != Some(*count))
+        .map(|(path, _)| path.clone())
+        .collect()
 }
 
 /// What a change to the lists asks the host to do.
@@ -330,15 +344,39 @@ impl Plait {
             return true;
         }
         let mute = self.preferences.value.navigation.mute_notifications;
+        let changed = changed_checkouts(&self.host_workspace.status, &view.status);
         let workspace = &mut self.host_workspace;
         workspace.lists = lists_from(&view, mute);
         workspace.revision = view.revision;
+        workspace.status = view.status.clone();
         workspace.source = Source::Host(view.host);
         self.rebuild_projects(cx);
         self.adopt_host_project(window, cx);
+        self.reread_changed(&changed, cx);
         self.refresh_tab_rows();
         cx.notify();
         true
+    }
+
+    /// The host saw files change in a checkout on screen: read it again. No
+    /// view polls; this, focus, and Refresh are what reread.
+    fn reread_changed(&mut self, changed: &[PathBuf], cx: &mut Context<Self>) {
+        let open = self.state.repository.path().to_owned();
+        if changed.contains(&open)
+            && !matches!(
+                self.state.repository.snapshot(),
+                plait_core::state::Load::Loading
+            )
+        {
+            self.state.repository.refresh();
+            self.pump(cx);
+        }
+        if changed
+            .iter()
+            .any(|path| *path == self.workspace.file_viewer.root)
+        {
+            self.check_file(cx);
+        }
     }
 
     /// A window that just moved to another machine opens one of that
@@ -499,6 +537,23 @@ mod tests {
         // Showing a hidden project again is an intent too.
         let shown = changes(&after, &before);
         assert!(shown.hide.contains(&(PathBuf::from("/srv/a"), false)));
+    }
+
+    #[core::prelude::v1::test]
+    fn moved_and_new_counters_are_changes() {
+        let map = |pairs: &[(&str, u64)]| {
+            pairs
+                .iter()
+                .map(|(p, n)| (PathBuf::from(p), *n))
+                .collect::<std::collections::BTreeMap<_, _>>()
+        };
+        let before = map(&[("/a", 1), ("/b", 4)]);
+        let after = map(&[("/a", 2), ("/b", 4), ("/c", 0)]);
+        assert_eq!(
+            changed_checkouts(&before, &after),
+            vec![PathBuf::from("/a"), PathBuf::from("/c")]
+        );
+        assert!(changed_checkouts(&after, &after).is_empty());
     }
 
     #[core::prelude::v1::test]

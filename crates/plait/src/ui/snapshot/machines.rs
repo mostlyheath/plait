@@ -329,3 +329,56 @@ fn a_remote_window_shows_only_its_hosts_workspace() {
     drop(h);
     std::fs::remove_dir_all(scratch).unwrap();
 }
+
+/// A change the host saw in the open checkout makes it read again; nothing polls.
+#[core::prelude::v1::test]
+fn a_watched_change_rereads_the_open_checkout() {
+    if !isolated("machines::a_watched_change_rereads_the_open_checkout") {
+        return;
+    }
+    use plait_core::host::workspace::{HostIdentity, Project, View};
+    let scratch = std::env::temp_dir().join(format!("plait-watched-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    let mut h = Harness::new(&repo, None, 900., 600.);
+    h.connect(&repo, false);
+    h.settle();
+    h.update(|p, window, cx| {
+        let open = p.state.repository.path().to_owned();
+        let view = |count: u64| View {
+            schema: 1,
+            host: HostIdentity {
+                id: "this-mac".into(),
+                name: "mac".into(),
+                platform: "macos".into(),
+            },
+            revision: 1,
+            projects: vec![Project {
+                path: open.clone(),
+                hidden: false,
+            }],
+            worktrees: Vec::new(),
+            seen: Vec::new(),
+            status: [(open.clone(), count)].into_iter().collect(),
+        };
+        let generation = p.host_workspace_generation();
+        assert!(p.apply_workspace(generation, view(0), window, cx));
+        // Drain the reread the first view asks for.
+        while p.state.next_repository_job().is_some() {}
+        p.state.repository.data.snapshot = plait_core::state::Load::Empty;
+        assert!(p.apply_workspace(generation, view(0), window, cx));
+        assert!(
+            p.state.next_repository_job().is_none(),
+            "an unchanged counter reread"
+        );
+        assert!(p.apply_workspace(generation, view(1), window, cx));
+        assert!(
+            matches!(
+                p.state.repository.snapshot(),
+                plait_core::state::Load::Loading
+            ),
+            "a moved counter did not reread the open checkout"
+        );
+    });
+    drop(h);
+    std::fs::remove_dir_all(scratch).unwrap();
+}
