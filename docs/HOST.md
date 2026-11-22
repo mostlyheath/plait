@@ -924,9 +924,13 @@ name the field at fault and never repeat its value.
 
 ## Plain folders
 
-A project may be a plain folder when neither it nor any ancestor has a `.git`
-entry. A folder inside a Git repository resolves to the repository root; an
-inaccessible or broken repository is refused. The thread retains its kind even
+A project may be a plain folder when neither it nor any ancestor has a
+repository marker: a `.git` file, or a `.git` folder containing `HEAD`, as Git
+itself requires (an empty stray `.git` folder is no marker). A folder inside a
+Git repository resolves to the repository root; an inaccessible or broken
+repository is refused. Workspace projects report `vcs` (`git` or `folder`),
+and Git reads of a plain folder return an empty status marked `plain` and a
+file list walked without Git. The thread retains its kind even
 if the folder later becomes a repository. Threads, approvals, and file viewing
 work in plain folders. Undo, Changes, History, and worktrees are unavailable.
 Nothing in a plain folder is protected or can be undone.
