@@ -109,6 +109,12 @@ export async function rootIdentity(root: string): Promise<FileIdentity> {
   if (!info.isDirectory() || await realpath(root) !== root) fail('permission_denied', 'Checkout root changed.');
   return { dev: String(info.dev), ino: String(info.ino) };
 }
+export async function verifyExpectedIdentity(root: string, expected: unknown): Promise<void> {
+  if (expected === undefined) return;
+  const current = await rootIdentity(root);
+  const identity = expected as FileIdentity;
+  if (current.dev !== identity.dev || current.ino !== identity.ino) fail('invalid_request', 'This folder changed since it was opened.');
+}
 export async function checkRoot(root: string, expected: FileIdentity) {
   const current = await rootIdentity(root);
   if (current.dev !== expected.dev || current.ino !== expected.ino) fail('permission_denied', 'Checkout root identity changed. Create a new thread for the replacement.');
