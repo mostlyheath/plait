@@ -39,7 +39,7 @@ print(json.dumps(value) if isinstance(value, (dict, list)) else value)' "$1" "$2
 }
 
 install_linux_host() {
-    local version=$1 arch build_id base name expected actual archive releases_dir current
+    local version=$1 arch build_id base name expected actual archive releases_dir current running status migration=false count
     [[ $(uname -s) == Linux ]] || fail 'The host installer requires Linux.'
     case $(uname -m) in
         x86_64) arch=x86_64 ;;
@@ -85,10 +85,30 @@ install_linux_host() {
     actual=$(checksum "$archive")
     [[ ${actual%% *} == "$expected" ]] || fail 'Host checksum does not match. Nothing was installed.'
     releases_dir="$HOME/.local/share/plait-host/releases"
-    # Rewriting the unit would not restart a running host, so switching builds is the updater's job.
     if [[ -L "$HOME/.local/bin/plait-host" ]]; then
-        current=$(readlink -- "$HOME/.local/bin/plait-host")
-        [[ $current == "$releases_dir/$build_id/bin/plait-host" ]] || fail 'A Plait host is already installed. Run plait-host update to update it.'
+        current=$(readlink -m -- "$HOME/.local/bin/plait-host")
+        case "$current" in
+            "$releases_dir/$build_id/bin/plait-host") ;;
+            "$releases_dir"/*) fail 'A Plait host is already installed. Run plait-host update to update it.' ;;
+            *) migration=true ;;
+        esac
+    fi
+    # The service may have been installed directly from a checkout, without a link.
+    if systemctl --user is-active --quiet plait-host.service; then
+        running=$(systemctl --user show plait-host.service -p ExecStart --value) || fail 'Could not inspect the running host service.'
+        running=$(printf '%s' "$running" | python3 -c 'import re, sys
+m = re.search(r"(?:^|[ {])path=(.*?)\s*;", sys.stdin.read())
+if not m or not m.group(1).startswith("/"): sys.exit(1)
+print(m.group(1))') || fail 'Could not inspect the running host service.'
+        running=$(readlink -m -- "$running")
+        case "$running" in
+            "$releases_dir/$build_id/bin/plait-host") ;;
+            "$releases_dir"/*) fail 'A Plait host is already installed. Run plait-host update to update it.' ;;
+            *) migration=true ;;
+        esac
+    else
+        status=$?
+        [[ $status == 3 || $status == 4 ]] || fail 'Could not check the running host service.'
     fi
     mkdir -p -- "$releases_dir"
     stage=$(mktemp -d "$releases_dir/.install.XXXXXXXX")
@@ -98,9 +118,24 @@ install_linux_host() {
         [[ -f "$stage/$build_id/bin/plait-host" && -x "$stage/$build_id/bin/plait-host" ]] || fail 'The archive does not contain the expected host.'
         mv -T -- "$stage/$build_id" "$releases_dir/$build_id" || fail 'Could not install the host release.'
     fi
+    if "$migration"; then
+        count=$("$releases_dir/$build_id/bin/plait-host" active-runs) || fail 'Could not check active runs; the source host was not replaced.'
+        [[ $count =~ ^[0-9]+$ ]] || fail 'Could not check active runs; the source host was not replaced.'
+        [[ $count =~ ^0+$ ]] || fail "The host has $count active runs. Finish them before replacing the source build."
+    fi
     mkdir -p -- "$HOME/.local/bin"
     ln -sfn -- "$releases_dir/$build_id/bin/plait-host" "$HOME/.local/bin/plait-host"
     "$releases_dir/$build_id/bin/plait-host" install-service
+    if "$migration"; then
+        if [[ -f "$HOME/.config/systemd/user/plait-host-tailnet.service" ]]; then
+            "$releases_dir/$build_id/bin/plait-host" install-service --tailnet
+        fi
+        systemctl --user restart plait-host.service || fail 'Could not restart plait-host.service.'
+        if [[ -f "$HOME/.config/systemd/user/plait-host-tailnet.service" ]]; then
+            systemctl --user restart plait-host-tailnet.service || fail 'Could not restart plait-host-tailnet.service.'
+        fi
+        printf 'Replaced the source-built host; data in ~/.local/share/plait was kept.\n'
+    fi
     if [[ $(loginctl show-user "${USER:-}" -p Linger 2>/dev/null || true) != Linger=yes ]]; then
         printf 'The host stops at logout unless an administrator runs loginctl enable-linger $USER.\n'
     fi

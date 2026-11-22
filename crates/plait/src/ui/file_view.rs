@@ -751,7 +751,7 @@ impl Plait {
         let count = text.lines.len();
         let digits = count.to_string().len().max(3);
         let gutter = digits as f32 * 7.5 + 24.;
-        let widest = widest_index(text, text.widest);
+        let widest = text.widest_index;
         let matches = self.workspace.file_viewer.find.matches.clone();
         let current = self.workspace.file_viewer.find.current;
         uniform_list(
@@ -803,14 +803,6 @@ impl Plait {
         .min_h_0()
         .into_any_element()
     }
-}
-
-/// The index of a widest line, so the list sizes its scroll width from it.
-fn widest_index(text: &file_view::Text, widest: usize) -> usize {
-    text.lines
-        .iter()
-        .position(|line| text.text[line.clone()].chars().count().min(LINE_CLIP) == widest)
-        .unwrap_or(0)
 }
 
 /// How one stretch of a line is drawn.
