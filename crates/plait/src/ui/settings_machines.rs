@@ -36,6 +36,8 @@ pub(super) struct MachinesUi {
     /// The next reconnect follows a link that was just made, so it need not
     /// make another. Every other reconnect to a remote machine starts one.
     pub(super) fresh_link: bool,
+    /// The machine this window is connected to; this Mac until a switch.
+    pub(super) active: MachineId,
 }
 
 fn field(
@@ -58,12 +60,32 @@ impl Plait {
         }
     }
 
-    /// The selected machine's name for headers; this Mac is "Local host".
+    /// The machine this window is connected to, for headers. A remote host
+    /// names itself; until it has, the name it was saved under is used.
     pub(super) fn machine_label(&self) -> String {
+        if self.host_is_local() {
+            return "This Mac".into();
+        }
+        if let Some(identity) = self.host_identity() {
+            return identity.name.clone();
+        }
         let id = self.selected_machine();
         match self.preferences.value.machines.get(&id) {
-            Some(machine) if !matches!(machine.transport, Transport::Local) => machine.name.clone(),
-            _ => "Local host".into(),
+            Some(machine) => machine.name.clone(),
+            None => "Another machine".into(),
+        }
+    }
+
+    /// The connected machine, as projects and tabs name it.
+    pub(super) fn current_machine(&self) -> plait_core::model::Machine {
+        let local = self.host_is_local();
+        plait_core::model::Machine {
+            name: if local {
+                plait_core::machine::local_name()
+            } else {
+                self.machine_label()
+            },
+            local,
         }
     }
 
@@ -104,8 +126,8 @@ impl Plait {
             Transport::Local => {
                 self.machines.connecting = None;
                 self.machines.note = None;
-                self.save_selected(id, cx);
-                self.use_machine_client(Client::local_or_unavailable(), true, window, cx);
+                self.save_selected(id.clone(), cx);
+                self.use_machine_client(Client::local_or_unavailable(), id, true, window, cx);
                 return;
             }
             remote => remote,
@@ -146,8 +168,8 @@ impl Plait {
                 match result {
                     Ok(link) => {
                         this.machines.note = Some((format!("Using {name}."), false));
-                        this.save_selected(id, cx);
-                        this.use_machine_client(Client::over_link(link), false, window, cx);
+                        this.save_selected(id.clone(), cx);
+                        this.use_machine_client(Client::over_link(link), id, false, window, cx);
                     }
                     Err(error) => {
                         this.machines.note =

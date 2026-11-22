@@ -93,6 +93,10 @@ impl PartialEq<ModelChoice> for ModelKey {
 #[serde(default)]
 pub struct Preferences {
     pub navigation: crate::navigation::Preferences,
+    /// This device's ID on every host it uses, for per-device state there.
+    pub device_id: String,
+    /// Hosts that already hold this device's project lists, by host ID.
+    pub imported_workspaces: Vec<String>,
     pub machines: crate::machines::Machines,
     /// The machine selected on this desktop; older preferences default to local.
     #[serde(deserialize_with = "lenient")]

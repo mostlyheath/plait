@@ -164,6 +164,18 @@ pub fn set_host_name(client: &Client, name: &str) -> Result<HostIdentity, Error>
     Ok(reply.host)
 }
 
+/// Views delivered on a dedicated thread, latest first: each is complete,
+/// so a slow reader needs only the newest.
+pub type Views = super::Updates<View>;
+
+/// Subscribes and reads on a dedicated thread. Dropping the result, or its
+/// cancel handle, unsubscribes.
+pub fn watch(client: &Client) -> Result<Views, Error> {
+    let mut stream = subscribe(client)?;
+    let socket = stream.frames.reader.get_ref().try_clone()?;
+    super::Updates::spawn(socket, move || stream.next_view())
+}
+
 /// A snapshot, then each later view in order. Dropping it unsubscribes.
 pub struct Stream {
     frames: Frames,

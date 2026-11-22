@@ -245,9 +245,7 @@ impl Plait {
                 ..Default::default()
             };
         }
-        let mut preferences = self.preferences.value.clone();
-        preferences.navigation.open(&path);
-        self.persist_navigation(preferences, cx);
+        self.update_lists(|lists| lists.open(&path), cx);
         let live = match self.host.change_checkout(path.clone()) {
             Ok(live) => live,
             Err(error) => {

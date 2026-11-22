@@ -269,7 +269,8 @@ pub fn projects(
     threads: &[ThreadSummary],
     preferences: &Preferences,
     current: &Path,
-    machine: &str,
+    machine: &Machine,
+    include_current: bool,
 ) -> Vec<Project> {
     let current = preferences.project_of(current);
     let mut activity = HashMap::new();
@@ -288,7 +289,8 @@ pub fn projects(
         .iter()
         .map(|thread| preferences.project_of(&thread.checkout))
         .chain(preferences.opened.iter().map(PathBuf::as_path))
-        .chain(std::iter::once(current))
+        // Another machine's window must not list a checkout its host never named.
+        .chain(include_current.then_some(current))
         .filter(|path| (!hidden.contains(path) || *path == current) && seen.insert(*path))
         .map(Path::to_owned)
         .collect::<Vec<_>>();
@@ -298,10 +300,7 @@ pub fn projects(
         .map(|checkout| Project {
             name: project_name(&checkout),
             checkout,
-            machines: vec![Machine {
-                name: machine.into(),
-                local: true,
-            }],
+            machines: vec![machine.clone()],
         })
         .collect()
 }
@@ -466,6 +465,39 @@ mod tests {
         assert!(p.observe(&[t], None, false).is_empty());
         assert!(p.unread.contains("a"));
     }
+    fn local() -> Machine {
+        Machine {
+            name: "Local".into(),
+            local: true,
+        }
+    }
+
+    #[test]
+    fn another_machines_window_lists_only_what_its_host_named() {
+        let p = Preferences {
+            opened: vec!["/srv/a".into()],
+            ..Default::default()
+        };
+        let names = |include| {
+            projects(&[], &p, Path::new("/Users/me/mac-only"), &local(), include)
+                .into_iter()
+                .map(|project| project.checkout)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names(false), vec![PathBuf::from("/srv/a")]);
+        assert_eq!(names(true).len(), 2);
+        assert!(
+            projects(
+                &[],
+                &Preferences::default(),
+                Path::new("/x"),
+                &local(),
+                false
+            )
+            .is_empty()
+        );
+    }
+
     #[test]
     fn projects_are_grouped_and_hidden_without_deleting_threads() {
         let threads = [
@@ -474,7 +506,7 @@ mod tests {
         ];
         let mut p = Preferences::default();
         p.open(Path::new("/empty"));
-        let groups = projects(&threads, &p, Path::new("/one"), "Local");
+        let groups = projects(&threads, &p, Path::new("/one"), &local(), true);
         assert_eq!(
             groups.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
             ["two", "one", "empty"]
@@ -517,7 +549,10 @@ mod tests {
             .is_none()
         );
         p.hide(Path::new("/two"));
-        assert_eq!(projects(&threads, &p, Path::new("/one"), "Local").len(), 2);
+        assert_eq!(
+            projects(&threads, &p, Path::new("/one"), &local(), true).len(),
+            2
+        );
         assert_eq!(threads.len(), 2);
     }
     #[test]
@@ -527,7 +562,8 @@ mod tests {
             &[t.clone()],
             &Preferences::default(),
             Path::new("/project"),
-            "Local",
+            &local(),
+            true,
         )
         .remove(0);
         assert!(matches(
@@ -594,7 +630,8 @@ mod tests {
             &threads,
             &preferences,
             Path::new("/repo.worktrees/a1"),
-            "Local",
+            &local(),
+            true,
         );
         let checkouts = list
             .iter()
