@@ -38,6 +38,8 @@ pub(super) struct MachinesUi {
     pub(super) fresh_link: bool,
     /// The machine this window is connected to; this Mac until a switch.
     pub(super) active: MachineId,
+    /// Installing Plait on a machine that lacks it, while that is offered.
+    pub(super) install: Option<super::machine_install::MachineInstall>,
 }
 
 fn field(
@@ -133,6 +135,7 @@ impl Plait {
         self.machines.generation += 1;
         let generation = self.machines.generation;
         self.machines.confirm_remove = None;
+        self.machines.install = None;
         let transport = match machine.transport {
             Transport::Local => {
                 self.machines.connecting = None;
@@ -185,6 +188,8 @@ impl Plait {
                     Err(error) => {
                         this.machines.note =
                             Some((format!("Could not reach {name}. {error}"), true));
+                        // Perhaps it answers but has no Plait yet: offer to install it.
+                        this.check_install(id.clone(), cx);
                     }
                 }
                 cx.notify();
@@ -551,6 +556,7 @@ impl Plait {
                         .line_height(px(18.)),
                 )
             })
+            .children(self.install_panel(cx))
             .child(if self.machines.form.is_some() {
                 self.machine_form(cx)
             } else {

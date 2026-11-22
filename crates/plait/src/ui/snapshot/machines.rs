@@ -34,7 +34,7 @@ fn workstation(h: &mut Harness) -> plait_core::machines::MachineId {
 
 type Scene = (&'static str, fn(&mut Harness), &'static [&'static str]);
 
-fn scenes() -> [Scene; 5] {
+fn scenes() -> [Scene; 7] {
     [
         (
             "machines-list",
@@ -71,6 +71,45 @@ fn scenes() -> [Scene; 5] {
                 });
             },
             &["Use workstation"],
+        ),
+        (
+            "machines-install",
+            |h| {
+                let id = workstation(h);
+                h.update(|p, _, _| {
+                    p.machines.note = Some((
+                        "Could not reach workstation. sh: 1: exec: /home/you/.local/bin/plait-host: not found".into(),
+                        true,
+                    ));
+                    p.machines.install = Some(super::super::machine_install::MachineInstall {
+                        id,
+                        name: "workstation".into(),
+                        stage: super::super::machine_install::Stage::Missing(
+                            plait_core::remote::install::Probe {
+                                platform: Some("linux-x86_64".into()),
+                                system: "Linux x86_64".into(),
+                                installed: false,
+                                downloader: true,
+                            },
+                        ),
+                    });
+                });
+            },
+            &["Install Plait on workstation"],
+        ),
+        (
+            "machines-installing",
+            |h| {
+                let id = workstation(h);
+                h.update(|p, _, _| {
+                    p.machines.install = Some(super::super::machine_install::MachineInstall {
+                        id,
+                        name: "workstation".into(),
+                        stage: super::super::machine_install::Stage::Installing,
+                    });
+                });
+            },
+            &[],
         ),
         (
             "machines-remove-confirm",

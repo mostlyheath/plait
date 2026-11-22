@@ -25,6 +25,7 @@ mod images;
 mod issues_view;
 mod jump;
 mod live_conversation;
+mod machine_install;
 mod markdown;
 mod model_picker;
 mod navigation;

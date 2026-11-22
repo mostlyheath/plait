@@ -81,7 +81,7 @@ fn ssh_bridge_lifecycle() {
         }
     });
     let pidfile = fixture.0.join("pid");
-    let script = fixture.script(&format!("echo $$ > '{}'; while [ \"$1\" != plait-host ]; do [ $# -gt 0 ] || exit 1; shift; done; [ \"$2\" = bridge ] || exit 1; exec '{}' bridge --store '{}'", pidfile.display(), env!("CARGO_BIN_EXE_plait-host"), fixture.0.display()));
+    let script = fixture.script(&format!("echo $$ > '{}'; case \"$*\" in *'exec plait-host bridge'*) ;; *) exit 1;; esac; exec '{}' bridge --store '{}'", pidfile.display(), env!("CARGO_BIN_EXE_plait-host"), fixture.0.display()));
     let link = connect(&destination(), options(script)).unwrap();
     let pid: i32 = fs::read_to_string(&pidfile)
         .unwrap()
