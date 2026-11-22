@@ -19,7 +19,7 @@ use plait_core::host::{
     harness::{Harness, HarnessId, HarnessState, Harnesses, Request, ThreadHarness},
     providers,
 };
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 #[derive(Default)]
 pub(super) struct HarnessesState {
@@ -102,6 +102,11 @@ pub(super) struct HarnessRow {
     pub(super) unstartable: Option<SharedString>,
     /// The harness needs a download the person starts from Settings → Agents.
     pub(super) setup: bool,
+    /// The version the host can install, offered while the harness is not installed.
+    pub(super) installable: Option<SharedString>,
+    pub(super) signed_out: bool,
+    /// The host installed the copy that runs.
+    pub(super) managed: bool,
 }
 
 pub(super) struct HarnessesView {
@@ -193,6 +198,12 @@ impl HarnessRow {
             default_detail,
             unstartable: unstartable.map(Into::into),
             setup: harness.state == HarnessState::SetupRequired,
+            installable: harness
+                .installable
+                .filter(|_| harness.state == HarnessState::NotInstalled)
+                .map(Into::into),
+            signed_out: harness.state == HarnessState::SignedOut,
+            managed: harness.managed,
         }
     }
 
@@ -386,6 +397,27 @@ fn own_settings(id: HarnessId) -> (&'static str, &'static str) {
     }
 }
 
+/// What installing a harness downloads, and whose software it stays.
+fn install_terms(id: HarnessId, version: &str) -> String {
+    let owner = match id {
+        HarnessId::Codex => "OpenAI's software under the Apache-2.0 license",
+        HarnessId::Claude => "Anthropic's software under Anthropic's terms",
+        _ => "its vendor's software under the vendor's terms",
+    };
+    format!(
+        "Not installed on this machine. Plait can install {} {version}, the version it is tested with, into the host's own folder; a copy you install yourself is used first. It stays {owner}.",
+        id.label()
+    )
+}
+
+fn terms_url(id: HarnessId) -> Option<&'static str> {
+    match id {
+        HarnessId::Codex => Some("https://github.com/openai/codex/blob/main/LICENSE"),
+        HarnessId::Claude => Some("https://code.claude.com/docs/en/legal-and-compliance"),
+        _ => None,
+    }
+}
+
 /// What a refused or failed harness request says. Host messages are shown as sent.
 fn failure(error: &host::Error) -> String {
     if providers::needs_host_update(error) {
@@ -555,7 +587,11 @@ impl Plait {
         self.send_harnesses(Request::set_up_harness(id), cx);
     }
 
-    /// Whether harness `id` is being set up now, for Settings → Agents.
+    pub(super) fn install_harness(&mut self, id: HarnessId, cx: &mut Context<Self>) {
+        self.send_harnesses(Request::install_harness(id), cx);
+    }
+
+    /// Whether harness `id` is being set up or installed now, for Settings → Agents.
     pub(super) fn harness_setting_up(&self, id: HarnessId) -> bool {
         self.harnesses.busy && self.harnesses.setting_up == Some(id)
     }
@@ -581,7 +617,9 @@ impl Plait {
             return;
         }
         let setup = match &request {
-            Request::SetUpHarness { harness, .. } => Some(*harness),
+            Request::SetUpHarness { harness, .. } | Request::InstallHarness { harness, .. } => {
+                Some(*harness)
+            }
             _ => None,
         };
         if self.host.protocol() >= 6 {
@@ -595,6 +633,9 @@ impl Plait {
                 }
                 | Request::SetUpHarness {
                     protocol_version, ..
+                }
+                | Request::InstallHarness {
+                    protocol_version, ..
                 } => *protocol_version = 6,
             }
         }
@@ -604,7 +645,13 @@ impl Plait {
         cx.notify();
         let client = self.host_client();
         let task = cx.background_executor().spawn(async move {
-            let reply: Harnesses = client.send(&request)?;
+            // An install downloads about 170 MB on the host before it answers.
+            let wait = if matches!(request, Request::InstallHarness { .. }) {
+                Duration::from_secs(16 * 60)
+            } else {
+                Duration::from_secs(20)
+            };
+            let reply: Harnesses = client.send_within(&request, wait)?;
             Ok::<_, host::Error>(HarnessesView::new(reply))
         });
         cx.spawn(async move |this, cx| {
@@ -747,7 +794,7 @@ impl Plait {
         });
         let mut page = settings::section("Agent harnesses").child(settings::setting(
             "What can run a thread",
-            "Pi is built in. Codex and Claude Code run through your own installs, with their own sign-in and settings. A new thread starts in the default from New threads; choose another under its message box, and the thread stays in it.",
+            "Pi is built in. Codex and Claude Code run through your own installs, or ones Plait installs on this machine, with their own sign-in and settings. A new thread starts in the default from New threads; choose another under its message box, and the thread stays in it.",
             refresh,
         ));
         if !self.host.connection.connected {
@@ -828,8 +875,22 @@ impl Plait {
                 colors().muted,
             ));
         if let Some(path) = &harness.path {
-            text = text
-                .child(tag(("harness-path-text", index), path.clone(), colors().subtle).truncate());
+            let path: SharedString = if harness.managed {
+                format!("Installed by Plait · {path}").into()
+            } else {
+                path.clone()
+            };
+            text = text.child(tag(("harness-path-text", index), path, colors().subtle).truncate());
+        }
+        if let Some(version) = &harness.installable {
+            text = text.child(
+                tag(
+                    ("harness-install-terms", index),
+                    install_terms(harness.id, version),
+                    colors().subtle,
+                )
+                .line_height(px(16.)),
+            );
         }
         if let Some(note) = &harness.note {
             text = text.child(
@@ -880,6 +941,49 @@ impl Plait {
                 }),
             );
         }
+        if let Some(version) = &harness.installable {
+            let id = harness.id;
+            let installing = self.harness_setting_up(id);
+            entry = entry.child(
+                row()
+                    .flex_shrink_0()
+                    .gap_1()
+                    .children(terms_url(id).map(|url| {
+                        toned_button(("harness-terms", index), "Terms", Tone::Ghost)
+                            .aria_label(format!("Read the terms {} comes under", harness.name))
+                            .on_activate(cx, move |_, _, cx| cx.open_url(url))
+                    }))
+                    .child(
+                        toned_button(
+                            ("harness-install", index),
+                            if installing {
+                                "Installing…"
+                            } else {
+                                "Install"
+                            },
+                            Tone::Primary,
+                        )
+                        .aria_label(format!("Install {} {version} on the host", harness.name))
+                        .disabled(busy)
+                        .when(!busy, |el| {
+                            el.on_activate(cx, move |this, _, cx| this.install_harness(id, cx))
+                        }),
+                    ),
+            );
+        }
+        if harness.signed_out {
+            let id = harness.id;
+            let signing_in = self.harness_flow() == Some(id);
+            entry = entry.child(
+                toned_button(("harness-sign-in", index), "Sign in", Tone::Primary)
+                    .flex_shrink_0()
+                    .aria_label(format!("Sign in to {} on the host", harness.name))
+                    .disabled(busy || signing_in)
+                    .when(!busy && !signing_in, |el| {
+                        el.on_activate(cx, move |this, _, cx| this.start_harness_sign_in(id, cx))
+                    }),
+            );
+        }
         if harness.has_path() {
             let (id, name) = (harness.id, harness.name.clone());
             entry = entry.child(
@@ -908,10 +1012,19 @@ impl Plait {
                     ),
             );
         }
-        match modes {
+        let flow = (self.harness_flow() == Some(harness.id)).then(|| {
+            column()
+                .gap_2()
+                .when_some(self.providers.note.clone(), |el, note| {
+                    el.child(tag(("harness-sign-in-note", index), note, colors().amber))
+                })
+                .child(self.provider_form(cx))
+        });
+        let entry = match modes {
             Some(modes) => column().gap_3().child(entry).child(modes),
             None => column().child(entry),
-        }
+        };
+        entry.when_some(flow, |el, flow| el.gap_3().child(flow))
     }
 
     /// Settings → New threads: the harness a new thread's draft starts in: Pi,
@@ -1177,6 +1290,37 @@ mod tests {
                       {"id":"auto","label":"Auto","detail":"Decides itself."}],
              "default_mode":"auto"}]}))
         .unwrap()
+    }
+
+    fn with(mut list: Harnesses, installable: Option<&str>, managed: bool) -> Harnesses {
+        list.harnesses[1].installable = installable.map(Into::into);
+        list.harnesses[1].managed = managed;
+        list
+    }
+
+    #[test]
+    fn a_missing_harness_offers_its_pinned_install_and_a_signed_out_one_offers_sign_in() {
+        let view = HarnessesView::new(with(
+            claude_list("not_installed", None),
+            Some("2.1.326"),
+            false,
+        ));
+        let claude = &view.rows[1];
+        assert_eq!(claude.installable.as_deref(), Some("2.1.326"));
+        assert!(!claude.signed_out);
+        assert!(super::install_terms(claude.id, "2.1.326").contains("Claude Code 2.1.326"));
+        // A host without a build for its platform offers nothing to install.
+        let view = HarnessesView::new(with(claude_list("not_installed", None), None, false));
+        assert_eq!(view.rows[1].installable, None);
+        // An installed harness is not offered again, even when the host could.
+        let view = HarnessesView::new(with(claude_list("signed_out", None), Some("2.1.326"), true));
+        let claude = &view.rows[1];
+        assert_eq!(claude.installable, None);
+        assert!(claude.signed_out && claude.managed);
+        assert!(
+            super::terms_url(HarnessId::Codex).is_some()
+                && super::terms_url(HarnessId::Pi).is_none()
+        );
     }
 
     #[test]

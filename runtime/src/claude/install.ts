@@ -1,3 +1,4 @@
+import { managedPath } from '../agent-tools.ts';
 // Finding the person's installed Claude Code, checking its version, and asking
 // it which models it offers and whether it is signed in, without a prompt.
 //
@@ -30,7 +31,7 @@ export const CLAUDE_MIN_VERSION = '2.1.290';
 
 export type ClaudeInstall = {
   state: 'ready' | 'not_installed' | 'unsupported_version' | 'error';
-  path?: string; version?: string; untested?: boolean;
+  path?: string; version?: string; untested?: boolean; managed?: boolean;
   /** One short sentence for the person, saying how to fix it when something is wrong. */
   message: string;
 };
@@ -133,21 +134,21 @@ function run(path: string, args: string[], env: NodeJS.ProcessEnv, timeout: numb
 }
 
 /** Finds the person's installed Claude Code and checks its version. Reads no credentials. */
-export async function findClaude(options: { path?: string; env?: NodeJS.ProcessEnv }): Promise<ClaudeInstall> {
-  let path = options.path; let env = options.env ?? process.env;
+export async function findClaude(options: { path?: string; env?: NodeJS.ProcessEnv; directory?: string }): Promise<ClaudeInstall> {
+  let path = options.path; let env = options.env ?? process.env; let managed = false;
   if (path !== undefined) {
     if (!isAbsolute(path) || !(await executable(path))) {
       return { state: 'not_installed', path, message: 'No Claude Code program was found at the chosen path. Choose another path or install Claude Code.' };
     }
   } else {
     const found = await search(options.env);
-    env = found.env; path = found.path;
+    env = found.env; path = found.path ?? (options.directory ? await managedPath('claude', options.directory) : undefined); managed = !found.path && !!path;
     if (!path) return { state: 'not_installed', message: `Claude Code was not found. Install Claude Code ${CLAUDE_MIN_VERSION} or newer.` };
   }
   const output = await run(path, ['--version'], env, VERSION_TIMEOUT_MS, VERSION_OUTPUT_BYTES);
   const version = output?.code === 0 ? parseVersionOutput(output.stdout) : undefined;
   if (!version) return { state: 'error', path, message: 'Claude Code did not report its version. Reinstall Claude Code or choose another path.' };
-  return judgeVersion(path, version);
+  return { ...judgeVersion(path, version), managed };
 }
 
 /**
@@ -231,7 +232,7 @@ type Auth = Awaited<ReturnType<typeof claudeAuth>>;
 /** The catalog from a sign-in check and an `initialize` answer (or the error starting Claude Code). */
 export function catalogFrom(auth: Auth, init: SDKControlInitializeResponse | Error, ms: number): ClaudeCatalog {
   if (auth && !auth.signedIn) {
-    return { state: 'signed_out', version: null, models: [], provider: auth.provider, note: 'Sign in with `claude` in a terminal, then Refresh.', ms };
+    return { state: 'signed_out', version: null, models: [], provider: auth.provider, note: 'Sign in from Settings → Agents, or run `claude auth login` on this machine.', ms };
   }
   if (init instanceof Error) {
     // Claude Code's own error text can quote the machine or the account, so it is not passed on.

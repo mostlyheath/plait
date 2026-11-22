@@ -129,7 +129,7 @@ export class Providers {
   private registry: Registry;
   private readonly holder: RegistryHolder;
   private readonly source: ProviderSource;
-  private readonly signIns: SignIns;
+  readonly signIns: SignIns;
   private reloading: Promise<void> = Promise.resolve();
   // Runs that started before a reload keep their registry; its credential writes still settle at shutdown.
   private readonly retired: Registry[] = [];

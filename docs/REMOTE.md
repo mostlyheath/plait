@@ -31,37 +31,48 @@ with Node, the runtime, and its dependencies included, and a signed manifest
 for it: `update-host-linux-x86_64.json` and `update-host-linux-arm64.json`, in
 the same format as `update-host.json`, each with its own build ID.
 
-## Agent CLIs on a host (agreed, not built)
+## Agent CLIs on a host
 
 Pi is part of the host, so a new machine can run threads with a provider key
 or sign-in alone. For Codex and Claude Code, **Settings → Agents** shows each
 one's state on the connected machine:
 
 - **Not installed · Install.** The host installs the version Plait is tested
-  with into its own folder (`~/.local/share/plait/tools/`), using its bundled
-  Node or the vendor's official installer, never `sudo`. A copy the person
-  installed themselves is found first and always wins. The CLI stays the
-  vendor's software under the vendor's terms, linked before installing.
+  with into its own folder (`~/.local/share/plait/tools/`): it downloads the
+  vendor's npm package for its platform and checks its pinned hash, without
+  `sudo`. A copy you install yourself is found first and always wins. The CLI
+  stays the vendor's software under the vendor's terms, linked beside
+  **Install**.
 - **Sign in.** The host runs the CLI's own sign-in; the app shows its link and
-  code and passes back anything the person pastes. Credentials stay in the
-  CLI's own files on that machine; Plait never reads them.
+  code and passes back the code you paste. Credentials stay in the CLI's own
+  files on that machine; Plait never reads them.
 
 ## Order of work
 
 1. **Built:** Linux host archives and their signed manifests in the release pipeline.
 2. The server-side install script.
 3. **Built:** Installing from the Mac over SSH.
-4. Host-installed CLIs and their sign-in in the app.
+4. **Built:** Host-installed CLIs and their sign-in in the app.
 5. Host updates on Linux: `plait-host update` and from the Mac.
 
 ## Set up a Linux host
 
-Download the archive and its `.sha256` file for your Linux architecture from
-[Releases](https://github.com/heath0xFF/plait/releases), verify it with
-`sha256sum -c`, and extract it. Run `<build-id>/bin/plait-host install-service`
-from its permanent location. The archive includes Node and the runtime.
+Install from the Mac (above), or run the installer on the machine as your
+normal user (x86_64 or arm64). It needs Python 3, curl or wget, and a SHA-256
+utility:
 
-Alternatively, install Rust, Node, npm, and Git on the host and build from a source checkout:
+```sh
+curl --proto '=https' -fsSL https://raw.githubusercontent.com/heath0xFF/plait/main/scripts/install.sh | bash -s -- --host
+```
+
+It reads the release's `update-host-linux-<arch>.json`, checks the archive's
+SHA-256 against it, installs the host and its bundled Node and runtime under
+`~/.local/share/plait-host`, links `~/.local/bin/plait-host`, and starts a
+systemd user service. It does not verify the publisher signature; the install
+from the Mac does. If a different build is already installed, it leaves the
+switch to the updater. Git is required for repository operations.
+
+Alternatively, install Rust, Node, npm, and Git and build from a source checkout:
 
 ```sh
 cargo build --release -p plait-host
@@ -69,11 +80,11 @@ cargo build --release -p plait-host
 target/release/plait-host install-service
 ```
 
-A source-built systemd user service uses the Node on the current PATH; an archived host uses its bundled Node. The host stores data in
-`~/.local/share/plait`. Run `plait-host run` for a foreground host, or
+A source-built service uses the Node on the current PATH. The host stores data
+in `~/.local/share/plait`. Run `plait-host run` for a foreground host, or
 `plait-host uninstall-service` to remove the service. Without lingering, the
 user service stops at logout; `loginctl enable-linger $USER` keeps it running.
-Linux host release archives include Node and the runtime; in-app Linux host updates are planned.
+In-app Linux host updates are planned.
 
 Linux runs trusted commands and trusted MCP servers as the host user. It
 refuses the sandboxed command policy; see [Linux sandbox](LINUX-SANDBOX.md).

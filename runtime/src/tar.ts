@@ -5,7 +5,7 @@
 import { promisify } from 'node:util';
 import { gunzip } from 'node:zlib';
 
-export type TarFile = { path: string; data: Buffer };
+export type TarFile = { path: string; data: Buffer; mode: number };
 export type TarLimits = {
   /** The largest the decompressed archive may be. */
   maxArchive: number;
@@ -109,6 +109,6 @@ export function readTar(tar: Buffer, limits: TarLimits): TarFile[] {
     const path = safePath(name);
     if (type === '5') continue;
     if (type !== '0') throw new Error(`The archive holds a link or special file: ${JSON.stringify(path.slice(0, 200))}`);
-    files.push({ path, data });
+    files.push({ path, data, mode: octal(header, 100, 8) });
   }
 }

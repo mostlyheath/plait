@@ -490,6 +490,8 @@ A client that steps down from 4 to 3 sees only Pi.
 {"op":"set_harness_path","protocol_version":4,"harness":"codex","path":"/absolute/path/to/codex"}
 {"op":"set_harness_mode","protocol_version":4,"harness":"codex","mode":"ask"}
 {"op":"set_up_harness","protocol_version":4,"harness":"claude"}
+{"op":"install_harness","protocol_version":4,"harness":"codex"}
+{"op":"start_harness_sign_in","harness":"codex"}
 {"op":"create_thread","protocol_version":4,"checkout":"/absolute/checkout","provider":"codex","model_id":"MODEL","request_id":"CLIENT_UUID","harness":"codex","thinking":"high","mode":"ask"}
 {"op":"configure_thread","protocol_version":4,"thread_id":"THREAD_ID","mode":"read_only"}
 ```
@@ -520,13 +522,31 @@ A client that steps down from 4 to 3 sees only Pi.
   is `invalid_request`.
 - **`set_up_harness`** sets up a harness that needs it; only `claude` does
   (see [Claude Code](#claude-code)), and any other harness is
-  `invalid_request`. It is the only operation that reaches the network for a
-  harness. It replies with the whole list, Claude Code checked again: a
+  `invalid_request`. It replies with the whole list, Claude Code checked again: a
   finished setup shows whatever the normal checks find, and a failed one stays
   `setup_required` with a `note` saying what went wrong. Setting up again
   when the copy is already in place downloads nothing. The download gives up
   after 15 seconds, inside the host's 20-second limit for any request, and
   setup can simply be tried again.
+- **`install_harness`** installs the Codex or Claude Code version Plait is
+  tested with into `tools/` in the host store, and for Claude Code also runs
+  setup. The host downloads the vendor's npm package for its own platform,
+  checks its pinned sha512, and unpacks only the executable's tree; a failed
+  install leaves nothing a lookup would use. A chosen path and the login
+  shell's `PATH` are searched first, so a copy the person installed always
+  wins. Older hosts reject the operation as `invalid_request`. It replies
+  with the whole list. Entries carry `installable` (the version this host can
+  install, or null when it has no build for its platform) and `managed`
+  (the copy that runs is the one the host installed). Only `set_up_harness`
+  and `install_harness` reach the network for a harness.
+- **`start_harness_sign_in`** runs the harness's own sign-in on the host:
+  `codex login --device-auth`, or `claude auth login`. It replies like
+  `start_sign_in`, with provider `harness:codex` or `harness:claude`, and
+  `sign_in_status`, `answer_sign_in`, and `cancel_sign_in` follow it. Codex shows
+  a link and code; Claude Code shows a link and asks for the code the page
+  gives. Credentials stay in the harness's own files; the host never reads
+  them or keeps a pasted code. A flow lasts at most 15 minutes, and
+  cancelling it stops the process.
 - **`create_thread`** takes an optional `harness`, `pi` when absent. A Codex
   thread's model has provider `codex` and a model ID from Codex's list, and a
   Claude Code thread's has provider `claude` and a model ID from Claude Code's
