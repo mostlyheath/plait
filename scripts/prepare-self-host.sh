@@ -9,7 +9,7 @@ if [[ $(uname -s) != Darwin || $(uname -m) != arm64 ]]; then
     exit 1
 fi
 for tool in git rustup cargo node npm xcodebuild; do
-    command -v "$tool" >/dev/null || { echo "Missing $tool. See docs/SELF-HOSTING.md." >&2; exit 1; }
+    command -v "$tool" >/dev/null || { echo "Missing $tool. See CONTRIBUTING.md#build-plait-with-plait." >&2; exit 1; }
 done
 if ! xcrun --sdk macosx --find metal >/dev/null; then
     echo 'Install the Xcode Metal component: xcodebuild -downloadComponent MetalToolchain' >&2

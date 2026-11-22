@@ -35,4 +35,4 @@ and 2). v0.1.0-preview.10 runs threads in the person's own Codex or Claude Code
 beside Pi, each with its own permissions (M7 steps 1 and 2). Current work is the
 rest of M7, an ACP client next. Changes to shared contracts,
 permissions, or persistence require agreement and compatibility tests. Follow
-[Contributing](CONTRIBUTING.md) and the [originality policy](docs/ORIGINALITY.md).
+[Contributing](CONTRIBUTING.md) and the [originality policy](CONTRIBUTING.md#originality-and-licenses).

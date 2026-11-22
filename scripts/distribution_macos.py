@@ -93,7 +93,7 @@ here=$(cd "$(dirname "$0")" && pwd)
         "Threads, drafts, and credentials are preserved. Future updates install from\n"
         "Plait > Check for Updates after active tasks finish.\n\n"
         "Setup, authentication, and updates:\n"
-        "https://github.com/heath0xFF/plait/blob/main/docs/MACOS.md\n"
+        "https://github.com/heath0xFF/plait/blob/main/docs/GUIDE.md\n"
     )
     image = work / f"Plait-{version}-{revision}-macos-arm64.dmg"
     run("hdiutil", "create", "-volname", "Plait", "-srcfolder", image_root,

@@ -118,7 +118,7 @@ main() {
     if [[ $component != client ]]; then
         printf 'A host update is staged if an older host is active. Finish work, then log out and back in to activate it.\n'
     fi
-    printf 'Setup and update guide: https://github.com/%s/blob/%s/docs/MACOS.md\n' "$repository" "$version"
+    printf 'Setup and update guide: https://github.com/%s/blob/%s/docs/GUIDE.md\n' "$repository" "$version"
 }
 
 main "$@"

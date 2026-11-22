@@ -12,7 +12,7 @@ does not own its process.
 
 Build `cargo build -p plait-host`; install runtime packages with
 `cd runtime && npm ci --ignore-scripts`. Node 22.19 or newer is required for
-source development. The [Mac host package](MACOS.md) includes pinned Node and
+source development. The [Mac host package](GUIDE.md#install-and-updates) includes pinned Node and
 runtime dependencies; it does not need a development checkout or shell Node.
 
 - `plait-host run [--store ABSOLUTE_PATH] [--runtime ABSOLUTE_PATH]`: foreground
@@ -689,7 +689,7 @@ message: version and sign-in parsing, the model list, every flag a run starts
 Claude Code with, mode changes in every mode, and interrupting with no turn
 running. What happens inside a turn has been tested only against a scripted
 stand-in so far; opt-in live tests for it are described in
-[Verification](VERIFICATION.md#claude-code).
+[Verification](VERIFICATION.md#known-gaps).
 
 ## Internal authorization boundary
 
@@ -1568,7 +1568,7 @@ See [Verification](VERIFICATION.md) for versioned results and
 development pass is not full host-execution acceptance.
 
 Use [Contributing](../CONTRIBUTING.md#required-checks) for focused commands and
-[manual release acceptance](VERIFICATION.md#manual-release-acceptance) for native
+[manual release acceptance](VERIFICATION.md#scenes-and-native-checks) for native
 and live-model checks. Do not substitute scripted lifecycle fixtures for the
 actual platform containment tests.
 
@@ -2041,7 +2041,7 @@ Pi receives `{type:"image",mimeType,data}` alongside text. Codex receives
 `{type:"image",url:"data:image/png;base64,..."}` in `turn/start` or `turn/steer`.
 Claude Code receives Anthropic base64 image source blocks through the pinned
 Agent SDK's streaming `SDKUserMessage` input. Image-only inputs contain no empty
-text block in any of the three adapters. [Verification](VERIFICATION.md#images-in-messages)
+text block in any of the three adapters. [Verification](VERIFICATION.md#known-gaps)
 records scripted coverage and the absence of live-model acceptance evidence.
 
 ## Recorded turn review

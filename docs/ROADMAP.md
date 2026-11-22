@@ -266,7 +266,7 @@ without following symlinks, and run off the UI thread. Editing and interactive
 shells use the person's tools through Open in Editor and Open Terminal Here.
 The reading, walking, and find work has provenance in Sidelit (same maintainer,
 MIT); Plait's views remain native GPUI. See the [Mac guide](MACOS.md) and
-[Git boundary](ARCHITECTURE.md#git-boundary) for shipped behavior.
+[Git boundary](ARCHITECTURE.md#host-first-data-flow) for shipped behavior.
 
 ## Harnesses and tools
 
@@ -300,7 +300,7 @@ place), so the agent itself should be the person's choice.
 
 Before adding an adapter, agree its protocol additions, capabilities, and
 install/version checks. Compare other agent workspaces by outcomes only,
-per the [originality policy](ORIGINALITY.md).
+per the [originality policy](../CONTRIBUTING.md#originality-and-licenses).
 
 **Built for M7 steps 1 and 2:** Pi, Codex, and Claude Code threads share the
 conversation and Git workspace. Codex uses the person's installed app-server;
@@ -347,7 +347,7 @@ Trusted projects already have the person's login-shell environment and tools.
 Other harnesses load their own skills and MCP servers; Plait does not inject
 Pi's resources into them. Pi TypeScript extensions come after MCP, if at all:
 they execute inside the runtime and need a separate replay and permission design.
-See [MCP tools](ARCHITECTURE.md#pi-mcp-tools) and [HOST.md](HOST.md) for the
+See [MCP tools](HOST.md#mcp-server-listing-and-project-switches) and [HOST.md](HOST.md) for the
 implemented discovery, configuration, and approval contracts.
 
 ## Turn records and review
@@ -372,8 +372,8 @@ lease excludes host writers, not every external-editor race.
 
 The exact coverage limits, failure states, retention rules, and compatibility
 contract are in [HOST.md](HOST.md#protocol-version-5). Implementation boundaries
-are in [Architecture](ARCHITECTURE.md#checkout-recording-and-undo); evidence is
-in [Verification](VERIFICATION.md#checkout-recording). A warm unchanged
+are in [Architecture](ARCHITECTURE.md#threads-runs-and-worktrees); evidence is
+in [Verification](VERIFICATION.md#automated-suites). A warm unchanged
 50,000-file record targets under 300 ms on Apple silicon; this is a target,
 not an installed-app measurement.
 
@@ -413,7 +413,7 @@ tab never stops a run or removes a worktree. Only the active workspace retains
 loaded content and a transcript watch; cold tabs retain bounded bookmarks.
 Settings opens over the workspace without changing the selected tab.
 See [tabs in the Mac guide](MACOS.md#tabs) and the
-[headless tab model](ARCHITECTURE.md#headless-tab-model).
+[headless tab model](ARCHITECTURE.md#desktop-state).
 
 ### Several threads in one project
 
@@ -458,7 +458,7 @@ reply shapes preserved. The remaining proposed flags include
 `execution_class_v1`, per-harness `shared_reader`, and `worktree_storage_v1`.
 Read-in-place and automatic cleanup need their own complete safety checks before
 enablement; neither is implied by existing lifecycle locks or manual removal.
-See [HOST.md](HOST.md), [Worktrees architecture](ARCHITECTURE.md#worktrees-graph),
+See [HOST.md](HOST.md), [Worktrees architecture](ARCHITECTURE.md#threads-runs-and-worktrees),
 and the [Mac guide](MACOS.md#worktrees) for implemented contracts and controls.
 
 ## Agreed next: Linear
@@ -565,7 +565,7 @@ names what has to be settled first.
 
 Targets from the product brief. Headless frame-cost measurements, which
 exclude GPU and the installed app, are in
-[Verification](VERIFICATION.md#measuring-frame-cost); installed-app results
+[Verification](VERIFICATION.md#performance-checks); installed-app results
 are not yet measured:
 
 - 60 FPS or better for normal local interaction.

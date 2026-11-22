@@ -47,7 +47,7 @@ class Ships(unittest.TestCase):
             "runtime/package-lock.json", "assets/themes/nord.yaml", "Cargo.lock",
             "scripts/build-macos.sh", "scripts/update_manifest.py", "scripts/install.sh",
         ]:
-            self.assertTrue(plan.ships(["docs/MACOS.md", path]), path)
+            self.assertTrue(plan.ships(["docs/GUIDE.md", path]), path)
 
     def test_no_change_since_the_last_preview_makes_none(self):
         self.assertFalse(plan.ships([]))
