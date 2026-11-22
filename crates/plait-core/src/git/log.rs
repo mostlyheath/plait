@@ -9,7 +9,7 @@ const MAX_PAGE: usize = 500;
 const FIELDS: usize = 5;
 
 /// One commit in the history list.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Commit {
     /// Full object ID in hex (40 for SHA-1, 64 for SHA-256 repositories).
     pub id: String,
@@ -22,7 +22,7 @@ pub struct Commit {
 }
 
 /// A page of history, newest first.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct History {
     pub commits: Vec<Commit>,
     /// More commits exist after this page.
@@ -156,7 +156,7 @@ pub fn show(root: &Path, id: &str) -> Result<Diff> {
 }
 
 /// A single bounded, hardened read for the project graph; parents retain topology.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct GraphCommit {
     pub commit: Commit,
     pub parents: Vec<String>,

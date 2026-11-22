@@ -42,6 +42,7 @@ pub mod toasts;
 pub mod tool_view;
 pub mod transcript;
 pub mod update;
+pub mod wire;
 
 pub mod history;
 pub mod navigation;

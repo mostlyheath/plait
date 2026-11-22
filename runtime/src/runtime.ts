@@ -6,6 +6,7 @@ import { Admissions, handlesAdmission } from './admission.ts';
 import { RunCapacity, resourceError, resourceFailure } from './run-capacity.ts';
 import type { ImageData } from './images.ts';
 import { TurnReview } from './turn-review.ts';
+import { GitReads } from './git-read.ts';
 import { LinearService } from './linear/service.ts';
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
@@ -80,6 +81,7 @@ export class Runtime {
   /** The checkout as each run found and left it, in the host's own store. */
   records: Records;
   turnReview: TurnReview;
+  gitReads = new GitReads();
   linear: LinearService;
   worktrees: Worktrees;
   admissions: Admissions;
@@ -299,6 +301,7 @@ export class Runtime {
     if (this.providers?.handles(input)) return this.providers.handle(input);
     if (handlesCleanup(input)) return this.checkoutCleanup(input);
     if (this.turnReview.handles(input)) return this.turnReview.handle(input);
+    if (this.gitReads.handles(input)) return this.gitReads.handle(input);
     if (this.linear.handles(input)) return this.linear.handle(input);
     if (this.worktrees.handles(input)) return this.worktrees.handle(input);
     if (handlesAdmission(input)) return this.admissions.handle(input);

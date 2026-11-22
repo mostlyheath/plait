@@ -25,7 +25,7 @@ pub const FIND_LIMIT: usize = 1000;
 pub const LINE_CLIP: usize = 2000;
 
 /// Size and modification time: enough to skip rereading an unchanged file.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Stamp {
     pub len: u64,
     pub device: u64,
@@ -83,6 +83,13 @@ pub fn stamp(root: &Path, relative: &Path) -> Result<Stamp, String> {
 
 /// Read `relative` under `root` for display.
 pub fn read(root: &Path, relative: &Path) -> Result<Opened, String> {
+    let (stamp, bytes) = read_bytes(root, relative)?;
+    Ok(classify(stamp, bytes, relative))
+}
+
+/// The file's stamp and bytes, or no bytes when it is over `READ_LIMIT`.
+/// A remote host sends these, and the desktop classifies and highlights them.
+pub fn read_bytes(root: &Path, relative: &Path) -> Result<(Stamp, Option<Vec<u8>>), String> {
     let file = open_regular(root, relative)?;
     let metadata = file.metadata().map_err(|e| e.to_string())?;
     let stamp = Stamp {
@@ -91,12 +98,8 @@ pub fn read(root: &Path, relative: &Path) -> Result<Opened, String> {
         inode: metadata.ino(),
         modified: metadata.modified().ok(),
     };
-    let too_large = Opened {
-        contents: Contents::TooLarge { len: stamp.len },
-        stamp,
-    };
     if stamp.len > READ_LIMIT {
-        return Ok(too_large);
+        return Ok((stamp, None));
     }
     let mut bytes = Vec::with_capacity(stamp.len as usize);
     file.take(READ_LIMIT + 1)
@@ -104,11 +107,22 @@ pub fn read(root: &Path, relative: &Path) -> Result<Opened, String> {
         .map_err(|e| e.to_string())?;
     // It grew past the limit between the size check and the read.
     if bytes.len() as u64 > READ_LIMIT {
-        return Ok(too_large);
+        return Ok((stamp, None));
     }
     if self::stamp(root, relative)? != stamp {
         return Err("File changed while it was being read. Open it again.".into());
     }
+    Ok((stamp, Some(bytes)))
+}
+
+/// What the viewer shows for bytes read by `read_bytes`.
+pub fn classify(stamp: Stamp, bytes: Option<Vec<u8>>, relative: &Path) -> Opened {
+    let Some(bytes) = bytes else {
+        return Opened {
+            contents: Contents::TooLarge { len: stamp.len },
+            stamp,
+        };
+    };
     let len = bytes.len() as u64;
     let contents = if bytes[..bytes.len().min(SNIFF)].contains(&0) {
         Contents::Binary { len }
@@ -118,7 +132,7 @@ pub fn read(root: &Path, relative: &Path) -> Result<Opened, String> {
             Err(_) => Contents::NotUtf8 { len },
         }
     };
-    Ok(Opened { contents, stamp })
+    Opened { contents, stamp }
 }
 
 fn open_regular(root: &Path, relative: &Path) -> Result<std::fs::File, String> {

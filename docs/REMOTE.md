@@ -205,9 +205,11 @@ Versionless, additive operations, like turn review. A host that does not
 know them answers `invalid_request`, and the desktop keeps the views
 unavailable with "Update this machine's host to see its Git."
 
-- **Reads:** `git_status`, `git_diff`, `git_files`, `git_log`, `git_show`,
-  `git_branches`, `git_line_counts`, `git_graph`, `file_read`,
-  `file_stamp`, and `worktree_sizes`.
+- **Reads (built):** one operation, `git_read`, names the read: `status`,
+  `diff`, `files`, `log`, `show`, `branches`, `line_counts`, `graph`,
+  `file`, or `file_stamp`. `git_read_page` fetches the rest of a large
+  result. Worktree sizes come with the desktop step, because they measure
+  the host's store too.
 - **Writes:** `git_write` carries one `WriteOp` (stage, unstage, hunk,
   commit, push, publish, fetch, pull, discard, restore, create or switch
   branch) and the checkout identity the desktop last read.
@@ -220,14 +222,16 @@ unavailable with "Update this machine's host to see its Git."
 
 The client accepts replies up to 1 MiB; local reads allow more. So:
 
-- Status and file lists are paged by a host token over one snapshot, the
-  way turn review pages. A changed checkout between pages restarts the
-  read rather than mixing snapshots.
-- `file_read` returns byte ranges of at most 768 KiB up to the existing
-  8 MiB file limit, each with the file's stamp; a stamp change restarts it.
-- Diffs and patches keep their current 512 KiB and 10,000-line caps, which
-  fit one reply.
-- Log, branch, graph, and line-count limits are unchanged.
+- The host runs a read once and keeps its serialized result. A result over
+  600 KiB is served in base64 pages of that size under a token, so every
+  page comes from the same snapshot. Tokens last two minutes after their
+  last use, at most four at a time, and end with their last page.
+- A result over 64 MiB is refused, not cut short.
+- A file comes back as its stamp and bytes, or only its stamp when it is
+  over the viewer's 8 MiB limit. The desktop classifies and highlights it,
+  as it does a local file.
+- Paths cross as base64 of their bytes, so names that are not UTF-8 survive.
+- Every other limit is the local read's own.
 
 ### Writes, credentials, and undo
 
@@ -252,8 +256,9 @@ The client accepts replies up to 1 MiB; local reads allow more. So:
 
 ### Order
 
-1. Host read operations with paging, and their tests: limits, paging over a
-   changing checkout, identity changes, symlinked files, and an older host.
+1. **Built:** host read operations with paging, and their tests: results
+   equal to local reads, paging, identity changes, symlinked files,
+   non-UTF-8 names, and an older host.
 2. Desktop backends for Changes, History, the branch picker, Files, the
    composer file list, line counts, and the Worktrees graph and sizes.
 3. `git_write` with host-kept discard backups, then network writes.

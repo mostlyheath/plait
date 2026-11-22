@@ -1175,6 +1175,7 @@ pub mod agent;
 pub mod build_output;
 pub mod checkout_queue;
 pub mod cleanup;
+pub mod git;
 pub mod harness;
 pub mod identity;
 pub mod linear;

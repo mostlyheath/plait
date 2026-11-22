@@ -13,9 +13,11 @@ pub struct Project {
     pub machines: Vec<Machine>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Change {
+    #[serde(with = "crate::wire::path")]
     pub path: PathBuf,
+    #[serde(with = "crate::wire::opt_path")]
     pub original: Option<PathBuf>,
     pub index: u8,
     pub worktree: u8,
@@ -64,8 +66,9 @@ impl Change {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct Snapshot {
+    #[serde(with = "crate::wire::path")]
     pub root: PathBuf,
     pub branch: String,
     /// On a branch with at least one commit, so there is something to push.
@@ -77,7 +80,7 @@ pub struct Snapshot {
 }
 
 /// Where the current branch stands against its upstream, as of the last fetch.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Tracking {
     /// Such as `origin/main`.
     pub upstream: String,
@@ -95,13 +98,13 @@ pub struct BranchHeader {
     pub tracking: Option<Tracking>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum DiffMode {
     Unstaged,
     Staged,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum DiffKind {
     Context,
     Added,
@@ -110,7 +113,7 @@ pub enum DiffKind {
     Header,
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct DiffLine {
     pub text: Arc<str>,
     pub kind: DiffKind,
@@ -118,7 +121,7 @@ pub struct DiffLine {
     pub new_line: Option<usize>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct Diff {
     /// The patch as Git wrote it, clipped for display.
     pub lines: Vec<DiffLine>,

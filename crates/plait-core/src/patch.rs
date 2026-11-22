@@ -22,7 +22,7 @@ pub enum FileHeaders {
 }
 
 /// One drawn row of a patch.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum PatchRow {
     /// The patch line at this index into `Diff::lines`, drawn as itself.
     Line(usize),
