@@ -2154,6 +2154,17 @@ The desktop does not use them yet.
 - Paths are absolute, at most 4096 bytes, without control characters; IDs
   match `[A-Za-z0-9_-]{1,128}`; a request is at most 65,000 bytes.
 
+## Device state
+
+The additive `device_state_get {device}` and `device_state_set {device, revision,
+state}` operations store an opaque JSON object per device. They omit
+`protocol_version`. A missing device returns revision 0 and null state. A set
+succeeds only at the current revision and returns the next revision; a stale
+write returns `conflict`, so the client can reread and retry. Device IDs match
+`[A-Za-z0-9_-]{1,128}` and serialized state is limited to 60,000 bytes. The
+host retains at most 64 devices, evicting the least recently updated on insertion.
+The desktop does not use these operations yet.
+
 ## Checkout Git reads for remote desktops
 
 These additive, read-only operations omit `protocol_version`. They let a
