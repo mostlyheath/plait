@@ -2119,9 +2119,8 @@ attribution proof, or reviewed baseline, and make no change to undo semantics.
 ## Checkout Git reads for remote desktops
 
 These additive, read-only operations omit `protocol_version`. They let a
-desktop on another machine read a checkout on this host. The desktop does
-not use them yet; [Remote hosts](REMOTE.md#remote-git-and-files-next-slice)
-describes the planned views. An older host rejects them with
+desktop on another machine read and change a checkout on this host; see
+[Remote hosts](REMOTE.md#remote-git-and-files). An older host rejects them with
 `invalid_request`, which the client reports as "Update this machine's host to
 see its Git."
 

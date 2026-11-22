@@ -172,9 +172,7 @@ impl Plait {
     }
 
     fn read_file(&mut self, reload: bool, cx: &mut Context<Self>) {
-        if !self.host_is_local() {
-            return;
-        }
+        let backend = self.repository_backend();
         let owner = self.host.read_stamp();
         let cancelled = self.workspace.cancelled.clone();
         let expected = self.state.checkout_key().cloned();
@@ -186,16 +184,9 @@ impl Plait {
         viewer.loading = !reload;
         let generation = viewer.generation;
         let root = viewer.root.clone();
-        let task = cx.background_executor().spawn(async move {
-            let expected = expected.ok_or("Checkout identity is not verified.")?;
-            expected.verify()?;
-            if root != expected.root {
-                return Err("Checkout identity changed.".into());
-            }
-            let opened = file_view::read(&root, &path)?;
-            expected.verify()?;
-            Ok(opened)
-        });
+        let task = cx
+            .background_executor()
+            .spawn(async move { backend.file(&root, expected.as_ref(), &path) });
         cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
@@ -242,7 +233,7 @@ impl Plait {
 
     /// Reread the open file if its size or time changed. Cheap: one stat.
     pub(super) fn check_file(&mut self, cx: &mut Context<Self>) {
-        if !self.host_is_local() || self.workspace.tab != Workspace::Files {
+        if self.workspace.tab != Workspace::Files {
             return;
         }
         let owner = self.host.read_stamp();
@@ -266,12 +257,10 @@ impl Plait {
         }
         let root = viewer.root.clone();
         let generation = viewer.generation;
-        let task = cx.background_executor().spawn(async move {
-            expected
-                .ok_or("Checkout identity is not verified.")?
-                .verify()?;
-            file_view::stamp(&root, &path)
-        });
+        let backend = self.repository_backend();
+        let task = cx
+            .background_executor()
+            .spawn(async move { backend.file_stamp(&root, expected.as_ref(), &path) });
         cx.spawn(async move |this, cx| {
             let stamp = task.await;
             let _ = this.update(cx, |this, cx| {

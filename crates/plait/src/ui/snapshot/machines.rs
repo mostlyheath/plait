@@ -247,8 +247,8 @@ fn remote_project_path_opens_only_absolute_paths() {
 }
 
 #[core::prelude::v1::test]
-fn remote_machine_runs_no_local_git_job() {
-    if !isolated("machines::remote_machine_runs_no_local_git_job") {
+fn remote_machine_reads_git_through_its_host() {
+    if !isolated("machines::remote_machine_reads_git_through_its_host") {
         return;
     }
     let scratch = std::env::temp_dir().join(format!("plait-remote-jobs-{}", std::process::id()));
@@ -256,21 +256,21 @@ fn remote_machine_runs_no_local_git_job() {
     let mut h = Harness::new(&repo, None, 900., 600.);
     h.connect(&repo, false);
     h.settle();
-    // Updated directly: settle would wait for a repository read that, on a
-    // remote machine, deliberately never starts.
-    h.window
-        .update(&mut h.cx, |p, _, cx| {
-            p.host_local = false;
-            // A refresh queues repository work; on a remote machine the pump
-            // must leave it queued rather than read this Mac's disk.
-            p.state.repository.refresh();
-            p.pump(cx);
-            assert!(
-                p.state.next_repository_job().is_some(),
-                "the job is still waiting, not started"
-            );
-        })
-        .unwrap();
+    h.update(|p, _, cx| {
+        assert!(matches!(p.state.repository.snapshot(), Load::Ready(_)));
+        // The test's host has no socket, so a read sent to it fails; this
+        // Mac's Git would have read the fixture and succeeded.
+        p.host_local = false;
+        p.state.repository.refresh();
+        p.pump(cx);
+    });
+    h.settle();
+    h.update(|p, _, _| {
+        assert!(
+            matches!(p.state.repository.snapshot(), Load::Error(_)),
+            "this Mac's Git answered for a remote checkout"
+        );
+    });
     drop(h);
     std::fs::remove_dir_all(scratch).unwrap();
 }

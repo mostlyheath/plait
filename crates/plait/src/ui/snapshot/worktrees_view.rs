@@ -74,11 +74,10 @@ pub(super) fn walk(repo: &Path, out: Option<&Path>, suffix: &str, width: f32, he
         let theme = if light { "light" } else { "dark" };
         install(&mut h, 4);
         h.capture(&format!("worktrees-graph-{theme}-{suffix}"));
-        // A remote host: lanes from its inventory, no local graph or sizes.
+        // A remote host: its graph, but no sizes, which measure this Mac's disk.
         h.update(|p, _, cx| {
             p.host_local = false;
             let rows = p.worktrees.rows.clone();
-            p.worktrees.graph = worktree_graph::layout(&rows, Vec::new(), false);
             p.worktrees.sizes = rows
                 .iter()
                 .map(|_| {

@@ -5,7 +5,7 @@
 use super::{Plait, Workspace, theme::*};
 use gpui::{prelude::*, *};
 use plait_core::{
-    git::{self, LineCount},
+    git::LineCount,
     host::{self, Request},
     model::DiffMode,
 };
@@ -223,9 +223,10 @@ impl Plait {
         let root = self.workspace.thread_files.root.clone();
         let paths = self.workspace.thread_files.paths.clone();
         let counted = root.clone();
+        let backend = self.repository_backend();
         let task = cx
             .background_executor()
-            .spawn(async move { git::line_counts(&counted, &paths) });
+            .spawn(async move { backend.line_counts(&counted, &paths) });
         cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {

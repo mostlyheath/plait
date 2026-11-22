@@ -1001,6 +1001,14 @@ impl Client {
         })
     }
 
+    /// A client for a test host's socket.
+    #[cfg(test)]
+    pub(crate) fn at_socket(path: PathBuf) -> Self {
+        Self {
+            transport: Transport::Local(path),
+        }
+    }
+
     pub fn over_link(link: std::sync::Arc<crate::remote::link::Link>) -> Self {
         Self {
             transport: Transport::Link(link),
