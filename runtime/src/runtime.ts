@@ -65,7 +65,7 @@ type Session = ToolState & {
   /** The person's prompt templates, found when the run started. */
   templates?: TemplateEntry[];
   external?: ExternalRun;
-  sink?: TurnSink;
+  sink?: TurnSink; executor?: TurnExecutor;
 };
 type Query = { minEntryId?: number; maxEntryId?: number; order: 'ascending' | 'descending' };
 /** Inputs one thread may hold behind its run. */
@@ -461,7 +461,8 @@ export class Runtime {
       case 'approve': {
         const session = this.sessions.get(String(request.thread_id));
         if (!session) fail('not_found', 'Approval is stale, stopped, or already answered.');
-        session.approvals.answer(String(request.approval_id), request.allow === true);
+        if (session.executor) session.executor.command({ type: 'approve', id: String(request.approval_id), allow: request.allow === true });
+        else session.approvals.answer(String(request.approval_id), request.allow === true);
         return { thread: session.snapshot };
       }
       case 'command_policy': case 'set_command_policy': return commandPolicyOperation(this.store, request);
@@ -669,13 +670,9 @@ export class Runtime {
       const opened = await executor.open(input, { models: this.models, state: session, retry: this.retry, registry: state => this.registry(state) });
       session.harness = opened.harness; session.root = opened.root;
       await this.syncInputs(session, true);
-      session.watch = await session.root.watch(context);
-      session.watch.start(async call => {
-        if (call.kind !== 'value') return;
-        await this.syncInputs(session);
-        session.sink!.emit({ type: 'live', projection: call.value, inputs: session.inputs, contextWindow: this.models.getModel(snapshot.model.provider, snapshot.model.model_id)?.contextWindow ?? null });
-        session.sink!.emit({ type: 'commit', head: Math.max(0, ...call.value.entries.map(entry => Number(entry.id))) });
-      });
+      session.watch = await executor.watch(session.root, session.sink!, async () => {
+        await this.syncInputs(session); return session.inputs;
+      }, () => this.models.getModel(snapshot.model.provider, snapshot.model.model_id)?.contextWindow ?? null);
     });
   }
   async submit(id: string, requestId: string, text: string, mode: ApprovalMode = 'ask', whenBusy?: QueueMode, images: string[] = []) {
@@ -734,16 +731,17 @@ export class Runtime {
       if (!this.records.busy(snapshot.checkout)) lease = await acquireCheckout(snapshot.checkout, 'writer');
       const save = () => this.save(snapshot);
       let sink: TurnSink | undefined;
-      const approvals = new InteractiveApproval(snapshot, () => { if (sink) sink.emit({ type: 'approval_needed' }); else save(); });
+      const approvals = new InteractiveApproval(snapshot, save);
+      const executor = this.external.resolveHarness(snapshot).kind === 'pi' ? new TurnExecutor() : undefined;
       // The mode belongs to this admission only; the next submission chooses again.
-      authorization = new RunAuthorization(mode === 'auto' ? automaticApproval : approvals);
+      authorization = new RunAuthorization(mode === 'auto' ? automaticApproval : (executor ?? approvals));
       const session: Session = {
         snapshot, vcs: threadKind(this.store, id), baseline: [], protected: [], rootIdentity: this.store.rootIdentity(id), buildCache: { store: this.directory, thread: id }, owned: new Map(), inputs: [], requestId,
-        authorization, approvals, mcpApproval: approvals, lease, save, outputs: this.store.outputs, record: image => this.store.record(id, image), steered: new Map(),
+        authorization, approvals, mcpApproval: executor ?? approvals, lease, save, outputs: this.store.outputs, record: image => this.store.record(id, image), steered: new Map(),
       };
       if (this.external.resolveHarness(snapshot).kind === 'pi') {
         sink = this.createTurnSink(snapshot, () => this.capacity.phases.set(snapshot.id, 'running'), () => session.save());
-        session.sink = sink;
+        session.sink = sink; session.executor = executor; executor!.connect(sink);
       }
       admitted = session;
       await this.beginCleanup(session);
@@ -975,7 +973,7 @@ export class Runtime {
         case 'external': return selected.id === 'codex' ? await this.runCodex(session, requestId, text, header) : await this.runClaude(session, requestId, text, header);
         case 'pi': break;
       }
-      const executor = new TurnExecutor();
+      const executor = session.executor!;
       const input: PiTurnInput = { sessionFile: join(this.directory, `${snapshot.id}.sqlite`), checkout: snapshot.checkout,
         model: { provider: snapshot.model.provider, modelId: snapshot.model.model_id }, maxTurns: this.maxTurns,
         vcs, priorOwned: this.store.owned(snapshot.id), directory: this.directory, threadId: snapshot.id,

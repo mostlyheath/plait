@@ -144,7 +144,8 @@ test('Pi sink preserves event order for plain and approval turns', async t => {
   assert.equal(events[0], 'record_before');
   assert.ok(events.indexOf('phase') > events.indexOf('record_before'));
   assert.ok(events.indexOf('approval_needed') > events.indexOf('phase'));
-  assert.equal(events.filter(event => event === 'approval_needed').length, 2);
+  assert.equal(events.filter(event => event === 'approval_needed').length, 1);
+  assert.ok(events.indexOf('approval_settled') > events.indexOf('approval_needed'));
   for (let i = 0; i < events.length; i++) if (events[i] === 'live') assert.equal(events[i + 1], 'commit');
   assert.deepEqual(events.slice(-2), ['record_after', 'finished']);
 });

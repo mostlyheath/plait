@@ -1,4 +1,4 @@
-import type { Snapshot, InputRecord } from './protocol.ts';
+import type { Snapshot, InputRecord, Approval } from './protocol.ts';
 import type { Store } from './store.ts';
 import type { Records } from './records.ts';
 import type { RunCapacity } from './run-capacity.ts';
@@ -25,6 +25,9 @@ import { dirtyPaths, identities, pathKey } from './safety.ts';
 import { restoreOwned } from './provenance.ts';
 import type { Postimage } from './safety.ts';
 import type { ThinkingLevel } from './protocol.ts';
+import { describeApproval } from './approval.ts';
+import { escapeDisplay } from './text.ts';
+import type { AuthorizationPolicy, EffectCall } from './authorization.ts';
 
 export type PiTurnInput = {
   sessionFile: string; checkout: string; model: { provider: string; modelId: string };
@@ -56,7 +59,49 @@ export interface PiTurnCallbacks {
 }
 
 /** Runs the configured Pi conversation; the caller retains its session and cleanup. */
-export class TurnExecutor {
+export class TurnExecutor implements AuthorizationPolicy {
+  private pending?: { id: string; signal: AbortSignal; settle(allow: boolean): void };
+  private sink?: TurnSink;
+  connect(sink: TurnSink): void { this.sink = sink; }
+  async authorize(call: EffectCall, signal: AbortSignal): Promise<void> {
+    if (!await this.ask(describeApproval(call), signal)) fail('permission_denied', 'Tool permission denied or revoked.');
+  }
+  async ask(approval: Approval, signal: AbortSignal): Promise<boolean> {
+    approval = { ...approval, summary: escapeDisplay(approval.summary), details: escapeDisplay(approval.details) };
+    if (signal.aborted) fail('permission_denied', 'Tool permission denied or revoked.');
+    if (this.pending) fail('busy', 'Another tool is awaiting approval.');
+    const sink = this.sink;
+    if (!sink) throw new Error('Executor sink is not connected.');
+    const allowed = await new Promise<boolean>((resolve, reject) => {
+      const cancel = () => { try { settle(false); } catch {} };
+      const settle = (allow: boolean) => {
+        if (this.pending !== pending) return;
+        this.pending = undefined; signal.removeEventListener('abort', cancel);
+        try { sink.emit({ type: 'approval_settled', id: approval.id }); resolve(allow); }
+        catch (error) { reject(error); throw error; }
+      };
+      const pending = { id: approval.id, signal, settle };
+      this.pending = pending; signal.addEventListener('abort', cancel, { once: true });
+      try { sink.emit({ type: 'approval_needed', approval }); if (signal.aborted) cancel(); }
+      catch (error) { this.pending = undefined; signal.removeEventListener('abort', cancel); reject(error); }
+    });
+    return allowed && !signal.aborted;
+  }
+  command(command: { type: 'approve'; id: string; allow: boolean }): void {
+    const pending = this.pending;
+    if (!pending || pending.id !== command.id || pending.signal.aborted) fail('not_found', 'Approval is stale, stopped, or already answered.');
+    pending.settle(command.allow);
+  }
+  async watch(root: Conversation, sink: TurnSink, inputs: () => Promise<InputRecord[]>, contextWindow: () => number | null) {
+    const watch = await root.watch(context);
+    watch.start(async call => {
+      if (call.kind !== 'value') return;
+      sink.emit({ type: 'live', projection: call.value, inputs: await inputs(), contextWindow: contextWindow() });
+      sink.emit({ type: 'commit', head: Math.max(0, ...call.value.entries.map(entry => Number(entry.id))) });
+    });
+    return watch;
+  }
+
   async prepare(input: PiTurnInput, state: ToolState): Promise<void> {
     const baseline = await dirtyPaths(input.checkout, input.vcs);
     state.owned = await restoreOwned(input.checkout, baseline, input.priorOwned, state.rootIdentity, state.lease?.fd, state.lease?.lifecycleFd, input.vcs);
@@ -134,7 +179,8 @@ export type TurnEvent =
   | { type: 'phase'; phase: 'running' }
   | { type: 'live'; projection: Projection; inputs: InputRecord[]; contextWindow: number | null }
   | { type: 'commit'; head: number }
-  | { type: 'approval_needed' }
+  | { type: 'approval_needed'; approval: Approval }
+  | { type: 'approval_settled'; id: string }
   | { type: 'record_before'; capacity: RunCapacity; records: Records; dev: string; requestId: string; signal: AbortSignal; lease?: LeaseHandle }
   | { type: 'record_after'; records: Records; record: string; lease: LeaseHandle }
   | { type: 'finished' };
@@ -167,7 +213,13 @@ export class InProcessSink implements TurnSink {
         for (const tool of this.snapshot.tools) if (tool.name.startsWith('mcp__')) tool.name = this.store.setting(nameKey(this.snapshot.id, tool.name)) ?? tool.name;
         break;
       case 'commit': this.save(event.head); break;
-      case 'approval_needed': this.save(); break;
+      case 'approval_needed': this.snapshot.pending_approval = event.approval; this.snapshot.status = 'awaiting_approval'; this.save(); break;
+      case 'approval_settled':
+        if (this.snapshot.pending_approval?.id === event.id) {
+          this.snapshot.pending_approval = null;
+          if (this.snapshot.status === 'awaiting_approval') this.snapshot.status = 'running';
+        }
+        this.save(); break;
       case 'record_before': return event.capacity.prepare(event.dev, this.snapshot.id, event.signal,
         () => event.records.before(this.snapshot.id, event.requestId, this.snapshot.checkout, event.lease));
       case 'record_after': return event.records.after(event.record, event.lease);

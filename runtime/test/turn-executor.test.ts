@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context';
 import { createModels } from '@earendil-works/pi-ai/models';
-import { fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai/providers/faux';
-import { createRegistry } from '@earendil-works/pi-durable';
+import { fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai/providers/faux';
+import { createRegistry, defineTool, defineExtension } from '@earendil-works/pi-durable';
 import type { ToolState } from '../src/tools.ts';
 import { TurnExecutor, type TurnEvent, type TurnSink } from '../src/turn-executor.ts';
 
@@ -50,4 +50,47 @@ test('executor includes discovered instructions with MCP disabled', async () => 
     assert.match(instructions, /Follow this instruction\./);
     assert.equal(state.mcp, undefined);
   } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+
+test('executor handles write approvals through commands without Runtime', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'plait-executor-approval-'));
+  const executor = new TurnExecutor();
+  const events: TurnEvent[] = []; const writes: string[] = [];
+  let allow = true;
+  const sink = { emit(event: TurnEvent) {
+    events.push(event);
+    if (event.type === 'approval_needed') queueMicrotask(() => executor.command({ type: 'approve', id: event.approval.id, allow }));
+  } } as TurnSink;
+  executor.connect(sink);
+  const models = createModels(); const faux = fauxProvider({ tokensPerSecond: 1e8 });
+  faux.setResponses([
+    fauxAssistantMessage([fauxToolCall('write', { path: 'allowed' }, { id: 'first' })], { stopReason: 'toolUse' }), fauxAssistantMessage('done'),
+    fauxAssistantMessage([fauxToolCall('write', { path: 'denied' }, { id: 'second' })], { stopReason: 'toolUse' }), fauxAssistantMessage('done'),
+  ]); models.setProvider(faux.provider);
+  const input = { sessionFile: join(directory, 'session.sqlite'), checkout: directory, model: { provider: 'faux', modelId: 'faux-1' }, maxTurns: 10, vcs: 'folder' as const, priorOwned: [], directory, threadId: 'thread', trusted: false, header: '', mcpSettings: {} };
+  const state = { authorization: { active: true } } as ToolState;
+  const { harness, root } = await executor.open(input, { models, state, retry: { enabled: false, maxRetries: 0, baseDelayMs: 0 }, registry: () => {
+    const registry = createRegistry();
+    registry.install(defineExtension({ name: 'test', tools: [defineTool({ name: 'write', description: 'Write a file', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+      async execute(value, api) {
+        const path = (value as { path: string }).path;
+        await executor.authorize({ toolId: api.callId, name: 'write', arguments: { path }, dirtyPaths: [] }, new AbortController().signal);
+        writes.push(path); return { output: [{ type: 'text' as const, text: 'written' }] };
+      } })] }));
+    return registry;
+  } });
+  try {
+    for (const requestId of ['one', 'two']) {
+      await executor.run({ root, instructions: 'Use the tool.', model: input.model, thinkingLevel: null, maxTurns: 10, signal: new AbortController().signal }, sink, {
+        activate() {}, async draft() { return { type: 'input', requestId, content: 'Write' }; }, started() {}, async steer() {},
+      });
+      allow = false;
+    }
+    assert.deepEqual(writes, ['allowed']);
+    const approvals = events.filter(event => event.type === 'approval_needed');
+    assert.equal(approvals.length, 2);
+    assert.notEqual(approvals[0].approval.id, approvals[1].approval.id);
+    assert.equal(events.filter(event => event.type === 'approval_settled').length, 2);
+  } finally { await harness.close(context); await rm(directory, { recursive: true, force: true }); }
 });
