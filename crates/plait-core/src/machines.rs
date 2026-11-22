@@ -67,7 +67,7 @@ pub enum Transport {
     },
 }
 impl Transport {
-    fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<(), String> {
         match self {
             Self::Local => Ok(()),
             Self::Ssh { port, store, .. } => {

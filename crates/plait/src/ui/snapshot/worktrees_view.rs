@@ -74,6 +74,25 @@ pub(super) fn walk(repo: &Path, out: Option<&Path>, suffix: &str, width: f32, he
         let theme = if light { "light" } else { "dark" };
         install(&mut h, 4);
         h.capture(&format!("worktrees-graph-{theme}-{suffix}"));
+        // A remote host: lanes from its inventory, no local graph or sizes.
+        h.update(|p, _, cx| {
+            p.host_local = false;
+            let rows = p.worktrees.rows.clone();
+            p.worktrees.graph = worktree_graph::layout(&rows, Vec::new(), false);
+            p.worktrees.sizes = rows
+                .iter()
+                .map(|_| {
+                    Some(Err(
+                        "Sizes are measured only for this Mac's checkouts.".into()
+                    ))
+                })
+                .collect();
+            p.worktrees.prepare();
+            cx.notify();
+        });
+        h.capture(&format!("worktrees-remote-{theme}-{suffix}"));
+        h.update(|p, _, _| p.host_local = true);
+        install(&mut h, 4);
         h.update(|p, _, _| p.worktrees.selected = 2);
         h.pointer(PlatformInput::MouseMove(MouseMoveEvent {
             position: point(
@@ -866,6 +885,49 @@ fn removal_prompt_freezes_choices_and_identity_across_resort_and_refresh() {
             }
         });
     }
+    drop(h);
+    let _ = std::fs::remove_dir_all(scratch);
+}
+/// A remote host's checkout paths name another machine's disk, so sizes are
+/// marked unavailable rather than measured on this Mac.
+#[core::prelude::v1::test]
+fn a_remote_host_measures_nothing_here() {
+    if !isolated("worktrees_view::a_remote_host_measures_nothing_here") {
+        return;
+    }
+    let scratch =
+        std::env::temp_dir().join(format!("plait-worktree-remote-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    let mut h = Harness::new(&repo, None, 1380., 860.);
+    h.connect(&repo, false);
+    install(&mut h, 4);
+    h.update(|p, _, cx| {
+        p.host_local = false;
+        p.worktrees.sizes[1] = Some(Err("The checkout folder is missing.".into()));
+        for i in [0, 2, 3] {
+            p.worktrees.sizes[i] = None;
+        }
+        let stamp = p
+            .tabs
+            .model
+            .active()
+            .and_then(|id| p.tabs.model.read_stamp(id))
+            .unwrap();
+        let generation = p.worktrees.generation;
+        p.measure_worktrees(stamp, generation, cx);
+        for i in [0, 2, 3] {
+            assert!(
+                matches!(&p.worktrees.sizes[i], Some(Err(why)) if why.contains("this Mac")),
+                "row {i} was not marked unavailable"
+            );
+        }
+        assert_eq!(
+            p.worktrees.sizes[1],
+            Some(Err("The checkout folder is missing.".into())),
+            "an earlier result was replaced"
+        );
+        assert_eq!(p.worktrees.total, "Size unavailable");
+    });
     drop(h);
     let _ = std::fs::remove_dir_all(scratch);
 }

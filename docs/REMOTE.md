@@ -1,6 +1,6 @@
 # Remote hosts
 
-**Agreed design for M3; transport framing, the bridge, and SSH transport are built.** The maintainer chose the direction:
+**Agreed design for M3. Built: transport framing, the bridge, SSH and tailnet transports, one remote machine per window, and the Linux user service.** The maintainer chose the direction:
 reach a Plait host on another machine over SSH or over a tailnet, with this
 Linux workstation as the first remote host, and remote threads before remote
 Git. [HOST.md](HOST.md) remains the contract for what is implemented.
@@ -79,6 +79,15 @@ this frame:
   nodes are refused unless listed by name.
 - The same stream format and limits apply.
 - The client dials `host:port` over the tailnet and needs no SSH.
+- The listener asks `tailscaled` at `/var/run/tailscale/tailscaled.sock`, where
+  Linux installs it. Elsewhere it cannot reach `tailscaled` and refuses to
+  start, so the tailnet listener is a Linux host feature for now.
+- On the host, run `plait-host tailnet allow --me` to allow your login, or
+  `plait-host tailnet allow <login>` to allow another login. Tagged nodes also
+  require `plait-host tailnet allow-node <name>`. Start the listener with
+  `plait-host serve --tailnet [--port 7419] [--store PATH]`. On Linux,
+  `plait-host install-service --tailnet` installs the separate listener unit.
+  The owner host service must also be running.
 
 ### What crosses the link
 
@@ -164,6 +173,9 @@ Decided while building step 4, to reach usable remote threads sooner.
 - **Git views.** Changes, History, Files, and the editor and terminal
   handoffs say they are unavailable on a remote machine until remote Git is
   built.
+  Worktrees lists the host's worktrees and removes them through the host, but
+  draws no commit graph and measures no sizes, because both read this Mac's
+  Git and disk.
 - **Later.** Projects from several machines in one sidebar at once, as
   described above, follow as their own slice.
 
@@ -272,7 +284,7 @@ The client accepts replies up to 1 MiB; local reads allow more. So:
      unavailable Git views, and scoped alerts.
    - Tests: scenes with mixed local, remote, and offline machines, and
      approval and Stop routing.
-6. **Tailnet listener and client.**
+6. **Tailnet listener and client — built.**
    - Tests: a scripted `tailscaled` answering for an allowed owner, the
      wrong user, a tagged peer, and being down; refusal to bind a
      non-Tailscale address; and limits.
