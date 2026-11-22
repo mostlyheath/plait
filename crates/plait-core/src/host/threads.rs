@@ -1,6 +1,5 @@
 //! The live thread list: an initial listing, then only what changed. Needs a version 3 host.
 
-use serde::Deserialize;
 use std::{
     os::unix::net::UnixStream,
     time::{Duration, Instant},
@@ -15,19 +14,7 @@ pub struct ThreadWatch {
     threads: Vec<ThreadSummary>,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Listing {
-    threads: Vec<ThreadSummary>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Event {
-    event: String,
-    threads: Vec<ThreadSummary>,
-    removed: Vec<String>,
-}
+pub use plait_protocol::host::threads::{Event, Listing};
 
 impl Client {
     pub fn watch_threads(&self, archived: bool) -> Result<ThreadWatch, Error> {

@@ -13,18 +13,7 @@ use std::{
 /// How long a host may take to send the first snapshot.
 const SNAPSHOT_WAIT: Duration = Duration::from_secs(20);
 
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
-pub struct HostIdentity {
-    pub id: String,
-    pub name: String,
-    pub platform: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
-pub struct Project {
-    pub path: PathBuf,
-    pub hidden: bool,
-}
+pub use plait_protocol::host::workspace::{HostIdentity, Project, Seen};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Worktree {
@@ -33,14 +22,6 @@ pub struct Worktree {
     pub branch: String,
     pub creation_id: Option<String>,
     pub identity: Option<crate::git::worktree::Identity>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Seen {
-    pub thread_id: String,
-    pub updated_at: u64,
-    pub state: String,
-    pub unread: bool,
 }
 
 /// One consistent view of a host's workspace.
@@ -55,7 +36,6 @@ pub struct View {
     pub worktrees: Vec<Worktree>,
     pub seen: Vec<Seen>,
 }
-
 #[derive(Debug, Serialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 enum Request<'a> {

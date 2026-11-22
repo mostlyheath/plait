@@ -4,6 +4,7 @@ pub mod display_text;
 pub mod file_view;
 pub mod frame;
 pub mod git;
+pub mod host;
 pub mod images;
 pub mod lease;
 pub mod model;
