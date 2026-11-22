@@ -76,6 +76,17 @@ impl Plait {
         }
     }
 
+    /// The window's title names another machine, so it is clear in the window
+    /// list and the Dock which machine a window works on.
+    pub(super) fn update_window_title(&self, window: &mut Window) {
+        let title = if self.host_is_local() {
+            "Plait".to_owned()
+        } else {
+            format!("Plait — {}", self.machine_label())
+        };
+        window.set_window_title(&title);
+    }
+
     /// The connected machine, as projects and tabs name it.
     pub(super) fn current_machine(&self) -> plait_core::model::Machine {
         let local = self.host_is_local();

@@ -367,6 +367,7 @@ impl Plait {
         workspace.status = view.status.clone();
         workspace.source = Source::Host(view.host);
         workspace.failed = false;
+        self.update_window_title(window);
         if !self.tabs.persistence.host_loaded && !self.tabs.persistence.host_loading {
             self.tabs.persistence.host_loading = true;
             self.load_host_tabs(window, cx);

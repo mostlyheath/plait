@@ -251,6 +251,7 @@ impl Plait {
             self.switch_machine_tabs(window, cx);
             self.rebuild_projects(cx);
         }
+        self.update_window_title(window);
         // This client was just made: the reconnect below must not make another.
         self.machines.fresh_link = true;
         self.host.connection.connecting = false;

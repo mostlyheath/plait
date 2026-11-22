@@ -116,6 +116,53 @@ fn machines_snapshots() {
         h.capture(&format!("remote-changes-{suffix}"));
         h.update(|p, window, cx| p.open_repository(&super::super::OpenRepository, window, cx));
         h.capture(&format!("remote-path-{suffix}"));
+        // A remote machine's own projects, named by its host, with the switcher open.
+        let mut h = Harness::new(&repo, Some(&output), width, height);
+        h.connect(&repo, false);
+        let mut existing = None;
+        h.update(|p, _, _| {
+            existing = p
+                .preferences
+                .value
+                .machines
+                .list()
+                .iter()
+                .find(|m| m.name == "workstation")
+                .map(|m| m.id.clone());
+        });
+        let id = existing.unwrap_or_else(|| workstation(&mut h));
+        h.update(|p, window, cx| {
+            p.settings_open = false;
+            let client = p.host_client();
+            p.use_machine_client(client, id.clone(), false, window, cx);
+            p.host.connection.connecting = false;
+            p.host.connection.connected = true;
+            p.machines.fresh_link = true;
+            let generation = p.host_workspace_generation();
+            let view = plait_core::host::workspace::View {
+                schema: 1,
+                host: plait_core::host::workspace::HostIdentity {
+                    id: "scene-host".into(),
+                    name: "workstation".into(),
+                    platform: "linux".into(),
+                },
+                revision: 1,
+                projects: ["/srv/api", "/srv/web"]
+                    .into_iter()
+                    .map(|path| plait_core::host::workspace::Project {
+                        path: path.into(),
+                        hidden: false,
+                    })
+                    .collect(),
+                worktrees: Vec::new(),
+                seen: Vec::new(),
+                status: Default::default(),
+            };
+            p.apply_workspace(generation, view, window, cx);
+            p.navigation.menu = Some("machines".into());
+            cx.notify();
+        });
+        h.capture(&format!("remote-switcher-{suffix}"));
     }
     std::fs::remove_dir_all(scratch).unwrap();
 }
