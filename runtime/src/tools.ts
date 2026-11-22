@@ -12,14 +12,13 @@ import type { BuildCache } from './build-cache.ts';
 import { fail, HostError } from './protocol.ts';
 import { rangeArgs, rangeText, outputTail } from './tool-output.ts';
 import type { CommandOutputs, TextRange } from './tool-output.ts';
-import type { Snapshot } from './protocol.ts';
 import type { AuthorizationPolicy, RunAuthorization } from './authorization.ts';
 import type { McpRun } from './mcp/tools.ts';
 import { readableFolders, skillFile } from './skills.ts';
 import type { SkillEntry } from './skills.ts';
 
 export type ToolState = {
-  snapshot: Snapshot; vcs?: 'git' | 'folder'; baseline: string[]; protected: FileIdentity[];
+  snapshot: { id: string; checkout: string }; vcs?: 'git' | 'folder'; baseline: string[]; protected: FileIdentity[];
   authorization: RunAuthorization;
   lease?: LeaseHandle;
   rootIdentity: FileIdentity;

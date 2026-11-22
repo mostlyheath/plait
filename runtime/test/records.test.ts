@@ -35,6 +35,9 @@ function recorded(pair: Pair | undefined, run: string, paths: string[]) {
   assert.ok(pair.after, `run ${run} has no later record`);
   assert.equal(pair.after.state, 'ready', JSON.stringify(pair.after));
   assert.equal(pair.after.before, pair.before.id);
+  assert.match(String(pair.before.id), /^[0-9a-f-]{36}$/);
+  assert.match(String(pair.after.id), /^[0-9a-f-]{36}$/);
+  assert.notEqual(pair.before.id, pair.after.id);
   assert.notEqual(pair.after.commit_id, pair.before.commit_id);
   assert.deepEqual(pair.after.paths, paths);
   assert.deepEqual(pair.before.paths, [], 'only a run\'s later record lists paths');
@@ -140,6 +143,7 @@ test('host restart quarantines an in-flight run and records only after cleanup c
   const [pair] = await eventually(async () => stored(f.store), value => value[0]?.after?.state === 'ready');
   recorded(pair, 'submit-1', ['attempts.txt', 'notes.txt']);
   assert.equal(pair.after!.after_restart, 1);
+  assert.equal(pair.before.id, cut.before.id);
   assert.equal((await f.watch(thread.id)).status, 'interrupted');
   // The next run in the checkout is recorded as usual, after the late record.
   assert.equal((await f.submit(thread.id, 'submit-2', 'Carry on.')).ok, true);
@@ -290,10 +294,12 @@ test('restart recovery waits for a leased next run when another writer held the 
   const pendingCleanup = await cleanupHelper('read', f.repo);
   await cleanupHelper('resolve', f.repo, pendingCleanup.cleanup!.token);
   const lease = await acquireCheckout(f.repo);
+  let recoveryId: unknown;
   try {
     await f.start('answer');
     const [deferred] = await eventually(async () => stored(f.store), value => value[0]?.after?.state === 'failed');
     assert.equal(deferred.after!.after_restart, 1);
+    recoveryId = deferred.after!.id;
   } finally { await lease.close(); }
   await writeFile(join(f.repo, 'while-down.txt'), 'external change\n');
   await f.submit(thread.id, 'submit-2', 'Continue.');
@@ -301,6 +307,7 @@ test('restart recovery waits for a leased next run when another writer held the 
   const [recovered, next] = stored(f.store);
   recorded(recovered, 'submit-1', ['attempts.txt', 'notes.txt', 'while-down.txt']);
   assert.equal(recovered.after!.after_restart, 1);
+  assert.equal(recovered.after!.id, recoveryId, 'retry retains the allocated record ID');
   recorded(next, 'submit-2', []);
   assert.equal(next.before.tree, recovered.after!.tree);
 });

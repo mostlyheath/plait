@@ -1,6 +1,6 @@
 import { createServer, createConnection, type Server, type Socket } from 'node:net';
 import { chmod, lstat, unlink } from 'node:fs/promises';
-import { COMMAND_LIMIT, EVENT_LIMIT, encodeFrame, FrameDecoder, parseCommand, parseRunnerMessage, type Command, type Attached, type Event, type RunnerMessage } from './protocol.ts';
+import { COMMAND_LIMIT, EVENT_LIMIT, encodeFrame, EventBuffer, FrameDecoder, parseCommand, parseRunnerMessage, type Command, type Attached, type Event, type RunnerMessage } from './protocol.ts';
 import { helper } from './registry.ts';
 
 // Node does not expose peer credentials; the host checks the connected descriptor.
@@ -12,7 +12,7 @@ export class RunnerServer {
   private server?: Server;
   private readonly sockets = new Set<Socket>();
   private readonly attached = new Set<Socket>();
-  private readonly events: Event[] = [];
+  private readonly events = new EventBuffer();
   private readonly path: string;
   private readonly snapshot: () => Attached;
   private readonly command: (command: Command) => void;
@@ -27,15 +27,14 @@ export class RunnerServer {
       await verify(socket); this.sockets.add(socket);
       let attached = false; const decoder = new FrameDecoder(COMMAND_LIMIT, parseCommand);
       socket.on('data', (data: Buffer) => { try { for (const message of decoder.push(data)) {
-        if (!attached) { if (message.type !== 'attach') throw new Error('attach required'); attached = true; this.attached.add(socket); socket.write(encodeFrame(this.snapshot(), EVENT_LIMIT)); for (const event of this.events) if (event.seq > message.last_seq) socket.write(encodeFrame(event, EVENT_LIMIT)); }
-        else { if (message.type === 'attach') throw new Error('already attached'); this.command(message); }
+        if (!attached) { if (message.type !== 'attach') throw new Error('attach required'); const replay = this.events.after(message.last_seq); attached = true; this.attached.add(socket); socket.write(encodeFrame(this.snapshot(), EVENT_LIMIT)); for (const event of replay) socket.write(encodeFrame(event, EVENT_LIMIT)); }
+        else { if (message.type === 'attach') throw new Error('already attached'); if (message.type === 'ack') this.events.ack(message.seq); else this.command(message); }
       } } catch { socket.destroy(); } });
       socket.on('close', () => { this.sockets.delete(socket); this.attached.delete(socket); }); socket.on('error', () => {}); socket.resume();
     } catch { socket.destroy(); }
   }
   publish(event: Event): void {
-    parseRunnerMessage(event); if (this.events.length && event.seq <= this.events.at(-1)!.seq) throw new Error('non-monotonic sequence');
-    const frame = encodeFrame(event, EVENT_LIMIT); this.events.push(event); for (const socket of this.attached) socket.write(frame);
+    const frame = encodeFrame(event, EVENT_LIMIT); this.events.publish(event); for (const socket of this.attached) socket.write(frame);
   }
   async close(): Promise<void> { for (const socket of this.sockets) socket.destroy(); if (this.server) await new Promise<void>((resolve, reject) => this.server!.close(error => error ? reject(error) : resolve())); await unlink(this.path).catch((error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error; }); }
 }

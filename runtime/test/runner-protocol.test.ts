@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { COMMAND_LIMIT, EVENT_LIMIT, encodeFrame, EventSequence, FrameDecoder, parseCommand, parseRunnerMessage } from '../src/runner/protocol.ts';
+import { COMMAND_LIMIT, EVENT_LIMIT, encodeFrame, EventBuffer, EventSequence, FrameDecoder, parseCommand, parseRunnerMessage } from '../src/runner/protocol.ts';
 
 test('frames split UTF-8 and validate command types and limits', () => {
   const decoder = new FrameDecoder(COMMAND_LIMIT, parseCommand);
@@ -19,6 +19,20 @@ test('events require increasing sequence numbers', () => {
   seq.accept(event);
   assert.throws(() => seq.accept(event));
   assert.throws(() => parseRunnerMessage({ type: 'unknown', seq: 2 }));
+});
+
+test('replay retains events until acknowledged and rejects gaps in retained history', () => {
+  const buffer = new EventBuffer();
+  buffer.publish({ type: 'phase', seq: 1, state: 'preparing' });
+  buffer.publish({ type: 'phase', seq: 2, state: 'running' });
+  assert.deepEqual(buffer.after(0).map(event => event.seq), [1, 2]);
+  buffer.ack(1);
+  buffer.ack(1);
+  assert.deepEqual(buffer.after(1).map(event => event.seq), [2]);
+  assert.throws(() => buffer.after(0));
+  assert.throws(() => buffer.ack(3));
+  buffer.ack(2);
+  assert.throws(() => buffer.publish({ type: 'phase', seq: 2, state: 'running' }));
 });
 
 test('event payloads reject missing required fields', () => {

@@ -94,7 +94,7 @@ export class InteractiveApproval implements AuthorizationPolicy {
   }
 }
 
-function describeApproval(call: EffectCall): Approval {
+export function describeApproval(call: EffectCall): Approval {
   if (call.mcp) return {
     id: randomUUID(), tool_id: call.toolId, kind: 'command',
     summary: `Use ${call.mcp.tool} from ${call.mcp.server}`,
