@@ -43,7 +43,7 @@ test('executor includes discovered instructions with MCP disabled', async () => 
       model: { provider: 'faux', modelId: 'faux-1' }, maxTurns: 10, vcs: 'folder' as const,
       priorOwned: [], directory, threadId: 'thread', trusted: false, header: '', mcpSettings: {}, agentDir };
     const state = { rootIdentity: { dev: '1', ino: '2' } } as ToolState;
-    const instructions = await new TurnExecutor().resources(input, state, {
+    const { instructions } = await new TurnExecutor().resources(input, state, {
       observe() { assert.fail('disabled MCP must not observe'); },
       remember() { assert.fail('disabled MCP must not register labels'); },
     });

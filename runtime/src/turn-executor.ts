@@ -5,7 +5,8 @@ import type { RunCapacity } from './run-capacity.ts';
 import type { LeaseHandle } from './safety.ts';
 import { McpRun, eligible, nameKey, type Observation } from './mcp/tools.ts';
 import { executionEntry, mcpPolicy } from './mcp/policy.ts';
-import { discover, skillsPrompt, type Resources } from './skills.ts';
+import { discover, skillsPrompt } from './skills.ts';
+import type { TemplateEntry } from './templates.ts';
 import { lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileAction } from './safety.ts';
@@ -109,8 +110,8 @@ export class TurnExecutor implements AuthorizationPolicy {
     state.protected = await identities(input.checkout, state.baseline);
   }
 
-  async resources(input: PiTurnInput, state: ToolState, callbacks: PiTurnCallbacks, load = discover): Promise<string> {
-    const resources: Resources = await load(input.checkout, input.trusted, { protect: [input.directory], agentDir: input.agentDir });
+  async resources(input: PiTurnInput, state: ToolState, callbacks: PiTurnCallbacks): Promise<{ instructions: string; templates: TemplateEntry[] }> {
+    const resources = await discover(input.checkout, input.trusted, { protect: [input.directory], agentDir: input.agentDir });
     state.skills = resources.skills;
     const settings = { setting: (key: string) => input.mcpSettings[key] ?? null, setSetting: () => {} };
     const servers = mcpPolicy(settings, input.checkout, state.rootIdentity, resources.mcpServers ?? [], resources.mcpEntries ?? new Map());
@@ -133,7 +134,7 @@ export class TurnExecutor implements AuthorizationPolicy {
       instructions += '\nAGENTS.md:\n' + text;
     } catch (error) { if ((error as { code?: string }).code !== 'ENOENT') throw error; }
     instructions += skillsPrompt(resources.skills);
-    return instructions;
+    return { instructions, templates: resources.templates };
   }
 
   async open(input: PiTurnInput, dependencies: { models: Models; state: ToolState; retry: ConversationRetryPolicy; registry?: typeof registry }): Promise<{ harness: Harness; root: Conversation }> {

@@ -981,7 +981,7 @@ export class Runtime {
         mcpSettings: Object.fromEntries(this.store.db.prepare("SELECT key, value FROM settings WHERE key LIKE 'mcp_server:%'").all().map(row => [String(row.key), String(row.value)])) };
       await executor.prepare(input, session);
       const observed = new Map<string, { fingerprint: string; observation: Observation }>();
-      const instructions = await executor.resources(input, session, {
+      const resources = await executor.resources(input, session, {
         observe: (entry, observation) => {
           this.mcpObserved.set(JSON.stringify([snapshot.checkout, session.rootIdentity.dev, session.rootIdentity.ino]), observed);
           observed.set(entry.name, { fingerprint: fingerprint(entry), observation });
@@ -991,14 +991,11 @@ export class Runtime {
           if (this.store.setting(key) === null) this.store.setSetting(key, label);
           for (const tool of snapshot.tools) if (tool.name === name) tool.name = label;
         },
-      }, async (checkout, trusted) => {
-        const resources = await this.resources(checkout, trusted);
-        session.templates = resources.templates;
-        return resources;
       });
+      session.templates = resources.templates;
       await this.open(session, executor, input);
       // The thread's current model, thinking level, and turn limit apply from this run.
-      await executor.run({ root: session.root!, instructions,
+      await executor.run({ root: session.root!, instructions: resources.instructions,
         model: { provider: snapshot.model.provider, modelId: snapshot.model.model_id },
         thinkingLevel: snapshot.thinking_level ?? null, maxTurns: this.maxTurns,
         signal: session.authorization.signal }, session.sink!, {
