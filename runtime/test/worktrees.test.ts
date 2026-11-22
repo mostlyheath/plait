@@ -82,6 +82,9 @@ test('host removal refuses uncommitted, unpushed and stale busy summaries and ke
   await h.runtime.reply({ op: 'create_worktree_thread', request_id: 'create', parent: info.result.parent, harness: 'codex', provider: 'codex', model_id: 'gpt-fake', approval: 'ask' });
   const ready = await done(h.runtime, 'create'); assert.equal(ready.state, 'ready', JSON.stringify(ready));
   const tree = ready.worktree!;
+  // The host records which project its worktree belongs to, for every client.
+  const owned = async () => ((await h.runtime.reply({ op: 'workspace_view' })).result as any).worktrees;
+  assert.deepEqual(await owned(), [{ folder: tree.path, main: h.root, branch: tree.branch, creation_id: 'create', identity: tree.identity }]);
   const remove = async (id: string, allow = false) => {
     const result = await h.runtime.reply({ op: 'remove_worktree', request_id: id, creation_id: 'create', identity: tree.identity, allow_unpushed: allow });
     assert.equal(result.ok, true, JSON.stringify(result)); return done(h.runtime, id);
@@ -92,7 +95,9 @@ test('host removal refuses uncommitted, unpushed and stale busy summaries and ke
   await writeFile(join(tree.path, 'source.txt'), 'committed\n');
   const lease = await acquireCheckout(tree.path);
   try { assert.match((await remove('stale-summary', true)).error!.message, /in use|busy/); } finally { await lease.close(); }
+  assert.equal((await owned()).length, 1, 'a refused removal kept the worktree');
   const removed = await remove('remove', true); assert.equal(removed.state, 'removed', JSON.stringify(removed));
+  assert.deepEqual(await owned(), []);
   assert.equal((await remove('remove', true)).state, 'removed');
   assert.equal(h.runtime.snapshot(ready.thread_id).checkout, tree.path);
   await exec('/usr/bin/git', ['-C', h.root, 'show-ref', '--verify', `refs/heads/${tree.branch}`]);

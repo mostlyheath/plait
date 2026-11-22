@@ -327,6 +327,8 @@ fn connection(
             .transpose()?
     } else if threads || request["op"] == "watch_build_output" {
         Some(notifications.subscribe(notifications::THREADS.to_owned())?)
+    } else if request["op"] == "workspace_subscribe" {
+        Some(notifications.subscribe(notifications::WORKSPACE.to_owned())?)
     } else {
         None
     };
@@ -343,6 +345,9 @@ fn connection(
     };
     if threads {
         return watch_threads(socket, sidecar, &request, subscription, &reply);
+    }
+    if request["op"] == "workspace_subscribe" {
+        return watch_workspace(socket, sidecar, subscription, &reply);
     }
     if request["op"] == "watch_build_output" {
         let mut previous = reply["result"].clone();
@@ -408,6 +413,41 @@ fn watch_threads(
     Ok(())
 }
 
+/// Sends the workspace again whenever its revision moves, numbered from 1 after
+/// the snapshot. A client that cannot keep up is disconnected by the write
+/// timeout and subscribes again for a fresh snapshot.
+fn watch_workspace(
+    mut socket: UnixStream,
+    sidecar: &Mutex<Sidecar>,
+    subscription: &mut notifications::Subscription,
+    initial: &Value,
+) -> io::Result<()> {
+    let view = json!({"op": "workspace_view"});
+    let mut revision = initial["result"]["revision"].clone();
+    let mut seq = 0u64;
+    while subscription.wait(&socket)? {
+        let reply = sidecar
+            .lock()
+            .map_err(|_| io::Error::other("sidecar failed"))?
+            .request(&view)?;
+        if reply["ok"] != true {
+            return send(&mut socket, &reply);
+        }
+        if let Some(event) = workspace_event(&revision, &reply["result"], seq + 1) {
+            seq += 1;
+            revision = reply["result"]["revision"].clone();
+            send(&mut socket, &event)?;
+        }
+    }
+    Ok(())
+}
+
+/// A workspace event when the revision moved.
+fn workspace_event(previous: &Value, current: &Value, seq: u64) -> Option<Value> {
+    (current["revision"] != *previous)
+        .then(|| json!({"event": "workspace", "seq": seq, "workspace": current}))
+}
+
 /// The summaries that are new or different, in the runtime's order, and the IDs that left the list.
 fn thread_changes(previous: &Value, current: &Value) -> Option<Value> {
     let list = |value: &Value| value.as_array().cloned().unwrap_or_default();
@@ -469,6 +509,16 @@ mod tests {
             thread("a", "idle")
         ]);
         assert_eq!(thread_changes(&before, &reordered), None);
+    }
+
+    #[test]
+    fn workspace_events_follow_the_revision_and_are_numbered() {
+        let view = |revision: u64| json!({"revision": revision, "projects": []});
+        assert_eq!(workspace_event(&json!(3), &view(3), 1), None);
+        assert_eq!(
+            workspace_event(&json!(3), &view(4), 1),
+            Some(json!({"event": "workspace", "seq": 1, "workspace": view(4)}))
+        );
     }
 
     #[test]

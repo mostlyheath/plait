@@ -1,0 +1,268 @@
+//! The person's workspace on a host: its identity, which projects are open or
+//! hidden, worktree ownership, and what has been seen. Additive operations;
+//! no protocol version is sent. A host that does not know them answers
+//! `invalid_request`, which `needs_host_update` names.
+use super::{Client, Error, Frames, decode};
+use serde::{Deserialize, Serialize};
+use std::{
+    path::{Path, PathBuf},
+    time::{Duration, Instant},
+};
+
+/// How long a host may take to send the first snapshot.
+const SNAPSHOT_WAIT: Duration = Duration::from_secs(20);
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct HostIdentity {
+    pub id: String,
+    pub name: String,
+    pub platform: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct Project {
+    pub path: PathBuf,
+    pub hidden: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Worktree {
+    pub folder: PathBuf,
+    pub main: PathBuf,
+    pub branch: String,
+    pub creation_id: Option<String>,
+    pub identity: Option<crate::git::worktree::Identity>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Seen {
+    pub thread_id: String,
+    pub updated_at: u64,
+    pub state: String,
+    pub unread: bool,
+}
+
+/// One consistent view of a host's workspace.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct View {
+    pub schema: u32,
+    pub host: HostIdentity,
+    pub revision: u64,
+    pub projects: Vec<Project>,
+    pub worktrees: Vec<Worktree>,
+    pub seen: Vec<Seen>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "op", rename_all = "snake_case")]
+enum Request<'a> {
+    WorkspaceView,
+    WorkspaceSubscribe,
+    WorkspaceOpenProject {
+        path: &'a Path,
+    },
+    WorkspaceHideProject {
+        path: &'a Path,
+        hidden: bool,
+    },
+    WorkspaceSetWorktree {
+        #[serde(flatten)]
+        worktree: &'a Worktree,
+    },
+    WorkspaceForgetWorktree {
+        folder: &'a Path,
+    },
+    WorkspaceMarkSeen {
+        entries: &'a [Seen],
+    },
+    WorkspaceImport {
+        device: &'a str,
+        projects: &'a [PathBuf],
+        hidden: &'a [PathBuf],
+        worktrees: &'a [Worktree],
+        seen: &'a [Seen],
+    },
+    HostSetName {
+        name: &'a str,
+    },
+}
+
+pub fn needs_host_update(error: &Error) -> bool {
+    matches!(error, Error::Rejected(error) if error.code == "invalid_request")
+}
+
+pub fn view(client: &Client) -> Result<View, Error> {
+    client.send(&Request::WorkspaceView)
+}
+
+#[derive(Deserialize)]
+struct Revision {
+    revision: u64,
+}
+
+/// Opens a project the host has checked is a Git checkout; returns its top folder.
+pub fn open_project(client: &Client, path: &Path) -> Result<PathBuf, Error> {
+    #[derive(Deserialize)]
+    struct Opened {
+        path: PathBuf,
+    }
+    let opened: Opened = client.send(&Request::WorkspaceOpenProject { path })?;
+    Ok(opened.path)
+}
+
+pub fn hide_project(client: &Client, path: &Path, hidden: bool) -> Result<u64, Error> {
+    let reply: Revision = client.send(&Request::WorkspaceHideProject { path, hidden })?;
+    Ok(reply.revision)
+}
+
+pub fn set_worktree(client: &Client, worktree: &Worktree) -> Result<u64, Error> {
+    let reply: Revision = client.send(&Request::WorkspaceSetWorktree { worktree })?;
+    Ok(reply.revision)
+}
+
+pub fn forget_worktree(client: &Client, folder: &Path) -> Result<u64, Error> {
+    let reply: Revision = client.send(&Request::WorkspaceForgetWorktree { folder })?;
+    Ok(reply.revision)
+}
+
+pub fn mark_seen(client: &Client, entries: &[Seen]) -> Result<u64, Error> {
+    let reply: Revision = client.send(&Request::WorkspaceMarkSeen { entries })?;
+    Ok(reply.revision)
+}
+
+/// This device's lists before the host kept them. A host merges them once
+/// per device and reports whether it did.
+pub struct Import<'a> {
+    pub device: &'a str,
+    pub projects: &'a [PathBuf],
+    pub hidden: &'a [PathBuf],
+    pub worktrees: &'a [Worktree],
+    pub seen: &'a [Seen],
+}
+
+pub fn import(client: &Client, lists: &Import<'_>) -> Result<bool, Error> {
+    #[derive(Deserialize)]
+    struct Imported {
+        imported: bool,
+    }
+    let reply: Imported = client.send(&Request::WorkspaceImport {
+        device: lists.device,
+        projects: lists.projects,
+        hidden: lists.hidden,
+        worktrees: lists.worktrees,
+        seen: lists.seen,
+    })?;
+    Ok(reply.imported)
+}
+
+pub fn set_host_name(client: &Client, name: &str) -> Result<HostIdentity, Error> {
+    #[derive(Deserialize)]
+    struct Named {
+        host: HostIdentity,
+    }
+    let reply: Named = client.send(&Request::HostSetName { name })?;
+    Ok(reply.host)
+}
+
+/// A snapshot, then each later view in order. Dropping it unsubscribes.
+pub struct Stream {
+    frames: Frames,
+    first: bool,
+    seq: u64,
+}
+
+pub fn subscribe(client: &Client) -> Result<Stream, Error> {
+    let bytes = serde_json::to_vec(&Request::WorkspaceSubscribe)
+        .map_err(|_| Error::Protocol("Cannot encode host request.".into()))?;
+    Ok(Stream {
+        frames: client.send_encoded(&bytes)?,
+        first: true,
+        seq: 0,
+    })
+}
+
+impl Stream {
+    /// Blocking. The first call returns the snapshot; later calls wait for the
+    /// next change. A gap in the numbering is an error, so the caller
+    /// subscribes again rather than trusting a view that skipped a change.
+    pub fn next_view(&mut self) -> Result<View, Error> {
+        if self.first {
+            self.first = false;
+            let line = self.frames.next(Some(Instant::now() + SNAPSHOT_WAIT))?;
+            return decode(&line);
+        }
+        let line = self.frames.next(None)?;
+        parse_event(&line, &mut self.seq)
+    }
+}
+
+fn parse_event(line: &[u8], seq: &mut u64) -> Result<View, Error> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Event {
+        event: String,
+        seq: u64,
+        workspace: View,
+    }
+    let event: Event = match serde_json::from_slice(line) {
+        Ok(event) => event,
+        // A failure reply ends the stream with the host's reason.
+        Err(_) => {
+            return decode::<View>(line)
+                .and(Err(Error::Protocol("The workspace stream ended.".into())));
+        }
+    };
+    if event.event != "workspace" || event.seq != *seq + 1 {
+        return Err(Error::Protocol(
+            "The workspace stream skipped a change; subscribe again.".into(),
+        ));
+    }
+    *seq = event.seq;
+    Ok(event.workspace)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const VIEW: &str = r#"{"schema":1,"host":{"id":"h","name":"workstation","platform":"linux"},"revision":2,"projects":[{"path":"/srv/a","hidden":false}],"worktrees":[],"seen":[]}"#;
+
+    #[test]
+    fn requests_carry_no_version_and_name_their_operation() {
+        assert_eq!(
+            serde_json::to_string(&Request::WorkspaceSubscribe).unwrap(),
+            r#"{"op":"workspace_subscribe"}"#
+        );
+        let tree = Worktree {
+            folder: "/w/t".into(),
+            main: "/w/m".into(),
+            branch: "plait/t".into(),
+            creation_id: Some("c".into()),
+            identity: None,
+        };
+        let value =
+            serde_json::to_value(Request::WorkspaceSetWorktree { worktree: &tree }).unwrap();
+        assert_eq!(value["op"], "workspace_set_worktree");
+        assert_eq!(value["folder"], "/w/t");
+        assert!(value.get("protocol_version").is_none());
+    }
+
+    #[test]
+    fn events_must_arrive_in_order() {
+        let mut seq = 0;
+        let event = |n: u64| format!(r#"{{"event":"workspace","seq":{n},"workspace":{VIEW}}}"#);
+        let view = parse_event(event(1).as_bytes(), &mut seq).unwrap();
+        assert_eq!(
+            (view.host.name.as_str(), view.revision, seq),
+            ("workstation", 2, 1)
+        );
+        assert!(
+            parse_event(event(3).as_bytes(), &mut seq).is_err(),
+            "a skipped event was accepted"
+        );
+        let failure = r#"{"ok":false,"error":{"code":"internal","message":"Sidecar stopped."}}"#;
+        assert!(
+            matches!(parse_event(failure.as_bytes(), &mut seq), Err(Error::Rejected(e)) if e.message == "Sidecar stopped.")
+        );
+    }
+}

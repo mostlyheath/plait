@@ -11,6 +11,8 @@ import type { FileIdentity } from './safety.ts';
 export type Parent = { root: string; identity: FileIdentity; main: string; main_identity: FileIdentity; common: string; common_identity: FileIdentity; base: string };
 export type Create = { op: 'create_worktree_thread'; request_id: string; parent: Parent; harness: HarnessId; provider: string; model_id: string; thinking?: ThinkingLevel; mode?: string; approval: ApprovalMode };
 export type Managed = { thread_id: string; parent: Parent; path: string; branch: string; identity: FileIdentity | null; stage: 'reserved' | 'creating' | 'ready' | 'failed' | 'removing' | 'removed'; error: string | null };
+/** Who learns that this host made or removed a worktree, so its owning project is known to every client. */
+export type Ownership = { made(tree: Managed, creationId: string): void; removed(folder: string): void };
 export type Operation = { request_id: string; thread_id: string; state: 'preparing' | 'ready' | 'failed' | 'removing' | 'removed'; worktree: Managed | null; error: Failure | null };
 type Request = Create | { op: 'project_worktrees'; checkout: string; only?: string } | { op: 'worktree_info'; checkout: string } | { op: 'worktree_status'; request_id: string } | { op: 'list_worktrees' } | { op: 'remove_worktree'; request_id: string; creation_id: string; identity: FileIdentity; allow_unpushed: boolean };
 const fields = {
@@ -97,10 +99,11 @@ export class Worktrees {
   private changed: () => void;
   private busy: (root: string) => boolean;
   private admit: () => void;
+  private ownership?: Ownership;
   constructor(store: Store, directory: string,
     prepare: (request: Create, id: string) => Promise<Snapshot>,
-    changed: () => void, busy: (root: string) => boolean, admit: () => void = () => {}) {
-    this.store = store; this.directory = directory; this.prepare = prepare;
+    changed: () => void, busy: (root: string) => boolean, admit: () => void = () => {}, ownership?: Ownership) {
+    this.store = store; this.directory = directory; this.prepare = prepare; this.ownership = ownership;
     this.changed = changed; this.busy = busy; this.admit = admit;
     this.builds = new BuildOutputs(store, directory, changed, busy);
     store.db.exec(`CREATE TABLE IF NOT EXISTS worktree_operations(request_id TEXT PRIMARY KEY,input TEXT NOT NULL,thread_id TEXT NOT NULL,snapshot TEXT NOT NULL,result TEXT NOT NULL);
@@ -262,6 +265,7 @@ export class Worktrees {
         this.store.admit('worktree_create', id, request, { thread_id: snapshot.id }, snapshot, tree.identity);
       }
       operation.state = 'ready'; operation.error = null; this.put(operation); this.changed();
+      this.ownership?.made(tree, operation.request_id);
       // After admission, never before it: an old seed is refreshed in the background.
       this.builds.scheduleSeed(tree.parent.main);
     } catch (error) {
@@ -301,6 +305,7 @@ export class Worktrees {
       operation.state = 'removing'; this.put(operation);
       operation.worktree = await worktreeHelper<Managed>({ action: 'remove', store: this.directory, thread_id: operation.thread_id, identity: request.identity, allow_unpushed: request.allow_unpushed });
       operation.state = 'removed'; operation.error = null; this.put(operation);
+      this.ownership?.removed(root);
     } catch (error) {
       // The refusal answers the removal. The creation keeps its own state and
       // error: ready only when its worktree is ready and its thread was admitted.
