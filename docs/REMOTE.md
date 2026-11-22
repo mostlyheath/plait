@@ -164,6 +164,9 @@ Decided while building step 4, to reach usable remote threads sooner.
 - **Git views.** Changes, History, Files, and the editor and terminal
   handoffs say they are unavailable on a remote machine until remote Git is
   built.
+  Worktrees lists the host's worktrees and removes them through the host, but
+  draws no commit graph and measures no sizes, because both read this Mac's
+  Git and disk.
 - **Later.** Projects from several machines in one sidebar at once, as
   described above, follow as their own slice.
 
