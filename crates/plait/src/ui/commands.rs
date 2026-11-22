@@ -172,7 +172,7 @@ impl Plait {
         let mut numbers = HashMap::new();
         for number in 1..=9 {
             if let Some(jump) = plait_core::navigation::jump(
-                &self.preferences.value.navigation,
+                self.lists(),
                 &self.state.projects,
                 &self.host.connection.threads,
                 &indices,
@@ -256,13 +256,14 @@ impl Plait {
     /// Everything the command palette lists, in the order shown before typing.
     fn command_items(&self, window: &Window, cx: &App) -> Vec<Item> {
         let mut items = self.thread_items(cx);
-        let mut preferences = self.preferences.value.navigation.clone();
+        let mut preferences = self.lists().clone();
         preferences.hidden.clear();
         for project in plait_core::navigation::projects(
             &self.host.connection.threads,
             &preferences,
             &self.host.creation.checkout,
-            &self.active_project().machines[0].name,
+            &self.active_project().machines[0],
+            self.host_is_local(),
         ) {
             items.push(
                 Item::new(
@@ -490,9 +491,7 @@ impl Plait {
             Command::OpenRemoteProject(path) => {
                 if !self.host_is_local() && super::valid_remote_path(&path) {
                     let path = std::path::PathBuf::from(path);
-                    let mut preferences = self.preferences.value.clone();
-                    preferences.navigation.open(&path);
-                    self.persist_navigation(preferences, cx);
+                    self.update_lists(|lists| lists.open(&path), cx);
                     self.rebuild_projects(cx);
                     self.change_checkout(path, window, cx);
                 }

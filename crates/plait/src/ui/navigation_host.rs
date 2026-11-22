@@ -59,10 +59,13 @@ impl Plait {
 
     pub(super) fn mark_thread_read(&mut self, id: &str, cx: &mut Context<Self>) {
         self.dismiss_toast(id, cx);
-        if self.preferences.value.navigation.unread.contains(id) {
-            let mut preferences = self.preferences.value.clone();
-            preferences.navigation.unread.remove(id);
-            self.persist_navigation(preferences, cx);
+        if self.lists().unread.contains(id) {
+            self.update_lists(
+                |lists| {
+                    lists.unread.remove(id);
+                },
+                cx,
+            );
             self.refresh_tab_rows();
         }
         if !cfg!(test) {
@@ -72,6 +75,7 @@ impl Plait {
     }
 
     pub(super) fn watch_all_threads(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.watch_workspace(window, cx);
         self.refresh_host_worktrees(cx);
         self.navigation.watch = None;
         self.admission.queue = false;
@@ -224,14 +228,9 @@ impl Plait {
             && self.conversation_snapshot().is_some())
         .then_some(self.host.thread.selected.as_deref())
         .flatten();
-        let mut preferences = self.preferences.value.clone();
-        let notifications =
-            preferences
-                .navigation
-                .observe(&self.host.connection.threads, visible, initial);
-        if preferences != self.preferences.value {
-            self.persist_navigation(preferences, cx);
-        }
+        let mut lists = self.lists().clone();
+        let notifications = lists.observe(&self.host.connection.threads, visible, initial);
+        self.update_lists(|current| *current = lists, cx);
         if cfg!(test) {
             return;
         }
@@ -288,25 +287,31 @@ impl Plait {
         }
         let previous = std::mem::replace(&mut self.host.creation.checkout, root.clone());
         self.state.repository.data.path = root.clone();
-        let mut preferences = self.preferences.value.clone();
-        preferences
-            .navigation
-            .opened
-            .retain(|path| path != &previous);
-        preferences.navigation.open(&root);
-        self.persist_navigation(preferences, cx);
+        self.update_lists(
+            |lists| {
+                lists.opened.retain(|path| path != &previous);
+                lists.open(&root);
+            },
+            cx,
+        );
         self.rebuild_projects(cx);
         self.capture_session(cx);
     }
 
     pub(super) fn rebuild_projects(&mut self, cx: &mut Context<Self>) {
-        let machine = self.state.projects[0].machines[0].name.clone();
+        let machine = self.current_machine();
         self.state.projects = navigation::projects(
             &self.host.connection.threads,
-            &self.preferences.value.navigation,
+            self.lists(),
             &self.host.creation.checkout,
             &machine,
+            self.host_is_local(),
         );
+        self.no_project = plait_core::model::Project {
+            checkout: self.host.creation.checkout.clone(),
+            name: "No project".into(),
+            machines: vec![machine],
+        };
         self.refresh_tab_rows();
         let paths = self
             .state
