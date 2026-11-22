@@ -6,8 +6,22 @@ import type { LeaseHandle } from './safety.ts';
 import { nameKey } from './mcp/tools.ts';
 import { update } from './transcript.ts';
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context';
-import type { Conversation, SubmissionDraft } from '@earendil-works/pi-durable';
+import { Harness } from '@earendil-works/pi-durable';
+import type { Conversation, ConversationRetryPolicy, SubmissionDraft } from '@earendil-works/pi-durable';
+import { createModels } from '@earendil-works/pi-ai/models';
+import type { Models } from '@earendil-works/pi-ai';
+import { SqliteStorage } from '@earendil-works/pi-durable/storage/sqlite';
+import { openNodeSqliteDatabase } from '@earendil-works/pi-durable/storage/sqlite/node';
+import { registry, type ToolState } from './tools.ts';
+import { dirtyPaths, identities, pathKey } from './safety.ts';
+import { restoreOwned } from './provenance.ts';
+import type { Postimage } from './safety.ts';
 import type { ThinkingLevel } from './protocol.ts';
+
+export type PiTurnInput = {
+  sessionFile: string; checkout: string; model: { provider: string; modelId: string };
+  maxTurns: number; vcs: 'git' | 'folder'; priorOwned: Postimage[];
+};
 
 export type TurnInput = {
   root: Conversation;
@@ -27,6 +41,36 @@ export interface TurnCommands {
 
 /** Runs the configured Pi conversation; the caller retains its session and cleanup. */
 export class TurnExecutor {
+  async prepare(input: PiTurnInput, state: ToolState): Promise<void> {
+    const baseline = await dirtyPaths(input.checkout, input.vcs);
+    state.owned = await restoreOwned(input.checkout, baseline, input.priorOwned, state.rootIdentity, state.lease?.fd, state.lease?.lifecycleFd, input.vcs);
+    state.baseline = baseline.filter(path => !state.owned.has(pathKey(path)));
+    state.protected = await identities(input.checkout, state.baseline);
+  }
+
+  async open(input: PiTurnInput, dependencies: { models: Models; state: ToolState; retry: ConversationRetryPolicy; registry?: typeof registry }): Promise<{ harness: Harness; root: Conversation }> {
+    const database = await openNodeSqliteDatabase(input.sessionFile);
+    let harness: Harness;
+    try {
+      await database.exec('PRAGMA synchronous=FULL');
+      const models = dependencies.models;
+      harness = await Harness.open(await SqliteStorage.open(database), {
+        models: () => dependencies.state.authorization.active ? models : createModels(),
+        registry: (dependencies.registry ?? registry)(dependencies.state),
+        // Only model requests retry; a tool call is unsafe to replay.
+        settings: () => ({ retry: dependencies.retry, stream: { timeoutMs: 60000 }, toolExecution: 'sequential', steeringMode: 'all' }),
+      }, context);
+    } catch (error) { await database.close(); throw error; }
+    try {
+      const root = await harness.root(context, { agent: { model: input.model, cwd: input.checkout, maxTurns: input.maxTurns } });
+      // Fence recovery before enabling scheduling: no model or tool can run here.
+      const inspection = await harness.inspect(context);
+      for (const task of inspection.tasks) await harness.abortTask(task.record.id, context);
+      await root.abort(context);
+      return { harness, root };
+    } catch (error) { await harness.close(context); throw error; }
+  }
+
   async run(input: TurnInput, sink: TurnSink, commands: TurnCommands): Promise<void> {
     await input.root.configure({ instructions: input.instructions, model: input.model,
       thinkingLevel: input.thinkingLevel, maxTurns: input.maxTurns }, context);

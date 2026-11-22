@@ -30,7 +30,7 @@ import { PROTOCOL_VERSIONS, fail, failure, queuedView, summaryView, THINKING_LEV
 import type { ApprovalMode, HarnessId, ModelChoice, Protocol, QueueMode, Request, Snapshot, InputRecord, ThinkingLevel } from './protocol.ts';
 import { Store } from './store.ts';
 import { Records } from './records.ts';
-import { checkout, projectKind, gitCheckout, dirtyPaths, fileAction, identities, acquireCheckout, rootIdentity, checkRoot, verifyExpectedIdentity, pathKey } from './safety.ts';
+import { checkout, projectKind, gitCheckout, dirtyPaths, fileAction, acquireCheckout, rootIdentity, checkRoot, verifyExpectedIdentity } from './safety.ts';
 import type { FileIdentity, LeaseHandle } from './safety.ts';
 import { registry } from './tools.ts';
 import { executionEntry, mcpPolicy, setMcpEnabled } from './mcp/policy.ts';
@@ -39,11 +39,10 @@ import type { Observation } from './mcp/tools.ts';
 import { discover, expandInput, report, skillsPrompt } from './skills.ts';
 import type { ToolState } from './tools.ts';
 import { MAX_TURNS } from './transcript.ts';
-import { InProcessSink, TurnExecutor, type TurnSink } from './turn-executor.ts';
+import { InProcessSink, TurnExecutor, type PiTurnInput, type TurnSink } from './turn-executor.ts';
 import { historyPage, historyText } from './history.ts';
 import type { HistorySource } from './history.ts';
 import { customTitle } from './text.ts';
-import { restoreOwned } from './provenance.ts';
 import { RunAuthorization } from './authorization.ts';
 import { InteractiveApproval, automaticApproval } from './approval.ts';
 import type { Providers } from './providers.ts';
@@ -663,37 +662,21 @@ export class Runtime {
       }
     }
   }
-  open(session: Session): Promise<void> {
-    return this.gate(session.snapshot.id, () => this.openHarness(session));
-  }
-  private async openHarness(session: Session): Promise<void> {
-    if (session.harness) return;
-    const snapshot = session.snapshot;
-    // A provider reload swaps the registry; this run keeps the one it started with.
-    const models = this.models;
-    const database = await openNodeSqliteDatabase(join(this.directory, `${snapshot.id}.sqlite`));
-    let harness: Harness;
-    try {
-      await database.exec('PRAGMA synchronous=FULL');
-      harness = await Harness.open(await SqliteStorage.open(database), {
-        models: () => session.authorization.active ? models : createModels(), registry: this.registry(session),
-        // Only model requests retry; a tool call is unsafe to replay.
-        settings: () => ({ retry: this.retry, stream: { timeoutMs: 60000 }, toolExecution: 'sequential', steeringMode: 'all' }),
-      }, context);
-    } catch (error) { await database.close(); throw error; }
-    session.harness = harness;
-    session.root = await harness.root(context, { agent: { model: { provider: snapshot.model.provider, modelId: snapshot.model.model_id }, cwd: snapshot.checkout, maxTurns: this.maxTurns } });
-    // Fence recovery before enabling scheduling: no model or tool can run here.
-    const inspection = await harness.inspect(context);
-    for (const task of inspection.tasks) await harness.abortTask(task.record.id, context);
-    await session.root.abort(context);
-    await this.syncInputs(session, true);
-    session.watch = await session.root.watch(context);
-    session.watch.start(async call => {
-      if (call.kind !== 'value') return;
-      await this.syncInputs(session);
-      session.sink!.emit({ type: 'live', projection: call.value, inputs: session.inputs, contextWindow: this.models.getModel(snapshot.model.provider, snapshot.model.model_id)?.contextWindow ?? null });
-      session.sink!.emit({ type: 'commit', head: Math.max(0, ...call.value.entries.map(entry => Number(entry.id))) });
+  open(session: Session, executor: TurnExecutor, input: PiTurnInput): Promise<void> {
+    return this.gate(session.snapshot.id, async () => {
+      if (session.harness) return;
+      const snapshot = session.snapshot;
+      // A provider reload swaps the registry; this run keeps the one it started with.
+      const opened = await executor.open(input, { models: this.models, state: session, retry: this.retry, registry: state => this.registry(state) });
+      session.harness = opened.harness; session.root = opened.root;
+      await this.syncInputs(session, true);
+      session.watch = await session.root.watch(context);
+      session.watch.start(async call => {
+        if (call.kind !== 'value') return;
+        await this.syncInputs(session);
+        session.sink!.emit({ type: 'live', projection: call.value, inputs: session.inputs, contextWindow: this.models.getModel(snapshot.model.provider, snapshot.model.model_id)?.contextWindow ?? null });
+        session.sink!.emit({ type: 'commit', head: Math.max(0, ...call.value.entries.map(entry => Number(entry.id))) });
+      });
     });
   }
   async submit(id: string, requestId: string, text: string, mode: ApprovalMode = 'ask', whenBusy?: QueueMode, images: string[] = []) {
@@ -993,10 +976,11 @@ export class Runtime {
         case 'external': return selected.id === 'codex' ? await this.runCodex(session, requestId, text, header) : await this.runClaude(session, requestId, text, header);
         case 'pi': break;
       }
-      const baseline = await dirtyPaths(snapshot.checkout, vcs);
-      session.owned = await restoreOwned(snapshot.checkout, baseline, this.store.owned(snapshot.id), session.rootIdentity, session.lease?.fd, session.lease?.lifecycleFd, vcs);
-      session.baseline = baseline.filter(path => !session.owned.has(pathKey(path)));
-      session.protected = await identities(snapshot.checkout, session.baseline);
+      const executor = new TurnExecutor();
+      const input: PiTurnInput = { sessionFile: join(this.directory, `${snapshot.id}.sqlite`), checkout: snapshot.checkout,
+        model: { provider: snapshot.model.provider, modelId: snapshot.model.model_id }, maxTurns: this.maxTurns,
+        vcs, priorOwned: this.store.owned(snapshot.id) };
+      await executor.prepare(input, session);
       let instructions = 'You are Plait, a local coding assistant. File tools are the only checkout writers; edits and commands may require the user\'s approval. Commands read the checkout and write only private scratch (HOME/TMPDIR) and this thread\'s private build cache (CARGO_HOME/CARGO_TARGET_DIR), with no external network and a 15 minute limit. Tests may use scratch-local Git repositories and Unix sockets. Use offline locked builds. Unchanged files this thread previously wrote can be edited again. Never modify other dirty or ignored paths, bypass approval, or start daemons. Read project instructions below.\n';
       if (session.commandPolicy === 'trusted') instructions = TRUSTED_INSTRUCTIONS;
       instructions = header + `Pi private build output: CARGO_TARGET_DIR=${JSON.stringify(join(this.directory, 'build-cache', snapshot.id, 'target'))}; CARGO_HOME=${JSON.stringify(join(this.directory, 'build-cache', snapshot.id, 'cargo'))}. Sandboxed commands receive these variables.\n` + instructions;
@@ -1030,9 +1014,9 @@ export class Runtime {
         instructions += '\nAGENTS.md:\n' + project;
       } catch (error) { if ((error as { code?: string }).code !== 'ENOENT') throw error; }
       instructions += skillsPrompt(session.skills);
-      await this.open(session);
+      await this.open(session, executor, input);
       // The thread's current model, thinking level, and turn limit apply from this run.
-      await new TurnExecutor().run({ root: session.root!, instructions,
+      await executor.run({ root: session.root!, instructions,
         model: { provider: snapshot.model.provider, modelId: snapshot.model.model_id },
         thinkingLevel: snapshot.thinking_level ?? null, maxTurns: this.maxTurns,
         signal: session.authorization.signal }, session.sink!, {
