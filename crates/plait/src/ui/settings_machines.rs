@@ -112,7 +112,7 @@ impl Plait {
         self.machines.restored = true;
         let id = self.selected_machine();
         if id != MachineId::default() {
-            self.use_machine(id, window, cx);
+            self.connect_machine(id, true, window, cx);
         }
     }
 
@@ -130,10 +130,21 @@ impl Plait {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.connect_machine(id, false, window, cx);
+    }
+
+    fn connect_machine(
+        &mut self,
+        id: MachineId,
+        restoring: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(machine) = self.preferences.value.machines.get(&id).cloned() else {
             return;
         };
         self.machines.generation += 1;
+        self.machine_restore_notice = None;
         let generation = self.machines.generation;
         self.machines.confirm_remove = None;
         self.machines.install = None;
@@ -192,6 +203,13 @@ impl Plait {
                     Err(error) => {
                         this.machines.note =
                             Some((format!("Could not reach {name}. {error}"), true));
+                        if restoring {
+                            this.machine_restore_notice =
+                                Some(format!("Could not reach {name}. {error}"));
+                        } else {
+                            this.settings_tab = super::settings::SettingsTab::Machines;
+                            this.show_settings(true, window, cx);
+                        }
                         // Perhaps it answers but has no Plait yet: offer to install it.
                         this.check_install(id.clone(), cx);
                     }
@@ -434,7 +452,7 @@ impl Plait {
     }
 
     pub(super) fn machine_settings(&self, cx: &mut Context<Self>) -> Div {
-        let selected = self.selected_machine();
+        let active = &self.machines.active;
         let busy = self.machines.connecting.is_some();
         let mut list = column().gap_1();
         for (index, machine) in self.preferences.value.machines.list().iter().enumerate() {
@@ -449,7 +467,7 @@ impl Plait {
                 },
                 Transport::Tailnet { host, port } => format!("Tailnet {host}:{port}"),
             };
-            let in_use = machine.id == selected;
+            let in_use = machine.id == *active;
             let connecting = self.machines.connecting.as_ref() == Some(&machine.id);
             let confirming = self.machines.confirm_remove.as_ref() == Some(&machine.id);
             let use_id = machine.id.clone();
@@ -475,7 +493,7 @@ impl Plait {
                         ),
                     );
             } else {
-                let usable = !in_use && !busy;
+                let usable = !connecting && (!in_use || busy);
                 controls = controls.child(
                     button(
                         ("machine-use", index),

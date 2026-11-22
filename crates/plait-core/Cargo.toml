@@ -8,6 +8,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+plait-protocol = { path = "../plait-protocol" }
 # Already pinned in the workspace graph; bounded image chunks use base64.
 base64 = "=0.22.1"
 # Verifies signed update manifests; signing happens only in the release workflow.

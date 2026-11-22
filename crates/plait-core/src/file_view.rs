@@ -12,11 +12,8 @@ use std::{
     ops::Range,
     os::unix::fs::MetadataExt,
     path::Path,
-    time::SystemTime,
 };
 
-/// Larger files are described, not drawn.
-pub const READ_LIMIT: u64 = 8 * 1024 * 1024;
 /// A NUL byte in this much of the start marks a binary file, as Git decides.
 const SNIFF: usize = 8000;
 /// Find stops counting here, so a one-letter query stays instant.
@@ -24,14 +21,7 @@ pub const FIND_LIMIT: usize = 1000;
 /// Lines longer than this are clipped when drawn; the text itself is kept.
 pub const LINE_CLIP: usize = 2000;
 
-/// Size and modification time: enough to skip rereading an unchanged file.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct Stamp {
-    pub len: u64,
-    pub device: u64,
-    pub inode: u64,
-    pub modified: Option<SystemTime>,
-}
+pub use plait_protocol::file_view::{READ_LIMIT, Stamp};
 
 /// What the viewer can show for a path.
 #[derive(Clone, Debug, PartialEq, Eq)]
