@@ -13,6 +13,9 @@ pub(super) struct Identity {
     verified_epoch: Option<u64>,
     pub pending: Option<(HostKey, Vec<CheckoutKey>)>,
     pub checkouts: HashMap<PathBuf, DirectoryIdentity>,
+    /// Checkouts a remote host vouched for. This Mac cannot stat them, so they
+    /// carry no directory identity, but their tabs still restore.
+    pub remote: Vec<PathBuf>,
     pub catalog_ready: bool,
     pub generation: u64,
     pub opening: u64,
@@ -185,14 +188,23 @@ impl Plait {
                 }
             }
         } else if previous != host {
+            let had_tabs = !self.tabs.model.tabs().is_empty();
             self.tabs.model.disconnected(&previous);
             self.capture_session(cx);
             self.park_workspace(cx);
-            self.notice = Some("The host store changed. Open its threads from the sidebar; previous tabs remain offline.".into());
+            // A machine switch already put the previous machine's tabs away.
+            if had_tabs {
+                self.notice = Some("The host store changed. Open its threads from the sidebar; previous tabs remain offline.".into());
+            }
         }
         self.tabs.host = host;
         self.tabs.identity.verified = true;
         self.tabs.identity.verified_epoch = Some(self.host.connection.epoch);
+        self.tabs.identity.remote = checkouts
+            .iter()
+            .filter(|c| c.directory.is_none())
+            .map(|c| c.root.clone())
+            .collect();
         self.tabs.identity.checkouts = checkouts
             .into_iter()
             .filter_map(|c| c.directory.map(|d| (c.root, d)))

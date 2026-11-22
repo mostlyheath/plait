@@ -29,9 +29,13 @@ pub(super) struct HostWorkspace {
     /// The host's lists, or, for an older remote host, only what this window opened.
     pub(super) lists: navigation::Preferences,
     pub(super) revision: u64,
+    /// The host's change counters for the checkouts it watches.
+    status: std::collections::BTreeMap<PathBuf, u64>,
     generation: u64,
     watch: Option<WatchLease>,
     importing: bool,
+    /// The stream failed for a reason other than an older host.
+    failed: bool,
 }
 
 /// The host's view as the sidebar's lists. Mute is this device's choice.
@@ -71,6 +75,18 @@ pub(super) fn lists_from(view: &View, mute: bool) -> navigation::Preferences {
         }
     }
     lists
+}
+
+/// Checkouts whose counter moved or that started being watched.
+pub(super) fn changed_checkouts(
+    before: &std::collections::BTreeMap<PathBuf, u64>,
+    after: &std::collections::BTreeMap<PathBuf, u64>,
+) -> Vec<PathBuf> {
+    after
+        .iter()
+        .filter(|(path, count)| before.get(*path) != Some(*count))
+        .map(|(path, _)| path.clone())
+        .collect()
 }
 
 /// What a change to the lists asks the host to do.
@@ -174,6 +190,14 @@ impl Plait {
         self.host_workspace.generation
     }
 
+    pub(super) fn host_workspace_started(&self) -> bool {
+        self.host_workspace.generation > 0
+    }
+
+    pub(super) fn host_workspace_failed(&self) -> bool {
+        self.host_workspace.failed
+    }
+
     /// The machine's own name, once its host has said it.
     pub(super) fn host_identity(&self) -> Option<&HostIdentity> {
         match &self.host_workspace.source {
@@ -259,8 +283,9 @@ impl Plait {
             let mut views = match task.await {
                 Ok(views) => views,
                 Err(error) => {
-                    let _ =
-                        this.update(cx, |this, cx| this.workspace_failed(generation, &error, cx));
+                    let _ = this.update_in(cx, |this, window, cx| {
+                        this.workspace_failed(generation, &error, window, cx)
+                    });
                     return;
                 }
             };
@@ -285,7 +310,7 @@ impl Plait {
                     .update_in(cx, |this, window, cx| match result {
                         Ok(view) => this.apply_workspace(generation, view, window, cx),
                         Err(error) => {
-                            this.workspace_failed(generation, &error, cx);
+                            this.workspace_failed(generation, &error, window, cx);
                             false
                         }
                     })
@@ -302,6 +327,7 @@ impl Plait {
         &mut self,
         generation: u64,
         error: &host_api::Error,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if self.host_workspace.generation != generation {
@@ -310,7 +336,11 @@ impl Plait {
         self.host_workspace.watch = None;
         if workspace::needs_host_update(error) {
             self.host_workspace.source = Source::Legacy;
+        } else {
+            self.host_workspace.failed = true;
         }
+        // Tabs wait for the workspace; without one, they use this Mac's file.
+        self.try_restore_tabs(window, cx);
         self.rebuild_projects(cx);
         cx.notify();
     }
@@ -330,15 +360,42 @@ impl Plait {
             return true;
         }
         let mute = self.preferences.value.navigation.mute_notifications;
+        let changed = changed_checkouts(&self.host_workspace.status, &view.status);
         let workspace = &mut self.host_workspace;
         workspace.lists = lists_from(&view, mute);
         workspace.revision = view.revision;
+        workspace.status = view.status.clone();
         workspace.source = Source::Host(view.host);
+        workspace.failed = false;
+        self.update_window_title(window);
+        if !self.tabs.persistence.host_loaded && !self.tabs.persistence.host_loading {
+            self.tabs.persistence.host_loading = true;
+            self.load_host_tabs(window, cx);
+        }
         self.rebuild_projects(cx);
         self.adopt_host_project(window, cx);
+        self.reread_changed(&changed, cx);
         self.refresh_tab_rows();
         cx.notify();
         true
+    }
+
+    /// The host saw files change in a checkout on screen: read it again. No
+    /// view polls; this, focus, and Refresh are what reread.
+    fn reread_changed(&mut self, changed: &[PathBuf], cx: &mut Context<Self>) {
+        let open = self.state.repository.path().to_owned();
+        if changed.contains(&open)
+            && !matches!(
+                self.state.repository.snapshot(),
+                plait_core::state::Load::Loading
+            )
+        {
+            self.state.repository.refresh();
+            self.pump(cx);
+        }
+        if changed.contains(&self.workspace.file_viewer.root) {
+            self.check_file(cx);
+        }
     }
 
     /// A window that just moved to another machine opens one of that
@@ -499,6 +556,23 @@ mod tests {
         // Showing a hidden project again is an intent too.
         let shown = changes(&after, &before);
         assert!(shown.hide.contains(&(PathBuf::from("/srv/a"), false)));
+    }
+
+    #[core::prelude::v1::test]
+    fn moved_and_new_counters_are_changes() {
+        let map = |pairs: &[(&str, u64)]| {
+            pairs
+                .iter()
+                .map(|(p, n)| (PathBuf::from(p), *n))
+                .collect::<std::collections::BTreeMap<_, _>>()
+        };
+        let before = map(&[("/a", 1), ("/b", 4)]);
+        let after = map(&[("/a", 2), ("/b", 4), ("/c", 0)]);
+        assert_eq!(
+            changed_checkouts(&before, &after),
+            vec![PathBuf::from("/a"), PathBuf::from("/c")]
+        );
+        assert!(changed_checkouts(&after, &after).is_empty());
     }
 
     #[core::prelude::v1::test]

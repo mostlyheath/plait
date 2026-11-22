@@ -76,6 +76,17 @@ impl Plait {
         }
     }
 
+    /// The window's title names another machine, so it is clear in the window
+    /// list and the Dock which machine a window works on.
+    pub(super) fn update_window_title(&self, window: &mut Window) {
+        let title = if self.host_is_local() {
+            "Plait".to_owned()
+        } else {
+            format!("Plait — {}", self.machine_label())
+        };
+        window.set_window_title(&title);
+    }
+
     /// The connected machine, as projects and tabs name it.
     pub(super) fn current_machine(&self) -> plait_core::model::Machine {
         let local = self.host_is_local();
@@ -525,7 +536,7 @@ impl Plait {
             .child(
                 tag(
                     "machines-intro",
-                    "Work with threads on another machine's Plait host. Remote machines run threads, approvals, and Stop; Changes, History, and Files are not available there yet.",
+                    "Work on another machine through its Plait host: its projects, threads, Changes, History, and Files. Each window works with one machine; switch from the top of the sidebar.",
                     colors().muted,
                 )
                 .line_height(px(18.)),
