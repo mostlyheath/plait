@@ -210,9 +210,9 @@ unavailable with "Update this machine's host to see its Git."
   `file`, or `file_stamp`. `git_read_page` fetches the rest of a large
   result. Worktree sizes come with the desktop step, because they measure
   the host's store too.
-- **Writes:** `git_write` carries one `WriteOp` (stage, unstage, hunk,
-  commit, push, publish, fetch, pull, discard, restore, create or switch
-  branch) and the checkout identity the desktop last read.
+- **Writes (built on the host):** `git_write` carries one `WriteOp` (stage,
+  unstage, hunk, commit, push, publish, fetch, pull, discard, restore,
+  create or switch branch) and the checkout identity the desktop last read.
 - Every request names a checkout. The host accepts an absolute path to the
   top of a Git work tree, checks its device and inode before and after the
   call (as `RepositoryJob` does locally), and refuses a changed identity.
@@ -239,6 +239,9 @@ The client accepts replies up to 1 MiB; local reads allow more. So:
   agent and keys, and its Git credential helpers. Prompts stay off, so a
   missing credential fails with Git's own message. The link does not forward
   this Mac's SSH agent.
+  A host run as a systemd user service has no SSH agent unless the person
+  gives it one, so an SSH remote needs a key without a passphrase there, or
+  an HTTPS remote with a credential helper.
 - A discard saves the file as an unreferenced blob in the repository's own
   object store, which is on the host, so **Restore** works there unchanged.
 - A write is not tied to the view's epoch, as locally. If the link drops
@@ -261,7 +264,8 @@ The client accepts replies up to 1 MiB; local reads allow more. So:
    non-UTF-8 names, and an older host.
 2. Desktop backends for Changes, History, the branch picker, Files, the
    composer file list, line counts, and the Worktrees graph and sizes.
-3. `git_write` with host-kept discard backups, then network writes.
+3. **Built on the host:** `git_write`, including network writes, under the
+   checkout's leases. The desktop uses it in step 2.
 4. The live check from a Mac to the Linux host.
 
 ## Order of work

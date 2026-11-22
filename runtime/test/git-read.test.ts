@@ -74,3 +74,18 @@ test('the real helper reads a checkout', async t => {
   const refused: any = await reads.handle({ op: 'git_read', read: 'status', checkout: Buffer.from(join(root, '.git')).toString('base64'), identity: null });
   assert.ok(JSON.parse(Buffer.from(refused.data, 'base64').toString('utf8')).error.message, 'a folder inside Git metadata is refused');
 });
+
+test('a Git write names its identity and runs the write helper', async () => {
+  const identity = { dev: '1', ino: '2' };
+  const valid = { op: 'git_write', checkout, identity, write: 'StageAll' };
+  assert.equal(validateGitRead(valid).op, 'git_write');
+  for (const input of [{ ...valid, identity: null }, { ...valid, identity: undefined }, { ...valid, write: null }, { ...valid, read: 'status' },
+    { ...valid, protocol_version: 6 }, { ...valid, checkout: 'x' }]) code(() => validateGitRead(input), 'invalid_request');
+  const calls: unknown[] = [];
+  const reads = new GitReads(async (input, operation) => { calls.push([operation, input]); return Buffer.from('{"ok":{}}'); });
+  const reply: any = await reads.handle(valid);
+  assert.deepEqual(calls, [['git-write', { checkout, identity, write: 'StageAll' }]]);
+  assert.equal(Buffer.from(reply.data, 'base64').toString(), '{"ok":{}}');
+  const failing = new GitReads(async () => { throw new Error('/secret'); });
+  await assert.rejects(failing.handle(valid), (e: HostError) => e.code === 'git_write_failed' && e.message.includes('Refresh'));
+});

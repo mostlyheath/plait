@@ -35,10 +35,10 @@ pub(super) const BUSY: &str =
 
 /// One write. Paths are relative to the repository root, as `Change::path`
 /// reports them; a rename lists both its path and its original.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum WriteOp {
-    Stage(Vec<PathBuf>),
-    Unstage(Vec<PathBuf>),
+    Stage(#[serde(with = "crate::wire::paths")] Vec<PathBuf>),
+    Unstage(#[serde(with = "crate::wire::paths")] Vec<PathBuf>),
     StageAll,
     UnstageAll,
     /// Commit what is staged. The message is used as written, apart from
@@ -59,6 +59,7 @@ pub enum WriteOp {
     /// staged diff. `header` is the hunk's `@@` line as shown; the write
     /// rereads the diff and refuses if hunk `index` no longer matches it.
     Hunk {
+        #[serde(with = "crate::wire::path")]
         path: PathBuf,
         from: DiffMode,
         index: usize,
@@ -68,6 +69,7 @@ pub enum WriteOp {
     /// saving its bytes so `Restore` can undo it. An untracked file is deleted.
     /// `hunk` is an index and shown header, as for `Hunk`.
     Discard {
+        #[serde(with = "crate::wire::path")]
         path: PathBuf,
         untracked: bool,
         hunk: Option<(usize, String)>,
@@ -84,15 +86,16 @@ pub enum WriteOp {
 
 /// A file's bytes saved in Git's object store before a discard. The object is
 /// unreferenced, so Git's own garbage collection removes it in time.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Backup {
+    #[serde(with = "crate::wire::path")]
     pub path: PathBuf,
     pub blob: String,
     pub executable: bool,
 }
 
 /// What a write did, in words for the user.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct WriteOutcome {
     /// Such as "Staged 2 files" or "Committed 1a2b3c4: Fix the parser".
     pub summary: String,

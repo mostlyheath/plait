@@ -68,6 +68,7 @@ fn run() -> io::Result<()> {
         "record" => return record::run(),
         "review" => return review::run(),
         "git-read" => return git_read::run(),
+        "git-write" => return git_read::write(),
         "worktree" => return worktree::run(),
         "build-output" => return build_output::run(),
         "worktree-git" => return worktree::git_run(),

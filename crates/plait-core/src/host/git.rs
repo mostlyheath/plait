@@ -9,6 +9,8 @@
 use super::{Client, Error};
 use crate::{
     file_view::{self, Stamp},
+    git::WriteOp,
+    git::WriteOutcome,
     git::{
         self, Branches, FileList, LineCount,
         log::{GraphCommit, History},
@@ -27,6 +29,9 @@ use std::{
 pub const OLDER_HOST: &str = "Update this machine's host to see its Git.";
 /// The runtime stops a read after 60 seconds; wait a little longer for its answer.
 const READ_WAIT: Duration = Duration::from_secs(65);
+/// A write may wait for the checkout's lease and then run a 120-second network
+/// command; the runtime stops it at 240 seconds.
+const WRITE_WAIT: Duration = Duration::from_secs(245);
 /// The most a client reassembles; a larger result is refused, not truncated.
 pub const RESULT_LIMIT: usize = 64 * 1024 * 1024;
 
@@ -143,6 +148,12 @@ pub enum Request {
         token: String,
         offset: usize,
     },
+    GitWrite {
+        #[serde(with = "crate::wire::path")]
+        checkout: PathBuf,
+        identity: WireIdentity,
+        write: WriteOp,
+    },
 }
 
 /// What the helper writes: the checkout's identity with the result, or the
@@ -169,6 +180,42 @@ pub struct HelperInput {
     pub identity: Option<WireIdentity>,
     #[serde(flatten)]
     pub read: Read,
+}
+
+/// The host's input to the write helper. A write always names the identity
+/// the desktop last read, as a local write does.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WriteInput {
+    #[serde(with = "crate::wire::path")]
+    pub checkout: PathBuf,
+    pub identity: WireIdentity,
+    pub write: WriteOp,
+}
+
+/// Blocking, on the host. Runs one write under the checkout's leases, as the
+/// desktop does for this Mac's checkouts, and serializes its outcome.
+pub fn execute_write(input: &WriteInput) -> Vec<u8> {
+    let outcome = match write_checked(input) {
+        Ok((identity, result)) => Outcome::Ok {
+            identity: identity.into(),
+            result,
+        },
+        Err(message) => Outcome::Error { message },
+    };
+    serde_json::to_vec(&outcome).unwrap_or_default()
+}
+
+fn write_checked(input: &WriteInput) -> Result<(DirIdentity, WriteOutcome), String> {
+    if !input.checkout.is_absolute() {
+        return Err("The checkout path must be absolute.".into());
+    }
+    let expected = input.identity.parse()?;
+    if git::toplevel(&input.checkout).and_then(|top| identity(&top))? != expected {
+        return Err("Open the top folder of the checkout.".into());
+    }
+    let outcome = git::write_checked(&input.checkout, Some(expected), &input.write)?;
+    Ok((expected, outcome))
 }
 
 /// Blocking, on the host. Runs one read and serializes its outcome.
@@ -441,6 +488,42 @@ pub fn file_stamp(
 ) -> Result<Remote<Stamp>, Error> {
     read(c, root, id, Read::FileStamp { path: path.into() })
 }
+
+/// Blocking. One write to `checkout` on the host behind `client`. The host
+/// finishes a write it started even if this connection drops, so a caller
+/// rereads status rather than assuming either outcome.
+pub fn write(
+    client: &Client,
+    checkout: &Path,
+    expected: DirIdentity,
+    op: &WriteOp,
+) -> Result<WriteOutcome, Error> {
+    let first: Page = client
+        .send_within(
+            &Request::GitWrite {
+                checkout: checkout.to_owned(),
+                identity: expected.into(),
+                write: op.clone(),
+            },
+            WRITE_WAIT,
+        )
+        .map_err(|e| {
+            if needs_host_update(&e) {
+                Error::Protocol(OLDER_HOST_WRITE.into())
+            } else {
+                e
+            }
+        })?;
+    let bytes = assemble(first, |token, offset| {
+        client.send(&Request::GitReadPage {
+            token: token.into(),
+            offset,
+        })
+    })?;
+    Ok(decode::<WriteOutcome>(&bytes)?.result)
+}
+
+pub const OLDER_HOST_WRITE: &str = "Update this machine's host to change its Git.";
 
 #[cfg(test)]
 #[path = "git_tests.rs"]
