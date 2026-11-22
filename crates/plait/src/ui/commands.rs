@@ -25,6 +25,8 @@ pub(super) enum Command {
     SignIn(String),
     OpenProject(std::path::PathBuf),
     OpenRemoteProject(String),
+    /// Show this folder of the remote machine in the open picker.
+    BrowseRemote(std::path::PathBuf),
     NewThread(ModelChoice),
     /// A model chosen in the model picker. The picker's purpose gives it meaning.
     Model(ModelChoice),
@@ -79,6 +81,7 @@ impl Clone for Command {
             Self::SignIn(id) => Self::SignIn(id.clone()),
             Self::OpenProject(path) => Self::OpenProject(path.clone()),
             Self::OpenRemoteProject(path) => Self::OpenRemoteProject(path.clone()),
+            Self::BrowseRemote(path) => Self::BrowseRemote(path.clone()),
             Self::NewThread(choice) => Self::NewThread(choice.clone()),
             Self::Model(choice) => Self::Model(choice.clone()),
             Self::HarnessModel(id, choice) => Self::HarnessModel(*id, choice.clone()),
@@ -398,6 +401,10 @@ impl Plait {
             }
             PaletteEvent::Aside(_) => {}
 
+            // Browsing a remote machine's folders keeps the picker open.
+            PaletteEvent::Run(Command::BrowseRemote(path)) => {
+                self.browse_remote(Some(path.clone()), cx)
+            }
             PaletteEvent::Run(command) => {
                 // Restore focus first, so an action runs where the user was.
                 self.close_overlay(true, window, cx);
@@ -491,6 +498,8 @@ impl Plait {
                 Some(ModelPurpose::ThreadModel) => self.choose_thread_model(choice, window, cx),
                 _ => {}
             },
+            // Handled while the picker stays open; reaching here means it closed first.
+            Command::BrowseRemote(_) => {}
             Command::OpenRemoteProject(path) => {
                 if !self.host_is_local() && super::valid_remote_path(&path) {
                     let path = std::path::PathBuf::from(path);

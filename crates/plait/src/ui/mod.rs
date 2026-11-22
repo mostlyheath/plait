@@ -34,6 +34,7 @@ mod new_thread_view;
 mod palette;
 mod panels;
 mod permissions;
+mod remote_browser;
 mod selection;
 mod server_setup;
 mod session;
@@ -195,6 +196,8 @@ pub struct Plait {
         std::rc::Rc<std::cell::RefCell<std::collections::HashMap<&'static str, Bounds<Pixels>>>>,
     /// The control the next picker belongs to.
     pending_anchor: Option<Bounds<Pixels>>,
+    /// Whether the open remote-folder picker's host can list folders.
+    remote_browser: Option<std::rc::Rc<std::cell::Cell<bool>>>,
     panels: panels::Panels,
     focus: FocusHandle,
     /// The conversation field that gets focus back after changing views.
@@ -322,6 +325,7 @@ impl Plait {
             overlay: None,
             anchors: Default::default(),
             pending_anchor: None,
+            remote_browser: None,
             panels: Default::default(),
             focus,
             conversation_focus: None,
@@ -624,7 +628,7 @@ impl Plait {
             return;
         }
         if !self.host_is_local() {
-            self.open_remote_path(window, cx);
+            self.open_remote_browser(window, cx);
             return;
         }
         self.picker_open = true;
@@ -1487,41 +1491,4 @@ const REMOTE_UNAVAILABLE: &str =
 
 fn valid_remote_path(path: &str) -> bool {
     !path.is_empty() && path.starts_with('/') && !path.chars().any(char::is_control)
-}
-
-impl Plait {
-    fn open_remote_path(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        use palette::{Item, Options, Palette, Typed};
-        let options = Options {
-            name: "Open remote project".into(),
-            placeholder: format!("Path on {}", self.machine_label()).into(),
-            empty: "Enter an absolute path without control characters.".into(),
-            initial: None,
-            mark: None,
-            aside: None,
-            note: None,
-        };
-        let typed: Typed = std::rc::Rc::new(|text, _| {
-            let valid = valid_remote_path(text);
-            Some((
-                Item::new(
-                    "remote-path",
-                    if valid {
-                        format!("Open {text}")
-                    } else {
-                        "Enter an absolute path without control characters.".into()
-                    },
-                    commands::Command::OpenRemoteProject(text.into()),
-                )
-                .enabled(valid),
-                true,
-            ))
-        });
-        let palette = cx.new(|cx| {
-            let mut palette = Palette::new(options, Vec::new(), window, cx);
-            palette.set_typed(typed, cx);
-            palette
-        });
-        self.present(palette, None, window, cx);
-    }
 }

@@ -2174,6 +2174,19 @@ write returns `conflict`, so the client can reread and retry. Device IDs match
 host retains at most 64 devices, evicting the least recently updated on insertion.
 The desktop uses these operations for per-device tabs, layout, and selection.
 
+## Folders
+
+The additive read-only `browse_folder {path?, hidden?}` operation omits
+`protocol_version`. An omitted path starts at the host user's home; a supplied
+path must be absolute, at most 4096 bytes, and contain no control characters.
+The reply contains the resolved `path`, its `parent` (null at the root), `home`,
+a `git` marker, sorted subfolder `entries` with their own Git markers, and
+`truncated` when more than 1000 folders match. Hidden names are omitted unless
+`hidden` is true. Folder symlinks are included by their link names. Git markers
+check for a `.git` file or directory without running Git; checks stop after two
+seconds and remaining markers are false. Missing, unreadable, and non-directory
+paths return `not_found`, `permission_denied`, and `invalid_request`, respectively.
+
 ## Checkout Git reads for remote desktops
 
 These additive, read-only operations omit `protocol_version`. They let a
