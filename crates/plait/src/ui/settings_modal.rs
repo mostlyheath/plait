@@ -45,6 +45,10 @@ impl Plait {
             if event.keystroke.key == "escape" && this.overlay.is_none() {
                 if recording || this.keyboard.recording.is_some() {
                     this.cancel_recording(cx);
+                } else if this.harness_path_open() {
+                    this.cancel_harness_path();
+                    window.focus(&this.settings_focus, cx);
+                    cx.notify();
                 } else if this.providers.form.is_some() {
                     this.close_provider_form(cx);
                     window.focus(&this.settings_focus, cx);

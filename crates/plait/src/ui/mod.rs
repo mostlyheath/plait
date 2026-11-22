@@ -200,6 +200,8 @@ pub struct Plait {
     pending_anchor: Option<Bounds<Pixels>>,
     /// Whether the open remote-folder picker's host can list folders.
     remote_browser: Option<std::rc::Rc<std::cell::Cell<bool>>>,
+    remote_browser_generation: u64,
+    remote_listing: Option<plait_core::host::folders::Listing>,
     panels: panels::Panels,
     focus: FocusHandle,
     /// The conversation field that gets focus back after changing views.
@@ -220,6 +222,7 @@ pub struct Plait {
     session: session::SessionState,
     picker_open: bool,
     notice: Option<String>,
+    machine_restore_notice: Option<String>,
     last_render_us: u128,
     max_render_us: u128,
     startup: Instant,
@@ -337,6 +340,8 @@ impl Plait {
             anchors: Default::default(),
             pending_anchor: None,
             remote_browser: None,
+            remote_browser_generation: 0,
+            remote_listing: None,
             panels: Default::default(),
             focus,
             conversation_focus: None,
@@ -354,6 +359,7 @@ impl Plait {
             session: session::SessionState::default(),
             picker_open: false,
             notice: None,
+            machine_restore_notice: None,
             last_render_us: 0,
             max_render_us: 0,
             startup,
@@ -705,6 +711,7 @@ impl Plait {
         cx: &mut Context<Self>,
     ) {
         self.close_overlay(true, window, cx);
+        self.cancel_harness_path();
         if page.is_some() && !self.settings_open {
             self.settings_restore = window.focused(cx);
         }
@@ -1432,6 +1439,24 @@ impl Render for Plait {
                                         .text_size(px(12.))
                                         .text_color(rgb(colors().amber))
                                         .child(note),
+                                )
+                            })
+                            .when_some(self.machine_restore_notice.clone(), |el, notice| {
+                                el.child(
+                                    row().px_4().py_2().gap_2().child(notice).child(
+                                        button(
+                                            "restore-machine-settings",
+                                            "Open Machines settings…",
+                                        )
+                                        .on_activate(
+                                            cx,
+                                            |this, window, cx| {
+                                                this.machine_restore_notice = None;
+                                                this.settings_tab = settings::SettingsTab::Machines;
+                                                this.show_settings(true, window, cx);
+                                            },
+                                        ),
+                                    ),
                                 )
                             })
                             .when_some(self.notice.clone(), |el, notice| {

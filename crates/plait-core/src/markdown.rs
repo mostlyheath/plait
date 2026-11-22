@@ -584,6 +584,8 @@ fn url_end(text: &str, start: usize) -> usize {
 pub struct Transcript {
     id: String,
     pub messages: HashMap<String, Arc<Message>>,
+    pub message_labels: HashMap<String, Arc<str>>,
+    pub live_label: Option<Arc<str>>,
     pub live: Option<Arc<Message>>,
     pub reasoning: HashMap<String, Arc<Message>>,
     pub live_reasoning: Option<Arc<Message>>,
@@ -606,6 +608,13 @@ impl Transcript {
             + self.id.capacity()
             + messages(&self.messages)
             + messages(&self.reasoning)
+            + self.message_labels.capacity() * (size_of::<(String, Arc<str>)>() + 2)
+            + self
+                .message_labels
+                .iter()
+                .map(|(id, label)| id.capacity() + label.len())
+                .sum::<usize>()
+            + self.live_label.as_ref().map_or(0, |label| label.len())
             + self
                 .live
                 .iter()
@@ -737,7 +746,37 @@ impl Transcript {
         if cancelled() {
             return None;
         }
+        let message_labels = snapshot
+            .messages
+            .iter()
+            .map(|message| {
+                let prefix = if message.role == MessageRole::User {
+                    "Your message: "
+                } else {
+                    "Plait message: "
+                };
+                let label = previous
+                    .and_then(|p| {
+                        p.messages
+                            .get(&message.id)
+                            .zip(p.message_labels.get(&message.id))
+                    })
+                    .filter(|(old, label)| old.source == message.text && label.starts_with(prefix))
+                    .map(|(_, label)| label.clone())
+                    .unwrap_or_else(|| format!("{prefix}{}", message.text).into());
+                (message.id.clone(), label)
+            })
+            .collect();
+        let live_label = (!snapshot.live_text.is_empty()).then(|| {
+            previous
+                .and_then(|p| p.live.as_ref().zip(p.live_label.as_ref()))
+                .filter(|(old, _)| old.source == snapshot.live_text)
+                .map(|(_, label)| label.clone())
+                .unwrap_or_else(|| format!("Plait is writing: {}", snapshot.live_text).into())
+        });
         Some(Self {
+            message_labels,
+            live_label,
             id: snapshot.id.clone(),
             messages,
             live,

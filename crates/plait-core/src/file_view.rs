@@ -12,11 +12,8 @@ use std::{
     ops::Range,
     os::unix::fs::MetadataExt,
     path::Path,
-    time::SystemTime,
 };
 
-/// Larger files are described, not drawn.
-pub const READ_LIMIT: u64 = 8 * 1024 * 1024;
 /// A NUL byte in this much of the start marks a binary file, as Git decides.
 const SNIFF: usize = 8000;
 /// Find stops counting here, so a one-letter query stays instant.
@@ -24,14 +21,7 @@ pub const FIND_LIMIT: usize = 1000;
 /// Lines longer than this are clipped when drawn; the text itself is kept.
 pub const LINE_CLIP: usize = 2000;
 
-/// Size and modification time: enough to skip rereading an unchanged file.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct Stamp {
-    pub len: u64,
-    pub device: u64,
-    pub inode: u64,
-    pub modified: Option<SystemTime>,
-}
+pub use plait_protocol::file_view::{READ_LIMIT, Stamp};
 
 /// What the viewer can show for a path.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -60,6 +50,8 @@ pub struct Text {
     pub spans: Vec<highlight::Span>,
     /// Characters in the longest line, for horizontal scrolling.
     pub widest: usize,
+    /// First line with the widest clipped width.
+    pub widest_index: usize,
     pub hash: u64,
 }
 
@@ -163,11 +155,14 @@ pub fn prepare(text: String, path: &str) -> Text {
     if start < text.len() || lines.is_empty() {
         lines.push(start..text.len());
     }
-    let widest = lines
+    let (widest_index, widest) = lines
         .iter()
-        .map(|line| text[line.clone()].chars().count().min(LINE_CLIP))
-        .max()
-        .unwrap_or(0);
+        .enumerate()
+        .map(|(index, line)| (index, text[line.clone()].chars().count().min(LINE_CLIP)))
+        .fold(
+            (0, 0),
+            |best, item| if item.1 > best.1 { item } else { best },
+        );
     let spans = highlight::highlight(highlight::language_for_path(path), &text);
     Text {
         hash: hash(&text),
@@ -175,6 +170,7 @@ pub fn prepare(text: String, path: &str) -> Text {
         lines,
         spans,
         widest,
+        widest_index,
     }
 }
 
@@ -221,6 +217,9 @@ mod tests {
                 .any(|(_, token)| *token == highlight::Token::Keyword)
         );
         assert_eq!(text.widest, 11);
+        assert_eq!(text.widest_index, 0);
+        assert_eq!(prepare("a\nlonger\nx".into(), "a").widest_index, 1);
+        assert_eq!(prepare("longer\na".into(), "a").widest_index, 0);
         assert_eq!(prepare(String::new(), "a").lines, vec![0..0]);
         assert_eq!(prepare("a\n".into(), "a").lines, vec![0..1]);
     }

@@ -20,6 +20,7 @@ pub struct HostConnection {
     pub connecting: bool,
     pub error: Option<String>,
     pub status: Option<Status>,
+    pub catalog_revision: u64,
     pub threads: Vec<ThreadSummary>,
     pub settings_model: Option<ModelChoice>,
     pub saving: bool,
@@ -79,6 +80,11 @@ pub struct HostState {
     /// Per-thread submission ledger, independent of which thread is selected.
     pub submissions: Submissions,
     pub undo: crate::operations::UndoLedger,
+}
+
+fn live_preview_clipped(snapshot: &Snapshot) -> bool {
+    snapshot.live_text.encode_utf16().take(16_383).count() >= 16_383
+        || snapshot.live_reasoning.encode_utf16().take(16_383).count() >= 16_383
 }
 
 impl HostState {
@@ -145,6 +151,7 @@ impl HostState {
             self.submissions.disconnected();
             self.connection = HostConnection {
                 epoch: self.connection.epoch,
+                catalog_revision: self.connection.catalog_revision.wrapping_add(1),
                 ..Default::default()
             };
             self.creation = CheckoutCreationState::new(path);
@@ -197,6 +204,15 @@ impl HostState {
                 .filter(|choice| self.connection.model_available(Some(choice), &status));
         }
         status.models.sort_by_key(|model| !model.authenticated);
+        if self.connection.status.as_ref().is_none_or(|old| {
+            old.models.len() != status.models.len()
+                || old.models.iter().zip(&status.models).any(|(a, b)| {
+                    (&a.provider, &a.model_id, &a.name, a.authenticated)
+                        != (&b.provider, &b.model_id, &b.name, b.authenticated)
+                })
+        }) {
+            self.connection.catalog_revision = self.connection.catalog_revision.wrapping_add(1);
+        }
         self.connection.settings_model = status.default_model.clone();
         self.connection.status = Some(status);
         true
@@ -250,6 +266,7 @@ impl HostState {
             thread.status = snapshot.status;
             thread.model = snapshot.model.clone();
         }
+        self.thread.live_preview_clipped = live_preview_clipped(&snapshot);
         self.thread.snapshot = Some(Arc::new(snapshot));
         true
     }
@@ -550,6 +567,48 @@ pub fn request_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preview_clipping_uses_utf16_units() {
+        let mut value = snapshot("a");
+        value.live_text = "a".repeat(16_382);
+        assert!(!live_preview_clipped(&value));
+        value.live_text.push('a');
+        assert!(live_preview_clipped(&value));
+        value.live_text.clear();
+        value.live_reasoning = "😀".repeat(8192);
+        assert!(live_preview_clipped(&value));
+    }
+
+    #[test]
+    fn catalog_revision_changes_only_for_displayed_model_changes() {
+        let mut state = HostState::new(PathBuf::from("/repo"));
+        let model = crate::host::Model {
+            provider: "p".into(),
+            model_id: "m".into(),
+            name: "Model".into(),
+            authenticated: true,
+            ..Default::default()
+        };
+        assert!(state.apply_status(0, status(None, vec![model.clone()])));
+        let revision = state.connection.catalog_revision;
+        assert!(state.apply_status(0, status(None, vec![model.clone()])));
+        assert_eq!(state.connection.catalog_revision, revision);
+        let mut other = model.clone();
+        other.model_id = "other".into();
+        assert!(state.apply_status(0, status(None, vec![model.clone(), other.clone()])));
+        let revision = state.connection.catalog_revision;
+        let mut metadata = model.clone();
+        metadata.context_window = Some(1234);
+        assert!(state.apply_status(0, status(None, vec![metadata, other.clone()])));
+        assert_eq!(state.connection.catalog_revision, revision);
+        assert!(state.apply_status(0, status(None, vec![other.clone(), model.clone()])));
+        let reordered = state.connection.catalog_revision;
+        assert_ne!(reordered, revision);
+        other.authenticated = false;
+        assert!(state.apply_status(0, status(None, vec![model, other])));
+        assert_ne!(state.connection.catalog_revision, reordered);
+    }
 
     fn status(default: Option<ModelChoice>, models: Vec<crate::host::Model>) -> Status {
         Status {

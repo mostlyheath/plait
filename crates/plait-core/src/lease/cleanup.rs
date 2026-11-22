@@ -1,38 +1,12 @@
 //! Durable exclusion when process cleanup cannot be confirmed. All changes
 //! require the checkout writer lease; a separate short lock makes reads atomic.
 use super::*;
-use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::io::{Read, Seek, Write};
 
-pub const STOP_UNCONFIRMED: &str = "Stop unconfirmed";
-pub const RESTART_REASON: &str = "The host ended before it confirmed this run's cleanup.";
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Cleanup {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub process: Option<CleanupProcess>,
-    pub token: String,
-    pub reason: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CleanupProcess {
-    pub group: i32,
-    pub command: String,
-    pub can_stop: bool,
-}
-
-impl Cleanup {
-    pub fn message(&self) -> String {
-        format!(
-            "Stop unconfirmed. {} New runs and Git changes are blocked. Check for processes still using this checkout, then confirm they have stopped.",
-            self.reason
-        )
-    }
-}
+pub use plait_protocol::lease::cleanup::{
+    Cleanup, CleanupProcess, RESTART_REASON, STOP_UNCONFIRMED,
+};
 
 fn locked_file(lease_dir: &Path, id: DirIdentity) -> Result<File, LeaseError> {
     let (_, directory) = open_lease_dir(lease_dir)?;

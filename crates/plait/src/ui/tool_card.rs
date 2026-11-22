@@ -307,7 +307,7 @@ impl Plait {
                 ),
             )
             .when(expanded, |el| {
-                el.child(self.tool_details(tool, view.map(Arc::as_ref), index, cx))
+                el.child(self.tool_details(tool, view.cloned(), index, cx))
             })
             .into_any_element()
     }
@@ -315,15 +315,19 @@ impl Plait {
     fn tool_details(
         &self,
         tool: &Tool,
-        view: Option<&ToolView>,
+        view: Option<Arc<ToolView>>,
         index: usize,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let group = SharedString::from(format!("tool-details-{}", tool.id));
         let sections = view
+            .as_ref()
             .map(|view| view.sections.as_slice())
             .unwrap_or_default();
-        let copy = view.map(ToolView::text).unwrap_or_default();
+        let has_copy = sections.len() > 1
+            || sections
+                .iter()
+                .any(|section| !section.block.text.is_empty());
         let body = sections.iter().enumerate().map(|(section_index, section)| {
             let site = Site {
                 owner: Owner::Tool(tool.id.clone().into()),
@@ -350,7 +354,7 @@ impl Plait {
                     colors().subtle,
                 ))
             })
-            .when(!copy.is_empty(), |el| {
+            .when(has_copy, |el| {
                 el.child(
                     div().absolute().top(px(4.)).right(px(4.)).child(
                         quiet_button(
@@ -361,7 +365,9 @@ impl Plait {
                         .bg(rgb(colors().panel))
                         .aria_label("Copy tool details")
                         .on_activate(cx, move |_, _, cx| {
-                            cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()))
+                            if let Some(view) = &view {
+                                cx.write_to_clipboard(ClipboardItem::new_string(view.text()));
+                            }
                         }),
                     ),
                 )
