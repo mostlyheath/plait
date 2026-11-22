@@ -60,12 +60,28 @@ fn highlight(style: &Style) -> HighlightStyle {
     }
 }
 
+/// Spans are sorted and non-overlapping, so only this slice can intersect.
+pub(super) fn overlapping_spans<'a>(
+    block: &'a Block,
+    range: &Range<usize>,
+) -> &'a [(Range<usize>, Style)] {
+    if range.is_empty() {
+        return &block.spans[..0];
+    }
+    let start = block
+        .spans
+        .partition_point(|(span, _)| span.end <= range.start);
+    let end = block
+        .spans
+        .partition_point(|(span, _)| span.start < range.end)
+        .max(start);
+    &block.spans[start..end]
+}
+
 /// Clip a block's spans to `range` and make them relative to it.
 fn local_spans(block: &Block, range: &Range<usize>) -> Vec<(Range<usize>, Style)> {
-    block
-        .spans
+    overlapping_spans(block, range)
         .iter()
-        .filter(|(span, _)| span.start < range.end && range.start < span.end)
         .map(|(span, style)| {
             let local =
                 span.start.max(range.start) - range.start..span.end.min(range.end) - range.start;
@@ -103,7 +119,7 @@ impl Plait {
         let text = StyledText::new(SharedString::from(block.text[range.clone()].to_owned()))
             .with_highlights(runs)
             .with_font_family_overrides(code);
-        self.selectable(site, block, range, text, by_line)
+        self.selectable(site, block, range, text, by_line, &spans)
     }
 
     /// The monospace body of a code block: one line per source line, scrolling sideways.
@@ -465,5 +481,26 @@ impl Plait {
             .min_w_0()
             .children(blocks.collect::<Vec<_>>())
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod span_tests {
+    use super::{Block, Style, overlapping_spans};
+
+    #[test]
+    fn overlapping_slice_tracks_range_and_boundaries() {
+        let block = Block {
+            spans: vec![
+                (0..3, Style::default()),
+                (3..6, Style::default()),
+                (8..10, Style::default()),
+            ],
+            ..Block::default()
+        };
+        assert_eq!(overlapping_spans(&block, &(3..5)).len(), 1);
+        assert_eq!(overlapping_spans(&block, &(5..9)).len(), 2);
+        assert!(overlapping_spans(&block, &(6..8)).is_empty());
+        assert!(overlapping_spans(&block, &(4..4)).is_empty());
     }
 }

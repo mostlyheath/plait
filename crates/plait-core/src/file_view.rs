@@ -50,6 +50,8 @@ pub struct Text {
     pub spans: Vec<highlight::Span>,
     /// Characters in the longest line, for horizontal scrolling.
     pub widest: usize,
+    /// First line with the widest clipped width.
+    pub widest_index: usize,
     pub hash: u64,
 }
 
@@ -153,11 +155,14 @@ pub fn prepare(text: String, path: &str) -> Text {
     if start < text.len() || lines.is_empty() {
         lines.push(start..text.len());
     }
-    let widest = lines
+    let (widest_index, widest) = lines
         .iter()
-        .map(|line| text[line.clone()].chars().count().min(LINE_CLIP))
-        .max()
-        .unwrap_or(0);
+        .enumerate()
+        .map(|(index, line)| (index, text[line.clone()].chars().count().min(LINE_CLIP)))
+        .fold(
+            (0, 0),
+            |best, item| if item.1 > best.1 { item } else { best },
+        );
     let spans = highlight::highlight(highlight::language_for_path(path), &text);
     Text {
         hash: hash(&text),
@@ -165,6 +170,7 @@ pub fn prepare(text: String, path: &str) -> Text {
         lines,
         spans,
         widest,
+        widest_index,
     }
 }
 
@@ -211,6 +217,9 @@ mod tests {
                 .any(|(_, token)| *token == highlight::Token::Keyword)
         );
         assert_eq!(text.widest, 11);
+        assert_eq!(text.widest_index, 0);
+        assert_eq!(prepare("a\nlonger\nx".into(), "a").widest_index, 1);
+        assert_eq!(prepare("longer\na".into(), "a").widest_index, 0);
         assert_eq!(prepare(String::new(), "a").lines, vec![0..0]);
         assert_eq!(prepare("a\n".into(), "a").lines, vec![0..1]);
     }

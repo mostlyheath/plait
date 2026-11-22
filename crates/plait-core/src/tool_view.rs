@@ -461,6 +461,18 @@ mod tests {
     }
 
     #[test]
+    fn copy_joins_tool_sections_with_blank_lines() {
+        let view = ToolView::new(&tool(
+            "command",
+            "done",
+            json!({"command": "echo hello"}),
+            "hello",
+        ));
+        assert_eq!(view.sections.len(), 2);
+        assert_eq!(view.text(), "echo hello\n\nhello");
+    }
+
+    #[test]
     fn edit_shows_a_line_diff_and_copies_as_one() {
         let view = ToolView::new(&tool(
             "edit",
