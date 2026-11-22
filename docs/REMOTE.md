@@ -173,13 +173,13 @@ Decided while building step 4, to reach usable remote threads sooner.
 - **Git views.** At first, Changes, History, and Files said they were
   unavailable on a remote machine. [Remote Git](#remote-git-and-files)
   replaced that. The editor and terminal handoffs remain unavailable.
-  Worktrees measures no sizes there, because sizes read this Mac's disk.
+  Worktrees graphs and sizes now come from the host too.
 - **Later.** Projects from several machines in one sidebar at once, as
   described above, follow as their own slice.
 
 ## Remote Git and files
 
-**Built, except Worktrees sizes; the live check remains.** A remote checkout
+**Built; the live check remains.** A remote checkout
 gets the same Changes, History, Files, branch picker, Worktrees graph, and
 agreed Git writes as a local one, run by the host on its own machine. The
 desktop's local path is unchanged.
@@ -205,9 +205,9 @@ unavailable with "Update this machine's host to see its Git."
 
 - **Reads (built):** one operation, `git_read`, names the read: `status`,
   `diff`, `files`, `log`, `show`, `branches`, `line_counts`, `graph`,
-  `file`, or `file_stamp`. `git_read_page` fetches the rest of a large
-  result. Worktree sizes come with the desktop step, because they measure
-  the host's store too.
+  `file`, `file_stamp`, or `worktree_size`. `git_read_page` fetches the
+  rest of a large result. For `worktree_size` the runtime adds its own store
+  path, for the thread's retained build output; a client cannot name one.
 - **Writes (built on the host):** `git_write` carries one `WriteOp` (stage,
   unstage, hunk, commit, push, publish, fetch, pull, discard, restore,
   create or switch branch) and the checkout identity the desktop last read.
@@ -262,8 +262,7 @@ The client accepts replies up to 1 MiB; local reads allow more. So:
    non-UTF-8 names, and an older host.
 2. **Built:** a desktop backend per machine for Changes, History, the
    branch picker, Files, the composer file list, line counts, the Worktrees
-   graph, and writes. Worktrees sizes still need a host read that measures
-   the host's store too.
+   graph and sizes, and writes.
 3. **Built:** `git_write` on the host, including network writes, under the
    checkout's leases.
 4. The live check from a Mac to the Linux host.

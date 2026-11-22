@@ -95,6 +95,33 @@ impl Backend {
         }
     }
 
+    /// One worktree's size. Locally the thread's retained build output is in
+    /// this Mac's store; a host measures with its own.
+    pub fn worktree_size(
+        &self,
+        project: &Path,
+        key: &crate::worktree_size::Key,
+        thread: Option<&str>,
+        others: &std::collections::HashSet<crate::worktree_size::DirId>,
+        store: &Path,
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> Result<crate::worktree_size::Size, String> {
+        use crate::worktree_size as size;
+        match self {
+            Self::Local => {
+                let cache = thread.map(|id| store.join("build-cache").join(id));
+                if key.removed {
+                    size::measure_retained_cache(cache.as_deref(), cancelled)
+                } else {
+                    size::measure_verified(key, cache.as_deref(), others, cancelled)
+                }
+            }
+            Self::Host(client) => {
+                remote::worktree_size(client, project, key, thread, others).map_err(text)
+            }
+        }
+    }
+
     pub fn graph(&self, root: &Path, heads: &[String]) -> Result<(Vec<GraphCommit>, bool), String> {
         match self {
             Self::Local => git::log::graph(root, heads),

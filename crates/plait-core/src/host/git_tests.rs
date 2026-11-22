@@ -51,6 +51,7 @@ fn run<T: DeserializeOwned>(
 ) -> Result<Remote<T>, Error> {
     let input = HelperInput {
         checkout: checkout.into(),
+        store: None,
         identity,
         read,
     };
@@ -474,5 +475,45 @@ fn writes_run_on_the_host_checkout_with_its_identity() {
             .any(|c| c.path == Path::new("src/lib.rs") && c.staged()),
         "a refused write staged something"
     );
+    let _ = std::fs::remove_dir_all(repo.parent().unwrap());
+}
+
+#[test]
+fn a_worktree_is_measured_with_the_hosts_own_store() {
+    let repo = repository("size");
+    let store = repo.parent().unwrap().join("store");
+    let cache = store.join("build-cache").join("thr_1");
+    std::fs::create_dir_all(&cache).unwrap();
+    std::fs::write(cache.join("out.o"), vec![0u8; 4096]).unwrap();
+    let id = local_identity(&repo);
+    let size = |thread: Option<&str>, removed: bool, store: Option<PathBuf>| {
+        let input = HelperInput {
+            checkout: repo.clone(),
+            store,
+            identity: None,
+            read: Read::WorktreeSize {
+                worktree: repo.clone(),
+                worktree_identity: Some(id.into()),
+                thread: thread.map(str::to_owned),
+                removed,
+                others: Vec::new(),
+                build_directories: Vec::new(),
+            },
+        };
+        decode::<crate::worktree_size::Size>(&execute(&input)).map(|r| r.result)
+    };
+    let here = size(Some("thr_1"), false, Some(store.clone())).unwrap();
+    assert!(here.source > 0 && here.build >= 4096, "{here:?}");
+    let retained = size(Some("thr_1"), true, Some(store.clone())).unwrap();
+    assert_eq!((retained.source, retained.build >= 4096), (0, true));
+    let message = |r: Result<_, Error>| match r {
+        Err(Error::Protocol(m)) => m,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        message(size(Some("../thr_1"), true, Some(store.clone()))),
+        "Invalid thread."
+    );
+    assert!(message(size(None, false, None)).contains("store"));
     let _ = std::fs::remove_dir_all(repo.parent().unwrap());
 }

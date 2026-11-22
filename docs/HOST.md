@@ -2128,7 +2128,11 @@ see its Git."
   runs one read. `checkout` is base64 of the absolute path's bytes. `KIND`
   and its fields are `status`, `files`, `branches`, `diff` (`change`,
   `mode`), `log` (`tip`, `skip`, `limit`), `show` (`id`), `line_counts`
-  (`paths`), `graph` (`heads`), `file` (`path`), and `file_stamp` (`path`).
+  (`paths`), `graph` (`heads`), `file` (`path`), `file_stamp` (`path`), and
+  `worktree_size` (`worktree`, `worktree_identity`, `thread`, `removed`,
+  `others`, `build_directories`). For `worktree_size` the runtime adds the
+  host store, so a thread's retained build output is measured there; a
+  client cannot send a store, and a thread must be an id.
   Any other field is refused.
 - The reply is `{total, data, token}`: `data` is base64 of the first part of
   the serialized outcome, and `token` is null when `data` is all of it.

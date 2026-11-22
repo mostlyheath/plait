@@ -70,6 +70,18 @@ pub enum Read {
         #[serde(with = "crate::wire::path")]
         path: PathBuf,
     },
+    /// One worktree's size, measured as the Worktrees view measures this Mac's.
+    /// The host adds its own store, for the thread's retained build output.
+    WorktreeSize {
+        #[serde(with = "crate::wire::path")]
+        worktree: PathBuf,
+        worktree_identity: Option<WireIdentity>,
+        thread: Option<String>,
+        removed: bool,
+        /// Other checkouts nested inside this one, measured as themselves.
+        others: Vec<WireIdentity>,
+        build_directories: Vec<String>,
+    },
 }
 
 /// `Change` without the fields a diff does not use, comparable in tests.
@@ -177,6 +189,9 @@ pub struct FileBytes {
 pub struct HelperInput {
     #[serde(with = "crate::wire::path")]
     pub checkout: PathBuf,
+    /// The host's store, added by the runtime; a client never names it.
+    #[serde(default, with = "crate::wire::opt_path")]
+    pub store: Option<PathBuf>,
     pub identity: Option<WireIdentity>,
     #[serde(flatten)]
     pub read: Read,
@@ -259,7 +274,10 @@ fn run_checked(input: &HelperInput) -> Result<(DirIdentity, serde_json::Value), 
     if identity(&top)? != before {
         return Err("Open the top folder of the checkout.".into());
     }
-    let result = dispatch(root, &input.read)?;
+    let result = match &input.read {
+        Read::WorktreeSize { .. } => value(measure_size(input)),
+        read => dispatch(root, read),
+    }?;
     if identity(root)? != before {
         return Err("Checkout identity changed.".into());
     }
@@ -276,6 +294,62 @@ fn identity(path: &Path) -> Result<DirIdentity, String> {
         dev: meta.dev(),
         ino: meta.ino(),
     })
+}
+
+fn measure_size(input: &HelperInput) -> Result<crate::worktree_size::Size, String> {
+    use crate::worktree_size::{self as size, Key};
+    let Read::WorktreeSize {
+        worktree: root,
+        worktree_identity: identity,
+        thread,
+        removed,
+        others,
+        build_directories,
+    } = &input.read
+    else {
+        return Err("Not a size read.".into());
+    };
+    let store = input
+        .store
+        .as_ref()
+        .ok_or("The host did not name its store.")?;
+    // The thread names a folder in the store, so only an id's characters pass.
+    let cache = match thread {
+        Some(id) if valid_thread(id) => Some(store.join("build-cache").join(id)),
+        Some(_) => return Err("Invalid thread.".into()),
+        None => None,
+    };
+    let never = std::sync::atomic::AtomicBool::new(false);
+    if *removed {
+        return size::measure_retained_cache(cache.as_deref(), &never);
+    }
+    if !root.is_absolute() {
+        return Err("The worktree path must be absolute.".into());
+    }
+    let key = Key {
+        root: root.clone(),
+        identity: identity.as_ref().map(|id| git::worktree::Identity {
+            dev: id.dev.clone(),
+            ino: id.ino.clone(),
+        }),
+        head: None,
+        last_used: None,
+        changed: None,
+        removed: false,
+        build_directories: build_directories.clone(),
+    };
+    let skip = others
+        .iter()
+        .map(|id| id.parse().map(|id| (id.dev, id.ino)))
+        .collect::<Result<_, _>>()?;
+    size::measure_verified(&key, cache.as_deref(), &skip, &never)
+}
+
+fn valid_thread(id: &str) -> bool {
+    (1..=128).contains(&id.len())
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
 fn value<T: Serialize>(result: Result<T, String>) -> Result<serde_json::Value, String> {
@@ -301,6 +375,7 @@ fn dispatch(root: &Path, read: &Read) -> Result<serde_json::Value, String> {
             )
         }
         Read::FileStamp { path } => value(file_view::stamp(root, path)),
+        Read::WorktreeSize { .. } => Err("Not a plain read.".into()),
     }
 }
 
@@ -482,6 +557,30 @@ pub fn file(
         identity: remote.identity,
         result: file_view::classify(remote.result.stamp, bytes, path),
     })
+}
+/// One worktree's size, measured by the host that owns it.
+pub fn worktree_size(
+    c: &Client,
+    project: &Path,
+    key: &crate::worktree_size::Key,
+    thread: Option<&str>,
+    others: &std::collections::HashSet<crate::worktree_size::DirId>,
+) -> Result<crate::worktree_size::Size, Error> {
+    let size = Read::WorktreeSize {
+        worktree: key.root.clone(),
+        worktree_identity: key.identity.as_ref().map(|id| WireIdentity {
+            dev: id.dev.clone(),
+            ino: id.ino.clone(),
+        }),
+        thread: thread.map(str::to_owned),
+        removed: key.removed,
+        others: others
+            .iter()
+            .map(|&(dev, ino)| DirIdentity { dev, ino }.into())
+            .collect(),
+        build_directories: key.build_directories.clone(),
+    };
+    read(c, project, None, size).map(|r| r.result)
 }
 pub fn file_stamp(
     c: &Client,
