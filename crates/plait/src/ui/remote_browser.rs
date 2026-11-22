@@ -22,21 +22,29 @@ pub(super) fn browse_items(listing: &Listing) -> Vec<Item> {
     let here = listing.path.display().to_string();
     if listing.git {
         items.push(
-            Item::new("open-here", format!("Open {}", folder_name(&listing.path)), open(&listing.path))
-                .detail(here.clone())
-                .section("This folder")
-                .glyph("folder", colors().mint),
+            Item::new(
+                "open-here",
+                format!("Open {}", folder_name(&listing.path)),
+                open(&listing.path),
+            )
+            .detail(here.clone())
+            .section("This folder")
+            .glyph("folder", colors().mint),
         );
     }
     if let Some(parent) = &listing.parent {
         items.push(
-            Item::new("up", format!("Up to {}", folder_name(parent)), browse(parent))
-                .detail(parent.display().to_string())
-                .section("This folder")
-                .glyph("up", colors().muted),
+            Item::new(
+                "up",
+                format!("Up to {}", folder_name(parent)),
+                browse(parent),
+            )
+            .detail(parent.display().to_string())
+            .section("This folder")
+            .glyph("up", colors().muted),
         );
     }
-    if listing.path != listing.home {
+    if listing.path != listing.home && listing.parent.as_ref() != Some(&listing.home) {
         items.push(
             Item::new("home", "Home folder", browse(&listing.home))
                 .detail(listing.home.display().to_string())
@@ -44,13 +52,20 @@ pub(super) fn browse_items(listing: &Listing) -> Vec<Item> {
                 .glyph("folder", colors().muted),
         );
     }
-    for entry in &listing.entries {
+    // Repositories first, then other folders, each in the host's order.
+    let (repositories, folders): (Vec<_>, Vec<_>) =
+        listing.entries.iter().partition(|entry| entry.git);
+    for entry in repositories.into_iter().chain(folders) {
         let path = listing.path.join(&entry.name);
-        let item = Item::new(format!("folder:{}", entry.name), entry.name.clone(), if entry.git {
-            open(&path)
-        } else {
-            browse(&path)
-        });
+        let item = Item::new(
+            format!("folder:{}", entry.name),
+            entry.name.clone(),
+            if entry.git {
+                open(&path)
+            } else {
+                browse(&path)
+            },
+        );
         items.push(if entry.git {
             item.detail("Repository")
                 .section("Repositories")
@@ -61,9 +76,13 @@ pub(super) fn browse_items(listing: &Listing) -> Vec<Item> {
     }
     if listing.truncated {
         items.push(
-            Item::new("more", "More folders than shown; type a path to go further", browse(&listing.path))
-                .section("Folders")
-                .enabled(false),
+            Item::new(
+                "more",
+                "More folders than shown; type a path to go further",
+                browse(&listing.path),
+            )
+            .section("Folders")
+            .enabled(false),
         );
     }
     if items.is_empty() {
@@ -113,11 +132,21 @@ impl Plait {
         let typed: Typed = {
             let browsable = browsable.clone();
             Rc::new(move |text, _| {
+                // Nothing typed is filtering, not a path.
+                if text.trim().is_empty() {
+                    return None;
+                }
                 let valid = super::valid_remote_path(text);
                 let (title, command) = if browsable.get() {
-                    (format!("Go to {text}"), Command::BrowseRemote(PathBuf::from(text)))
+                    (
+                        format!("Go to {text}"),
+                        Command::BrowseRemote(PathBuf::from(text)),
+                    )
                 } else {
-                    (format!("Open {text}"), Command::OpenRemoteProject(text.into()))
+                    (
+                        format!("Open {text}"),
+                        Command::OpenRemoteProject(text.into()),
+                    )
                 };
                 let title = if valid {
                     title
@@ -145,7 +174,10 @@ impl Plait {
         let machine = self.machine_label();
         palette.update(cx, |palette, cx| {
             palette.clear_query(cx);
-            palette.set_items(notice("reading", format!("Reading folders on {machine}…")), cx);
+            palette.set_items(
+                notice("reading", format!("Reading folders on {machine}…")),
+                cx,
+            );
         });
         let client = self.host_client();
         let task = cx
@@ -167,7 +199,7 @@ impl Plait {
                 }
                 Err(error) => notice("failed", error.to_string()),
             };
-            let _ = palette.update(cx, |palette, cx| palette.set_items(items, cx));
+            palette.update(cx, |palette, cx| palette.set_items(items, cx));
         })
         .detach();
     }
@@ -205,10 +237,17 @@ mod tests {
     #[core::prelude::v1::test]
     fn a_repository_opens_and_a_folder_opens_to_its_contents() {
         let items = browse_items(&listing(false));
-        assert_eq!(keys(&items), ["up", "home", "folder:api", "folder:notes"]);
-        assert!(matches!(&items[2].command, Command::OpenRemoteProject(p) if p == "/home/me/code/api"));
-        assert!(matches!(&items[3].command, Command::BrowseRemote(p) if p == Path::new("/home/me/code/notes")));
-        assert!(matches!(&items[0].command, Command::BrowseRemote(p) if p == Path::new("/home/me")));
+        // The parent is the home folder, so there is no separate home row.
+        assert_eq!(keys(&items), ["up", "folder:api", "folder:notes"]);
+        assert!(
+            matches!(&items[1].command, Command::OpenRemoteProject(p) if p == "/home/me/code/api")
+        );
+        assert!(
+            matches!(&items[2].command, Command::BrowseRemote(p) if p == Path::new("/home/me/code/notes"))
+        );
+        assert!(
+            matches!(&items[0].command, Command::BrowseRemote(p) if p == Path::new("/home/me"))
+        );
     }
 
     #[core::prelude::v1::test]

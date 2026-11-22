@@ -498,6 +498,8 @@ impl Plait {
                 Some(ModelPurpose::ThreadModel) => self.choose_thread_model(choice, window, cx),
                 _ => {}
             },
+            // Handled while the picker stays open; reaching here means it closed first.
+            Command::BrowseRemote(_) => {}
             Command::OpenRemoteProject(path) => {
                 if !self.host_is_local() && super::valid_remote_path(&path) {
                     let path = std::path::PathBuf::from(path);
