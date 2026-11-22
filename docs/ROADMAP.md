@@ -16,6 +16,8 @@ for evidence and limits.
 
 ### Next
 
+- Install a remote host from the Mac or with a script, and install missing
+  agent CLIs on a host; see [installing a remote host](REMOTE.md#installing-a-remote-host-agreed-not-built).
 - Show several independent machines in one sidebar.
 - Publish Linux host releases and support in-app host updates on Linux.
 - Complete independent client and host releases and update flows.
@@ -88,6 +90,16 @@ One writer owns a checkout at a time; linked worktrees also coordinate shared
 Git metadata. The file viewer is read-only, bounded, and does not follow
 symlinks out of the checkout. Filesystem and Git work stays off the UI thread.
 Editor and terminal handoffs use configured commands.
+
+**Plain folders (agreed).** A project can be a folder that is not a Git
+repository. Threads, approvals, and the file viewer work there; Changes,
+History, branches, worktrees, turn records, and undo need Git and say so.
+A folder is plain only when no repository marker (a `.git` file, or a `.git`
+folder with `HEAD`) exists at it or above it, so a broken repository is
+refused rather than treated as plain. A thread's kind is fixed when it is
+created. Nothing in a plain folder is protected as already changed, and
+nothing an agent changes there can be undone. Plait does not initialize
+repositories.
 
 Worktrees are optional and begin at a captured commit, without copying dirty
 work. Removal verifies identity and safety, preserves branches and history,

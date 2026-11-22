@@ -813,6 +813,7 @@ mod tests {
                 tracking: self.tracking.clone(),
                 changes: self.changes.clone(),
                 elapsed: self.elapsed,
+                plain: self.plain,
             }
         }
     }
@@ -838,6 +839,7 @@ mod tests {
                 },
             ],
             elapsed: Duration::ZERO,
+            plain: false,
         })
     }
 

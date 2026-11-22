@@ -262,7 +262,7 @@ export class Worktrees {
       const duplicate = this.store.duplicate('worktree_create', id, request);
       if (!duplicate) {
         setCommandPolicy(this.store, tree.path, tree.identity, this.store.setting(`worktree_policy:${snapshot.id}`) === 'sandboxed' ? 'sandboxed' : 'trusted');
-        this.store.admit('worktree_create', id, request, { thread_id: snapshot.id }, snapshot, tree.identity);
+        this.store.admit('worktree_create', id, request, { thread_id: snapshot.id }, snapshot, tree.identity, [], 'git');
       }
       operation.state = 'ready'; operation.error = null; this.put(operation); this.changed();
       this.ownership?.made(tree, operation.request_id);

@@ -25,6 +25,34 @@ fn picker_snapshots() {
             );
         });
         h.capture(&format!("picker-draft-model-{suffix}"));
+        // Opening a project on another machine: its folders, read by its host.
+        h.update(|p, window, cx| {
+            p.close_overlay(false, window, cx);
+            p.host_local = false;
+            p.open_repository(&super::super::OpenRepository, window, cx);
+        });
+        // The test host has no socket: let that read fail first, then show a listing.
+        h.settle();
+        h.update(|p, _, cx| {
+            let listing = plait_core::host::folders::Listing {
+                path: "/home/me/code".into(),
+                parent: Some("/home/me".into()),
+                home: "/home/me".into(),
+                git: false,
+                entries: ["api", "dotfiles", "notes", "web"]
+                    .into_iter()
+                    .map(|name| plait_core::host::folders::Entry {
+                        name: name.into(),
+                        git: name != "notes",
+                    })
+                    .collect(),
+                truncated: false,
+            };
+            let palette = p.overlay.as_ref().unwrap().palette.clone();
+            let items = super::super::remote_browser::browse_items(&listing);
+            palette.update(cx, |palette, cx| palette.set_items(items, cx));
+        });
+        h.capture(&format!("picker-remote-folders-{suffix}"));
     }
     std::fs::remove_dir_all(scratch).unwrap();
 }

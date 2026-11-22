@@ -35,7 +35,7 @@ test('the workspace names its host and starts empty', async t => {
   assert.equal(named.host.name, 'workstation');
 });
 
-test('only a Git checkout opens, at its top folder, and each change moves the revision', async t => {
+test('a checkout opens at its top folder, and each change moves the revision', async t => {
   const { workspace, repo, root, notified } = await setup(t);
   const opened: any = await workspace.handle({ op: 'workspace_open_project', path: join(repo, '.') });
   assert.equal(opened.path, repo);
@@ -45,12 +45,12 @@ test('only a Git checkout opens, at its top folder, and each change moves the re
   await assert.rejects(workspace.handle({ op: 'workspace_open_project', path: 'relative' }), code('invalid_request'));
   await workspace.handle({ op: 'workspace_hide_project', path: repo, hidden: true });
   let view: any = await workspace.handle({ op: 'workspace_view' });
-  assert.deepEqual(view.projects, [{ path: repo, hidden: true }]);
+  assert.deepEqual(view.projects, [{ path: repo, hidden: true, vcs: 'git' }]);
   assert.equal(view.revision, 2);
   // Opening a hidden project shows it again.
   await workspace.handle({ op: 'workspace_open_project', path: repo });
   view = await workspace.handle({ op: 'workspace_view' });
-  assert.deepEqual(view.projects, [{ path: repo, hidden: false }]);
+  assert.deepEqual(view.projects, [{ path: repo, hidden: false, vcs: 'git' }]);
 });
 
 test('worktree ownership and seen state round-trip; an older observation never wins', async t => {
@@ -74,7 +74,7 @@ test('a device imports its lists once', async t => {
   assert.deepEqual(await workspace.handle({ op: 'workspace_import', ...lists }), { imported: true, revision: 1 });
   assert.deepEqual(await workspace.handle({ op: 'workspace_import', ...lists, projects: ['/z'] }), { imported: false, revision: 1 });
   const view: any = await workspace.handle({ op: 'workspace_view' });
-  assert.deepEqual(view.projects, [{ path: '/a', hidden: false }, { path: '/b', hidden: false }, { path: '/c', hidden: true }]);
+  assert.deepEqual(view.projects, [{ path: '/a', hidden: false, vcs: 'git' }, { path: '/b', hidden: false, vcs: 'git' }, { path: '/c', hidden: true, vcs: 'git' }]);
   assert.equal(view.seen.length, 1);
 });
 
@@ -104,4 +104,11 @@ test('workspace write retries replay the first revision without notifying again'
   assert.deepEqual(await workspace.handle(request), first);
   assert.equal(notified(), 1);
   await assert.rejects(workspace.handle({ ...request, name: 'other' }), code('conflict'));
+});
+
+test('opens a plain folder', async t => {
+  const { workspace, root } = await setup(t);
+  const folder = join(root, 'plain'); await mkdir(folder);
+  await workspace.handle({ op: 'workspace_open_project', path: folder });
+  assert.deepEqual(workspace.view().projects, [{ path: folder, hidden: false, vcs: 'folder' }]);
 });
