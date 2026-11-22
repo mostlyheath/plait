@@ -1,4 +1,5 @@
 //! Multiplex local socket streams over a framed byte link.
+use super::frame::FrameIo;
 use super::frame::{Frame, Kind, REQUEST_LIMIT};
 use std::{
     collections::HashMap,
