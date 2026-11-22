@@ -77,7 +77,7 @@ the signing secret can sign updates; review them like release code.
 ## Independent client and server releases
 
 **Agreed contract; host operations in step 2 are built.** It implements the roadmap's
-[independent release contract](ROADMAP.md#independent-release-contract).
+[independent release contract](ROADMAP.md#host-and-release-boundaries).
 Today one signed `update.json` describes the app and its host together, and
 the in-app update replaces both.
 

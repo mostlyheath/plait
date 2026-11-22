@@ -24,7 +24,7 @@ Use `--version <tag>` to pin a release or `--download <dir>` to verify and save 
 
 **Install and Restart** replaces `/Applications/Plait.app`, installs the new host, restarts it, and reopens Plait with your tabs and drafts intact. Updates refuse to install while any thread is running or awaiting approval; finish or stop active runs first. Independent client and server updates are planned ([Releasing](RELEASING.md#independent-client-and-server-releases)).
 
-On a headless Mac host, run `plait-host update --check` and `plait-host update`. For Linux hosts, see [Remote hosts](REMOTE.md#the-linux-host).
+On a headless Mac host, run `plait-host update --check` and `plait-host update`. For Linux hosts, see [Remote hosts](REMOTE.md#set-up-a-linux-host).
 
 ### From a source checkout
 
@@ -61,7 +61,7 @@ To add a remote machine, choose **Add machine…**:
 
 Choose **Use** to connect in the background; if connecting fails, Plait stays on the current machine and reports the error. The window remembers its last machine and reconnects at launch without blocking. **Remove…** forgets a machine locally without affecting its host or threads. Live remote verification against a separate Linux host remains open; see [Remote hosts](REMOTE.md) for transport and Linux service details.
 
-**How the window shows which machine it is on:** The workspace header displays `project / machine · branch` (hover to see the full checkout path). The sidebar footer and Settings header show `<machine> connected`, `Connecting to <machine>…`, or `<machine> disconnected`. The machine name comes from the host's own identity (defaulting to its hostname; **This Mac** locally), falling back to the saved machine name while connecting.
+**Which machine you are on:** The sidebar's top row names the machine and shows whether it is connected; click it to switch machines or open **Manage machines…**. The window title names a remote machine, and the workspace header shows `project / machine · branch`. A remote machine's name comes from its host (its hostname unless renamed); while it connects, the name you saved is shown.
 
 **Each machine's own projects:** Hosts supporting the workspace stream ([HOST.md](HOST.md#workspace)) keep their own opened and hidden projects, worktree ownership, and read/unread state. On this Mac, existing desktop lists import into this Mac's host once. Switching machines shows that machine's projects. Choose **Open repository…** (`Cmd-O`) to pick a folder on this Mac or enter an absolute checkout path on a remote machine.
 

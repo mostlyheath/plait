@@ -66,7 +66,7 @@ fonts and software rendering. Scenes do not validate the native window,
 input, accessibility bridge, or live provider. Build and inspect the native
 app after UI changes. With Accessibility permission already granted,
 `bash scripts/smoke-macos.sh` exercises accessible controls in disposable
-repositories. See [UI checks](../CONTRIBUTING.md#ui-checks).
+repositories. See [UI checks](../CONTRIBUTING.md#required-checks).
 
 `scripts/acceptance-macos.sh` drives a native window and collects observations.
 It takes over the pointer and keyboard: do not run it while someone is using
@@ -87,7 +87,7 @@ conditions and the checks for a particular change.
 The planned host-first speed check compares local-socket Git status and diff
 latency with the direct desktop path before that path is removed. The named
 `scripts/speed-check.sh` is not present in this checkout; the check remains
-planned. See [HOST-FIRST.md](HOST-FIRST.md#git-and-files-through-the-host).
+planned. See [HOST-FIRST.md](HOST-FIRST.md#workspace-and-git).
 
 `bash scripts/bench-frames.sh` measures headless CPU frame costs for generated
 heavy scenes; `--debug` uses an unoptimized build. It excludes GPU

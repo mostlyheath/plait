@@ -1,4 +1,4 @@
-# Local host contract (M2.5)
+# Host contract (M2.5)
 
 This is the version 1 contract plus the opt-in additions described in
 [Protocol version 2](#protocol-version-2) and
@@ -29,8 +29,9 @@ runtime dependencies; it does not need a development checkout or shell Node.
   Socket: `STORE/host.sock`. Store overrides must be absolute.
 - The store directory is mode 0700 and socket mode 0600. A lifetime OS writer
   lock on `STORE/host.lock` rejects a second host, including after a crash.
-- The Rust host owns and monitors the Node sidecar. No TCP port is opened,
-  except the loopback callback of a pending [provider sign-in](#provider-sign-in).
+- The Rust host owns and monitors the Node sidecar. The optional Tailscale
+  listener accepts authorized peers; provider sign-in may open a loopback
+  callback. See [Remote hosts](REMOTE.md).
   Sidecar failure closes the host. Development restart is explicit through
   `start`; the installed Mac LaunchAgent restarts failed hosts. Neither route
   replays interrupted work. The packaged host uses adjacent immutable Node and
@@ -953,8 +954,8 @@ snapshot does not yet report the policy its run used.
   is a row a host before the change wrote for a trusted checkout. A row that
   cannot be read is `sandboxed`, rather than a guess. Another host store never
   shares the setting.
-- **Who can set it.** Only this operation, sent by a local client as an explicit
-  user action. No tool, model output, thread, run, or snapshot carries or
+- **Who can set it.** Only this operation, sent by an authenticated client as
+  an explicit user action. No tool, model output, thread, run, or snapshot carries or
   changes the policy, and a thread cannot take it to another checkout.
 - **When it applies.** A run reads the policy once at admission and keeps it
   until it ends. A change applies to the next run. Recovery starts no run.
@@ -1439,7 +1440,8 @@ and parents, external changes, another thread's files, root replacements, and
 missing records remain protected. A crash after an effect but before its record
 never grants ownership. No ownership is inferred from an unrelated later read. Never reset, stash, or overwrite these paths. Reject
 symlinks, parent traversal, special files, Git metadata, and filesystem escapes.
-Command execution uses the macOS filesystem sandbox; other hosts reject commands.
+Sandboxed command execution uses the macOS filesystem sandbox; Linux refuses
+the sandboxed policy and supports trusted commands.
 Commands READ the checkout and WRITE ONLY private scratch and the current
 thread's private build cache. File edit/write tools are the sole checkout
 writers. HOME and TMPDIR use a new mode-0700 directory under `/private/tmp` for each
@@ -2170,13 +2172,13 @@ succeeds only at the current revision and returns the next revision; a stale
 write returns `conflict`, so the client can reread and retry. Device IDs match
 `[A-Za-z0-9_-]{1,128}` and serialized state is limited to 60,000 bytes. The
 host retains at most 64 devices, evicting the least recently updated on insertion.
-The desktop does not use these operations yet.
+The desktop uses these operations for per-device tabs, layout, and selection.
 
 ## Checkout Git reads for remote desktops
 
 These additive, read-only operations omit `protocol_version`. They let a
-desktop on another machine read and change a checkout on this host; see
-[Remote hosts](REMOTE.md#remote-git-and-files). An older host rejects them with
+desktop read a checkout on its host; see
+[Remote hosts](REMOTE.md#working-remotely). An older host rejects them with
 `invalid_request`, which the client reports as "Update this machine's host to
 see its Git."
 
@@ -2237,7 +2239,7 @@ shapes remain unchanged, so no protocol version bump is required. An older host 
 
 No agent, model tool, or MCP server can call these operations, and nothing runs
 in the background or polls Linear on a timer. Requests are made only when a
-local client asks over the owner-only host socket.
+authenticated client asks through the owner-only host socket.
 
 ### What crosses the socket and where the key lives
 
@@ -2519,11 +2521,10 @@ non-replay rule, not remote compare-and-swap. No live API behavior is claimed.
   Write refusals also include their `outcome`. Other operations' errors retain
   their existing two-field shape; clients need not parse the message for a wait.
 
-### Not built in this stage
+The desktop supports Settings key entry, a project issue view, draft
+references, and a source-issue thread label. See [Linear](LINEAR.md).
 
-- No desktop UI yet. The agreed first step adds Settings key entry, a
-  persistent project-level issue view, draft references, and a source-issue
-  thread label. It does not depend on issue-triggered runs. See [Linear](LINEAR.md).
+### Not built in this stage
 - No browser OAuth sign-in or token refresh yet.
 - No automatic writes, background polling, or Linear change notifications.
 - No issue-triggered autonomous runs (their rules are not yet agreed).
@@ -3001,9 +3002,9 @@ fails explicitly instead of redirecting the draft.
 `plait-host bridge` multiplexes an authenticated byte stream onto the host's
 owner-only socket. It connects only to the invoking owner's socket, using the
 default store or `--store PATH`; it does not expose a network listener. The
-[remote transport format](REMOTE.md#transport) defines its frames. Each link
-allows at most 32 streams; requests are limited to 64 KiB, replies to 1 MiB,
-and a partial frame has a 15-second deadline. SSH integration remains planned.
+[remote transport](REMOTE.md#transport-limits-and-verification) describes the
+limits. Each link allows at most 32 streams; requests are limited to 64 KiB, replies to 1 MiB,
+and a partial frame has a 15-second deadline. SSH uses the bridge.
 
 ### Host release information and draining
 
