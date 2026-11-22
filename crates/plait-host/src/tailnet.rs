@@ -28,10 +28,12 @@ impl LocalApi {
             .map_err(|e| io::Error::other(format!("cannot reach tailscaled LocalAPI: {e}")))?;
         stream.set_read_timeout(Some(Duration::from_secs(3)))?;
         stream.set_write_timeout(Some(Duration::from_secs(3)))?;
-        write!(
-            stream,
+        // One write: a peer that reads the request once and closes must not
+        // see half of it, or macOS resets the connection before the reply.
+        let request = format!(
             "GET {path} HTTP/1.1\r\nHost: local-tailscaled.sock\r\nConnection: close\r\n\r\n"
-        )?;
+        );
+        stream.write_all(request.as_bytes())?;
         let mut data = Vec::new();
         stream.take(LIMIT + 1).read_to_end(&mut data)?;
         if data.len() as u64 > LIMIT {
@@ -285,8 +287,13 @@ mod tests {
         let listener = UnixListener::bind(&path).unwrap();
         thread::spawn(move || {
             let (mut s, _) = listener.accept().unwrap();
-            let mut request = [0; 1024];
-            let _ = s.read(&mut request);
+            // Read the whole request: closing with unread bytes resets the
+            // connection on macOS, and the client would lose the reply.
+            let mut request = Vec::new();
+            let mut byte = [0; 1];
+            while !request.ends_with(b"\r\n\r\n") && s.read(&mut byte).unwrap_or(0) == 1 {
+                request.push(byte[0]);
+            }
             let body = body.to_string();
             write!(
                 s,
