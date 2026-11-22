@@ -1,7 +1,6 @@
 //! Host-owned run records, their guarded reads, and undo at the closing line.
 use super::{Plait, Workspace, theme::*, thread_controls::TextTooltip};
 use gpui::{prelude::*, *};
-use plait_core::ownership::CheckoutKeyExt;
 use plait_core::{
     git::record::Uncovered,
     history::records::{self, Availability, Line, Lines},
@@ -362,7 +361,6 @@ impl Plait {
         self.remeasure_undo_panel(&attempt.run);
         let client = self.host_client();
         let supported = self.host.connection.has_checkout_identity;
-        let local = self.host_is_local();
         let task = cx.background_executor().spawn(async move {
             let expected = expected.ok_or_else(|| {
                 host::Error::Protocol("Checkout identity is not verified.".into())
@@ -376,14 +374,10 @@ impl Plait {
                         ino: expected.inode,
                     }),
                 )?;
-            } else if local {
-                expected.verify().map_err(|message| {
-                    host::Error::Rejected(host::HostError {
-                        retry_after_seconds: None,
-                        code: "checkout_identity_changed".into(),
-                        message,
-                    })
-                })?;
+            } else {
+                return Err(host::Error::Protocol(
+                    "Update the host to verify the checkout.".into(),
+                ));
             }
             client.request::<UndoTurnReply>(&request)
         });

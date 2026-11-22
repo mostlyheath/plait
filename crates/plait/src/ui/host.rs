@@ -3,7 +3,6 @@ use super::{
     composer::{Composer, ComposerEvent},
 };
 use gpui::{prelude::*, *};
-use plait_core::ownership::CheckoutKeyExt;
 use plait_core::{
     host::{self, Request, Snapshot},
     host_state::request_id,
@@ -109,7 +108,6 @@ impl Plait {
             .transpose();
         let journal = self.session.journal.clone();
         let client = self.host_client();
-        let local = self.host_is_local();
         let is_status =
             self.host.connection.connecting && matches!(request, Request::Status { .. });
         let task = cx.background_executor().spawn(async move {
@@ -138,15 +136,16 @@ impl Plait {
                         })?;
                         journal.flush().map_err(std::io::Error::other)?;
                     }
-                    if local && !supported {
-                        if let Request::ListThreads { checkout, .. }
-                        | Request::CreateThread { checkout, .. } = &mut request
-                        {
-                            *checkout = std::fs::canonicalize(&*checkout)?;
-                        }
-                        if let Some(expected) = &expected {
-                            expected.verify().map_err(host::Error::Protocol)?;
-                        }
+                    if !supported
+                        && (expected.is_some()
+                            || matches!(
+                                request,
+                                Request::ListThreads { .. } | Request::CreateThread { .. }
+                            ))
+                    {
+                        return Err(host::Error::Protocol(
+                            "Update the host to verify the checkout.".into(),
+                        ));
                     }
                     if let Some((thread, images)) = uploads {
                         client.upload_images(&thread, &images)?;

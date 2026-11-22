@@ -1,5 +1,4 @@
 //! Stable operation owners and short-lived read contexts. No UI state lives here.
-pub use plait_engine::ownership::CheckoutKeyExt;
 pub use plait_protocol::ownership::{CheckoutKey, HostKey, ThreadKey};
 use std::path::PathBuf;
 

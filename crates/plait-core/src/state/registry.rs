@@ -1,7 +1,6 @@
 //! Repository job routing. Parked checkouts retain identity and write outcomes,
 //! not a thread view or background read demand.
 use super::*;
-use crate::ownership::CheckoutKeyExt;
 use crate::ownership::HostKeyExt;
 use crate::ownership::{CheckoutKey, HostKey};
 use std::collections::HashMap;
@@ -54,73 +53,11 @@ pub struct RepositoryReply {
 }
 
 impl RepositoryJob {
-    /// Blocking. Runs on this Mac or on the checkout's host.
+    /// Blocking. Repository operations run on the checkout's host.
     pub fn run_on(&self, backend: &super::backend::Backend) -> RepositoryReply {
         match backend {
-            super::backend::Backend::Local => self.run(),
             super::backend::Backend::Host(client) => self.run_remote(client),
         }
-    }
-
-    /// Blocking. The target is checked before any Git operation and again before
-    /// its reply can be installed; a root replacement is never a cache hit.
-    pub fn run(&self) -> RepositoryReply {
-        if self.expected.is_none() && matches!(self.job, Job::Write { .. }) {
-            return RepositoryReply {
-                identity: None,
-                reply: self
-                    .job
-                    .failure("Checkout identity is not verified.".into()),
-            };
-        }
-        if let Some(key) = &self.expected
-            && let Err(error) = key.verify()
-        {
-            return RepositoryReply {
-                identity: None,
-                reply: self.job.failure(error),
-            };
-        }
-        let mut reply = match (&self.job, &self.expected) {
-            (Job::Write { root, op }, Some(key)) => Reply::Write(git::write_checked(
-                root,
-                Some(crate::lease::DirIdentity {
-                    dev: key.device,
-                    ino: key.inode,
-                }),
-                op,
-            )),
-            _ => self.job.run(),
-        };
-        let identity = match &reply {
-            Reply::Status(Ok(snapshot)) => {
-                match CheckoutKey::resolve(self.host.clone(), &snapshot.root) {
-                    Ok(key)
-                        if self
-                            .expected
-                            .as_ref()
-                            .is_none_or(|expected| expected == &key) =>
-                    {
-                        Some(key)
-                    }
-                    Ok(_) => {
-                        reply = self.job.failure("Checkout identity changed.".into());
-                        None
-                    }
-                    Err(error) => {
-                        reply = self.job.failure(error);
-                        None
-                    }
-                }
-            }
-            _ => None,
-        };
-        if let Some(key) = &self.expected
-            && let Err(error) = key.verify()
-        {
-            reply = self.job.failure(error);
-        }
-        RepositoryReply { identity, reply }
     }
 }
 

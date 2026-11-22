@@ -1,10 +1,7 @@
-//! Where a checkout's Git and files are read: on this Mac, or by the host that
-//! owns a remote checkout. Both run the same `git` and `file_view` functions;
-//! only a remote one crosses the link.
+//! Repository reads and writes are performed by the checkout host.
 use super::*;
-use crate::ownership::CheckoutKeyExt;
 use crate::{
-    file_view::{self, Opened, Stamp},
+    file_view::{Opened, Stamp},
     git::{LineCount, log::GraphCommit},
     host::{Client, git as remote},
     lease::DirIdentity,
@@ -14,7 +11,6 @@ use std::path::Path;
 
 #[derive(Clone)]
 pub enum Backend {
-    Local,
     Host(Client),
 }
 
@@ -39,16 +35,7 @@ fn expected<'a>(key: Option<&'a CheckoutKey>, root: &Path) -> Result<&'a Checkou
 }
 
 impl Backend {
-    pub fn for_host(local: bool, client: Client) -> Self {
-        if local {
-            Self::Local
-        } else {
-            Self::Host(client)
-        }
-    }
-
-    /// The file viewer's read. Locally the identity is checked here before and
-    /// after; a host checks it on its own machine.
+    /// The host checks the checkout identity before and after reading.
     pub fn file(
         &self,
         root: &Path,
@@ -57,12 +44,6 @@ impl Backend {
     ) -> Result<Opened, String> {
         let key = expected(key, root)?;
         match self {
-            Self::Local => {
-                key.verify()?;
-                let opened = file_view::read(root, path)?;
-                key.verify()?;
-                Ok(opened)
-            }
             Self::Host(client) => remote::file(client, root, Some(identity(key)), path)
                 .map(|r| r.result)
                 .map_err(text),
@@ -77,10 +58,6 @@ impl Backend {
     ) -> Result<Stamp, String> {
         let key = expected(key, root)?;
         match self {
-            Self::Local => {
-                key.verify()?;
-                file_view::stamp(root, path)
-            }
             Self::Host(client) => remote::file_stamp(client, root, Some(identity(key)), path)
                 .map(|r| r.result)
                 .map_err(text),
@@ -89,15 +66,13 @@ impl Backend {
 
     pub fn line_counts(&self, root: &Path, paths: &[PathBuf]) -> Result<Vec<LineCount>, String> {
         match self {
-            Self::Local => git::line_counts(root, paths),
             Self::Host(client) => remote::line_counts(client, root, None, paths)
                 .map(|r| r.result)
                 .map_err(text),
         }
     }
 
-    /// One worktree's size. Locally the thread's retained build output is in
-    /// this Mac's store; a host measures with its own.
+    /// Measure the worktree and retained build output on the host.
     pub fn worktree_size(
         &self,
         project: &Path,
@@ -107,16 +82,8 @@ impl Backend {
         store: &Path,
         cancelled: &std::sync::atomic::AtomicBool,
     ) -> Result<crate::worktree_size::Size, String> {
-        use crate::worktree_size as size;
+        let _ = (store, cancelled);
         match self {
-            Self::Local => {
-                let cache = thread.map(|id| store.join("build-cache").join(id));
-                if key.removed {
-                    size::measure_retained_cache(cache.as_deref(), cancelled)
-                } else {
-                    size::measure_verified(key, cache.as_deref(), others, cancelled)
-                }
-            }
             Self::Host(client) => {
                 remote::worktree_size(client, project, key, thread, others).map_err(text)
             }
@@ -125,7 +92,6 @@ impl Backend {
 
     pub fn graph(&self, root: &Path, heads: &[String]) -> Result<(Vec<GraphCommit>, bool), String> {
         match self {
-            Self::Local => git::log::graph(root, heads),
             Self::Host(client) => remote::graph(client, root, None, heads)
                 .map(|r| r.result)
                 .map_err(text),
@@ -227,6 +193,19 @@ mod tests {
         os::unix::{fs::PermissionsExt, net::UnixListener},
         sync::mpsc,
     };
+
+    #[test]
+    fn checkout_reads_require_matching_identity() {
+        let key = CheckoutKey {
+            host: None,
+            root: "/checkout".into(),
+            device: 1,
+            inode: 2,
+        };
+        assert!(expected(None, Path::new("/checkout")).is_err());
+        assert!(expected(Some(&key), Path::new("/other")).is_err());
+        assert!(expected(Some(&key), Path::new("/checkout")).is_ok());
+    }
 
     /// A host that answers each request with `reply(request)`, and reports
     /// what it was asked.

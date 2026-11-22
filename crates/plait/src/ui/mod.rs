@@ -247,12 +247,9 @@ impl Plait {
             .is_some_and(|snapshot| snapshot.plain)
     }
 
-    /// Where the selected machine's checkouts are read and changed. A host
-    /// that keeps a workspace reads its own checkouts, this Mac's included;
-    /// an older local host leaves this Mac's Git to the desktop.
+    /// Repository operations run on the selected machine’s host.
     pub(super) fn repository_backend(&self) -> plait_core::state::Backend {
-        let local = self.host_is_local() && self.host_identity().is_none();
-        plait_core::state::Backend::for_host(local, self.host_client())
+        plait_core::state::Backend::Host(self.host_client())
     }
     #[allow(dead_code)]
     fn use_machine_client(

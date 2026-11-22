@@ -1,4 +1,4 @@
-//! Identity is verified off the UI thread; an older host keeps session-only tabs.
+//! Checkout identity is verified by the host off the UI thread.
 use super::{Plait, tab_lifecycle::Intent};
 use gpui::*;
 use plait_core::{
@@ -21,6 +21,7 @@ pub(super) struct Identity {
     pub opening: u64,
 }
 
+#[cfg(test)]
 pub(super) fn directory(root: &std::path::Path) -> Option<DirectoryIdentity> {
     use std::os::unix::fs::MetadataExt;
     let meta = std::fs::metadata(root).ok()?;
@@ -38,6 +39,11 @@ impl Plait {
 
     pub(super) fn verify_tab_identity(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if cfg!(test) || !self.host.connection.connected {
+            return;
+        }
+        if !self.host.connection.has_checkout_identity {
+            self.notice = Some("Update the host to verify the checkout.".into());
+            cx.notify();
             return;
         }
         self.tabs.identity.generation += 1;
@@ -68,8 +74,6 @@ impl Plait {
         roots.sort();
         roots.dedup();
         let client = self.host_client();
-        let supported = self.host.connection.has_checkout_identity;
-        let local = self.host_is_local();
         let task = cx.background_executor().spawn(async move {
             let host = host::identity::read(&client).ok().or_else(|| {
                 let info = host::review::info(&client, thread.as_deref()?).ok()?;
@@ -79,21 +83,6 @@ impl Plait {
             let checkouts = roots
                 .into_iter()
                 .filter_map(|root| {
-                    if !supported {
-                        return if local {
-                            directory(&root).map(|directory| CheckoutKey {
-                                host: host.clone(),
-                                root,
-                                directory: Some(directory),
-                            })
-                        } else {
-                            Some(CheckoutKey {
-                                host: host.clone(),
-                                root,
-                                directory: None,
-                            })
-                        };
-                    }
                     let result = host::git::identity(&client, &root, None).ok()?;
                     Some(CheckoutKey {
                         host: host.clone(),
@@ -255,17 +244,12 @@ impl Plait {
         let client = self.host_client();
         let epoch = self.host.connection.epoch;
         let supported = self.host.connection.has_checkout_identity;
-        let local = self.host_is_local();
+        if !supported {
+            self.notice = Some("Update the host to verify the checkout.".into());
+            cx.notify();
+            return;
+        }
         let task = cx.background_executor().spawn(async move {
-            if !supported {
-                let root = if local && worktrees {
-                    plait_core::git::worktree::main_checkout(&root).unwrap_or(root)
-                } else {
-                    root
-                };
-                let identity = if local { directory(&root) } else { None };
-                return (root, identity);
-            }
             let root = if worktrees {
                 host::git::main_checkout(&client, &root, None)
                     .map(|read| read.result)
