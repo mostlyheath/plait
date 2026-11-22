@@ -169,10 +169,83 @@ Decided while building step 4, to reach usable remote threads sooner.
 
 ## Remote Git and files (next slice)
 
-Bounded host-side read operations give remote checkouts their status,
-diffs, log, file lists, and the file viewer. Then come the agreed Git
-writes: staging, commit, and push. They apply the same hardening as the
-desktop's local Git reads. That design is written before it is built.
+**Agreed design, not built.** A remote checkout gets the same Changes,
+History, Files, branch picker, Worktrees graph, and agreed Git writes as a
+local one, run by the host on its own machine. The desktop's local path is
+unchanged.
+
+### Where the Git runs
+
+- The host runs the same `plait-core` functions the desktop runs today
+  (`git::status`, `diff`, `files`, `log`, `show`, `branches`,
+  `line_counts`, `log::graph`, `file_view::read` and `stamp`,
+  `worktree_size`, and `git::write_checked`). It runs them in the Rust
+  helper, as it already does for turn records, review, and worktrees, so
+  both paths share one hardened command builder and one set of limits.
+- No Git crosses the link: only requests and bounded, typed results.
+- Reads keep the desktop's hardening: no optional locks, external diff,
+  textconv, filters, fsmonitor, or untracked cache. Writes keep the
+  repository's own configuration, filters, and hooks, as local writes do.
+
+### Operations
+
+Versionless, additive operations, like turn review. A host that does not
+know them answers `invalid_request`, and the desktop keeps the views
+unavailable with "Update this machine's host to see its Git."
+
+- **Reads:** `git_status`, `git_diff`, `git_files`, `git_log`, `git_show`,
+  `git_branches`, `git_line_counts`, `git_graph`, `file_read`,
+  `file_stamp`, and `worktree_sizes`.
+- **Writes:** `git_write` carries one `WriteOp` (stage, unstage, hunk,
+  commit, push, publish, fetch, pull, discard, restore, create or switch
+  branch) and the checkout identity the desktop last read.
+- Every request names a checkout. The host accepts an absolute path to the
+  top of a Git work tree, checks its device and inode before and after the
+  call (as `RepositoryJob` does locally), and refuses a changed identity.
+  File reads go through the no-symlink helper rooted at that checkout.
+
+### Size and paging
+
+The client accepts replies up to 1 MiB; local reads allow more. So:
+
+- Status and file lists are paged by a host token over one snapshot, the
+  way turn review pages. A changed checkout between pages restarts the
+  read rather than mixing snapshots.
+- `file_read` returns byte ranges of at most 768 KiB up to the existing
+  8 MiB file limit, each with the file's stamp; a stamp change restarts it.
+- Diffs and patches keep their current 512 KiB and 10,000-line caps, which
+  fit one reply.
+- Log, branch, graph, and line-count limits are unchanged.
+
+### Writes, credentials, and undo
+
+- Network writes run on the host with that machine's credentials: its SSH
+  agent and keys, and its Git credential helpers. Prompts stay off, so a
+  missing credential fails with Git's own message. The link does not forward
+  this Mac's SSH agent.
+- Discard backups are kept in the host's store, and **Restore** asks the
+  host for them, so undo works after the desktop reconnects.
+- A write is not tied to the view's epoch, as locally. If the link drops
+  during a write, the host finishes it, and the desktop rereads status when
+  it reconnects rather than assuming either outcome.
+
+### Desktop
+
+- Repository jobs run through a backend chosen by the machine: local Git
+  for this Mac, host operations otherwise. `pump` stops being gated.
+- Editor, Terminal, and Finder handoffs stay unavailable for remote
+  checkouts; they would open this Mac's paths.
+- Refresh is unchanged: host events, **Refresh**, and focus trigger reads.
+  Nothing watches the remote file system.
+
+### Order
+
+1. Host read operations with paging, and their tests: limits, paging over a
+   changing checkout, identity changes, symlinked files, and an older host.
+2. Desktop backends for Changes, History, the branch picker, Files, the
+   composer file list, line counts, and the Worktrees graph and sizes.
+3. `git_write` with host-kept discard backups, then network writes.
+4. The live check from a Mac to the Linux host.
 
 ## Order of work
 
@@ -207,7 +280,7 @@ desktop's local Git reads. That design is written before it is built.
    Mac to the Linux workstation. The systemd user service is built; releases
    and the live check remain planned.
 
-Remote Git and files follow as their own design and slice.
+Remote Git and files follow as their own slice, designed above.
 
 ## Verification limits
 
