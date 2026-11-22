@@ -16,8 +16,8 @@ for evidence and limits.
 
 ### Next
 
-- Install a remote host from the Mac or with a script, and install missing
-  agent CLIs on a host; see [installing a remote host](REMOTE.md#installing-a-remote-host-agreed-not-built).
+- Split `plait-core` into `plait-protocol`, `plait-engine`, and `plait-client`
+  so clients link only the protocol and client layers; see [Architecture](ARCHITECTURE.md#crate-boundaries-agreed-not-built).
 - Show several independent machines in one sidebar.
 - Publish Linux host releases and support in-app host updates on Linux.
 - Complete independent client and host releases and update flows.
