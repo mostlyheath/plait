@@ -5,7 +5,6 @@
 use super::{Client, Error, Frames, decode};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -13,29 +12,8 @@ use std::{
 /// How long a host may take to send the first snapshot.
 const SNAPSHOT_WAIT: Duration = Duration::from_secs(20);
 
-pub use plait_protocol::host::workspace::{HostIdentity, Project, Seen};
+pub use plait_protocol::host::workspace::{HostIdentity, Project, Seen, View, Worktree};
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Worktree {
-    pub folder: PathBuf,
-    pub main: PathBuf,
-    pub branch: String,
-    pub creation_id: Option<String>,
-    pub identity: Option<crate::git::worktree::Identity>,
-}
-
-/// One consistent view of a host's workspace.
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
-pub struct View {
-    pub schema: u32,
-    pub host: HostIdentity,
-    pub revision: u64,
-    #[serde(default)]
-    pub status: BTreeMap<PathBuf, u64>,
-    pub projects: Vec<Project>,
-    pub worktrees: Vec<Worktree>,
-    pub seen: Vec<Seen>,
-}
 #[derive(Debug, Serialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 enum Request<'a> {
@@ -331,16 +309,6 @@ mod tests {
         assert_eq!(value["op"], "workspace_set_worktree");
         assert_eq!(value["folder"], "/w/t");
         assert!(value.get("protocol_version").is_none());
-    }
-
-    #[test]
-    fn status_is_optional_and_parses_paths() {
-        let old: View = serde_json::from_str(VIEW).unwrap();
-        assert!(old.status.is_empty());
-        let mut value: serde_json::Value = serde_json::from_str(VIEW).unwrap();
-        value["status"] = serde_json::json!({"/srv/a": 7});
-        let view: View = serde_json::from_value(value).unwrap();
-        assert_eq!(view.status.get(Path::new("/srv/a")), Some(&7));
     }
 
     #[test]

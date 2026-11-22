@@ -180,14 +180,16 @@ use std::{
     os::unix::fs::{DirBuilderExt, MetadataExt},
 };
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct Identity {
-    pub dev: String,
-    pub ino: String,
+pub use plait_protocol::git::worktree::Identity;
+
+pub trait IdentityExt: Sized {
+    fn read(path: &Path) -> Result<Self>;
+    fn checked(&self, path: &Path) -> Result<()>;
+    fn lease(&self) -> Result<crate::lease::DirIdentity>;
 }
-impl Identity {
-    pub fn read(path: &Path) -> Result<Self> {
+
+impl IdentityExt for Identity {
+    fn read(path: &Path) -> Result<Self> {
         let meta = fs::symlink_metadata(path).map_err(|e| e.to_string())?;
         if !meta.is_dir() || path.canonicalize().map_err(|e| e.to_string())? != path {
             return Err("Worktree directory identity changed.".into());
@@ -197,13 +199,13 @@ impl Identity {
             ino: meta.ino().to_string(),
         })
     }
-    pub fn checked(&self, path: &Path) -> Result<()> {
+    fn checked(&self, path: &Path) -> Result<()> {
         if Self::read(path)? != *self {
             return Err("Worktree directory identity changed.".into());
         }
         Ok(())
     }
-    pub fn lease(&self) -> Result<crate::lease::DirIdentity> {
+    fn lease(&self) -> Result<crate::lease::DirIdentity> {
         Ok(crate::lease::DirIdentity {
             dev: self.dev.parse().map_err(|_| "Invalid device identity.")?,
             ino: self.ino.parse().map_err(|_| "Invalid inode identity.")?,

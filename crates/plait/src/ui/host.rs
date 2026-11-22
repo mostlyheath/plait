@@ -3,6 +3,7 @@ use super::{
     composer::{Composer, ComposerEvent},
 };
 use gpui::{prelude::*, *};
+use plait_core::ownership::CheckoutKeyExt;
 use plait_core::{
     host::{self, Request, Snapshot},
     host_state::request_id,

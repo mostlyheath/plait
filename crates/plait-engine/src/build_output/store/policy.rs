@@ -1,3 +1,4 @@
+use crate::git::worktree::IdentityExt;
 use crate::{
     build_output,
     git::{self, worktree::Identity},

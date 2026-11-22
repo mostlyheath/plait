@@ -1,4 +1,5 @@
 //! Host-private approvals, immutable seeds and recoverable worktree preparation.
+use crate::git::worktree::IdentityExt;
 pub mod policy;
 mod transaction;
 use crate::{

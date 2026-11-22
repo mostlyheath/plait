@@ -6,6 +6,7 @@ use plait_core::host::{
     policy::{self, CommandPolicy, PolicyReply, Request},
     providers,
 };
+use plait_core::ownership::CheckoutKeyExt;
 use std::path::PathBuf;
 
 #[derive(Default)]

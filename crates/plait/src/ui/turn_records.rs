@@ -1,6 +1,7 @@
 //! Host-owned run records, their guarded reads, and undo at the closing line.
 use super::{Plait, Workspace, theme::*, thread_controls::TextTooltip};
 use gpui::{prelude::*, *};
+use plait_core::ownership::CheckoutKeyExt;
 use plait_core::{
     git::record::Uncovered,
     history::records::{self, Availability, Line, Lines},

@@ -1,5 +1,6 @@
 //! Additive checkout cleanup reads and explicit, token-bound confirmation.
 use super::{Client, Error};
+use crate::ownership::CheckoutKeyExt;
 use crate::{lease::cleanup::Cleanup, ownership::CheckoutKey};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
