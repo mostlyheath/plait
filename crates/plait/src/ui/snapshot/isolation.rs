@@ -68,7 +68,7 @@ pub(super) fn walk(
             plait.host.creation.generation,
             plait.host.creation.checkout.clone(),
         ));
-        plait.cleanup.value = Some(plait_core::lease::cleanup::Cleanup {
+        plait.cleanup.value = Some(plait_protocol::lease::cleanup::Cleanup {
             process: None,
             token: "sample-cleanup".into(),
             reason: "Codex did not confirm its turn ended and its app-server has not exited."

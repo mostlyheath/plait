@@ -11,6 +11,7 @@ publish = false
 gpui.workspace = true
 gpui_platform.workspace = true
 plait-core = { path = "../plait-core" }
+plait-protocol = { path = "../plait-protocol" }
 serde = { version = "=1.0.229", features = ["derive"] }
 unicode-segmentation = "=1.13.3"
 # GPUI already pins this decoder; direct access supplies allocation limits and thumbnails.
