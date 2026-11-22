@@ -401,6 +401,9 @@ pub(super) struct Palette {
     generation: u64,
     /// The query generation `rows` belongs to.
     arranged: u64,
+    /// The control that opened this picker, so it opens beside that control
+    /// instead of at the top of the window.
+    pub(super) anchor: Option<Bounds<Pixels>>,
     _subscriptions: [Subscription; 2],
 }
 
@@ -438,6 +441,7 @@ impl Palette {
             scroll: UniformListScrollHandle::new(),
             generation: 0,
             arranged: 0,
+            anchor: None,
             _subscriptions: subscriptions,
         };
         this.reveal();
@@ -912,7 +916,7 @@ impl Focusable for Palette {
 impl EventEmitter<PaletteEvent> for Palette {}
 
 impl Render for Palette {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _above = super::theme::AboveModal::enter();
         let searching = !self.field.read(cx).text().trim().is_empty();
         let panel = column()
@@ -962,27 +966,104 @@ impl Render for Palette {
             .child(self.footer(searching));
         // A full-window layer: it blocks the workspace behind and dims it,
         // because the panel has no shadow to lift it.
-        div()
+        let layer = div()
             .absolute()
             .top_0()
             .left_0()
             .size_full()
             .occlude()
+            .bg(rgba(colors().scrim));
+        let Some(anchor) = self.anchor else {
+            return layer
+                .flex()
+                .flex_col()
+                .items_center()
+                .px_6()
+                .pt(px(72.))
+                .pb_6()
+                .child(panel);
+        };
+        let place = anchored_place(anchor, window.viewport_size());
+        let panel = panel.max_w(place.width).max_h(place.height);
+        let positioned = div()
+            .absolute()
+            .left(place.left)
+            .w(place.width)
             .flex()
             .flex_col()
-            .items_center()
-            .px_6()
-            .pt(px(72.))
-            .pb_6()
-            .bg(rgba(colors().scrim))
-            .child(panel)
+            .when(place.above, |el| el.bottom(place.edge).justify_end())
+            .when(!place.above, |el| el.top(place.edge))
+            .child(panel);
+        layer.child(positioned)
+    }
+}
+
+/// Where an anchored picker goes: beside its control, on the side with more
+/// room, kept inside the window.
+#[derive(Debug, PartialEq)]
+struct Place {
+    left: Pixels,
+    width: Pixels,
+    /// Opening upward, `edge` is the distance from the window's bottom;
+    /// otherwise from its top.
+    above: bool,
+    edge: Pixels,
+    height: Pixels,
+}
+
+fn anchored_place(anchor: Bounds<Pixels>, window: Size<Pixels>) -> Place {
+    const MARGIN: f32 = 16.;
+    const GAP: f32 = 6.;
+    let width = px(480.).min(window.width - px(2. * MARGIN)).max(px(240.));
+    let left = anchor
+        .left()
+        .min(window.width - width - px(MARGIN))
+        .max(px(MARGIN));
+    let room_above = anchor.top() - px(MARGIN + GAP);
+    let room_below = window.height - anchor.bottom() - px(MARGIN + GAP);
+    let above = room_above > room_below;
+    Place {
+        left,
+        width,
+        above,
+        edge: if above {
+            window.height - anchor.top() + px(GAP)
+        } else {
+            anchor.bottom() + px(GAP)
+        },
+        height: if above { room_above } else { room_below }.max(px(160.)),
     }
 }
 
 #[cfg(test)]
 mod tests {
     // Named imports: a glob would bring in GPUI's own `test` attribute.
-    use super::{Entry, Row, arrange, nearest, runs, start, step};
+    use super::{Entry, Row, anchored_place, arrange, nearest, runs, start, step};
+    use gpui::{Bounds, point, px, size};
+
+    #[core::prelude::v1::test]
+    fn a_picker_opens_beside_its_control_and_stays_in_the_window() {
+        let window = size(px(1200.), px(800.));
+        // A chip under the composer: the picker opens upward from its top edge.
+        let chip = Bounds::new(point(px(400.), px(740.)), size(px(120.), px(24.)));
+        let place = anchored_place(chip, window);
+        assert!(place.above);
+        assert_eq!(place.left, px(400.));
+        assert_eq!(place.edge, px(800. - 740. + 6.));
+        assert_eq!(place.width, px(480.));
+        // A control near the top: it opens downward from the control's bottom edge.
+        let row = Bounds::new(point(px(300.), px(40.)), size(px(24.), px(24.)));
+        let place = anchored_place(row, window);
+        assert!(!place.above);
+        assert_eq!(place.edge, px(70.));
+        // Near the right edge it moves left to stay inside the window.
+        let right = Bounds::new(point(px(1150.), px(740.)), size(px(40.), px(24.)));
+        assert_eq!(anchored_place(right, window).left, px(1200. - 480. - 16.));
+        // A narrow window shrinks the picker but keeps the margin.
+        let narrow = anchored_place(chip, size(px(400.), px(800.)));
+        assert_eq!(narrow.width, px(368.));
+        assert_eq!(narrow.left, px(16.));
+    }
     use std::ops::Range;
 
     fn entry(key: &str, title: &str, detail: &str, section: &str, enabled: bool) -> Entry {

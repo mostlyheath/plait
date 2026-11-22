@@ -339,7 +339,12 @@ impl Plait {
                             .truncate()
                             .child(a11y_text("thread-model-name", model_name)),
                     )
-                    .on_activate(cx, |this, window, cx| this.open_thread_models(window, cx)),
+                    .relative()
+                    .child(self.anchor_probe("thread-model"))
+                    .on_activate(cx, |this, window, cx| {
+                        this.anchor_next("thread-model");
+                        this.open_thread_models(window, cx)
+                    }),
                 reason,
             ));
         if !levels.is_empty() {
@@ -347,7 +352,12 @@ impl Plait {
                 button("thread-thinking", thinking_value(level))
                     .aria_label(format!("Thinking level: {}", level.label()))
                     .aria_description(reason.unwrap_or("Choose how much this model thinks."))
-                    .on_activate(cx, |this, window, cx| this.open_thinking(window, cx)),
+                    .relative()
+                    .child(self.anchor_probe("thread-thinking"))
+                    .on_activate(cx, |this, window, cx| {
+                        this.anchor_next("thread-thinking");
+                        this.open_thinking(window, cx)
+                    }),
                 reason,
             ));
         }

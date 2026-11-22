@@ -328,6 +328,9 @@ impl Plait {
         cx: &mut Context<Self>,
     ) {
         self.close_overlay(true, window, cx);
+        if let Some(anchor) = self.pending_anchor.take() {
+            palette.update(cx, |palette, _| palette.anchor = Some(anchor));
+        }
         let restore = window.focused(cx);
         let events = cx.subscribe_in(&palette, window, Self::on_palette_event);
         window.focus(&palette.focus_handle(cx), cx);

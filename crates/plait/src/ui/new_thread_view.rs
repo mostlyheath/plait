@@ -98,7 +98,12 @@ impl Plait {
                     locked,
                 )
                 .aria_label(format!("Project: {}", project.name))
-                .on_activate(cx, |this, window, cx| this.open_draft_projects(window, cx)),
+                .relative()
+                .child(self.anchor_probe("draft-project"))
+                .on_activate(cx, |this, window, cx| {
+                    this.anchor_next("draft-project");
+                    this.open_draft_projects(window, cx)
+                }),
             )
             .child(
                 menu_chip(
@@ -111,7 +116,10 @@ impl Plait {
                 )
                 .max_w(px(240.))
                 .aria_label(format!("Model: {model}"))
+                .relative()
+                .child(self.anchor_probe("draft-model"))
                 .on_activate(cx, |this, window, cx| {
+                    this.anchor_next("draft-model");
                     this.open_model_picker(ModelPurpose::NewThread, window, cx)
                 }),
             )
@@ -127,7 +135,12 @@ impl Plait {
                     locked,
                 )
                 .aria_label(format!("Harness: {harness_name}"))
-                .on_activate(cx, |this, window, cx| this.open_draft_harnesses(window, cx)),
+                .relative()
+                .child(self.anchor_probe("draft-harness"))
+                .on_activate(cx, |this, window, cx| {
+                    this.anchor_next("draft-harness");
+                    this.open_draft_harnesses(window, cx)
+                }),
             );
         chips = chips.children(self.draft_permissions(cx));
         row()
@@ -177,7 +190,12 @@ impl Plait {
                 self.draft_locked(),
             )
             .aria_label(format!("Thinking level: {}", level.label()))
-            .on_activate(cx, |this, window, cx| this.open_draft_thinking(window, cx)),
+            .relative()
+            .child(self.anchor_probe("draft-thinking"))
+            .on_activate(cx, |this, window, cx| {
+                this.anchor_next("draft-thinking");
+                this.open_draft_thinking(window, cx)
+            }),
         )
     }
 
