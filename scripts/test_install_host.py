@@ -104,6 +104,16 @@ class HostInstallTests(unittest.TestCase):
         self.assertFalse((old.parent / BUILD).exists())
         self.assertFalse((self.home / '.local/bin/plait-host').exists())
 
+    def test_another_installed_build_is_left_to_the_updater(self):
+        old = self.home / '.local/share/plait-host/releases' / ('1.2.2-' + 'c' * 20) / 'bin'
+        old.mkdir(parents=True)
+        (self.home / '.local/bin').mkdir(parents=True)
+        (self.home / '.local/bin/plait-host').symlink_to(old / 'plait-host')
+        result = self.run_install()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('plait-host update', result.stderr)
+        self.assertFalse((old.parent.parent / BUILD).exists())
+
     def test_unsupported_architecture(self):
         self.env['TEST_ARCH'] = 'riscv64'
         result = self.run_install()

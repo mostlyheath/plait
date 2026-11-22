@@ -39,7 +39,7 @@ print(json.dumps(value) if isinstance(value, (dict, list)) else value)' "$1" "$2
 }
 
 install_linux_host() {
-    local version=$1 arch build_id revision base name expected actual archive releases_dir listed
+    local version=$1 arch build_id base name expected actual archive releases_dir current
     [[ $(uname -s) == Linux ]] || fail 'The host installer requires Linux.'
     case $(uname -m) in
         x86_64) arch=x86_64 ;;
@@ -85,6 +85,11 @@ install_linux_host() {
     actual=$(checksum "$archive")
     [[ ${actual%% *} == "$expected" ]] || fail 'Host checksum does not match. Nothing was installed.'
     releases_dir="$HOME/.local/share/plait-host/releases"
+    # Rewriting the unit would not restart a running host, so switching builds is the updater's job.
+    if [[ -L "$HOME/.local/bin/plait-host" ]]; then
+        current=$(readlink -- "$HOME/.local/bin/plait-host")
+        [[ $current == "$releases_dir/$build_id/bin/plait-host" ]] || fail 'A Plait host is already installed. Run plait-host update to update it.'
+    fi
     mkdir -p -- "$releases_dir"
     stage=$(mktemp -d "$releases_dir/.install.XXXXXXXX")
     trap 'rm -rf -- "$work" "$stage"' EXIT
