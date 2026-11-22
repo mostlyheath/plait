@@ -150,6 +150,16 @@ fn run() -> io::Result<()> {
             Err(io::Error::other("service commands are Linux-only"))
         };
     }
+    if operation == "active-runs" {
+        if args.next().is_some() {
+            return Err(io::Error::other("usage: plait-host active-runs"));
+        }
+        let home = env::var_os("HOME").ok_or_else(|| io::Error::other("HOME is not set"))?;
+        let store = PathBuf::from(home).join(".local/share/plait");
+        let count = plait_core::update::install::active_runs(&store).map_err(io::Error::other)?;
+        println!("{count}");
+        return Ok(());
+    }
     if operation == "version" {
         serde_json::to_writer(
             io::stdout(),
