@@ -78,6 +78,9 @@ pub struct Snapshot {
     pub tracking: Option<Tracking>,
     pub changes: Vec<Change>,
     pub elapsed: Duration,
+    /// Not a Git repository: a plain folder has no changes, history, or undo.
+    #[serde(default)]
+    pub plain: bool,
 }
 
 /// Where the current branch stands against its upstream, as of the last fetch.

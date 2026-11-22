@@ -15,7 +15,7 @@ This table matches `ACTIONS` in `crates/plait/src/ui/actions.rs` (checked by aut
 | Cmd-Shift-N | New Thread with Model… | `thread.new_with_model` |
 | Cmd-Option-N | New Thread in Worktree | `thread.new_worktree` |
 | Cmd-Shift-M | Change Thread Model… | `thread.switch_model` |
-| Cmd-O | Open Repository… | `repository.open` |
+| Cmd-O | Open Project… | `repository.open` |
 | Cmd-P | Open File… | `file.open` |
 | Cmd-R | Refresh Git Status | `git.refresh` |
 | Cmd-Option-E | Open in Editor | `file.open_in_editor` |

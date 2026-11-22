@@ -37,7 +37,7 @@ pub(super) fn scene(
         if kind=="loading" {p.workspace.turn_review.loading=true;}
         if kind=="unavailable" {p.workspace.turn_review.error=Some(("Unavailable","The saved content is unavailable.".into()));}
         if kind=="old" {p.workspace.turn_review.older=true;p.workspace.turn_review.error=Some(("Older host","Turn review needs a newer host. Current Git changes are still available.".into()));}
-        if kind=="clean" { p.state.repository.complete(plait_core::state::Job::Status {epoch:p.state.repository.epoch(),path:repository.into()}, plait_core::state::Reply::Status(Ok(Arc::new(plait_core::model::Snapshot {root:repository.into(),branch:"main".into(),named:true,tracking:None,changes:vec![],elapsed:Duration::ZERO})))); p.state.repository.view.changes.selected=None; }
+        if kind=="clean" { p.state.repository.complete(plait_core::state::Job::Status {epoch:p.state.repository.epoch(),path:repository.into()}, plait_core::state::Reply::Status(Ok(Arc::new(plait_core::model::Snapshot {root:repository.into(),branch:"main".into(),named:true,tracking:None,changes:vec![],elapsed:Duration::ZERO,plain:false})))); p.state.repository.view.changes.selected=None; }
         p.workspace.diff_scroll=UniformListScrollHandle::new(); p.workspace.file_scroll=UniformListScrollHandle::new();p.workspace.tab=Workspace::Changes;
     });
 }
@@ -466,6 +466,7 @@ fn scope_keys_and_clean_files() {
             tracking: None,
             changes: vec![],
             elapsed: Duration::ZERO,
+            plain: false,
         }));
         p.state.repository.view.changes.selected = None;
         p.review_comparison(true, cx);
@@ -623,6 +624,7 @@ fn set_changes(p: &mut Plait, changes: Vec<plait_core::model::Change>) {
         tracking: None,
         changes,
         elapsed: Duration::ZERO,
+        plain: false,
     }));
 }
 

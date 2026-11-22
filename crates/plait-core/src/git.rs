@@ -360,8 +360,42 @@ pub fn toplevel(path: &Path) -> Result<PathBuf> {
     Ok(path_from_bytes(root))
 }
 
+/// A plain folder: no repository marker at `path` or any folder above it. A
+/// marker is a `.git` file (a linked worktree) or a `.git` folder with `HEAD`,
+/// as Git itself requires; a broken repository with one is not plain, and
+/// Git's own error reports it. An empty stray `.git` folder is no marker.
+pub fn plain_folder(path: &Path) -> bool {
+    !path.ancestors().any(repository_marker)
+}
+
+fn repository_marker(folder: &Path) -> bool {
+    let git = folder.join(".git");
+    match std::fs::symlink_metadata(&git) {
+        Ok(meta) if meta.is_dir() => std::fs::symlink_metadata(git.join("HEAD")).is_ok(),
+        Ok(_) => true,
+        Err(_) => false,
+    }
+}
+
 pub fn status(path: &Path) -> Result<Snapshot> {
     let start = Instant::now();
+    if plain_folder(path) {
+        let root = path
+            .canonicalize()
+            .map_err(|_| "The folder is missing.".to_string())?;
+        if !root.is_dir() {
+            return Err("Not a folder.".into());
+        }
+        return Ok(Snapshot {
+            root,
+            branch: String::new(),
+            named: false,
+            tracking: None,
+            changes: Vec::new(),
+            elapsed: start.elapsed(),
+            plain: true,
+        });
+    }
     let root = command(
         path,
         &[OsStr::new("rev-parse"), OsStr::new("--show-toplevel")],
@@ -392,6 +426,7 @@ pub fn status(path: &Path) -> Result<Snapshot> {
         tracking: header.tracking,
         changes,
         elapsed: start.elapsed(),
+        plain: false,
     })
 }
 
@@ -617,6 +652,11 @@ pub struct FileList {
 /// repositories are left out. Submodules appear as their gitlink path.
 pub fn files(root: &Path) -> Result<FileList> {
     let start = Instant::now();
+    if plain_folder(root) {
+        let mut list = plain_files(root, FILE_LIST_LIMIT, Duration::from_secs(2));
+        list.elapsed = start.elapsed();
+        return Ok(list);
+    }
     let args = [
         "ls-files",
         "-z",
@@ -632,6 +672,46 @@ pub fn files(root: &Path) -> Result<FileList> {
     let mut list = parse_files(&output.bytes, output.truncated, FILE_LIST_LIMIT)?;
     list.elapsed = start.elapsed();
     Ok(list)
+}
+
+/// Files in a plain folder, without Git: hidden entries are skipped, links are
+/// not followed, and the walk stops at `limit` files or after `budget`.
+fn plain_files(root: &Path, limit: usize, budget: Duration) -> FileList {
+    let deadline = Instant::now() + budget;
+    let mut list = FileList::default();
+    let mut folders = vec![PathBuf::new()];
+    while let Some(relative) = folders.pop() {
+        let Ok(entries) = std::fs::read_dir(root.join(&relative)) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            if list.paths.len() >= limit || Instant::now() > deadline {
+                list.truncated = true;
+                folders.clear();
+                break;
+            }
+            let name = entry.file_name();
+            if name.as_encoded_bytes().first() == Some(&b'.') {
+                continue;
+            }
+            let path = relative.join(&name);
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_dir() {
+                folders.push(path);
+            } else if kind.is_file() {
+                match path.to_str() {
+                    Some(text) if !text.chars().any(char::is_control) => list
+                        .paths
+                        .push(text.replace(std::path::MAIN_SEPARATOR, "/")),
+                    _ => list.skipped += 1,
+                }
+            }
+        }
+    }
+    list.paths.sort();
+    list
 }
 
 /// Parse `git ls-files -z -t` records: a status tag, a space, and a path.

@@ -922,6 +922,19 @@ provider ID, an `answer_sign_in` when no input is pending, or a `models.json` th
 host will not rewrite. `internal`: Pi could not store, remove, or reload. Messages
 name the field at fault and never repeat its value.
 
+## Plain folders
+
+A project may be a plain folder when neither it nor any ancestor has a
+repository marker: a `.git` file, or a `.git` folder containing `HEAD`, as Git
+itself requires (an empty stray `.git` folder is no marker). A folder inside a
+Git repository resolves to the repository root; an inaccessible or broken
+repository is refused. Workspace projects report `vcs` (`git` or `folder`),
+and Git reads of a plain folder return an empty status marked `plain` and a
+file list walked without Git. The thread retains its kind even
+if the folder later becomes a repository. Threads, approvals, and file viewing
+work in plain folders. Undo, Changes, History, and worktrees are unavailable.
+Nothing in a plain folder is protected or can be undone.
+
 ## Command policy
 
 Each canonical checkout has a command policy: `trusted`, the default, or
@@ -939,7 +952,7 @@ defaulted to `sandboxed`.
 
 All return `{"checkout":"/canonical/checkout","policy":"sandboxed"}`, with the
 policy now in force for that checkout. `checkout` is an absolute path inside a
-Git working tree and is resolved to its canonical root, as in `list_threads`.
+Git working tree or a plain folder and is resolved to its canonical root, as in `list_threads`.
 `policy` is `sandboxed` or `trusted`; anything else is `invalid_request`. Both
 operations accept the optional `protocol_version` and reply the same way for
 every version. A host without them rejects the unknown operation with
@@ -2173,6 +2186,19 @@ write returns `conflict`, so the client can reread and retry. Device IDs match
 `[A-Za-z0-9_-]{1,128}` and serialized state is limited to 60,000 bytes. The
 host retains at most 64 devices, evicting the least recently updated on insertion.
 The desktop uses these operations for per-device tabs, layout, and selection.
+
+## Folders
+
+The additive read-only `browse_folder {path?, hidden?}` operation omits
+`protocol_version`. An omitted path starts at the host user's home; a supplied
+path must be absolute, at most 4096 bytes, and contain no control characters.
+The reply contains the resolved `path`, its `parent` (null at the root), `home`,
+a `git` marker, sorted subfolder `entries` with their own Git markers, and
+`truncated` when more than 1000 folders match. Hidden names are omitted unless
+`hidden` is true. Folder symlinks are included by their link names. Git markers
+check for a `.git` file or directory without running Git; checks stop after two
+seconds and remaining markers are false. Missing, unreadable, and non-directory
+paths return `not_found`, `permission_denied`, and `invalid_request`, respectively.
 
 ## Checkout Git reads for remote desktops
 

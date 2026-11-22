@@ -19,25 +19,59 @@ async function git(root: string, args: string[], input?: string) {
   const result = await operation;
   return new TextDecoder('utf-8', { fatal: true }).decode(result.stdout);
 }
-export async function checkout(path: string): Promise<string> {
+export type ProjectVcs = 'git' | 'folder';
+export async function projectKind(path: string): Promise<{root: string; vcs: ProjectVcs}> {
   if (!isAbsolute(path)) fail('invalid_request', 'Checkout must be absolute.');
   try {
     const root = await realpath(path);
-    return await realpath((await git(root, ['rev-parse', '--show-toplevel'])).trim());
+    if (!(await lstat(root)).isDirectory()) throw new Error('Not a directory');
+    // Plain only when no repository marker exists here or above, as Git itself
+    // decides: a `.git` file, or a `.git` folder with HEAD. A broken repository
+    // with a marker stays a repository and keeps Git's refusal.
+    let current = root;
+    for (;;) {
+      if (await repositoryMarker(current)) break;
+      const parent = dirname(current);
+      if (parent === current) return { root, vcs: 'folder' };
+      current = parent;
+    }
+    return { root: await realpath((await git(root, ['rev-parse', '--show-toplevel'])).trim()), vcs: 'git' };
   } catch (error) { const classified = resourceError(error); if (classified !== error) throw classified; fail('invalid_request', 'Checkout must be an accessible Git working tree.'); }
+}
+async function repositoryMarker(folder: string): Promise<boolean> {
+  try {
+    const entry = await lstat(join(folder, '.git'));
+    if (!entry.isDirectory()) return true;
+    await lstat(join(folder, '.git', 'HEAD'));
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
+  }
+}
+export async function checkout(path: string): Promise<string> { return (await projectKind(path)).root; }
+export async function gitCheckout(path: string): Promise<void> {
+  try {
+    if (await realpath((await git(path, ['rev-parse', '--show-toplevel'])).trim()) !== path) throw new Error('Checkout root changed');
+  }
+  catch (error) { const classified = resourceError(error); if (classified !== error) throw classified; fail('invalid_request', 'Checkout must be an accessible Git working tree.'); }
 }
 /** A linked worktree keeps its objects and refs in the main repository's Git
  * directory, outside its own root. Returns that directory, or undefined when
  * it lies inside the root as usual. Fixed per root, so it is remembered. */
 const sharedDirs = new Map<string, string | undefined>();
 export async function sharedGitDir(root: string): Promise<string | undefined> {
+  if ((await projectKind(root)).vcs === 'folder') return undefined;
   if (sharedDirs.has(root)) return sharedDirs.get(root);
   const dir = await realpath((await git(root, ['rev-parse', '--path-format=absolute', '--git-common-dir'])).trim());
   const shared = dir === root || dir.startsWith(root + '/') ? undefined : dir;
   sharedDirs.set(root, shared);
   return shared;
 }
-export async function dirtyPaths(root: string): Promise<string[]> {
+/** `vcs` is the thread's stored kind. Without it the checkout is treated as
+ * Git, so a repository that lost its `.git` is refused, never unprotected. */
+export async function dirtyPaths(root: string, vcs: ProjectVcs = 'git'): Promise<string[]> {
+  if (vcs === 'folder') return [];
   let names = '';
   try { names = await git(root, ['config', '--name-only', '--get-regexp', '^filter\\..*\\.(clean|process)$']); }
   catch (error) { if ((error as { code?: number }).code !== 1) throw error; }
@@ -64,7 +98,8 @@ export function sameImage(left: Postimage, right: Postimage) {
   return (['path', 'sha256', 'dev', 'ino', 'mode', 'size', 'mtime', 'ctime'] as const).every(key => left[key] === right[key]);
 }
 export const pathKey = (path: string) => path.normalize('NFD').toLowerCase();
-export async function ignoredPaths(root: string, paths: string[]): Promise<string[]> {
+export async function ignoredPaths(root: string, paths: string[], vcs: ProjectVcs = 'git'): Promise<string[]> {
+  if (vcs === 'folder') return [];
   if (!paths.length) return [];
   try { return (await git(root, ['check-ignore', '--no-index', '-z', '--stdin'], paths.join('\0') + '\0')).split('\0').filter(Boolean); }
   catch (error) { if ((error as { code?: number }).code === 1) return []; throw error; }
@@ -305,7 +340,8 @@ export async function fileAction<T = FileResult>(root: string, action: string, p
 }
 
 /** Metadata only: no working-tree filters, project hooks, or optional locks. */
-export async function runHeader(root: string): Promise<string> {
+export async function runHeader(root: string, vcs: ProjectVcs = 'git'): Promise<string> {
+  if (vcs === 'folder') return `Plait run context (host supplied):\nWorking directory: ${JSON.stringify(root)}\nThis folder is not a Git repository. Nothing in it is protected or can be undone.\n`;
   const branch = (await git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']).catch(error => {
     if ((error as { code?: number }).code === 1) return '(detached)'; throw error;
   })).trim();

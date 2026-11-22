@@ -510,6 +510,13 @@ impl Palette {
         cx.notify();
     }
 
+    /// Empty the search field, as when the picker shows another folder.
+    pub fn clear_query(&mut self, cx: &mut Context<Self>) {
+        if !self.field.read(cx).text().is_empty() {
+            self.field.update(cx, |field, cx| field.set_text("", cx));
+        }
+    }
+
     /// Replace the search text, as typing would. Scenes use it; drop the
     /// attribute when a caller needs to open the palette with text in it.
     #[cfg(test)]

@@ -94,7 +94,7 @@ manifests. To run a host on Linux, see [Remote hosts](docs/REMOTE.md).
 
 ## Get started
 
-1. **Open repository…** (Cmd-O).
+1. **Open project…** (Cmd-O): a repository or any folder.
 2. **Settings** (Cmd-comma) → **Providers**: sign in or add a key.
 3. Start a thread and describe the change. Watch it work, or approve each step.
 4. Review in **Changes**, commit, and keep going in the same thread.
