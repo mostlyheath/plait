@@ -1,6 +1,8 @@
 //! Repository job routing. Parked checkouts retain identity and write outcomes,
 //! not a thread view or background read demand.
 use super::*;
+use crate::ownership::CheckoutKeyExt;
+use crate::ownership::HostKeyExt;
 use crate::ownership::{CheckoutKey, HostKey};
 use std::collections::HashMap;
 

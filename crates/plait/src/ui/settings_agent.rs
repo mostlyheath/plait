@@ -6,6 +6,7 @@
 //! which Plait follows, so there is one place to manage them. Every string the
 //! page and the composer draw is made once, on the background executor, when
 //! the reply arrives; rendering formats nothing.
+use plait_core::ownership::CheckoutKeyExt;
 
 use super::{Plait, composer::AgentCommand, settings, theme::*, thread_controls::TextTooltip};
 use gpui::{prelude::*, *};

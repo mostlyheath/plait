@@ -5,6 +5,7 @@ use plait_core::host::{
     self, Client,
     admission::{self, Placement, Request, Stage},
 };
+use plait_core::ownership::CheckoutKeyExt;
 use std::{
     path::PathBuf,
     time::{Duration, Instant},

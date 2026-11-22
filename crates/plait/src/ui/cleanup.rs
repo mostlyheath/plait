@@ -1,6 +1,7 @@
 //! One checkout-scoped control. Disk and socket work stay off render.
 use super::{Plait, theme::*, thread_controls::TextTooltip};
 use gpui::{prelude::*, *};
+use plait_core::ownership::CheckoutKeyExt;
 use plait_core::{host, lease::cleanup::Cleanup, ownership::CheckoutKey};
 use std::{path::PathBuf, time::Duration};
 

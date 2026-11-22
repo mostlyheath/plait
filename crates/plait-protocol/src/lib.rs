@@ -8,6 +8,7 @@ pub mod host;
 pub mod images;
 pub mod lease;
 pub mod model;
+pub mod ownership;
 pub mod patch;
 pub mod update;
 pub mod wire;

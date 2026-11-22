@@ -4,6 +4,7 @@ use std::path::PathBuf;
 pub mod agent;
 pub mod checkout_queue;
 pub mod folders;
+pub mod git;
 pub mod harness;
 pub mod history;
 pub mod linear;

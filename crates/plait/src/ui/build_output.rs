@@ -10,6 +10,7 @@ use plait_core::host::{
     self, CancelWatch,
     build_output::{self, Info, Kind, Phase, Progress, Request},
 };
+use plait_core::ownership::CheckoutKeyExt;
 use std::{collections::BTreeMap, path::PathBuf};
 
 #[derive(Default)]

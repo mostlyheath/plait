@@ -1,3 +1,4 @@
+use crate::ownership::HostKeyExt;
 use std::{
     collections::{HashMap, HashSet},
     sync::atomic::{AtomicU64, Ordering},
