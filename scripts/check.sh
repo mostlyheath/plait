@@ -39,11 +39,16 @@ if [[ $(uname -s) == Darwin ]]; then
 else
     python3 -m unittest discover -s scripts/acceptance -p 'test_*.py'
 fi
-# The protocol dependency closure must stay free of platform I/O and UI crates.
-# The cryptography entries are pure Ed25519/SHA-2 implementations and their pure dependencies.
-protocol_dependencies=$(cargo tree --locked -p plait-protocol --edges normal --prefix none)
-if grep -Evq '^(plait-protocol|base64|serde|serde_core|serde_derive|serde_json|proc-macro2|unicode-ident|quote|syn|itoa|memchr|zmij|unicode-properties|ed25519-dalek|curve25519-dalek|curve25519-dalek-derive|cfg-if|cpufeatures|digest|block-buffer|generic-array|typenum|crypto-common|subtle|zeroize|ed25519|signature|sha2) v' <<< "$protocol_dependencies"; then
-    echo 'Protocol dependency is not on the I/O-free allowlist; review it before adding it.' >&2
+# The protocol dependency closure must stay free of platform I/O and UI crates, on
+# every target. The cryptography entries are pure Ed25519/SHA-2 implementations
+# (fiat-crypto is curve25519-dalek's verified pure-Rust backend on some targets);
+# libc is allowed only because cpufeatures reads CPU features through it on Apple
+# silicon.
+protocol_dependencies=$(cargo tree --locked -p plait-protocol --edges normal --prefix none --target all)
+protocol_allowed='^(plait-protocol|base64|serde|serde_core|serde_derive|serde_json|proc-macro2|unicode-ident|quote|syn|itoa|memchr|zmij|unicode-properties|ed25519-dalek|curve25519-dalek|curve25519-dalek-derive|fiat-crypto|cfg-if|cpufeatures|libc|digest|block-buffer|generic-array|typenum|crypto-common|subtle|zeroize|ed25519|signature|sha2) v'
+if unexpected=$(grep -Ev "$protocol_allowed" <<< "$protocol_dependencies"); then
+    echo 'Protocol dependency is not on the I/O-free allowlist; review it before adding it:' >&2
+    sort -u <<< "$unexpected" >&2
     exit 1
 fi
 # The daemon and shared core must stay independent of desktop dependencies.
