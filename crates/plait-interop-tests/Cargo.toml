@@ -1,0 +1,19 @@
+[package]
+name = "plait-interop-tests"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+plait-core = { path = "../plait-core" }
+plait-engine = { path = "../plait-engine" }
+plait-protocol = { path = "../plait-protocol" }
+libc = "=0.2.191"
+serde_json = "=1.0.154"
+sha2 = "=0.10.9"
+
+[[bin]]
+name = "plait-host"
+path = "../plait-host/src/main.rs"

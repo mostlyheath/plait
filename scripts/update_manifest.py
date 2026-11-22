@@ -4,7 +4,7 @@
 Usage: update_manifest.py <release-dir> <tag>
 
 The manifest names each artifact's size and SHA-256. The release workflow
-signs it with the update key (crates/plait-core/examples/update-key.rs);
+signs it with the update key (crates/plait-protocol/examples/update-key.rs);
 clients verify that signature before trusting any field.
 """
 import hashlib

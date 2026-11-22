@@ -7,7 +7,7 @@
 //! files. Both deny Git-directory writes, including timestamp changes.
 //! Elsewhere the helpers run directly.
 
-use plait_core::git::{
+use plait_engine::git::{
     record::{self, Located, PruneRequest, Request},
     undo,
 };
@@ -358,7 +358,7 @@ fn undo_request(value: Value) -> io::Result<()> {
         return Err(failure("store must be absolute".into()));
     }
     let located = undo::locate(&request.checkout).map_err(failure)?;
-    let expected = plait_core::lease::DirIdentity {
+    let expected = plait_engine::lease::DirIdentity {
         dev: request
             .identity
             .dev

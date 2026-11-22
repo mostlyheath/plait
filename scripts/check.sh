@@ -23,7 +23,7 @@ case "$(uname -s)" in
             echo 'Linux command-sandbox acceptance is blocked. See docs/LINUX-SANDBOX.md.' >&2
             exit 1
         fi
-        packages=(-p plait-core -p plait-engine -p plait-protocol -p plait-host)
+        packages=(-p plait-core -p plait-engine -p plait-protocol -p plait-host -p plait-interop-tests)
         echo 'Checking Linux headless development. Native UI and Linux command execution are not validated.'
         ;;
     *)
@@ -49,6 +49,11 @@ protocol_allowed='^(plait-protocol|base64|serde|serde_core|serde_derive|serde_js
 if unexpected=$(grep -Ev "$protocol_allowed" <<< "$protocol_dependencies"); then
     echo 'Protocol dependency is not on the I/O-free allowlist; review it before adding it:' >&2
     sort -u <<< "$unexpected" >&2
+    exit 1
+fi
+host_dependencies=$(cargo tree --locked -p plait-host --edges normal --prefix none)
+if grep -Eq '^plait-core( |$)' <<< "$host_dependencies"; then
+    echo 'The host must not depend on plait-core.' >&2
     exit 1
 fi
 # The daemon and shared core must stay independent of desktop dependencies.

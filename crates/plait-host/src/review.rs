@@ -1,5 +1,5 @@
 //! Read helpers share the recorder's lifetime supervisor, but never its index.
-use plait_core::git::{record, review};
+use plait_engine::git::{record, review};
 use serde_json::Value;
 use std::{
     io::{self, Read},

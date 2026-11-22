@@ -55,7 +55,7 @@ fn generate(path: &Path) -> io::Result<()> {
 fn sign(key: &Path, manifest: &Path) -> io::Result<()> {
     let key = load(key)?;
     let bytes = fs::read(manifest)?;
-    let expected = plait_core::update::public_key().map_err(io::Error::other)?;
+    let expected = plait_protocol::update::public_key().map_err(io::Error::other)?;
     if key.verifying_key() != expected {
         return Err(io::Error::other(
             "this key does not match the public key built into Plait",
@@ -79,7 +79,7 @@ fn check(
     signature: &[u8],
     key: &ed25519_dalek::VerifyingKey,
 ) -> io::Result<(String, usize)> {
-    use plait_core::update::{Component, verify, verify_component};
+    use plait_protocol::update::{Component, verify, verify_component};
     let component = match manifest.file_name().and_then(|name| name.to_str()) {
         Some("update-client.json") => Some(Component::Client),
         Some(name) if name.starts_with("update-host") && name.ends_with(".json") => {
@@ -101,7 +101,7 @@ fn verify(manifest: &Path) -> io::Result<()> {
     let mut target = manifest.as_os_str().to_owned();
     target.push(".sig");
     let signature = fs::read(&target)?;
-    let key = plait_core::update::public_key().map_err(io::Error::other)?;
+    let key = plait_protocol::update::public_key().map_err(io::Error::other)?;
     let (tag, artifacts) = check(manifest, &bytes, &signature, &key)?;
     println!("{tag} ({artifacts} artifacts) is signed by the Plait release key");
     Ok(())

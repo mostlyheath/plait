@@ -54,7 +54,7 @@ fn run() -> io::Result<()> {
     if operation == "runner-peer-fd" {
         use std::os::fd::FromRawFd;
         let socket = unsafe { std::os::unix::net::UnixStream::from_raw_fd(3) };
-        return plait_core::local_socket::require_same_user(&socket);
+        return plait_engine::local_socket::require_same_user(&socket);
     }
     if operation == "cleanup" {
         return lease::cleanup_operation(args.collect());
@@ -164,7 +164,7 @@ fn run() -> io::Result<()> {
         }
         let home = env::var_os("HOME").ok_or_else(|| io::Error::other("HOME is not set"))?;
         let store = PathBuf::from(home).join(".local/share/plait");
-        let count = plait_core::update::install::active_runs(&store).map_err(io::Error::other)?;
+        let count = plait_engine::update::install::active_runs(&store).map_err(io::Error::other)?;
         println!("{count}");
         return Ok(());
     }
@@ -174,7 +174,7 @@ fn run() -> io::Result<()> {
             &serde_json::json!({
                 "component": "host", "version": env!("CARGO_PKG_VERSION"),
                 "revision": option_env!("PLAIT_BUILD_REVISION").unwrap_or("development"),
-                "release": plait_core::update::current_version().map(|version| version.to_string()),
+                "release": plait_protocol::update::current_version().map(|version| version.to_string()),
                 "protocol_version": 6,
             }),
         )?;

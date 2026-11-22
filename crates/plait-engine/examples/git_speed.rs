@@ -7,10 +7,11 @@ use std::{
 };
 
 use plait_core::{
-    file_view, git,
+    file_view,
     host::{Client, git as host_git},
-    model::DiffMode,
 };
+use plait_engine::git;
+use plait_protocol::model::DiffMode;
 
 fn tracked_file(root: &Path) -> Result<PathBuf, String> {
     if root.join("README.md").is_file() {

@@ -1,5 +1,5 @@
 //! Supervised host worktree helper. Journals outlive both the socket and runtime.
-use plait_core::git::worktree::{self, HelperRequest as Request, ManagedWorktree};
+use plait_engine::git::worktree::{self, HelperRequest as Request, ManagedWorktree};
 use serde_json::{Value, json};
 use std::{
     fs::{self, File, OpenOptions},
@@ -40,7 +40,7 @@ fn execute(input: Value) -> io::Result<Value> {
             records,
             only,
         } => {
-            use plait_core::build_output::store::{policy, seed_summary};
+            use plait_engine::build_output::store::{policy, seed_summary};
             let Some(store) = store else {
                 return worktree::inventory::inventory_of(&root, &records, only.as_deref())
                     .and_then(|value| serde_json::to_value(value).map_err(|e| e.to_string()))
@@ -97,7 +97,7 @@ fn execute(input: Value) -> io::Result<Value> {
                 |record| save(&path, record).map_err(|e| e.to_string()),
                 &mut supervised_git,
                 |parent| {
-                    plait_core::build_output::store::policy::load(
+                    plait_engine::build_output::store::policy::load(
                         &store,
                         &parent.main,
                         &parent.main_identity,
@@ -201,7 +201,7 @@ fn supervised_git(
     root: &Path,
     args: &[&str],
     _timeout: Duration,
-    leases: &[&plait_core::lease::CheckoutLease],
+    leases: &[&plait_engine::lease::CheckoutLease],
 ) -> Result<(), String> {
     use std::process::{Command, Stdio};
     let mut command = Command::new(std::env::current_exe().map_err(|e| e.to_string())?);

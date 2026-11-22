@@ -9,7 +9,7 @@ if (( $# > 1 )); then
 fi
 cd "$root"
 cargo build --release -p plait-host
-cargo build --release -p plait-core --example git_speed
+cargo build --release -p plait-engine --example git_speed
 store=$(mktemp -d /tmp/plait-speed.XXXXXXXX)
 cleanup() {
   # Match the exact scratch store argument, never the user's host.
