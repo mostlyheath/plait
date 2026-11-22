@@ -2120,23 +2120,30 @@ attribution proof, or reviewed baseline, and make no change to undo semantics.
 
 The first step of [Host-first Plait](HOST-FIRST.md). These additive
 operations omit `protocol_version`; an older host answers `invalid_request`.
-The desktop does not use them yet.
+The desktop reads its sidebar from this stream. With an older host it uses
+this Mac's saved lists for this Mac, and only what the window opened for
+another machine.
 
 - `{"op":"workspace_view"}` returns `{schema:1, host, revision, projects,
-  worktrees, seen}`.
+  worktrees, seen, status}`.
   - `host` is `{id, name, platform}`. The ID is stable for the store and
     is the same one turn review reports. The name defaults to the machine's
     hostname, and `{"op":"host_set_name","name":N}` changes it.
   - `projects` lists `{path, hidden}` in the order they were opened.
   - `worktrees` lists `{folder, main, branch, creation_id, identity}`:
     which project each worktree belongs to.
+  - `status` maps watched checkout paths to in-memory change counters, starting
+    at zero when a watch starts. The host watches visible projects and listed
+    worktrees, up to 64 folders; failed watches are omitted. Counters signal
+    that Git status may have changed and reset when the host restarts.
   - `seen` lists `{thread_id, updated_at, state, unread}`, newest first,
     with at most 1000 entries.
 - `{"op":"workspace_subscribe"}` replies with the same view, then sends
-  `{"event":"workspace","seq":N,"workspace":VIEW}` each time the revision
-  moves, numbered from 1. A thread change alone is not a workspace change. A
+  `{"event":"workspace","seq":N,"workspace":VIEW}` each time the revision or status
+  changes, numbered from 1. A thread change alone is not a workspace change. A
   subscriber that cannot keep up is disconnected and subscribes again for a
   fresh view.
+- Workspace writes accept an optional `op_id`: retries with the same ID and input return the first outcome for up to 24 hours.
 - Writes, each committed with a new revision, then announced to subscribers:
   - `workspace_open_project {path}` accepts only an accessible Git working
     tree on this host, and returns its top folder. Opening a hidden project
@@ -2153,6 +2160,17 @@ The desktop does not use them yet.
     returns `imported:false`.
 - Paths are absolute, at most 4096 bytes, without control characters; IDs
   match `[A-Za-z0-9_-]{1,128}`; a request is at most 65,000 bytes.
+
+## Device state
+
+The additive `device_state_get {device}` and `device_state_set {device, revision,
+state}` operations store an opaque JSON object per device. They omit
+`protocol_version`. A missing device returns revision 0 and null state. A set
+succeeds only at the current revision and returns the next revision; a stale
+write returns `conflict`, so the client can reread and retry. Device IDs match
+`[A-Za-z0-9_-]{1,128}` and serialized state is limited to 60,000 bytes. The
+host retains at most 64 devices, evicting the least recently updated on insertion.
+The desktop does not use these operations yet.
 
 ## Checkout Git reads for remote desktops
 
@@ -2189,7 +2207,7 @@ see its Git."
   stamp.
 - Results over 64 MiB, a helper that fails, and a read over 60 seconds are
   refused without helper diagnostics.
-- `{"op":"git_write","checkout":B64,"identity":{"dev":"D","ino":"I"},"write":OP}`
+- `{"op":"git_write","checkout":B64,"identity":{"dev":"D","ino":"I"},"write":OP}` accepts an optional `op_id` to replay the first outcome for up to 24 hours.
   runs one of the desktop's agreed writes (`WriteOp`: stage, unstage, stage
   or unstage all, a hunk, commit, push, publish, fetch, pull, discard,
   restore, create or switch branch) through `plait-host git-write`. The

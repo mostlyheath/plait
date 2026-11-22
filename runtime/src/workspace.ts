@@ -5,8 +5,10 @@ import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
 import { isAbsolute } from 'node:path';
 import { fail } from './protocol.ts';
+import { once } from './operations.ts';
 import { checkout } from './safety.ts';
 import type { Store } from './store.ts';
+import type { CheckoutWatcher } from './watcher.ts';
 
 /** The reserved notification name: the workspace changed. */
 export const WORKSPACE_TOPIC = '%';
@@ -25,7 +27,8 @@ const operations: Record<string, string[]> = {
   workspace_import: ['device', 'projects', 'hidden', 'worktrees', 'seen'],
   host_set_name: ['name'],
 };
-const optional = new Set(['creation_id', 'identity']);
+const optional = new Set(['creation_id', 'identity', 'op_id']);
+for (const op of Object.keys(operations)) if (!['workspace_view', 'workspace_subscribe'].includes(op)) operations[op].push('op_id');
 
 type Worktree = { folder: string; main: string; branch: string; creation_id: string | null; identity: { dev: string; ino: string } | null };
 type Seen = { thread_id: string; updated_at: number; state: string; unread: boolean };
@@ -77,6 +80,12 @@ export function validateWorkspace(input: unknown): Record<string, unknown> & { o
 export class Workspace {
   private store: Store;
   private changed: () => void;
+  private watcher?: CheckoutWatcher;
+  setWatcher(watcher: CheckoutWatcher) { this.watcher = watcher; this.syncWatcher(); }
+  private syncWatcher() {
+    const view = this.view();
+    this.watcher?.sync([...view.projects.filter(project => !project.hidden).map(project => project.path), ...view.worktrees.map(tree => tree.folder)]);
+  }
   constructor(store: Store, changed: () => void) {
     this.store = store; this.changed = changed;
     store.db.exec(`
@@ -105,11 +114,17 @@ export class Workspace {
     const seen = db.prepare('SELECT * FROM workspace_seen ORDER BY updated_at DESC, thread_id').all().map(row => ({
       thread_id: String(row.thread_id), updated_at: Number(row.updated_at), state: String(row.state), unread: Number(row.unread) === 1,
     }));
-    return { schema: 1, host: this.identity(), revision: Number(this.store.setting('workspace_revision') ?? 0), projects, worktrees, seen };
+    return { schema: 1, host: this.identity(), revision: Number(this.store.setting('workspace_revision') ?? 0), projects, worktrees, seen, status: this.watcher?.status() ?? {} };
   }
 
   async handle(input: unknown) {
     const request = validateWorkspace(input);
+    if (request.op === 'workspace_view' || request.op === 'workspace_subscribe') return this.view();
+    const { op_id, ...inputWithoutId } = request;
+    return once(this.store, op_id, request.op, inputWithoutId, () => this.writeRequest(request));
+  }
+
+  private async writeRequest(request: Record<string, unknown> & { op: string }) {
     switch (request.op) {
       case 'workspace_view': case 'workspace_subscribe': return this.view();
       case 'workspace_open_project': {
@@ -200,6 +215,7 @@ export class Workspace {
       this.store.setSetting('workspace_revision', String(this.revision() + 1));
       this.store.db.exec('COMMIT');
     } catch (error) { this.store.db.exec('ROLLBACK'); throw error; }
+    this.syncWatcher();
     this.changed();
   }
 }

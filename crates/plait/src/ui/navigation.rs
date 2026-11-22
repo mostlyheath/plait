@@ -114,12 +114,13 @@ impl Plait {
             .projects
             .iter()
             .find(|project| project.checkout == self.project_of(self.visible_project_checkout()))
-            .unwrap_or(&self.state.projects[0])
+            .or(self.state.projects.first())
+            .unwrap_or(&self.no_project)
     }
 
     /// The project a checkout lists under; a Plait worktree belongs to its repository.
     pub(super) fn project_of<'a>(&'a self, checkout: &'a std::path::Path) -> &'a std::path::Path {
-        self.preferences.value.navigation.project_of(checkout)
+        self.lists().project_of(checkout)
     }
 
     pub(super) fn filtered_threads(&self, cx: &App) -> Vec<usize> {
@@ -147,7 +148,7 @@ impl Plait {
                     query,
                     self.navigation.archived,
                     self.navigation.attention,
-                    &self.preferences.value.navigation.unread,
+                    &self.lists().unread,
                 )
                 .then_some((*project_index, index))
             })
@@ -411,7 +412,7 @@ impl Plait {
         }
         let menu_id = id.clone();
         let context_id = id.clone();
-        let unread = self.preferences.value.navigation.unread.contains(&id);
+        let unread = self.lists().unread.contains(&id);
         let status = nav::state_label(thread);
         let short = if status == "Needs approval" {
             "Approve"
@@ -424,12 +425,7 @@ impl Plait {
             .as_millis() as u64;
         let age = nav::age(thread.updated_at, now);
         let label = self.thread_title(&id);
-        let worktree = self
-            .preferences
-            .value
-            .navigation
-            .worktree(&thread.checkout)
-            .is_some();
+        let worktree = self.lists().worktree(&thread.checkout).is_some();
         row()
             .w_full()
             .h(px(ROW_HEIGHT))
@@ -623,7 +619,7 @@ impl Plait {
                             }),
                     )
                     .child(div().flex_1())
-                    .when(!self.preferences.value.navigation.hidden.is_empty(), |el| {
+                    .when(!self.lists().hidden.is_empty(), |el| {
                         el.child(
                             tool("show-hidden-projects", "eye", "Show hidden projects")
                                 .on_activate(cx, |this, _, cx| {
@@ -722,7 +718,7 @@ impl Plait {
                 }))
                 .child(button("project-hide", "Remove from sidebar").on_activate(cx, move |this, _, cx| {
                     if this.project_of(&this.host.creation.checkout) == hide { this.navigation.error = Some("Open another project before removing this one. Host threads are kept.".into()); }
-                    else { let mut value = this.preferences.value.clone(); value.navigation.hide(&hide); this.set_preferences(value, PreferenceGroup::View, cx); this.rebuild_projects(cx); }
+                    else { this.update_lists(|lists| lists.hide(&hide), cx); this.rebuild_projects(cx); }
                     this.navigation.menu = None; cx.notify();
                 }))
                 .child(tag("project-menu-note", "Removing a project keeps its host threads.", colors().subtle));
@@ -737,7 +733,7 @@ impl Plait {
             let archive = id.clone();
             let archived = thread.archived == Some(true);
             let worktrees = thread.checkout.clone();
-            let tree = self.preferences.value.navigation.worktree(&thread.checkout);
+            let tree = self.lists().worktree(&thread.checkout);
             let branch = tree.map(|tree| tree.branch.clone());
             let remove = thread.checkout.clone();
             panel = panel

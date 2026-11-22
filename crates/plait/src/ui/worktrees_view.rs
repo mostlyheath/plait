@@ -284,11 +284,7 @@ impl Plait {
 
     pub(super) fn worktree_context_line(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let snapshot = self.host.thread.snapshot.as_ref()?;
-        let tree = self
-            .preferences
-            .value
-            .navigation
-            .worktree(&snapshot.checkout)?;
+        let tree = self.lists().worktree(&snapshot.checkout)?;
         let project = tree.main.clone();
         Some(
             row()
@@ -639,11 +635,8 @@ impl Plait {
                 "Missing"
             } else {
                 thread.map_or("", |t| {
-                    plait_core::tabs::row::summary_state(
-                        t,
-                        self.preferences.value.navigation.unread.contains(&t.id),
-                    )
-                    .word(true)
+                    plait_core::tabs::row::summary_state(t, self.lists().unread.contains(&t.id))
+                        .word(true)
                 })
             });
         }

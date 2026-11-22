@@ -19,6 +19,7 @@ mod file_view;
 mod harnesses;
 mod history;
 mod host;
+mod host_workspace;
 mod images;
 mod issues_view;
 mod jump;
@@ -145,6 +146,9 @@ pub struct Plait {
     host_client: plait_core::host::Client,
     host_local: bool,
     navigation: navigation::Navigation,
+    host_workspace: host_workspace::HostWorkspace,
+    /// What a window on a machine with no projects yet shows as its project.
+    no_project: plait_core::model::Project,
     /// Presentation state for the single selected thread workspace.
     workspace: thread_workspace::ThreadWorkspace,
     commit_sends:
@@ -228,12 +232,21 @@ impl Plait {
     fn use_machine_client(
         &mut self,
         client: plait_core::host::Client,
+        machine: plait_core::machines::MachineId,
         local: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.host_client = client;
         self.host_local = local;
+        // A new link to the same machine keeps what is on screen; another
+        // machine starts empty, so nothing of the previous one shows as its.
+        if std::mem::replace(&mut self.machines.active, machine) != self.machines.active {
+            self.host.connection.threads.clear();
+            self.navigation.available.clear();
+            self.host_workspace = Default::default();
+            self.rebuild_projects(cx);
+        }
         // This client was just made: the reconnect below must not make another.
         self.machines.fresh_link = true;
         self.host.connection.connecting = false;
@@ -258,6 +271,15 @@ impl Plait {
             host_client: plait_core::host::Client::local_or_unavailable(),
             host_local: true,
             navigation: navigation::Navigation::new(cx),
+            host_workspace: Default::default(),
+            no_project: plait_core::model::Project {
+                checkout: PathBuf::new(),
+                name: "No project".into(),
+                machines: vec![plait_core::model::Machine {
+                    name: plait_core::machine::local_name(),
+                    local: true,
+                }],
+            },
             workspace: thread_workspace::ThreadWorkspace::new(commit_message),
             commit_sends: Default::default(),
             settings_open: false,

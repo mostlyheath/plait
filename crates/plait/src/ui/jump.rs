@@ -68,7 +68,7 @@ impl Plait {
     /// Select the Nth thread, machine, or project in sidebar order.
     pub(super) fn jump_to(&mut self, number: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(jump) = plait_core::navigation::jump(
-            &self.preferences.value.navigation,
+            self.lists(),
             &self.state.projects,
             &self.host.connection.threads,
             &self.filtered_threads(cx),
@@ -136,13 +136,13 @@ impl Plait {
                     this.load_fonts(cx);
                 }
                 this.pump_preferences(cx);
-                let mut value = this.preferences.value.clone();
-                value
-                    .navigation
-                    .observe(&this.host.connection.threads, None, true);
-                if value != this.preferences.value {
-                    this.persist_navigation(value, cx);
-                }
+                let threads = this.host.connection.threads.clone();
+                this.update_lists(
+                    |lists| {
+                        lists.observe(&threads, None, true);
+                    },
+                    cx,
+                );
                 this.rebuild_projects(cx);
                 cx.notify();
             });

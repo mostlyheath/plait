@@ -209,7 +209,7 @@ impl Plait {
             &RowContext {
                 host: &self.tabs.host,
                 threads: &self.host.connection.threads,
-                navigation: &self.preferences.value.navigation,
+                navigation: self.lists(),
                 machine: &self.active_project().machines[0].name,
             },
         );

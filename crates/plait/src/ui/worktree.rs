@@ -229,9 +229,7 @@ impl Plait {
         operation: &Operation,
         cx: &mut Context<Self>,
     ) {
-        let mut preferences = self.preferences.value.clone();
-        preferences.navigation.remember_host_worktree(operation);
-        self.persist_navigation(preferences, cx);
+        self.update_lists(|lists| lists.remember_host_worktree(operation), cx);
     }
     /// Reconcile receipts after a closed window or a lost acknowledgement.
     pub(super) fn refresh_host_worktrees(&mut self, cx: &mut Context<Self>) {
@@ -246,11 +244,14 @@ impl Plait {
                     if this.host.connection.epoch != epoch {
                         return;
                     }
-                    let mut preferences = this.preferences.value.clone();
-                    for operation in operations {
-                        preferences.navigation.remember_host_worktree(&operation);
-                    }
-                    this.persist_navigation(preferences, cx);
+                    this.update_lists(
+                        |lists| {
+                            for operation in &operations {
+                                lists.remember_host_worktree(operation);
+                            }
+                        },
+                        cx,
+                    );
                     this.rebuild_projects(cx);
                 });
             }
@@ -280,7 +281,7 @@ impl Plait {
             }
             return;
         }
-        let Some(tree) = self.preferences.value.navigation.worktree(&path).cloned() else {
+        let Some(tree) = self.lists().worktree(&path).cloned() else {
             return;
         };
         if tree.creation_id.is_none() || tree.identity.is_none() {

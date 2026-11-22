@@ -47,7 +47,7 @@ impl Plait {
             .iter()
             .map(|t| t.checkout.clone())
             .collect();
-        roots.extend(self.preferences.value.navigation.opened.iter().cloned());
+        roots.extend(self.lists().opened.iter().cloned());
         roots.push(self.host.creation.checkout.clone());
         roots.extend(
             self.tabs

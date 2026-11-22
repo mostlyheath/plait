@@ -5598,7 +5598,8 @@ fn switching_machine_reconnects() {
     harness.update(|plait, window, cx| {
         let epoch = plait.host.connection.epoch;
         let client = plait.host_client();
-        plait.use_machine_client(client, false, window, cx);
+        let remote = plait_core::machines::MachineId::new("workstation").unwrap();
+        plait.use_machine_client(client, remote, false, window, cx);
         assert!(!plait.host_is_local());
         assert!(plait.host.connection.epoch > epoch);
     });

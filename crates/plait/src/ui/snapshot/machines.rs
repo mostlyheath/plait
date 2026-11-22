@@ -169,7 +169,7 @@ fn machines_are_labelled_and_validate_input() {
         p.add_machine_for_test(cx);
         assert!(p.machines.form.is_none());
         assert_eq!(p.preferences.value.machines.list().len(), 2);
-        assert_eq!(p.machine_label(), "Local host", "adding does not switch");
+        assert_eq!(p.machine_label(), "This Mac", "adding does not switch");
     });
     std::fs::remove_dir_all(scratch).unwrap();
 }
@@ -215,27 +215,25 @@ fn remote_project_path_opens_only_absolute_paths() {
     h.connect(&repo, false);
     h.update(|p, window, cx| {
         p.host_local = false;
+        // As after a real switch: the link is new, so opening a project does not relink.
+        p.machines.fresh_link = true;
         p.run_command(
             super::super::commands::Command::OpenRemoteProject("relative".into()),
             None,
             window,
             cx,
         );
-        assert!(
-            !p.preferences
-                .value
-                .navigation
-                .opened
-                .contains(&PathBuf::from("relative"))
-        );
+        assert!(!p.lists().opened.contains(&PathBuf::from("relative")));
         p.run_command(
             super::super::commands::Command::OpenRemoteProject("/remote/project".into()),
             None,
             window,
             cx,
         );
+        assert!(p.lists().opened.contains(&PathBuf::from("/remote/project")));
+        // Another machine's path is never saved as one of this Mac's projects.
         assert!(
-            p.preferences
+            !p.preferences
                 .value
                 .navigation
                 .opened
@@ -270,6 +268,63 @@ fn remote_machine_reads_git_through_its_host() {
             matches!(p.state.repository.snapshot(), Load::Error(_)),
             "this Mac's Git answered for a remote checkout"
         );
+    });
+    drop(h);
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
+/// A remote machine's window lists only what its host names, under the
+/// host's own name, and never what this Mac had open.
+#[core::prelude::v1::test]
+fn a_remote_window_shows_only_its_hosts_workspace() {
+    if !isolated("machines::a_remote_window_shows_only_its_hosts_workspace") {
+        return;
+    }
+    use plait_core::host::workspace::{HostIdentity, Project, View};
+    let scratch = std::env::temp_dir().join(format!("plait-remote-ws-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    let mut h = Harness::new(&repo, None, 900., 600.);
+    h.connect(&repo, false);
+    h.update(|p, window, cx| {
+        let mac = p.lists().opened.clone();
+        // Switching machines starts empty: none of this Mac's threads remain.
+        let remote = plait_core::machines::MachineId::new("workstation").unwrap();
+        let client = p.host_client();
+        p.use_machine_client(client, remote, false, window, cx);
+        assert!(p.host.connection.threads.is_empty());
+        // The host's view arrives once the link is up, as it would be here.
+        p.host.connection.connecting = false;
+        p.host.connection.connected = true;
+        p.machines.fresh_link = true;
+        let generation = p.host_workspace_generation();
+        let view = View {
+            schema: 1,
+            host: HostIdentity {
+                id: "host-1".into(),
+                name: "arthur".into(),
+                platform: "linux".into(),
+            },
+            revision: 3,
+            projects: vec![Project {
+                path: "/srv/api".into(),
+                hidden: false,
+            }],
+            worktrees: Vec::new(),
+            seen: Vec::new(),
+            status: Default::default(),
+        };
+        assert!(p.apply_workspace(generation, view, window, cx));
+        let names = p
+            .state
+            .projects
+            .iter()
+            .map(|project| project.checkout.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec![PathBuf::from("/srv/api")]);
+        assert_eq!(p.machine_label(), "arthur");
+        assert!(!p.state.projects[0].machines[0].local);
+        // This Mac's saved lists are untouched.
+        assert_eq!(p.preferences.value.navigation.opened, mac);
     });
     drop(h);
     std::fs::remove_dir_all(scratch).unwrap();
