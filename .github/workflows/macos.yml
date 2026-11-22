@@ -202,10 +202,11 @@ jobs:
         with:
           persist-credentials: false
       - name: Build and package host
+        env:
+          RELEASE_TAG: ${{ needs.plan.outputs.tag }}
         run: |
           rustup toolchain install --profile minimal --no-self-update
-          cargo build --release --locked -p plait-host
-          python3 scripts/package_linux_host.py --arch ${{ matrix.arch }} --out dist
+          python3 scripts/package_linux_host.py --arch ${{ matrix.arch }} --out dist --release-tag "$RELEASE_TAG"
           python3 scripts/smoke_linux_host.py dist/*.tar.gz
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

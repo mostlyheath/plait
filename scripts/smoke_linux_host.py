@@ -33,7 +33,7 @@ def main(archive):
         binary = host / "bin/plait-host"
         env = {**os.environ, "PATH": str(host / "bin")}
         version = json.loads(subprocess.check_output([str(binary), "version"], env=env, text=True))
-        if version["component"] != "host" or version["version"] != metadata["version"]:
+        if version["component"] != "host" or version["version"] != metadata["version"] or version["revision"] != metadata["revision"]:
             raise ValueError("Host version does not match component metadata")
         store = root / "store"
         process = subprocess.Popen([str(binary), "run", "--store", str(store)], env=env)

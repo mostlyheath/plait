@@ -465,6 +465,7 @@ impl Plait {
                 .aria_selected(selected)
                 .on_activate(cx, move |this, _, cx| {
                     this.cancel_recording(cx);
+                    this.cancel_harness_path();
                     if tab != SettingsTab::Providers {
                         this.close_provider_form(cx);
                     }

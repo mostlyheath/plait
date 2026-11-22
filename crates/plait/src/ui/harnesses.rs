@@ -11,6 +11,7 @@ use super::{
     model_picker::{model_key, model_label},
     palette::Item,
     settings,
+    text_field::TextField,
     theme::*,
 };
 use gpui::{prelude::*, *};
@@ -34,6 +35,7 @@ pub(super) struct HarnessesState {
     /// The latest request; an earlier reply that lands after it is dropped.
     serial: u64,
     note: Option<SharedString>,
+    path_editor: Option<PathEditor>,
     /// The harness of the model last chosen for a new thread, and its permission mode.
     chosen: Option<(HarnessId, ModelChoice, Option<String>)>,
     /// The harness and mode `host.pending_create` was made for, so a retry repeats them.
@@ -41,6 +43,12 @@ pub(super) struct HarnessesState {
     pending_mode: Option<String>,
     /// The open thread's harness, the list generation, and what its composer line says.
     line: Option<(ThreadHarness, u64, ThreadLine)>,
+}
+
+struct PathEditor {
+    id: HarnessId,
+    field: Entity<TextField>,
+    error: Option<SharedString>,
 }
 
 /// What the composer line says about a thread that does not run in Pi.
@@ -688,8 +696,55 @@ impl Plait {
         cx.notify();
     }
 
+    pub(super) fn harness_path_open(&self) -> bool {
+        self.harnesses.path_editor.is_some()
+    }
+
+    pub(super) fn cancel_harness_path(&mut self) {
+        self.harnesses.path_editor = None;
+    }
+
+    fn save_harness_editor(&mut self, cx: &mut Context<Self>) {
+        if self.harnesses.busy {
+            return;
+        }
+        let Some(editor) = self.harnesses.path_editor.as_ref() else {
+            return;
+        };
+        let id = editor.id;
+        let path = editor.field.read(cx).text().trim().to_owned();
+        if !valid_harness_path(&path) {
+            if let Some(editor) = &mut self.harnesses.path_editor {
+                editor.error = Some("Enter an absolute path on the remote machine.".into());
+            }
+        } else {
+            self.cancel_harness_path();
+            self.set_harness_path(id, Some(path.into()), cx);
+        }
+        cx.notify();
+    }
+
     /// Ask for an executable with the system file picker, then send it to the host.
-    fn choose_harness_path(&mut self, id: HarnessId, name: SharedString, cx: &mut Context<Self>) {
+    fn choose_harness_path(
+        &mut self,
+        id: HarnessId,
+        name: SharedString,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.host_is_local() {
+            let field =
+                cx.new(|cx| TextField::new("Remote executable path", "/usr/local/bin/agent", cx));
+            cx.observe(&field, |_, _, cx| cx.notify()).detach();
+            window.focus(&field.focus_handle(cx), cx);
+            self.harnesses.path_editor = Some(PathEditor {
+                id,
+                field,
+                error: None,
+            });
+            cx.notify();
+            return;
+        }
         let prompt = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
@@ -991,14 +1046,22 @@ impl Plait {
                     .flex_shrink_0()
                     .gap_1()
                     .child(
-                        toned_button(("harness-choose", index), "Choose…", Tone::Ghost)
-                            .aria_label(format!("Choose the {} executable", harness.name))
-                            .disabled(busy)
-                            .when(!busy, |el| {
-                                el.on_activate(cx, move |this, _, cx| {
-                                    this.choose_harness_path(id, name.clone(), cx)
-                                })
-                            }),
+                        toned_button(
+                            ("harness-choose", index),
+                            if self.host_is_local() {
+                                "Choose…"
+                            } else {
+                                "Enter path…"
+                            },
+                            Tone::Ghost,
+                        )
+                        .aria_label(format!("Choose the {} executable", harness.name))
+                        .disabled(busy)
+                        .when(!busy, |el| {
+                            el.on_activate(cx, move |this, window, cx| {
+                                this.choose_harness_path(id, name.clone(), window, cx)
+                            })
+                        }),
                     )
                     .child(
                         toned_button(("harness-path", index), "Use PATH", Tone::Ghost)
@@ -1006,6 +1069,7 @@ impl Plait {
                             .disabled(busy)
                             .when(!busy, |el| {
                                 el.on_activate(cx, move |this, _, cx| {
+                                    this.cancel_harness_path();
                                     this.set_harness_path(id, None, cx)
                                 })
                             }),
@@ -1024,7 +1088,62 @@ impl Plait {
             Some(modes) => column().gap_3().child(entry).child(modes),
             None => column().child(entry),
         };
-        entry.when_some(flow, |el, flow| el.gap_3().child(flow))
+        let editor = self
+            .harnesses
+            .path_editor
+            .as_ref()
+            .filter(|editor| editor.id == harness.id)
+            .map(|editor| {
+                let field = editor.field.clone();
+                let error = editor.error.clone();
+                column()
+                    .gap_2()
+                    .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                        if event.keystroke.key == "enter"
+                            && this
+                                .harnesses
+                                .path_editor
+                                .as_ref()
+                                .is_some_and(|editor| !editor.field.read(cx).is_composing())
+                        {
+                            this.save_harness_editor(cx);
+                            cx.stop_propagation();
+                        }
+                    }))
+                    .child(field.clone())
+                    .when_some(error, |el, note| {
+                        el.child(tag(("harness-path-error", index), note, colors().amber))
+                    })
+                    .child(
+                        row()
+                            .gap_2()
+                            .child(
+                                toned_button(
+                                    ("harness-path-save", index),
+                                    "Save path",
+                                    Tone::Primary,
+                                )
+                                .disabled(busy)
+                                .when(!busy, |el| {
+                                    el.on_activate(cx, move |this, _, cx| {
+                                        this.save_harness_editor(cx);
+                                    })
+                                }),
+                            )
+                            .child(
+                                button(("harness-path-cancel", index), "Cancel").on_activate(
+                                    cx,
+                                    |this, _, cx| {
+                                        this.cancel_harness_path();
+                                        cx.notify();
+                                    },
+                                ),
+                            ),
+                    )
+            });
+        entry
+            .when_some(editor, |el, editor| el.gap_3().child(editor))
+            .when_some(flow, |el, flow| el.gap_3().child(flow))
     }
 
     /// Settings → New threads: the harness a new thread's draft starts in: Pi,
@@ -1453,5 +1572,25 @@ mod tests {
             line.note.as_ref(),
             "Codex is using permissions its own configuration sets, not Full access."
         );
+    }
+}
+
+fn valid_harness_path(path: &str) -> bool {
+    path.len() > 1
+        && path.starts_with('/')
+        && !path.ends_with('/')
+        && !path.chars().any(char::is_control)
+}
+
+#[cfg(test)]
+mod remote_path_tests {
+    #[test]
+    fn requires_an_absolute_remote_path() {
+        assert!(super::valid_harness_path("/usr/bin/codex"));
+        assert!(!super::valid_harness_path("codex"));
+        assert!(!super::valid_harness_path("/"));
+        assert!(!super::valid_harness_path("/bin/"));
+        assert!(!super::valid_harness_path("/bin/\u{1b}codex"));
+        assert!(!super::valid_harness_path("/bin/\0codex"));
     }
 }

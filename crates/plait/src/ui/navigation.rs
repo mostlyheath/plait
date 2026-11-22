@@ -1055,20 +1055,32 @@ impl Plait {
     /// Which machine this window works on, and the way to another.
     fn machine_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let machine = self.machine_label();
-        let (state, tint) = if self.host.connection.connecting {
+        let (state, tint) = if self.host.connection.connecting || self.machines.connecting.is_some()
+        {
             ("Connecting", colors().muted)
         } else if self.host.connection.connected {
             ("Connected", colors().mint)
         } else {
             ("Offline", colors().amber)
         };
+        let display = self
+            .machines
+            .connecting
+            .as_ref()
+            .and_then(|id| self.preferences.value.machines.get(id))
+            .map(|machine| format!("Connecting to {}…", machine.name))
+            .unwrap_or_else(|| machine.clone());
         nav_row(
             "machine-switcher",
-            format!("{machine}, {state}. Switch machine…"),
+            if self.machines.connecting.is_some() {
+                format!("{display}. Switch machine…")
+            } else {
+                format!("{display}, {state}. Switch machine…")
+            },
             self.navigation.menu.as_deref() == Some("machines"),
         )
         .child(icon("machine"))
-        .child(title(machine).text_color(rgb(colors().text)))
+        .child(title(display).text_color(rgb(colors().text)))
         .child(dot(tint))
         .child(icon("down"))
         .on_activate(cx, |this, _, cx| {
@@ -1085,19 +1097,26 @@ impl Plait {
         let mut panel = panel.child(tag("machine-menu-heading", "Machines", colors().muted));
         for (index, machine) in self.preferences.value.machines.list().iter().enumerate() {
             let id = &machine.id;
-            let label = if id == &self.machines.active {
+            let label = if self.machines.connecting.as_ref() == Some(id) {
+                format!("{} · Connecting…", machine.name)
+            } else if id == &self.machines.active {
                 format!("{} ✓", machine.name)
             } else {
                 machine.name.clone()
             };
+            let enabled = self.machines.connecting.as_ref() != Some(id)
+                && (id != &self.machines.active || self.machines.connecting.is_some());
             let id = id.clone();
-            panel = panel.child(button(("machine-use", index), label).on_activate(
-                cx,
-                move |this, window, cx| {
-                    this.navigation.menu = None;
-                    this.use_machine(id.clone(), window, cx);
-                },
-            ));
+            panel = panel.child(
+                button(("machine-use", index), label)
+                    .disabled(!enabled)
+                    .when(enabled, |el| {
+                        el.on_activate(cx, move |this, window, cx| {
+                            this.navigation.menu = None;
+                            this.use_machine(id.clone(), window, cx);
+                        })
+                    }),
+            );
         }
         panel.child(button("machine-manage", "Manage machines…").on_activate(
             cx,
