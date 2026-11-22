@@ -457,3 +457,23 @@ fn verify_inherited_dir_fd(fd: i32, expected: DirIdentity) -> io::Result<()> {
     }
     Ok(())
 }
+
+/// Lock an owner-only regular runner lock inherited on fd 3.
+pub fn runner_lock() -> io::Result<()> {
+    let stat = fstat_fd(3)?;
+    #[allow(clippy::unnecessary_cast)]
+    if (stat.st_mode as u32 & libc::S_IFMT as u32) != libc::S_IFREG as u32
+        || stat.st_mode as u32 & 0o077 != 0
+        || stat.st_uid != unsafe { libc::geteuid() }
+        || stat.st_nlink != 1
+    {
+        return Err(io::Error::other("invalid runner lock"));
+    }
+    if !try_flock_fd(3, libc::LOCK_EX).map_err(io::Error::other)? {
+        return Err(io::Error::new(
+            io::ErrorKind::WouldBlock,
+            "runner lock busy",
+        ));
+    }
+    Ok(())
+}

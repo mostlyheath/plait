@@ -56,6 +56,33 @@ pub fn unit_text(executable: &Path, node_dir: Option<&Path>) -> io::Result<Strin
     ))
 }
 
+// Prepared for detached runners; selection and process spawning are future work.
+#[cfg_attr(not(test), allow(dead_code))]
+fn runner_argv(run_id: &str, command: &[String], systemd: bool) -> io::Result<Vec<String>> {
+    if run_id.is_empty()
+        || !run_id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        || command.is_empty()
+    {
+        return Err(io::Error::other("invalid runner id or command"));
+    }
+    let mut args = if systemd {
+        vec![
+            "systemd-run".into(),
+            "--user".into(),
+            "--scope".into(),
+            "--slice=plait-runners.slice".into(),
+            format!("--unit=plait-runner-{run_id}"),
+            "--".into(),
+        ]
+    } else {
+        vec!["setsid".into(), "--".into()]
+    };
+    args.extend_from_slice(command);
+    Ok(args)
+}
+
 fn unit_path_for(unit: &str) -> io::Result<PathBuf> {
     let base = match env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {
         Some(path) => PathBuf::from(path),
@@ -215,6 +242,28 @@ pub fn uninstall() -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn runner_commands_use_independent_scopes_or_setsid() {
+        let command = vec!["node".to_string(), "runner.js".to_string()];
+        assert_eq!(
+            runner_argv("abc-1", &command, true).unwrap(),
+            [
+                "systemd-run",
+                "--user",
+                "--scope",
+                "--slice=plait-runners.slice",
+                "--unit=plait-runner-abc-1",
+                "--",
+                "node",
+                "runner.js"
+            ]
+        );
+        assert_eq!(
+            runner_argv("abc-1", &command, false).unwrap(),
+            ["setsid", "--", "node", "runner.js"]
+        );
+        assert!(runner_argv("../bad", &command, true).is_err());
+    }
     #[test]
     fn source_and_packaged_paths() {
         let source = unit_text(Path::new("/host"), Some(Path::new("/home/me/node/bin"))).unwrap();

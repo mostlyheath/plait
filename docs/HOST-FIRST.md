@@ -84,3 +84,13 @@ branch was recorded.
 
 Each step preserves compatibility and needs its own verification. See
 [Verification](VERIFICATION.md) for evidence and limits.
+
+## Runs that outlive the host (agreed, in progress)
+
+The agreed design separates each accepted run into a runner that can outlive
+its request server. On restart the server will rediscover a runner as live when
+its lock is held, finished when its lock is free and a terminal receipt exists,
+or dead when neither is present. Interrupted effects are never replayed.
+
+The supervision and transport foundation is in progress; current runs still
+stop on host restart. Runner execution and rediscovery are not yet connected.
