@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,9 +9,12 @@ import { inputMessage, type Snapshot } from '../src/protocol.ts';
 import { Runtime } from '../src/runtime.ts';
 import { rootIdentity } from '../src/safety.ts';
 
+// A checkout's identity is read by its real path, and macOS's temp folder is a
+// symlink, so every folder made here is resolved first.
+
 for (const status of ['running', 'awaiting_approval'] as const) {
   test(`startup interrupts ${status} only during recovery`, async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'plait-recovery-'));
+    const directory = await realpath(await mkdtemp(join(tmpdir(), 'plait-recovery-')));
     const first = new Runtime(directory, createModels(), new Set());
     const snapshot: Snapshot = { id: 'thread', checkout: '/checkout', model: { provider: 'faux', model_id: 'model' },
       status, messages: [], tools: [], live_text: 'partial', pending_approval: null, error: null, truncated: false };
@@ -39,7 +42,7 @@ for (const status of ['running', 'awaiting_approval'] as const) {
 
 for (const mode of ['one steer', 'two steers', 'rowless follow-up'] as const) {
   test(`restart resolves the active turn with ${mode}`, async t => {
-    const directory = await mkdtemp(join(tmpdir(), 'plait-recovery-'));
+    const directory = await realpath(await mkdtemp(join(tmpdir(), 'plait-recovery-')));
     t.after(() => rm(directory, { recursive: true, force: true }));
     const open = () => new Runtime(directory, createModels(), new Set());
     const first = open();
@@ -79,7 +82,7 @@ for (const mode of ['one steer', 'two steers', 'rowless follow-up'] as const) {
 }
 
 test('recovery after rollback does not assign a rowless run to the earlier admission', async t => {
-  const directory = await mkdtemp(join(tmpdir(), 'plait-rollback-'));
+  const directory = await realpath(await mkdtemp(join(tmpdir(), 'plait-rollback-')));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const open = () => new Runtime(directory, createModels(), new Set());
   const first = open();
@@ -113,7 +116,7 @@ test('recovery after rollback does not assign a rowless run to the earlier admis
 
 for (const boundary of ['missing', 'undone'] as const) {
   test(`rollback leaves the earlier outcome unset when the active boundary is ${boundary}`, async t => {
-    const directory = await mkdtemp(join(tmpdir(), 'plait-rollback-'));
+    const directory = await realpath(await mkdtemp(join(tmpdir(), 'plait-rollback-')));
     t.after(() => rm(directory, { recursive: true, force: true }));
     const open = () => new Runtime(directory, createModels(), new Set());
     const first = open();
@@ -150,7 +153,7 @@ for (const boundary of ['missing', 'undone'] as const) {
 }
 
 test('migration leaves completed runs without a reported outcome', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'plait-migration-'));
+  const directory = await realpath(await mkdtemp(join(tmpdir(), 'plait-migration-')));
   const old = new DatabaseSync(join(directory, 'host.sqlite'));
   // runs DDL from the protocol 6 store.
   old.exec(`CREATE TABLE runs(run_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, request_id TEXT NOT NULL, harness TEXT NOT NULL,
