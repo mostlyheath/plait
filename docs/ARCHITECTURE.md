@@ -13,10 +13,9 @@ The agreed split, in progress:
   I/O, including host requests, snapshots and provider data, update manifests and their signature
   check, and remote frame encoding. Both host and clients use it.
 - `plait-transport`: shared frame and owner-checked local socket I/O for hosts and clients.
-- `plait-release`: shared release fetching and artifact verification I/O for hosts and clients.
+- `plait-release`: release fetching, artifact verification, and host installation for hosts and clients.
 - `plait-engine` (built, growing): Git, leases, records, build output, and
-  worktree size measurement. The host uses it directly; `plait-core` still links
-  it during the migration.
+  worktree size measurement. The host uses it directly.
 - `plait-client` (planned): transports, the host client, the snapshot mirror and
   event stream, and GPUI-free view models, reusable by other clients such as a
   future iOS app.
@@ -24,8 +23,8 @@ The agreed split, in progress:
 
 Neither the desktop nor `plait-client` will link `plait-engine`; everything a
 client needs from a machine goes through a host, and CI will enforce the
-direction. Until each step lands, `plait-core` holds the rest and re-exports moved
-types and engine operations from their old paths. `plait-host` depends on the
+direction. `plait-core` holds the remaining client models and re-exports shared types from
+their old paths during the migration. `plait-host` depends on the
 engine and protocol without depending on `plait-core`.
 
 ## Boundaries

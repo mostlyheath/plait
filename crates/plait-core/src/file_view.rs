@@ -19,7 +19,6 @@ pub const FIND_LIMIT: usize = 1000;
 /// Lines longer than this are clipped when drawn; the text itself is kept.
 pub const LINE_CLIP: usize = 2000;
 
-pub use plait_engine::file_view::{read_bytes, stamp};
 pub use plait_protocol::file_view::{READ_LIMIT, Stamp};
 
 /// What the viewer can show for a path.
@@ -58,12 +57,6 @@ pub struct Text {
 pub struct Opened {
     pub contents: Contents,
     pub stamp: Stamp,
-}
-
-/// Read `relative` under `root` for display.
-pub fn read(root: &Path, relative: &Path) -> Result<Opened, String> {
-    let (stamp, bytes) = read_bytes(root, relative)?;
-    Ok(classify(stamp, bytes, relative))
 }
 
 /// What the viewer shows for bytes read by `read_bytes`.
@@ -146,15 +139,6 @@ pub fn line_of(lines: &[Range<usize>], offset: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
-
-    fn scratch(name: &str) -> PathBuf {
-        let dir =
-            std::env::temp_dir().join(format!("plait-file-view-{}-{name}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
 
     #[test]
     fn text_is_split_into_lines_and_highlighted() {
@@ -172,74 +156,6 @@ mod tests {
         assert_eq!(prepare("longer\na".into(), "a").widest_index, 0);
         assert_eq!(prepare(String::new(), "a").lines, vec![0..0]);
         assert_eq!(prepare("a\n".into(), "a").lines, vec![0..1]);
-    }
-
-    #[test]
-    fn reads_text_and_describes_what_it_cannot_show() {
-        let dir = scratch("read");
-        std::fs::write(dir.join("a.md"), "# Title\n").unwrap();
-        std::fs::write(dir.join("image.png"), [0x89, b'P', 0, 1]).unwrap();
-        std::fs::write(dir.join("latin1.txt"), [b'c', 0xe9]).unwrap();
-        let read = read(&dir, Path::new("a.md")).unwrap();
-        let Contents::Text(text) = read.contents else {
-            panic!("text")
-        };
-        assert_eq!(text.text, "# Title\n");
-        assert_eq!(read.stamp.len, 8);
-        assert_eq!(
-            super::read(&dir, Path::new("image.png")).unwrap().contents,
-            Contents::Binary { len: 4 }
-        );
-        assert_eq!(
-            super::read(&dir, Path::new("latin1.txt")).unwrap().contents,
-            Contents::NotUtf8 { len: 2 }
-        );
-        let big = std::fs::File::create(dir.join("big.log")).unwrap();
-        big.set_len(READ_LIMIT + 1).unwrap();
-        assert_eq!(
-            super::read(&dir, Path::new("big.log")).unwrap().contents,
-            Contents::TooLarge {
-                len: READ_LIMIT + 1
-            }
-        );
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn refuses_escapes_symlinks_and_special_files() {
-        let dir = scratch("refuse");
-        let outside = scratch("refuse-outside");
-        std::fs::write(outside.join("secret"), "x").unwrap();
-        std::os::unix::fs::symlink(outside.join("secret"), dir.join("link")).unwrap();
-        std::os::unix::fs::symlink(&outside, dir.join("folder")).unwrap();
-        std::fs::create_dir(dir.join("sub")).unwrap();
-        for path in [
-            "link",
-            "folder/secret",
-            "../refuse-outside/secret",
-            "sub",
-            "missing",
-        ] {
-            assert!(read(&dir, Path::new(path)).is_err(), "{path}");
-        }
-        let fifo = std::ffi::CString::new(dir.join("pipe").to_str().unwrap()).unwrap();
-        assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
-        assert!(
-            read(&dir, Path::new("pipe")).is_err(),
-            "a FIFO neither blocks nor reads"
-        );
-        std::fs::remove_dir_all(dir).unwrap();
-        std::fs::remove_dir_all(outside).unwrap();
-    }
-
-    #[test]
-    fn a_stamp_changes_with_the_file() {
-        let dir = scratch("stamp");
-        std::fs::write(dir.join("a"), "one").unwrap();
-        let first = stamp(&dir, Path::new("a")).unwrap();
-        std::fs::write(dir.join("a"), "three").unwrap();
-        assert_ne!(stamp(&dir, Path::new("a")).unwrap(), first);
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

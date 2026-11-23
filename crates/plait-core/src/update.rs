@@ -7,7 +7,7 @@
 
 pub mod install;
 #[cfg(target_os = "linux")]
-pub use plait_engine::update::linux;
+pub use plait_release::linux;
 pub mod setup;
 
 pub use plait_protocol::update::*;

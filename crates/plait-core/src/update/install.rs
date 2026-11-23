@@ -1,6 +1,6 @@
 //! Desktop app-bundle updates and compatibility exports for host installation.
 use super::{Error, Offer, invalid};
-pub use plait_engine::update::install::*;
+pub use plait_release::install::*;
 use std::{
     fs,
     os::unix::{fs::MetadataExt, process::CommandExt},

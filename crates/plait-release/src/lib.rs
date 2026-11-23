@@ -1,6 +1,10 @@
 //! Shared release feed and artifact downloads.
 
-use plait_protocol::update::*;
+pub use plait_protocol::update::*;
+pub mod install;
+#[cfg(target_os = "linux")]
+pub mod linux;
+pub use plait_transport::local_socket;
 use sha2::{Digest, Sha256};
 use std::{
     fs,

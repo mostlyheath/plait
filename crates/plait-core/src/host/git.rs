@@ -34,7 +34,6 @@ const WRITE_WAIT: Duration = Duration::from_secs(245);
 /// The most a client reassembles; a larger result is refused, not truncated.
 pub const RESULT_LIMIT: usize = 64 * 1024 * 1024;
 
-pub use plait_engine::host_git::{execute, execute_write};
 pub use plait_protocol::host::git::{
     FileBytes, HelperInput, Outcome, Read, Request, WireChange, WireIdentity, WriteInput,
 };

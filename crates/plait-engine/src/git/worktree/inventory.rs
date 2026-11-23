@@ -1,24 +1,7 @@
 //! Host-side live inventory. Removal and preview consume the same preservation facts.
 use super::*;
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct Preservation {
-    pub changed: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub build_output: Option<u64>,
-    pub unpushed: Option<u64>,
-    pub exclusive: Option<u64>,
-    pub refusal: Option<String>,
-    /// The same checks with the person's explicit publication exception.
-    #[serde(default)]
-    pub can_keep_local: bool,
-}
-impl Preservation {
-    pub fn require_safe(&self) -> Result<()> {
-        self.refusal.clone().map_or(Ok(()), Err)
-    }
-}
+pub use plait_protocol::git::worktree::inventory::Preservation;
 const DIRTY: &str = "This worktree has uncommitted or ignored files. Preserve or remove them before removing the worktree.";
 const EXCLUSIVE: &str = "This worktree has commits that are on no branch (made on a detached HEAD or kept only by its own refs). Removing it would lose them. Put them on a branch, then remove the worktree.";
 

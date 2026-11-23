@@ -3697,7 +3697,6 @@ dependencies = [
  "base64",
  "ed25519-dalek",
  "libc",
- "plait-engine",
  "plait-protocol",
  "plait-release",
  "plait-transport",
@@ -3766,7 +3765,9 @@ dependencies = [
 name = "plait-release"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "plait-protocol",
+ "plait-transport",
  "serde_json",
  "sha2",
 ]

@@ -1,9 +1,9 @@
 //! `plait-host update`: installs the newest signed release's host on this
 //! machine, for hosts that run without the desktop app.
 
-use plait_engine::update;
+use plait_release as update;
 #[cfg(not(target_os = "linux"))]
-use plait_engine::update::install;
+use plait_release::install;
 use std::io;
 
 pub fn run(args: Vec<String>) -> io::Result<()> {

@@ -67,3 +67,31 @@ pub fn relative(value: &str) -> Result<PathBuf, String> {
     }
     Ok(PathBuf::from(value))
 }
+
+pub mod store {
+    pub mod policy {
+        use crate::git::worktree::Identity;
+        use serde::{Deserialize, Serialize};
+        use std::path::PathBuf;
+        #[derive(Clone, Debug, Serialize, Deserialize)]
+        #[serde(deny_unknown_fields)]
+        pub struct Policy {
+            pub schema: u32,
+            pub project: PathBuf,
+            pub identity: Identity,
+            pub revision: u64,
+            pub paths: Vec<String>,
+        }
+    }
+
+    use serde::{Deserialize, Serialize};
+    /// What a published seed holds, as recorded when it was taken: logical bytes,
+    /// not a promise of reclaimable space (its blocks are shared copy-on-write).
+    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub struct SeedSummary {
+        pub bytes: u64,
+        pub files: u64,
+        pub verified_at: u64,
+    }
+}
