@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { access, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -17,6 +17,15 @@ import { Store } from '../src/store.ts';
 import { TurnSnapshotApplier } from '../src/turn-executor.ts';
 
 const exec = promisify(execFile);
+
+async function until(predicate: () => boolean | Promise<boolean>, timeoutMs = 10000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await predicate()) return;
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+  throw new Error('Condition timed out');
+}
 
 function makeSnapshot(id: string, checkout: string): Snapshot {
   return {
@@ -350,6 +359,67 @@ test('accept and createRun commit in one transaction; failure rolls back both an
     assert.equal(runtime.runnerSessions.size, 0);
     await assert.rejects(access(pidFile));
     assert.deepEqual(await new RunnerRegistry(storeDir).scan(), []);
+  } finally {
+    await runtime?.close();
+    if (prevDetached === undefined) delete process.env.PLAIT_DETACHED_RUNNERS; else process.env.PLAIT_DETACHED_RUNNERS = prevDetached;
+    if (prevTestTurns === undefined) delete process.env.PLAIT_RUNNER_TEST_TURNS; else process.env.PLAIT_RUNNER_TEST_TURNS = prevTestTurns;
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test('steer queued while runner socket is disconnected is resent on reconnect and accepted once', async () => {
+  const base = await realpath(await mkdtemp(join(tmpdir(), 'pr-')));
+  const repo = join(base, 'repo');
+  const storeDir = join(base, 'store');
+  const gate = join(base, 'gate');
+  const steerFile = join(base, 'steer.json');
+  const prevDetached = process.env.PLAIT_DETACHED_RUNNERS;
+  const prevTestTurns = process.env.PLAIT_RUNNER_TEST_TURNS;
+  process.env.PLAIT_DETACHED_RUNNERS = '1';
+  process.env.PLAIT_RUNNER_TEST_TURNS = '1';
+  let runtime: Runtime | undefined;
+  try {
+    await exec('/bin/mkdir', ['-p', repo, storeDir]);
+    await exec('/usr/bin/git', ['init', '-q', repo]);
+    await writeFile(join(repo, 'notes.txt'), 'before\n');
+    await exec('/usr/bin/git', ['-C', repo, 'add', '.']);
+    await exec('/usr/bin/git', ['-C', repo, '-c', 'user.name=Test', '-c', 'user.email=test@invalid', 'commit', '-qm', 'init']);
+
+    const models = createModels();
+    const faux = fauxProvider({});
+    faux.setResponses([fauxAssistantMessage([fauxText('ok')])]);
+    models.setProvider(faux.provider);
+    runtime = new Runtime(storeDir, models, new Set(['faux']));
+    await runtime.recover();
+
+    const created = await runtime.handle({ op: 'create_thread', checkout: repo, provider: 'faux', model_id: 'faux-1', request_id: 'create-1' }) as { thread: Snapshot };
+    const threadId = created.thread.id;
+    const text = `__plait_runner_test__:${JSON.stringify({ skip_approval: true, gate, steer_file: steerFile })}`;
+    await runtime.submit(threadId, 'run-1', text);
+
+    await until(() => runtime!.snapshot(threadId).live_text === 'working', 10000);
+    const session = runtime.runnerSessions.get(threadId)!;
+    assert.ok(session);
+
+    // Drop the supervisor's socket connection to simulate a transient disconnect while the runner stays live.
+    const internal = session.supervisor as unknown as { client?: { close(): void } };
+    internal.client?.close();
+    await until(() => !internal.client, 5000);
+
+    // Submit a steering input while disconnected: initial send fails, durable queue retains it, reconnect resends it.
+    await runtime.submit(threadId, 'steer-offline', 'delivered after reconnect', 'ask', 'steer');
+    await until(async () => {
+      try {
+        const parsed = JSON.parse(await readFile(steerFile, 'utf8')) as { request_id?: string; text?: string };
+        return parsed.request_id === 'steer-offline' && parsed.text === 'delivered after reconnect';
+      } catch {
+        return false;
+      }
+    }, 10000);
+
+    await writeFile(gate, 'open');
+    await until(() => !runtime!.runnerSessions.has(threadId), 10000);
+    assert.equal(runtime.snapshot(threadId).status, 'idle', JSON.stringify(runtime.snapshot(threadId).error));
   } finally {
     await runtime?.close();
     if (prevDetached === undefined) delete process.env.PLAIT_DETACHED_RUNNERS; else process.env.PLAIT_DETACHED_RUNNERS = prevDetached;

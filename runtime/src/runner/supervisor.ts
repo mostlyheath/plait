@@ -10,6 +10,7 @@ import type { Command, Event } from './protocol.ts';
 type Options = {
   store: string;
   onEvent: (event: Event) => void | Promise<void>;
+  onReattach?: () => void;
   onDisconnect?: (entry: RunnerEntry | undefined) => void;
   onGap?: (floor: number, lastSeq: number) => void;
   entry?: string;
@@ -48,7 +49,7 @@ export class RunnerSupervisor {
       const pid = await spawnRunner(this.options.entry ?? fileURLToPath(new URL('./main.ts', import.meta.url)), args.lease, { PLAIT_RUNNER_STORE: this.options.store, PLAIT_RUNNER_ID: runId }, this.registry.path(runId, '.log'));
       const deadline = Date.now() + 5000;
       for (;;) {
-        try { await this.attach(runId, 0, Math.max(1, deadline - Date.now())); break; }
+        try { await this.attach(runId, 0, Math.max(1, deadline - Date.now()), true); break; }
         catch (error) { if (Date.now() >= deadline) throw await this.startFailure(runId, error); await new Promise(resolve => setTimeout(resolve, 25)); }
       }
       await releaseAfterHandoff(args.lease); handedOff = true;
@@ -79,11 +80,13 @@ export class RunnerSupervisor {
       return { runId, pid };
     } catch (error) { this.detach(); if (!handedOff) await args.lease.close(); throw error; }
   }
-  async attach(runId: string, lastSeq: number, timeoutMs = 5000): Promise<void> {
+  async attach(runId: string, lastSeq: number, timeoutMs = 5000, isLaunch = false): Promise<void> {
     if (this.client) throw new Error('Supervisor already attached');
     this.runId = runId; this.lastSeq = lastSeq; this.detached = false;
     let resolveAttached!: () => void; let rejectAttached!: (error: Error) => void;
     const attached = new Promise<void>((resolve, reject) => { resolveAttached = resolve; rejectAttached = reject; });
+    // connect() can fail before `attached` is awaited; a later timeout or close must not surface as an unhandled rejection.
+    attached.catch(() => {});
     const timer = setTimeout(() => rejectAttached(new Error('Runner attach timed out')), timeoutMs);
     let client: RunnerClient | undefined;
     try {
@@ -109,6 +112,12 @@ export class RunnerSupervisor {
       this.backoffMs = this.options.retryBaseMs ?? 100;
       if (this.client === client && !this.detached) {
         this.heartbeat = setInterval(() => this.ping(), this.options.heartbeatMs ?? 15000);
+        if (!isLaunch && !this.gapped) {
+          // Resend any unplaced steering inputs after replayed events settle.
+          void this.queue.then(() => {
+            if (this.client === client && !this.detached && !this.gapped) this.options.onReattach?.();
+          });
+        }
       }
     } catch (error) {
       if (this.client === client) this.client = undefined;

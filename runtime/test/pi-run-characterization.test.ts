@@ -8,6 +8,23 @@ import { Runtime } from '../src/runtime.ts';
 import type { TurnEvent } from '../src/turn-executor.ts';
 import { acquireCheckout } from '../src/safety.ts';
 import { exec, setup } from './support/safety.ts';
+import type { ScriptedStep } from './support/runner-test-provider.ts';
+
+const detached = process.env.PLAIT_DETACHED_RUNNERS === '1';
+
+function toScriptedSteps(responses: Responses): ScriptedStep[] {
+  return responses.map(step => {
+    if (typeof step === 'function') throw new Error('Function response steps are not supported in detached script mode');
+    if (step.stopReason === 'error') {
+      return { stopReason: 'error', errorMessage: step.errorMessage ?? 'SCRIPTED_ERROR' };
+    }
+    const content = Array.isArray(step.content) ? step.content : [];
+    const text = content.filter((part): part is { type: 'text'; text: string } => part.type === 'text').map(part => part.text).join('');
+    const tool = content.find((part): part is { type: 'toolCall'; id: string; name: string; arguments: Record<string, string | number> } => part.type === 'toolCall');
+    if (tool) return { ...(text ? { text } : {}), tool: { name: tool.name, args: tool.arguments, id: tool.id } };
+    return { text };
+  });
+}
 
 class TestRuntime extends Runtime {
   events: TurnEvent['type'][] = [];
@@ -26,10 +43,28 @@ async function fixture(t: Parameters<typeof setup>[0], responses: Responses) {
   await exec('/usr/bin/git', ['-C', root, 'add', '.']);
   await exec('/usr/bin/git', ['-C', root, '-c', 'user.name=Test', '-c', 'user.email=test@invalid', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'base']);
   const store = join(base, 'store'); await mkdir(store, { mode: 0o700 });
+  const prevScenario = process.env.PLAIT_TEST_SCENARIO;
+  const prevTestTurns = process.env.PLAIT_RUNNER_TEST_TURNS;
+  if (detached) {
+    process.env.PLAIT_TEST_SCENARIO = 'pi-script';
+    process.env.PLAIT_RUNNER_TEST_TURNS = '1';
+    await writeFile(join(store, 'pi-test-script.json'), JSON.stringify({
+      steps: toScriptedSteps(responses),
+      retry: { enabled: false, maxRetries: 0, baseDelayMs: 10 },
+    }));
+  }
   const models = createModels(); const faux = fauxProvider({ tokensPerSecond: 1e8 });
   faux.setResponses(responses); models.setProvider(faux.provider);
   const runtime = new TestRuntime(store, models, new Set(['faux'])); runtime.retry.enabled = false;
-  t.after(() => runtime.close());
+  t.after(async () => {
+    if (detached) {
+      if (prevScenario === undefined) delete process.env.PLAIT_TEST_SCENARIO;
+      else process.env.PLAIT_TEST_SCENARIO = prevScenario;
+      if (prevTestTurns === undefined) delete process.env.PLAIT_RUNNER_TEST_TURNS;
+      else process.env.PLAIT_RUNNER_TEST_TURNS = prevTestTurns;
+    }
+    await runtime.close();
+  });
   const call = async (request: Record<string, unknown>) => {
     const reply: any = await runtime.reply({ protocol_version: 6, ...request });
     assert.equal(reply.ok, true, JSON.stringify(reply)); return reply.result;
@@ -44,7 +79,7 @@ async function fixture(t: Parameters<typeof setup>[0], responses: Responses) {
     const end = Date.now() + 20000;
     while (!predicate()) { assert.ok(Date.now() < end, JSON.stringify(runtime.snapshot(id))); await new Promise(resolve => setTimeout(resolve, 10)); }
   };
-  const settled = async () => { await until(() => !runtime.sessions.has(id)); return runtime.snapshot(id); };
+  const settled = async () => { await until(() => !runtime.sessions.has(id) && !runtime.runnerSessions.has(id)); return runtime.snapshot(id); };
   return { root, runtime, id, call, submit, records, until, settled, statuses, notices };
 }
 const write = (path: string, content: string) => fauxAssistantMessage([fauxToolCall('write', { path, content }, { id: `write-${path}` })], { stopReason: 'toolUse' });
@@ -125,27 +160,33 @@ test('stop during approval settles the run and releases the checkout', async t =
 
 test('Pi sink preserves event order for plain and approval turns', async t => {
   const plain = await fixture(t, [fauxAssistantMessage('Hello.')]);
-  await plain.submit('plain', 'Hello'); await plain.settled();
-  const plainEvents = plain.runtime.events;
-  assert.equal(plainEvents[0], 'record_before');
-  assert.ok(plainEvents.indexOf('phase') > plainEvents.indexOf('record_before'));
-  assert.ok(plainEvents.includes('live'));
-  for (let i = 0; i < plainEvents.length; i++) if (plainEvents[i] === 'live') assert.equal(plainEvents[i + 1], 'commit');
-  assert.deepEqual(plainEvents.slice(-2), ['record_after', 'finished']);
-  assert.ok(!plainEvents.includes('approval_needed'));
+  await plain.submit('plain', 'Hello'); const plainEnd = await plain.settled();
+  assert.equal(plainEnd.status, 'idle');
+  if (!detached) {
+    const plainEvents = plain.runtime.events;
+    assert.equal(plainEvents[0], 'record_before');
+    assert.ok(plainEvents.indexOf('phase') > plainEvents.indexOf('record_before'));
+    assert.ok(plainEvents.includes('live'));
+    for (let i = 0; i < plainEvents.length; i++) if (plainEvents[i] === 'live') assert.equal(plainEvents[i + 1], 'commit');
+    assert.deepEqual(plainEvents.slice(-2), ['record_after', 'finished']);
+    assert.ok(!plainEvents.includes('approval_needed'));
+  }
 
   const approval = await fixture(t, [write('approved.txt', 'yes'), fauxAssistantMessage('Done.')]);
   await approval.submit('approval', 'Write', { approval: 'ask' });
   await approval.until(() => !!approval.runtime.snapshot(approval.id).pending_approval);
   const pending = approval.runtime.snapshot(approval.id).pending_approval!;
   await approval.call({ op: 'approve', thread_id: approval.id, approval_id: pending.id, allow: true });
-  await approval.settled();
-  const events = approval.runtime.events;
-  assert.equal(events[0], 'record_before');
-  assert.ok(events.indexOf('phase') > events.indexOf('record_before'));
-  assert.ok(events.indexOf('approval_needed') > events.indexOf('phase'));
-  assert.equal(events.filter(event => event === 'approval_needed').length, 1);
-  assert.ok(events.indexOf('approval_settled') > events.indexOf('approval_needed'));
-  for (let i = 0; i < events.length; i++) if (events[i] === 'live') assert.equal(events[i + 1], 'commit');
-  assert.deepEqual(events.slice(-2), ['record_after', 'finished']);
+  const approvalEnd = await approval.settled();
+  assert.equal(approvalEnd.status, 'idle');
+  if (!detached) {
+    const events = approval.runtime.events;
+    assert.equal(events[0], 'record_before');
+    assert.ok(events.indexOf('phase') > events.indexOf('record_before'));
+    assert.ok(events.indexOf('approval_needed') > events.indexOf('phase'));
+    assert.equal(events.filter(event => event === 'approval_needed').length, 1);
+    assert.ok(events.indexOf('approval_settled') > events.indexOf('approval_needed'));
+    for (let i = 0; i < events.length; i++) if (events[i] === 'live') assert.equal(events[i + 1], 'commit');
+    assert.deepEqual(events.slice(-2), ['record_after', 'finished']);
+  }
 });

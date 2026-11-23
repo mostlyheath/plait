@@ -235,6 +235,14 @@ export class TurnSnapshotApplier {
   livePayload(payload: Record<string, unknown>): void {
     if (typeof payload.text === 'string') this.snapshot.live_text = payload.text;
     if (typeof payload.reasoning === 'string') this.snapshot.live_reasoning = payload.reasoning;
+    if (Array.isArray(payload.messages)) this.snapshot.messages = payload.messages as Snapshot['messages'];
+    if (Array.isArray(payload.tools)) this.snapshot.tools = payload.tools as Snapshot['tools'];
+    if (payload.usage && typeof payload.usage === 'object') this.snapshot.usage = payload.usage as Snapshot['usage'];
+    if ('retry' in payload) this.snapshot.retry = (payload.retry ?? null) as Snapshot['retry'];
+    if (typeof payload.truncated === 'boolean') this.snapshot.truncated = payload.truncated;
+    if (payload.error && typeof payload.error === 'object' && this.snapshot.status !== 'stopped' && this.snapshot.status !== 'interrupted') {
+      this.snapshot.error = payload.error as Snapshot['error'];
+    }
   }
   approvalNeeded(approval: Approval): void {
     this.snapshot.pending_approval = approval;

@@ -299,3 +299,16 @@ test('a runner that cannot listen explains why the launch failed', async t => {
     await assert.rejects(supervisor.launch({ threadId: 'thread', requestId: 'request', lease, payload: { kind: 'test' } }), /Runner did not start[\s\S]*too long/);
   } finally { supervisor.detach(); await lease.close(); }
 });
+
+test('an attach that times out while connecting leaves no unhandled rejection', async t => {
+  const { base } = await setup(t);
+  const unhandled: unknown[] = []; const record = (error: unknown) => { unhandled.push(error); };
+  process.on('unhandledRejection', record);
+  try {
+    const supervisor = new RunnerSupervisor({ store: base, onEvent: () => {} });
+    // No runner listens, so connect fails; a 1 ms budget makes the timer fire around it.
+    await assert.rejects(supervisor.attach('absent', 0, 1));
+    await new Promise(resolve => setTimeout(resolve, 50));
+    assert.deepEqual(unhandled, []);
+  } finally { process.off('unhandledRejection', record); }
+});

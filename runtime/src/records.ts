@@ -33,7 +33,7 @@ type ChangedPath = {
   added: number | null; removed: number | null;
 };
 /** What `plait-host record` replies. */
-type Made = {
+export type Made = {
   commit: string; tree: string; object_format: string; head: string | null; head_ref: string | null;
   not_covered: Uncovered[]; not_covered_total: number; paths: ChangedPath[] | null; elapsed_ms: number;
 };
@@ -75,7 +75,7 @@ export function helper<T>(operation: 'record' | 'prune' | 'undo' | 'review', inp
 }
 
 /** Captures immutable artifacts; indexing the result remains the caller's job. */
-function capture(directory: string, checkout: string, id: string, before: string | undefined, undo: boolean, lease?: LeaseHandle) {
+export function capture(directory: string, checkout: string, id: string, before: string | undefined, undo: boolean, lease?: LeaseHandle) {
   return helper<Made>('record', { checkout, store: directory, id, ...(before ? { before } : {}), ...(undo ? { undo: true } : {}) }, lease);
 }
 
@@ -227,6 +227,37 @@ export class Records {
 
   revision(thread: string) {
     return Number(this.store.db.prepare('SELECT records_revision FROM threads WHERE id=?').get(thread)?.records_revision ?? 0);
+  }
+  /** Indexes a record captured by a detached runner into host.sqlite idempotently. */
+  indexRunnerRecord(kind: 'before' | 'after', payload: Record<string, unknown>): void {
+    const id = typeof payload.id === 'string' ? payload.id : '';
+    const thread = typeof payload.thread_id === 'string' ? payload.thread_id : '';
+    const run = typeof payload.request_id === 'string' ? payload.request_id : '';
+    const checkout = typeof payload.checkout === 'string' ? payload.checkout : '';
+    const state = payload.state === 'ready' || payload.state === 'failed' ? payload.state : '';
+    if (!id || !thread || !run || !checkout || !state) return;
+    const before = kind === 'after' && typeof payload.before === 'string' ? payload.before : null;
+    const made = state === 'ready' && payload.made && typeof payload.made === 'object' ? payload.made as Made : undefined;
+    const createdAt = typeof payload.created_at === 'number' && Number.isSafeInteger(payload.created_at) ? payload.created_at : Date.now();
+    this.store.transaction(() => {
+      this.store.db.prepare(`INSERT INTO records (id,thread,run_request,kind,checkout,before,commit_id,tree,head,head_ref,state,not_covered,not_covered_total,after_restart,created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,0,?)
+        ON CONFLICT(id) DO UPDATE SET state=excluded.state,commit_id=excluded.commit_id,tree=excluded.tree,head=excluded.head,head_ref=excluded.head_ref,
+        not_covered=excluded.not_covered,not_covered_total=excluded.not_covered_total`)
+        .run(
+          id, thread, run, kind, checkout, before,
+          made?.commit ?? null, made?.tree ?? null, made?.head ?? null, made?.head_ref ?? null,
+          state, made ? JSON.stringify(made.not_covered) : null, made?.not_covered_total ?? null, createdAt,
+        );
+      if (kind === 'after' && made) {
+        this.store.db.prepare('DELETE FROM record_paths WHERE record=?').run(id);
+        const path = this.store.db.prepare('INSERT INTO record_paths VALUES (?,?,?,?,?,?,?,?)');
+        for (const changed of made.paths ?? []) {
+          path.run(id, changed.path, changed.before_mode, changed.before_oid, changed.after_mode, changed.after_oid, changed.added, changed.removed);
+        }
+      }
+    });
+    this.bump(thread);
   }
   page(thread: string, before?: string, limit?: number) { return recordsPage(this.store, thread, before, limit); }
   changedPaths(thread: string) {

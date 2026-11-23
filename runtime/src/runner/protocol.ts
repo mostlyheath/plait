@@ -6,7 +6,7 @@ export type RunnerState = 'preparing' | 'running' | 'awaiting_approval' | 'finis
 export type Attach = { type: 'attach'; protocol: 1; last_seq: number };
 export type Command = Attach | { type: 'start'; payload: unknown } | { type: 'approve'; approval_id: string; allow: boolean } | { type: 'stop' } | { type: 'steer'; request_id: string; text: string; images: unknown[] } | { type: 'set_mode'; mode: string } | { type: 'ack'; seq: number } | { type: 'ping'; nonce: string };
 export type Attached = { type: 'attached'; state: RunnerState; seq: number; floor?: number; snapshot: unknown; pending_approval: unknown; head: unknown; before_record_id: unknown };
-export type Event = { type: 'phase' | 'live' | 'commit' | 'approval_needed' | 'approval_settled' | 'forget' | 'pong' | 'postimage' | 'record_before' | 'record_after' | 'finished'; seq: number; [key: string]: unknown };
+export type Event = { type: 'phase' | 'live' | 'commit' | 'approval_needed' | 'approval_settled' | 'forget' | 'pong' | 'postimage' | 'record_before' | 'record_after' | 'mcp_observed' | 'tool_label' | 'finished'; seq: number; [key: string]: unknown };
 export type RunnerMessage = Attached | Event;
 
 function sequence(value: unknown): value is number {
@@ -55,6 +55,8 @@ export function parseRunnerMessage(value: unknown): RunnerMessage {
     case 'pong': if (typeof value.nonce === 'string') return value as Event; break;
     case 'postimage': if (object(value.postimage)) return value as Event; break;
     case 'record_before': case 'record_after': if (object(value.record)) return value as Event; break;
+    case 'mcp_observed': if (typeof value.checkout === 'string' && typeof value.root_dev === 'string' && typeof value.root_ino === 'string' && typeof value.name === 'string' && typeof value.fingerprint === 'string' && object(value.observation)) return value as Event; break;
+    case 'tool_label': if (typeof value.name === 'string' && typeof value.label === 'string') return value as Event; break;
     case 'finished': if (object(value.result)) return value as Event; break;
   }
   throw new Error('invalid or unknown runner message');
@@ -128,7 +130,7 @@ export class EventBuffer {
 }
 
 const BOUNDARY_EVENTS = new Set<Event['type']>([
-  'approval_needed', 'approval_settled', 'postimage', 'forget', 'record_before', 'record_after', 'finished',
+  'approval_needed', 'approval_settled', 'postimage', 'forget', 'record_before', 'record_after', 'tool_label', 'finished',
 ]);
 
 /** Filter unacknowledged events for a done receipt: keep only the latest `live` and never drop boundary events. */
@@ -143,5 +145,9 @@ export function receiptEvents(events: Event[], maxBytes = EVENT_LIMIT): Event[] 
     return true;
   });
   if (Buffer.byteLength(JSON.stringify(filtered), 'utf8') <= maxBytes) return filtered;
-  return filtered.filter(event => BOUNDARY_EVENTS.has(event.type) || event.type === 'live');
+  return filtered.filter(event =>
+    BOUNDARY_EVENTS.has(event.type)
+    || event.type === 'live'
+    || (event.type === 'commit' && Array.isArray(event.placed) && event.placed.length > 0),
+  );
 }

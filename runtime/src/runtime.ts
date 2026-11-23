@@ -18,6 +18,7 @@ import { LinearService } from './linear/service.ts';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context';
 import { clampThinkingLevel, createModels, getSupportedThinkingLevels } from '@earendil-works/pi-ai/models';
 import type { Api, Model, Models } from '@earendil-works/pi-ai';
@@ -238,17 +239,32 @@ export class Runtime {
     }
     this.records.start(liveCheckouts);
   }
+  private runnerEventHooks() {
+    return {
+      records: this.records,
+      onMcpObserved: (checkoutPath: string, rootDev: string, rootIno: string, name: string, fp: string, observation: Observation) => {
+        const key = JSON.stringify([checkoutPath, rootDev, rootIno]);
+        let observed = this.mcpObserved.get(key);
+        if (!observed) {
+          observed = new Map();
+          this.mcpObserved.set(key, observed);
+        }
+        observed.set(name, { fingerprint: fp, observation });
+      },
+    };
+  }
   private createRunnerSession(runId: string, threadId: string, requestId: string, snapshot: Snapshot): RunnerSession {
     return new RunnerSession(runId, threadId, requestId, snapshot, {
       store: this.store,
       directory: this.directory,
+      ...this.runnerEventHooks(),
       notify: (id, summary) => this.notify(id, summary),
       phase: (id, state) => this.capacity.phases.set(id, state === 'preparing' ? 'preparing' : 'running'),
       onClosed: (session, entry, finishedResult) => this.onRunnerClosed(session, entry, finishedResult),
     });
   }
   private finishRunnerReceipt(runId: string, snapshot: Snapshot, receipt: unknown, lastSeq: number): boolean {
-    const summaryChanged = applyRunnerReceipt(this.store, runId, snapshot, receipt, lastSeq);
+    const summaryChanged = applyRunnerReceipt(this.store, runId, snapshot, receipt, lastSeq, false, this.runnerEventHooks());
     if (snapshot.status === 'error' || snapshot.status === 'interrupted') this.store.waiters.hold(snapshot.id);
     return summaryChanged;
   }
@@ -271,7 +287,7 @@ export class Runtime {
     if (isGapped) {
       // Gap already marked the thread interrupted and stopped the runner; reconcile receipt effects without overwriting status.
       const receipt = entry?.status === 'finished' && entry.receipt ? entry.receipt : {};
-      summaryChanged = applyRunnerReceipt(this.store, session.runId, session.snapshot, receipt, lastSeq, true);
+      summaryChanged = applyRunnerReceipt(this.store, session.runId, session.snapshot, receipt, lastSeq, true, this.runnerEventHooks());
       this.store.waiters.hold(session.threadId);
     } else if (finishedResult !== undefined || entry?.status === 'finished' || runRow?.state === 'finished') {
       const receipt = entry?.status === 'finished' && entry.receipt ? entry.receipt : { result: finishedResult };
@@ -747,6 +763,26 @@ export class Runtime {
       }
       const path = join(this.directory, `${id}.sqlite`);
       if (!existsSync(path)) return work(base);
+      if (this.runnerSessions.has(id)) {
+        // Detached Pi runner holds the WAL writer; query entries strictly read-only without migrations or checkpoints.
+        const db = new DatabaseSync(path, { readOnly: true, timeout: 5000 });
+        try {
+          const table = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='entries'").get();
+          if (!table) return await work(base);
+          const rootId = Number(ROOT_CONVERSATION_ID);
+          const readOnlyEntries = async (query: Query, limit: number): Promise<EntryRecord[]> => {
+            const clauses = ['conversation_id = ?'];
+            const params: number[] = [rootId];
+            if (query.minEntryId !== undefined) { clauses.push('id >= ?'); params.push(query.minEntryId); }
+            if (query.maxEntryId !== undefined) { clauses.push('id <= ?'); params.push(query.maxEntryId); }
+            const dir = query.order === 'ascending' ? 'ASC' : 'DESC';
+            params.push(limit);
+            const rows = db.prepare(`SELECT record FROM entries WHERE ${clauses.join(' AND ')} ORDER BY id ${dir} LIMIT ?`).all(...params);
+            return rows.map(row => JSON.parse(String(row.record)) as EntryRecord);
+          };
+          return await work({ ...base, entries: readOnlyEntries });
+        } finally { db.close(); }
+      }
       // A read-only harness recovers nothing and can never schedule a task, a tool, or a model request.
       const harness = await Harness.open(await SqliteStorage.open(await openNodeSqliteDatabase(path)), { models: createModels(), registry: createRegistry(), readOnly: true }, context);
       try {
@@ -860,7 +896,13 @@ export class Runtime {
     return { ...(parsed as Record<string, unknown>), kind: 'test' };
   }
   /** Admits one detached runner: reserves checkout, hands off lease, and commits acceptance. */
-  private async startDetached(snapshot: Snapshot, requestId: string, mode: ApprovalMode, accept: () => boolean, payload: Record<string, unknown>): Promise<void> {
+  private async startDetached(
+    snapshot: Snapshot,
+    requestId: string,
+    mode: ApprovalMode,
+    accept: () => boolean,
+    payload: Record<string, unknown> | ((root: FileIdentity) => Record<string, unknown>),
+  ): Promise<void> {
     const id = snapshot.id;
     if (this.active.has(snapshot.checkout)) fail('busy', 'This checkout already has an active run.');
     this.capacity.admit(this.active.size);
@@ -876,6 +918,7 @@ export class Runtime {
       await this.admissions.probing(snapshot.checkout);
       if (this.records.busy(snapshot.checkout)) await this.records.settled(snapshot.checkout);
       lease = await acquireCheckout(snapshot.checkout, 'writer');
+      const resolvedPayload = typeof payload === 'function' ? payload(lease.identity) : payload;
       cleanupToken = randomUUID();
       await cleanupHelper('begin', snapshot.checkout, cleanupToken, RESTART_REASON, lease);
       this.admitWork();
@@ -888,12 +931,12 @@ export class Runtime {
       snapshot.approval_mode = mode;
       let summaryChanged = false;
       await runnerSession.supervisor.launch({
-        runId, threadId: id, requestId, lease, payload, cleanupToken,
+        runId, threadId: id, requestId, lease, payload: resolvedPayload, cleanupToken,
         // Commit durable acceptance and run creation in ONE transaction before `start`.
         beforeStart: () => {
           summaryChanged = this.store.transaction(() => {
             const changed = accept();
-            this.store.createRun(runId, id, requestId, String(payload.kind ?? 'test'));
+            this.store.createRun(runId, id, requestId, String(resolvedPayload.kind ?? 'test'));
             return changed;
           });
         },
@@ -916,9 +959,30 @@ export class Runtime {
   }
   /** Admits one run: reserves the checkout, creates its own authorization, then commits acceptance. */
   private async start(snapshot: Snapshot, requestId: string, text: string, mode: ApprovalMode, accept: () => boolean) {
-    if (this.external.resolveHarness(snapshot).kind === 'unknown') unsupportedHarness();
+    const selected = this.external.resolveHarness(snapshot);
+    if (selected.kind === 'unknown') unsupportedHarness();
     const testPayload = this.detachedTestPayload(snapshot, text);
     if (testPayload) return this.startDetached(snapshot, requestId, mode, accept, testPayload);
+    if (process.env.PLAIT_DETACHED_RUNNERS === '1' && selected.kind === 'pi') {
+      return this.startDetached(snapshot, requestId, mode, accept, root => {
+        const policy = commandPolicy(this.store, snapshot.checkout, root);
+        return {
+          kind: 'pi',
+          thread_id: snapshot.id,
+          request_id: requestId,
+          text,
+          checkout: snapshot.checkout,
+          vcs: threadKind(this.store, snapshot.id),
+          model: { provider: snapshot.model.provider, modelId: snapshot.model.model_id },
+          thinking_level: snapshot.thinking_level ?? null,
+          max_turns: this.maxTurns,
+          retry: this.retry,
+          approval_mode: mode === 'auto' ? 'auto' : 'manual',
+          ...(policy ? { command_policy: policy } : {}),
+          root_identity: root,
+        };
+      });
+    }
     const id = snapshot.id;
     if (this.active.has(snapshot.checkout)) fail('busy', 'This checkout already has an active run.');
     this.capacity.admit(this.active.size);
