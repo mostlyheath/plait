@@ -63,7 +63,7 @@ export async function setup(t: { after: (fn: () => Promise<void>) => void }, sce
   const start = async (mode = scenario) => {
     const deadline = Date.now() + 15000;
     for (;;) {
-      const child = spawn(binary, ['run', '--store', store, '--runtime', fixture], { stdio: ['ignore', 'ignore', 'pipe'], env: { ...process.env, ...extraEnv, PLAIT_TEST_SCENARIO: mode } });
+      const child = spawn(binary, ['run', '--store', store, '--runtime', fixture], { stdio: ['ignore', 'ignore', 'pipe'], env: { PLAIT_RUNNER_TEST_SUPPORT: import.meta.dirname, ...process.env, ...extraEnv, PLAIT_TEST_SCENARIO: mode } });
       children.push(child);
       let stderr = ''; child.stderr!.on('data', chunk => { stderr = (stderr + chunk.toString()).slice(-8192); });
       const gone = () => child.exitCode !== null || child.signalCode !== null;
