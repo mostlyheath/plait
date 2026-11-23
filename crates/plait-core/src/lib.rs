@@ -50,4 +50,4 @@ pub mod navigation;
 pub mod display_text;
 pub mod worktree_graph;
 pub mod worktree_removal;
-pub use plait_engine::worktree_size;
+pub use plait_protocol::worktree_size;

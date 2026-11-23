@@ -56,6 +56,13 @@ if grep -Eq '^plait-core( |$)' <<< "$host_dependencies"; then
     echo 'The host must not depend on plait-core.' >&2
     exit 1
 fi
+for package in plait-core plait; do
+    dependencies=$(cargo tree --locked -p "$package" -e normal --prefix none)
+    if grep -Eq '^plait-engine( |$)' <<< "$dependencies"; then
+        echo "$package must not depend on plait-engine." >&2
+        exit 1
+    fi
+done
 # The daemon and shared core must stay independent of desktop dependencies.
 dependencies=$(cargo tree --locked -p plait-core -p plait-host --edges normal,build,dev --prefix none)
 if grep -Eq '^gpui([-_ ]|$)' <<< "$dependencies"; then
