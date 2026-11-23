@@ -442,6 +442,7 @@ impl Plait {
             .child(
                 div()
                     .font_family(mono())
+                    .text_size(px(code_size()))
                     .text_color(rgb(colors().blue))
                     .underline()
                     .text_decoration_color(rgb(colors().blue))
@@ -1008,7 +1009,8 @@ impl Plait {
                             .border_1()
                             .border_color(rgb(colors().border))
                             .font_family(mono())
-                            .line_height(px(19.))
+                            .text_size(px(code_size()))
+                            .line_height(px(code_line_height()))
                             .child(approval.details.clone()),
                     )
                 })

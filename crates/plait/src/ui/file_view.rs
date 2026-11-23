@@ -21,7 +21,11 @@ use plait_client::{
 };
 use std::{ops::Range, path::PathBuf, sync::Arc};
 
-pub(super) const LINE_HEIGHT: f32 = 20.;
+/// Row height for file lines: 8 points of leading over the code size
+/// (20 at 12, 21 at 13, 22 at 14) so lines never clip at 13 or 14 points.
+pub(super) fn line_height() -> f32 {
+    code_size() + 8.
+}
 const TAB_WIDTH: usize = 4;
 
 #[derive(Default)]
@@ -750,7 +754,9 @@ impl Plait {
         };
         let count = text.lines.len();
         let digits = count.to_string().len().max(3);
-        let gutter = digits as f32 * 7.5 + 24.;
+        let size = code_size();
+        let row_height = line_height();
+        let gutter = digits as f32 * (size * 0.65) + 24.;
         let widest = text.widest_index;
         let matches = self.workspace.file_viewer.find.matches.clone();
         let current = self.workspace.file_viewer.find.current;
@@ -770,10 +776,10 @@ impl Plait {
                             .collect::<Vec<_>>();
                         row()
                             .id(("file-line", index))
-                            .h(px(LINE_HEIGHT))
+                            .h(px(row_height))
                             .font_family(mono())
-                            .text_size(px(12.))
-                            .line_height(px(LINE_HEIGHT))
+                            .text_size(px(size))
+                            .line_height(px(row_height))
                             .child(
                                 div()
                                     .w(px(gutter))

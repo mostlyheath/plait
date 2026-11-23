@@ -137,6 +137,7 @@ impl Plait {
                 }
                 super::actions::install(cx, &this.preferences.value.keymap);
                 this.apply_theme(cx);
+                this.apply_code_size(cx);
                 // Settings opened before this read shows the default font.
                 this.show_code_font(cx);
                 this.show_editor_commands(cx);

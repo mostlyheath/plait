@@ -59,6 +59,16 @@ const KEYMAP_KEYS_LIMIT: usize = 48;
 /// The desktop decides what an ID and a keystroke mean; this is only storage.
 pub type Keymap = BTreeMap<String, String>;
 
+/// Bounds and default for the code font size, in points.
+pub const CODE_SIZE_DEFAULT: u8 = 12;
+pub const CODE_SIZE_MIN: u8 = 12;
+pub const CODE_SIZE_MAX: u8 = 14;
+
+/// Clamp a point size to the allowed code size range (12–14).
+pub fn clamp_code_size(size: u8) -> u8 {
+    size.clamp(CODE_SIZE_MIN, CODE_SIZE_MAX)
+}
+
 /// A model chosen on this desktop: an identifier, never a credential.
 /// Unlike the wire type, unknown fields are ignored so a newer file still loads.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -132,6 +142,10 @@ pub struct Preferences {
     /// The font family code, paths, and commands are drawn in; `None` is the
     /// system's monospaced font. Read it through `code_font`.
     pub code_font: Option<String>,
+    /// The code font size, in points (12–14); `None` is the default (12).
+    /// Read it through `code_size` and change it through `set_code_size`.
+    #[serde(deserialize_with = "lenient_code_size")]
+    pub code_size: Option<u8>,
     /// The harness a new thread's draft starts in, when it is ready. Never `Other`:
     /// one this client does not know reads, and is written, as Pi.
     #[serde(deserialize_with = "lenient_harness", serialize_with = "known_harness")]
@@ -162,6 +176,27 @@ fn lenient_level<'de, D: serde::Deserializer<'de>>(
 ) -> Result<Option<ThinkingLevel>, D::Error> {
     let value = Option::<serde_json::Value>::deserialize(deserializer)?;
     Ok(value.and_then(|value| serde_json::from_value(value).ok()))
+}
+
+/// A stored code size outside 12–14 is clamped rather than rejected, and an
+/// unreadable value (e.g. from a newer client) reads as unset.
+fn lenient_code_size<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<u8>, D::Error> {
+    let Some(value) = Option::<serde_json::Value>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    let clamped = if let Some(n) = value.as_i64() {
+        Some(n.clamp(CODE_SIZE_MIN as i64, CODE_SIZE_MAX as i64) as u8)
+    } else if let Some(n) = value.as_u64() {
+        Some(n.clamp(CODE_SIZE_MIN as u64, CODE_SIZE_MAX as u64) as u8)
+    } else {
+        value
+            .as_f64()
+            .filter(|n| n.is_finite())
+            .map(|n| n.round().clamp(CODE_SIZE_MIN as f64, CODE_SIZE_MAX as f64) as u8)
+    };
+    Ok(clamped)
 }
 
 /// A harness this client cannot run (from a newer one) reads as Pi rather
@@ -201,6 +236,20 @@ impl Preferences {
             .as_deref()
             .map(str::trim)
             .filter(|name| !name.is_empty())
+    }
+
+    /// The chosen code font size in points, clamped to 12–14 (default 12).
+    pub fn code_size(&self) -> u8 {
+        self.code_size
+            .map(clamp_code_size)
+            .unwrap_or(CODE_SIZE_DEFAULT)
+    }
+
+    /// Choose the code font size in points, clamped to 12–14.
+    /// The default is stored as unset so it stays aligned with `Default`.
+    pub fn set_code_size(&mut self, size: u8) {
+        let clamped = clamp_code_size(size);
+        self.code_size = (clamped != CODE_SIZE_DEFAULT).then_some(clamped);
     }
 
     pub fn is_favorite(&self, choice: &ModelChoice) -> bool {
@@ -275,6 +324,7 @@ impl Preferences {
         trim_oldest(&mut self.favorite_models, FAVORITE_LIMIT);
         self.recent_models.truncate(RECENT_LIMIT);
         self.trim_keymap();
+        self.code_size = self.code_size.map(clamp_code_size);
         // A hand-edited command that cannot be used reads as the default.
         let files = std::mem::take(&mut self.open_files_with);
         let _ = self.set_open_files_with(files);
@@ -555,6 +605,54 @@ mod tests {
         let written = serde_json::to_string(&saved).unwrap();
         let read: Preferences = serde_json::from_str(&written).unwrap();
         assert_eq!(read.code_font(), Some("JetBrains Mono"));
+    }
+
+    #[test]
+    fn code_size_defaults_clamps_and_round_trips() {
+        // A file saved before the setting existed loads at 12 points.
+        let older: Preferences = serde_json::from_str(r#"{"hide_inspector":true}"#).unwrap();
+        assert_eq!(older.code_size(), CODE_SIZE_DEFAULT);
+        assert!(older.hide_inspector);
+
+        // Values outside 12–14 are clamped rather than rejected, and an
+        // unreadable value falls back to 12 without failing the rest of the file.
+        for (raw, expected) in [
+            ("0", 12),
+            ("-4", 12),
+            ("11", 12),
+            ("12", 12),
+            ("13", 13),
+            ("14", 14),
+            ("15", 14),
+            ("999", 14),
+            ("null", 12),
+            (r#""huge""#, 12),
+        ] {
+            let loaded: Preferences =
+                serde_json::from_str(&format!(r#"{{"code_size":{raw},"hide_inspector":true}}"#))
+                    .unwrap();
+            assert_eq!(loaded.code_size(), expected, "raw={raw}");
+            assert!(loaded.hide_inspector);
+        }
+
+        // Saving and reloading round-trips every valid size and clamps out-of-range sets.
+        let root = scratch("code-size");
+        let path = root.join("desktop.json");
+        for (input, expected) in [(10, 12), (12, 12), (13, 13), (14, 14), (20, 14)] {
+            let mut chosen = Preferences::default();
+            chosen.set_code_size(input);
+            assert_eq!(chosen.code_size(), expected);
+            save(&path, &chosen).unwrap();
+            let loaded = load(&path).unwrap();
+            assert_eq!(loaded, chosen);
+            assert_eq!(loaded.code_size(), expected);
+        }
+        // A hand-edited out-of-range value on disk loads clamped, not rejected.
+        fs::write(&path, r#"{"code_size": 24, "hide_inspector": true}"#).unwrap();
+        let loaded = load(&path).unwrap();
+        assert_eq!(loaded.code_size(), 14);
+        assert!(loaded.hide_inspector);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

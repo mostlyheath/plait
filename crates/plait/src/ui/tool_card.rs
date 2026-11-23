@@ -28,8 +28,11 @@ fn tool_tint(status: ToolStatus) -> u32 {
     }
 }
 
-/// Line height of a call's row, so a wrapped subject and its chevron align.
-const TOOL_LINE: f32 = 18.;
+/// Line height of a call's row, so a wrapped subject and its chevron align:
+/// 6 points of leading over the code size (18 at 12, 19 at 13, 20 at 14).
+fn tool_line_height() -> f32 {
+    code_size() + 6.
+}
 /// A collapsed call's subject wraps to at most this many lines.
 const SUBJECT_LINES: usize = 4;
 
@@ -39,7 +42,7 @@ fn line_icon(name: &'static str) -> Div {
         .flex()
         .flex_shrink_0()
         .items_center()
-        .h(px(TOOL_LINE))
+        .h(px(tool_line_height()))
         .child(icon(name))
 }
 
@@ -259,7 +262,7 @@ impl Plait {
                     .h_auto()
                     .py(px(4.))
                     .items_start()
-                    .line_height(px(TOOL_LINE))
+                    .line_height(px(tool_line_height()))
                     .aria_label(format!(
                         "{} tool{} · {}",
                         tool.name,
@@ -284,7 +287,7 @@ impl Plait {
                                 // The opened call shows the whole command.
                                 .line_clamp(SUBJECT_LINES)
                                 .font_family(mono())
-                                .text_size(px(12.))
+                                .text_size(px(code_size()))
                                 .text_color(rgb(colors().muted))
                                 .child(subject),
                         )
@@ -400,8 +403,8 @@ impl Plait {
                 .w_full()
                 .min_w_0()
                 .font_family(mono())
-                .text_size(px(12.))
-                .line_height(px(19.))
+                .text_size(px(code_size()))
+                .line_height(px(code_line_height()))
                 .child(
                     div()
                         .w(px(16.))

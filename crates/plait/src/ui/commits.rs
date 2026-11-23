@@ -63,7 +63,12 @@ impl Plait {
                     .gap_2()
                     .text_size(px(11.))
                     .text_color(rgb(colors().subtle))
-                    .child(div().font_family(mono()).child(commit.short.clone()))
+                    .child(
+                        div()
+                            .font_family(mono())
+                            .text_size(px(code_size()))
+                            .child(commit.short.clone()),
+                    )
                     .child(
                         div()
                             .flex_1()
