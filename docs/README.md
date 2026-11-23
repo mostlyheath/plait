@@ -15,7 +15,7 @@
 - [Architecture](ARCHITECTURE.md): the app, the host, and how state flows
   between them.
 - [Host contract](HOST.md): the host's protocol, persistence, and safety rules.
-- [Design](../DESIGN.md): layout, tokens, and interaction.
+- [Design](../DESIGN.md): layout, interaction, tokens, and the order the design is built in.
 - [Releasing](RELEASING.md): how a merge becomes a signed preview.
 - [Verification](VERIFICATION.md): what the checks cover and what they do not.
 
