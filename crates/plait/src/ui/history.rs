@@ -255,7 +255,7 @@ impl Plait {
                     if cache.evict_for_budget(anchor.as_ref()) { continue; }
                     return Some(Err("This conversation part exceeds the reading memory limit. Its stored history is unchanged."));
                 }
-                let lines = history::records::project(&display, &records, !cache.detached);
+                let lines = if cache.detached { history::records::project_detached(&display, &snapshot, &records) } else { history::records::project(&display, &records, true) };
                 return Some(Ok((
                     Arc::new(cache),
                     Arc::new(display),

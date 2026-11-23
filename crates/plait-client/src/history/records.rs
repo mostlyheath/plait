@@ -109,6 +109,8 @@ pub enum Availability {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct File {
+    pub change: &'static str,
+    pub folder: String,
     pub path: PathBuf,
     pub name: String,
     pub counts: String,
@@ -117,6 +119,8 @@ pub struct File {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Line {
+    pub created_at: u64,
+    pub paths_total: usize,
     /// Original run identity; stable across undo and redo.
     pub run: String,
     /// Exact record whose paths are displayed; independent of the undo target.
@@ -137,6 +141,9 @@ pub struct Line {
 }
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Lines {
+    pub newest: Option<String>,
+    pub active_run: Option<String>,
+    pub live_status: Option<host::ThreadStatus>,
     pub rows: HashMap<Key, Line>,
     pub latest: Option<Line>,
     /// Suppresses message-based summaries inside a run joined by steering.
@@ -186,6 +193,16 @@ fn line(
         .map(|file| {
             let path = crate::display_text::escape(&file.path.to_string_lossy());
             File {
+                folder: file
+                    .path
+                    .parent()
+                    .map(|p| crate::display_text::escape(&p.to_string_lossy()))
+                    .unwrap_or_default(),
+                change: match file.change {
+                    host::RecordChange::Added => "Added",
+                    host::RecordChange::Deleted => "Deleted",
+                    host::RecordChange::Modified | host::RecordChange::Mode => "Modified",
+                },
                 path: file.path.clone(),
                 name: crate::display_text::escape(
                     &file
@@ -288,6 +305,8 @@ fn line(
     let more_label = format!("{} more", files.len().saturating_sub(3));
     let more_detail = format!("Review all {} files in this record.", files.len());
     Line {
+        created_at: original.created_at,
+        paths_total: current.paths_total,
         review_detail,
         more_label,
         more_detail,
@@ -385,7 +404,38 @@ pub fn project(snapshot: &Snapshot, records: &[TurnRecord], live_end: bool) -> L
     if live_end && !snapshot.status.busy() {
         finish(&mut result, active, &closing, steps, last_member, true);
     }
+    // The panel can keep a selected record when its messages page out.
+    for record in records.iter().filter(|r| r.kind == RecordKind::Turn) {
+        result.newest.get_or_insert_with(|| record.id.clone());
+        result.runs.entry(record.id.clone()).or_insert_with(|| {
+            let known_steps = live_end && active.is_some_and(|r| r.id == record.id);
+            line(record, &children, if known_steps { steps } else { None })
+        });
+    }
+    if live_end {
+        result.live_status = Some(snapshot.status);
+        result.active_run = active.map(|r| r.id.clone());
+    }
     result
+}
+
+/// Paging the transcript must not change which record belongs to the live thread.
+pub fn project_detached(display: &Snapshot, live: &Snapshot, records: &[TurnRecord]) -> Lines {
+    let mut lines = project(display, records, false);
+    let newest_request = live
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.role == MessageRole::User);
+    lines.live_status = Some(live.status);
+    lines.active_run = newest_request.and_then(|message| {
+        let request = message.id.strip_prefix("request-")?;
+        records
+            .iter()
+            .find(|r| r.kind == RecordKind::Turn && r.request_ids.iter().any(|id| id == request))
+            .map(|r| r.id.clone())
+    });
+    lines
 }
 
 #[cfg(test)]

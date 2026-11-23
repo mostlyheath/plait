@@ -298,3 +298,135 @@ fn recorded_display_escapes_controls_without_changing_identity() {
         "display preparation must not mutate the saved patch"
     );
 }
+
+#[test]
+fn this_turn_uses_selected_record_and_reports_only_loaded_counts() {
+    use crate::history::this_turn::{Selection, UndoContext, panel};
+    let mut value = record("last", &["next"], "ready");
+    value["paths_total"] = json!(4);
+    value["paths"][0]["removed"] = Value::Null;
+    let mut selection = Selection::default();
+    let undo = UndoContext {
+        connected: true,
+        current: true,
+        ..Default::default()
+    };
+    let lines = project(
+        &snapshot(),
+        &[
+            decode(value),
+            decode(record("first", &["one", "steer"], "ready")),
+        ],
+        true,
+    );
+    for (status, expected) in [
+        (ThreadStatus::Idle, "Finished · 0 steps"),
+        (ThreadStatus::Error, "Failed"),
+        (ThreadStatus::Stopped, "Stopped"),
+    ] {
+        let view = panel(&lines, &selection, status, undo).unwrap();
+        assert_eq!(view.heading, "This turn");
+        assert_eq!(view.state, expected);
+        assert_eq!(view.more, 3);
+        assert!(view.files[0].counts.is_empty());
+        assert!(view.action.unwrap().enabled);
+    }
+    selection.earlier("first");
+    let view = panel(&lines, &selection, ThreadStatus::Idle, undo).unwrap();
+    assert_eq!(
+        (view.heading, view.state.as_str()),
+        ("Earlier turn", "1 step")
+    );
+    selection.latest();
+    assert!(panel(&Lines::default(), &selection, ThreadStatus::Idle, undo).is_none());
+}
+
+#[test]
+fn this_turn_working_and_undone_follow_record_readiness() {
+    use crate::history::this_turn::{Selection, UndoContext, panel};
+    let mut s = snapshot();
+    s.status = ThreadStatus::Running;
+    let selection = Selection::default();
+    let undo = UndoContext {
+        connected: true,
+        current: true,
+        busy: true,
+        ..Default::default()
+    };
+    for (state, count) in [("recording", 0), ("ready", 1)] {
+        let lines = project(&s, &[decode(record("last", &["next"], state))], true);
+        let view = panel(&lines, &selection, s.status, undo).unwrap();
+        assert_eq!(view.state, "Working");
+        assert_eq!(view.files.len(), count);
+        // A running turn has no closing line yet, so the panel offers no Undo.
+        assert!(view.action.is_none());
+    }
+    let lines = project(
+        &s,
+        &[decode(record("first", &["one", "steer"], "ready"))],
+        true,
+    );
+    assert!(
+        panel(&lines, &selection, s.status, undo)
+            .unwrap()
+            .files
+            .is_empty()
+    );
+    s.status = ThreadStatus::Idle;
+    let mut restored = record("u", &[], "ready");
+    restored["kind"] = json!("undo");
+    restored["undoes"] = json!("last");
+    let lines = project(
+        &s,
+        &[
+            decode(restored),
+            decode(record("last", &["next"], "undone")),
+        ],
+        true,
+    );
+    let view = panel(
+        &lines,
+        &selection,
+        s.status,
+        UndoContext {
+            busy: false,
+            ..undo
+        },
+    )
+    .unwrap();
+    assert_eq!(view.state, "Undone");
+    assert_eq!(view.line.unwrap().target.as_deref(), Some("u"));
+    assert!(view.action.unwrap().enabled);
+}
+
+#[test]
+fn this_turn_detached_history_keeps_the_live_run_and_operation_note() {
+    use crate::history::this_turn::{Selection, UndoContext, panel};
+    let mut live = snapshot();
+    live.status = ThreadStatus::Running;
+    let mut earlier = snapshot();
+    earlier.messages.truncate(2);
+    let records = [
+        decode(record("last", &["next"], "ready")),
+        decode(record("first", &["one", "steer"], "ready")),
+    ];
+    let lines = project_detached(&earlier, &live, &records);
+    let note = (
+        "last".into(),
+        "Incomplete",
+        "Inspect Changes before another undo.".into(),
+    );
+    let undo = UndoContext {
+        connected: true,
+        current: true,
+        note: Some(&note),
+        ..Default::default()
+    };
+    let view = panel(&lines, &Selection::default(), live.status, undo).unwrap();
+    assert_eq!(view.state, "Working");
+    assert_eq!(view.files.len(), 1);
+    assert_eq!(view.line.unwrap().run, "last");
+    let action = view.action.unwrap();
+    assert!(!action.enabled);
+    assert_eq!(action.detail, note.2);
+}

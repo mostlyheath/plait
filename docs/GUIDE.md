@@ -79,7 +79,7 @@ Use **Show or Hide Archived Threads** in the menu or palette. Rename or archive 
 
 ### Tabs
 
-The 40-point top bar holds the window buttons, sidebar toggle, open tabs (threads, drafts, Worktrees, and Linear Issues), and **+**. When the sidebar is open, tabs align with its right edge; drag empty bar space to move the window. The 36-point second row shows the active checkout context, view switcher (**Conversation**, **Changes**, **History**, **Files**), and Git inspector toggle.
+The 40-point top bar holds the window buttons, sidebar toggle, open tabs (threads, drafts, Worktrees, and Linear Issues), and **+**. When the sidebar is open, tabs align with its right edge; drag empty bar space to move the window. The 36-point second row shows the active checkout context, view switcher (**Conversation**, **Changes**, **History**, **Files**), and This turn toggle.
 
 - Switch tabs with `Cmd-1`–`Cmd-8` (`Cmd-9` selects the last), `Cmd-Shift-[` / `Cmd-Shift-]`, or the overflow menu (`Cmd-Shift-Backslash`). Reorder tabs by dragging or with `Control-Shift-Left` / `Control-Shift-Right`.
 - Close a tab with `Cmd-W` or middle-click; closing never stops a running thread. Reopen closed tabs (and older nonempty drafts) with `Cmd-Shift-T`. Closing the last tab leaves an empty workspace; pressing `Cmd-W` again (or `Cmd-Shift-W`) closes the window.
@@ -166,7 +166,9 @@ Host-owned worktrees are created on `plait/<uuid-prefix>` branches under `<main-
 
 With a protocol 5+ host, the host snapshots your checkout before and after every run—across all harnesses and permission modes, including files written by commands—into a private Git store kept for 30 days. If the before-record fails, the run does not start.
 
-- **Review a run:** Click any filename or the step count on a finished run's closing line to open **Changes** scoped to that turn's saved before/after diff (**Recorded**), even for files later committed, edited, or deleted. Switch between **Recorded** and **Current** to compare against your live working tree, or open the scope picker to choose **All changes**, **Original** (the run's changes), or **Restored** (what an undo put back). Staging by turn and "since last reviewed" baselines are planned.
+In a wide Conversation window, **This turn** shows the latest run and its recorded file changes. Select a file for its recorded diff, or use Undo or Redo with the same safeguards as the conversation. An earlier turn’s steps show that record. **Latest** returns to the newest turn. The footer opens Switch Branch or current Changes. With no turn record, the panel shows the working tree.
+
+- **Review a run:** Click any recorded filename or the latest finished run’s step count to open **Changes** scoped to that turn's saved before/after diff (**Recorded**), even for files later committed, edited, or deleted. Switch between **Recorded** and **Current** to compare against your live working tree, or open the scope picker to choose **All changes**, **Original** (the run's changes), or **Restored** (what an undo put back). Staging by turn and "since last reviewed" baselines are planned.
 
 ### Undo a run
 

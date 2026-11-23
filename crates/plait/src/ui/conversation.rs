@@ -12,14 +12,22 @@ impl Plait {
             .border_l_1()
             .border_color(rgb(colors().border))
             .bg(rgb(colors().rail))
-            .child(
-                row()
-                    .h(px(36.))
-                    .px_3()
-                    .flex_shrink_0()
-                    .child(section_label("inspector-working-tree", "Working tree")),
-            )
-            .child(self.file_panel(true, cx))
+            .child(if let Some(panel) = self.this_turn(cx) {
+                panel
+            } else {
+                column()
+                    .flex_1()
+                    .min_h_0()
+                    .child(
+                        row()
+                            .h(px(36.))
+                            .px_3()
+                            .flex_shrink_0()
+                            .child(section_label("inspector-working-tree", "Working tree")),
+                    )
+                    .child(self.file_panel(true, cx))
+                    .into_any_element()
+            })
             .child(self.resize_handle(Panel::Inspector, cx))
     }
 

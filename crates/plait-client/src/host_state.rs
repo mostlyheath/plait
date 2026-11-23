@@ -25,6 +25,7 @@ pub struct HostConnection {
     pub catalog_revision: u64,
     threads: Vec<ThreadSummary>,
     threads_revision: u64,
+    busy_checkouts: std::sync::OnceLock<HashSet<PathBuf>>,
     pub settings_model: Option<ModelChoice>,
     pub saving: bool,
     pub save_message: Option<String>,
@@ -34,7 +35,19 @@ impl HostConnection {
     pub fn threads(&self) -> &[ThreadSummary] {
         &self.threads
     }
+    pub fn checkout_has_run(&self, path: &std::path::Path) -> bool {
+        self.busy_checkouts
+            .get_or_init(|| {
+                self.threads
+                    .iter()
+                    .filter(|t| t.status.busy())
+                    .map(|t| t.checkout.clone())
+                    .collect()
+            })
+            .contains(path)
+    }
     pub fn threads_mut(&mut self) -> &mut Vec<ThreadSummary> {
+        self.busy_checkouts.take();
         self.threads_revision = self
             .threads_revision
             .checked_add(1)
@@ -1035,6 +1048,20 @@ mod tests {
                 .begin_with("t", "next".into(), None, None, Some(17))
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn cached_busy_checkouts_follow_catalog_changes() {
+        let repo = std::path::Path::new("/repo");
+        let mut connection = HostConnection::default();
+        connection.set_threads(vec![ThreadSummary {
+            checkout: repo.into(),
+            status: crate::host::ThreadStatus::Running,
+            ..Default::default()
+        }]);
+        assert!(connection.checkout_has_run(repo));
+        connection.threads_mut()[0].status = crate::host::ThreadStatus::Stopped;
+        assert!(!connection.checkout_has_run(repo));
     }
 
     #[test]

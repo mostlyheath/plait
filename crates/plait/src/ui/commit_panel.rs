@@ -365,11 +365,7 @@ impl Plait {
         let Some(root) = self.state.repository.snapshot().ready().map(|s| &s.root) else {
             return false;
         };
-        self.host
-            .connection
-            .threads()
-            .iter()
-            .any(|thread| thread.status.busy() && &thread.checkout == root)
+        self.host.connection.checkout_has_run(root)
     }
 
     /// Stage-all controls, the message field, Commit, and the last result.

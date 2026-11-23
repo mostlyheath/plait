@@ -62,6 +62,7 @@ mod sidebar;
 mod storage;
 mod tabs;
 mod test_host;
+mod this_turn;
 mod toasts;
 mod turn_review;
 mod undo;
@@ -2408,6 +2409,7 @@ fn walk(output: Option<&Path>) {
         reading_walk(&mut harness, &repository, suffix);
         messages::walk(&mut harness, &repository, suffix);
         find::find_walk(&mut harness, &repository, suffix);
+        this_turn::scenes(&mut harness, &repository, suffix);
         undo::undo_walk(&mut harness, &repository, suffix);
         turn_review::walk(&mut harness, &repository, suffix);
         history_walk(&mut harness, &repository, suffix);

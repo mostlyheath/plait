@@ -114,7 +114,7 @@ pub(super) const ACTIONS: &[AppAction] = &[
     entry("window.close", "Close Window", "File", Some("cmd-shift-w"), Group, || Box::new(Close)),
     entry("palette.toggle", "Command Palette…", "View", Some("cmd-k"), Item, || Box::new(CommandPalette)),
     entry("view.toggle_sidebar", "Toggle Sidebar", "View", Some("cmd-b"), Group, || Box::new(ToggleSidebar)),
-    entry("view.toggle_inspector", "Toggle Git Inspector", "View", Some("cmd-l"), Item, || Box::new(ToggleInspector)),
+    entry("view.toggle_inspector", "Toggle This Turn", "View", Some("cmd-l"), Item, || Box::new(ToggleInspector)),
     entry("view.toggle_changed_files", "Toggle Changed Files", "View", None, Item, || Box::new(ToggleChangedFiles)),
     entry("view.toggle_diagnostics", "Toggle Diagnostics", "View", Some("cmd-shift-d"), Item, || Box::new(ToggleDiagnostics)),
     entry("view.conversation", "Conversation", "View", Some("cmd-shift-1"), Item, || Box::new(Conversation)),
