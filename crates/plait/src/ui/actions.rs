@@ -133,6 +133,8 @@ pub(super) const ACTIONS: &[AppAction] = &[
     entry("thread.show_archived", "Show or Hide Archived Threads", "Thread", None, Item, || Box::new(ToggleArchived)),
     entry("thread.filter", "Find a Thread", "Thread", None, Item, || Box::new(FilterThreads)),
     entry("thread.notifications", "Mute or Unmute Thread Alerts", "Thread", None, Item, || Box::new(ToggleNotifications)),
+    entry("thread.refresh_list", "Refresh Threads and Folders", "Thread", None, Item, || Box::new(RefreshThreadList)),
+    entry("project.show_hidden", "Show Hidden Projects", "Thread", None, Item, || Box::new(ShowHiddenProjects)),
     // Answers to the open thread's approval. Both need Command and Option, so
     // no typing slip sends one, and their keys sit far apart.
     entry("thread.undo_last_turn", "Undo Last Turn", "Thread", Some("cmd-alt-u"), Group, || Box::new(UndoLastTurn)),

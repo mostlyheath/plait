@@ -235,7 +235,7 @@ impl Plait {
         if after == before {
             return;
         }
-        self.navigation.invalidate_search();
+        self.navigation.invalidate_projects();
         // A draw can reuse the parent view without visiting the visible list.
         self.navigation.update_cached_list_flags(&after, cx);
         match self.host_workspace.source {
@@ -563,6 +563,20 @@ mod tests {
         assert!(lists.unread.contains("t1"));
         assert_eq!(lists.observed["t1"].updated_at, 9);
         assert!(lists.mute_notifications, "mute stays this device's choice");
+    }
+
+    #[core::prelude::v1::test]
+    fn showing_hidden_projects_only_unhides() {
+        let before = lists_from(&view(), false);
+        let mut after = before.clone();
+        after.hidden.clear();
+        let found = changes(&before, &after);
+        // No folder is opened, so a missing one cannot stop the rest.
+        assert!(found.open.is_empty());
+        assert_eq!(found.hide, vec![(PathBuf::from("/srv/b"), false)]);
+        assert!(found.seen.is_empty());
+        assert_eq!(after.opened, before.opened);
+        assert_eq!(after.worktrees, before.worktrees);
     }
 
     #[core::prelude::v1::test]

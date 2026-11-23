@@ -181,7 +181,7 @@ fn two_creations_complete_once_in_their_tabs_after_switch_and_close() {
     }
     let scratch = std::env::temp_dir().join(format!("plait-many-sends-{}", std::process::id()));
     let repo = fixture_repository(&scratch);
-    let mut h = Harness::new(&repo, None, 900., 600.);
+    let mut h = Harness::with_host(&repo, None, 900., 600., None);
     h.connect(&repo, false);
     h.update(|p,w,cx| {
         p.host.connection.status.as_mut().unwrap().protocol_version=6;
@@ -201,11 +201,8 @@ fn two_creations_complete_once_in_their_tabs_after_switch_and_close() {
         // The host update can precede creation completion and its saved title.
         p.host.connection.threads_mut().push(ThreadSummary { id: "created-b".into(), checkout: repo.clone(), model: choice(), ..Default::default() });
         p.rebuild_projects(cx);
-        p.navigation.filter.update(cx, |field, cx| field.set_text("message b", cx));
-        assert!(p.filtered_threads(cx).is_empty());
         finish(p,"send-b",reply("created-b"),w,cx);
-        assert_eq!(p.filtered_threads(cx).len(), 1);
-        p.navigation.filter.update(cx, |field, cx| field.set_text("", cx));
+        assert_eq!(p.thread_title("created-b"), "Message B");
         assert_eq!(p.tabs.model.active(),Some(b));
         finish(p,"send-a",reply("created-a"),w,cx);
         assert_eq!(p.tabs.model.active(),Some(b));

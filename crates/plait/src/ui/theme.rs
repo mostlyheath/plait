@@ -409,6 +409,39 @@ pub fn code_block() -> Div {
         .text_color(rgb(colors().muted))
 }
 
+pub fn thread_row_colors(
+    state: plait_client::navigation::ThreadRowState,
+    selected: bool,
+) -> (u32, u32, u32) {
+    use plait_client::navigation::ThreadRowState::*;
+    let c = colors();
+    let (node, title, detail) = match state {
+        Working => (c.blue, c.muted, c.blue),
+        Approval | Interrupted => (c.amber, c.text, c.amber),
+        Failed => (c.red, c.text, c.red),
+        Queued(_) | Other => (c.subtle, c.muted, c.subtle),
+        FinishedUnread => (c.mint, c.text, c.subtle),
+    };
+    (node, if selected { c.text } else { title }, detail)
+}
+
+pub fn thread_mark(color: u32) -> Div {
+    // Interrupt the line so hover and selection show through the three-point gap.
+    let line = || {
+        div()
+            .w(px(1.))
+            .h(px((ROW_HEIGHT - 13.) / 2.))
+            .bg(rgb(colors().edge))
+    };
+    column()
+        .flex_shrink_0()
+        .items_center()
+        .gap(px(3.))
+        .child(line())
+        .child(dot(color).size(px(7.)))
+        .child(line())
+}
+
 pub fn dot(color: u32) -> Div {
     div()
         .size(px(6.))
@@ -507,6 +540,9 @@ impl AssetSource for Assets {
                 r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="m6 4 4 4-4 4" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>"#
             }
             // Original stroke glyphs for controls; category glyphs come from the brand kit.
+            "search" => {
+                r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><g fill="none" stroke="black" stroke-width="1.5"><circle cx="6.75" cy="6.75" r="4.25"/><path d="m10 10 3.5 3.5" stroke-linecap="round"/></g></svg>"#
+            }
             "plus" => {
                 r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round"/></svg>"#
             }

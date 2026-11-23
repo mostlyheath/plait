@@ -58,6 +58,7 @@ mod mixed_tabs;
 mod pickers;
 mod settings_modal;
 mod showcase;
+mod sidebar;
 mod storage;
 mod tabs;
 mod test_host;
@@ -680,13 +681,32 @@ struct Harness {
     window: WindowHandle<Plait>,
     /// Where to write PNG files. `None` draws every scene without a renderer.
     output: Option<PathBuf>,
-    _host: test_host::TestHost,
+    _host: Option<test_host::TestHost>,
 }
 
 impl Harness {
     fn new(repository: &Path, output: Option<&Path>, width: f32, height: f32) -> Self {
-        let host = test_host::TestHost::start();
-        let client = host.client();
+        Self::with_host(
+            repository,
+            output,
+            width,
+            height,
+            Some(test_host::TestHost::start()),
+        )
+    }
+
+    fn with_host(
+        repository: &Path,
+        output: Option<&Path>,
+        width: f32,
+        height: f32,
+        host: Option<test_host::TestHost>,
+    ) -> Self {
+        // Sidebar-only scenes inject summaries and need no repository server.
+        let client = host.as_ref().map_or_else(
+            || plait_client::host::Client::with_test_git_host(None, repository.join("absent.sock")),
+            test_host::TestHost::client,
+        );
         let text_system = text_system();
         let render = output.is_some();
         let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(Assets), move || {
@@ -2411,6 +2431,7 @@ fn walk(output: Option<&Path>) {
         draft_scenes_walk(&mut harness, &repository, suffix);
         branches::branches_walk(&mut harness, &repository, suffix);
         inspector_walk(&mut harness, &repository, suffix);
+        sidebar::walk(&mut harness, &repository, suffix);
         navigation_walk(&mut harness, &repository, suffix);
         // Threads exist, but none is open.
         harness.update(|plait, _, _| {
@@ -5267,26 +5288,8 @@ fn navigation_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
     harness.capture(&format!("navigation-archived-{suffix}"));
     harness.update(|plait, window, cx| plait.begin_rename(THREAD.into(), window, cx));
     harness.capture(&format!("navigation-rename-{suffix}"));
-    harness.update(|plait, _, cx| {
+    harness.update(|plait, _, _| {
         plait.navigation.rename = None;
-        plait
-            .navigation
-            .filter
-            .update(cx, |field, cx| field.set_text("repair", cx));
-    });
-    harness.capture(&format!("navigation-filter-{suffix}"));
-    harness.update(|plait, _, cx| {
-        plait
-            .navigation
-            .filter
-            .update(cx, |field, cx| field.set_text("nothing matches this", cx))
-    });
-    harness.capture(&format!("navigation-empty-{suffix}"));
-    harness.update(|plait, _, cx| {
-        plait
-            .navigation
-            .filter
-            .update(cx, |field, cx| field.set_text("", cx));
         plait.navigation.menu = Some(THREAD.into());
     });
     harness.capture(&format!("navigation-actions-{suffix}"));
@@ -5522,7 +5525,7 @@ fn thread_management_preserves_newer_edits_and_activity() {
     }
     let scratch = std::env::temp_dir().join(format!("plait-management-ui-{}", std::process::id()));
     let repository = fixture_repository(&scratch);
-    let mut harness = Harness::new(&repository, None, 900., 600.);
+    let mut harness = Harness::with_host(&repository, None, 900., 600., None);
     harness.connect(&repository, false);
     harness.update(|plait, window, cx| {
         plait
@@ -5549,7 +5552,7 @@ fn thread_management_preserves_newer_edits_and_activity() {
             .unwrap();
         field.update(cx, |field, cx| field.set_text("A newer edit", cx));
         plait.navigation.menu = Some("thr_0c44a9d1".into());
-        let focus = plait.navigation.filter.focus_handle(cx);
+        let focus = plait.workspace.composers[THREAD].focus_handle(cx);
         window.focus(&focus, cx);
 
         let summary = plait
@@ -7340,7 +7343,7 @@ fn navigation_rows_are_cached_and_invalidated() {
     let scratch =
         std::env::temp_dir().join(format!("plait-navigation-cache-{}", std::process::id()));
     let repository = fixture_repository(&scratch);
-    let mut harness = Harness::new(&repository, None, 900., 600.);
+    let mut harness = Harness::with_host(&repository, None, 900., 600., None);
     harness.update(|p, _, cx| {
         p.sidebar = true;
         *p.host.connection.threads_mut() = vec![ThreadSummary {
@@ -7362,10 +7365,8 @@ fn navigation_rows_are_cached_and_invalidated() {
         .window
         .update(&mut harness.cx, |p, _, cx| {
             assert_eq!(p.navigation.row_recomputations(), count);
-            p.navigation
-                .filter
-                .update(cx, |field, cx| field.set_text("needle", cx));
-            assert_eq!(p.filtered_threads(cx).len(), 1);
+            p.navigation.attention = true;
+            assert!(p.filtered_threads(cx).is_empty());
             assert_eq!(p.navigation.row_recomputations(), count + 1);
             p.host.connection.threads_mut().push(ThreadSummary {
                 id: "new".into(),
@@ -7375,14 +7376,12 @@ fn navigation_rows_are_cached_and_invalidated() {
                 archived: Some(true),
                 ..Default::default()
             });
-            assert_eq!(p.filtered_threads(cx).len(), 1);
+            assert!(p.filtered_threads(cx).is_empty());
             assert_eq!(p.navigation.row_recomputations(), count + 2);
-            p.navigation.archived = true;
-            assert_eq!(p.filtered_threads(cx).len(), 2);
+            p.navigation.attention = false;
+            assert_eq!(p.filtered_threads(cx).len(), 1);
             assert_eq!(p.navigation.row_recomputations(), count + 3);
-            p.navigation
-                .filter
-                .update(cx, |field, cx| field.set_text("", cx));
+            p.navigation.archived = true;
             assert_eq!(p.filtered_threads(cx).len(), 2);
             assert_eq!(p.navigation.row_recomputations(), count + 4);
             p.navigation.collapsed.insert(repository.clone());
@@ -7407,7 +7406,7 @@ fn cached_thread_row_tracks_selected_machine_lists() {
     }
     let scratch = std::env::temp_dir().join(format!("plait-row-lists-{}", std::process::id()));
     let repository = fixture_repository(&scratch);
-    let mut harness = Harness::new(&repository, None, 900., 600.);
+    let mut harness = Harness::with_host(&repository, None, 900., 600., None);
     harness.update(|p, _, cx| {
         p.sidebar = true;
         p.host_workspace.source =

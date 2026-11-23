@@ -10,8 +10,6 @@ use std::collections::HashSet;
 
 impl Plait {
     pub(super) fn initialize_navigation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let field = self.navigation.filter.clone();
-        cx.subscribe(&field, |_, _, _, cx| cx.notify()).detach();
         cx.observe_window_activation(window, |this, window, cx| {
             // Another app may have changed the open file.
             if window.is_window_active() {
@@ -302,7 +300,7 @@ impl Plait {
     }
 
     pub(super) fn rebuild_projects(&mut self, cx: &mut Context<Self>) {
-        self.navigation.invalidate_search();
+        self.navigation.invalidate_projects();
         let machine = self.current_machine();
         self.state.projects = navigation::projects(
             self.host.connection.threads(),

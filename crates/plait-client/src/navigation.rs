@@ -328,28 +328,66 @@ pub fn projects(
         .collect()
 }
 
-/// A project match includes all its threads; a thread match retains its
-/// project. The caller pairs each thread with its project.
-pub fn matches(
-    thread: &ThreadSummary,
-    title: &str,
-    project: &Project,
-    query: &str,
-    archived: bool,
-    attention: bool,
-    unread: &BTreeSet<String>,
-) -> bool {
-    if (!archived && thread.archived == Some(true))
-        || (attention && !needs_attention(thread, unread))
-    {
-        return false;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ThreadRowState {
+    Working,
+    Approval,
+    Failed,
+    Interrupted,
+    Queued(&'static str),
+    FinishedUnread,
+    Other,
+}
+
+pub fn thread_row_state(thread: &ThreadSummary, unread: &BTreeSet<String>) -> ThreadRowState {
+    use ThreadRowState::*;
+    if thread.pending_approval == Some(true) {
+        return Approval;
     }
-    let haystack =
-        format!("{} {} {}", project.name, project.checkout.display(), title).to_lowercase();
-    query
-        .to_lowercase()
-        .split_whitespace()
-        .all(|word| haystack.contains(word))
+    match thread.status {
+        ThreadStatus::Running => Working,
+        ThreadStatus::AwaitingApproval => Approval,
+        ThreadStatus::Error => Failed,
+        ThreadStatus::Interrupted => Interrupted,
+        _ if let Some(queue) = &thread.checkout_queue => Queued(queue.label()),
+        _ if unread.contains(&thread.id) => FinishedUnread,
+        _ => Other,
+    }
+}
+
+impl ThreadRowState {
+    /// The state in words for an accessible name. It agrees with the row's
+    /// visible word, and names a settled thread's state where the row shows
+    /// only its age.
+    pub fn spoken(self, thread: &ThreadSummary) -> &'static str {
+        match self {
+            Self::Working => "Working",
+            Self::Approval => "Needs approval",
+            Self::Failed => "Failed",
+            Self::Interrupted => "Interrupted",
+            Self::Queued(label) => label,
+            Self::FinishedUnread | Self::Other => state_label(thread),
+        }
+    }
+
+    /// The row's right-hand text.
+    pub fn label(self, age: &str) -> &str {
+        match self {
+            Self::Working => "Working",
+            Self::Approval => "Approve",
+            Self::Failed => "Failed",
+            Self::Interrupted => "Interrupted",
+            Self::Queued(label) => label,
+            Self::FinishedUnread | Self::Other => age,
+        }
+    }
+}
+
+pub fn needs_me_count(threads: &[ThreadSummary], unread: &BTreeSet<String>) -> usize {
+    threads
+        .iter()
+        .filter(|t| t.archived != Some(true) && needs_attention(t, unread))
+        .count()
 }
 
 pub fn jump(
@@ -633,62 +671,86 @@ mod tests {
         assert_eq!(threads.len(), 2);
     }
     #[test]
-    fn filtering_respects_archive_attention_and_project_names() {
-        let mut t = thread("a", "/project", ThreadStatus::Idle, 2);
-        let p = projects(
-            &[t.clone()],
-            &Preferences::default(),
-            Path::new("/project"),
-            &local(),
-            true,
-        )
-        .remove(0);
-        assert!(matches(
-            &t,
-            "Repair tests",
-            &p,
-            "project repair",
-            false,
-            false,
-            &BTreeSet::new()
-        ));
-        assert!(!matches(
-            &t,
-            "Repair tests",
-            &p,
-            "missing",
-            false,
-            false,
-            &BTreeSet::new()
-        ));
-        t.archived = Some(true);
-        assert!(!matches(
-            &t,
-            "Repair tests",
-            &p,
-            "",
-            false,
-            false,
-            &BTreeSet::new()
-        ));
-        assert!(matches(
-            &t,
-            "Repair tests",
-            &p,
-            "",
-            true,
-            false,
-            &BTreeSet::new()
-        ));
-        assert!(!matches(
-            &t,
-            "Repair tests",
-            &p,
-            "",
-            true,
-            true,
-            &BTreeSet::new()
-        ));
+    fn sidebar_states_and_attention_count() {
+        use crate::host::checkout_queue::{State, Summary};
+        use ThreadRowState::*;
+        let unread = BTreeSet::from(["unread".to_owned()]);
+        let mut threads = Vec::new();
+        for (status, id, pending, queued, expected, label) in [
+            (
+                ThreadStatus::Running,
+                "unread",
+                false,
+                true,
+                Working,
+                "Working",
+            ),
+            (
+                ThreadStatus::Running,
+                "unread",
+                true,
+                false,
+                Approval,
+                "Approve",
+            ),
+            (
+                ThreadStatus::AwaitingApproval,
+                "a",
+                false,
+                false,
+                Approval,
+                "Approve",
+            ),
+            (ThreadStatus::Error, "unread", false, true, Failed, "Failed"),
+            (
+                ThreadStatus::Interrupted,
+                "unread",
+                false,
+                false,
+                Interrupted,
+                "Interrupted",
+            ),
+            (
+                ThreadStatus::Idle,
+                "unread",
+                false,
+                true,
+                Queued("Held"),
+                "Held",
+            ),
+            (
+                ThreadStatus::Idle,
+                "unread",
+                false,
+                false,
+                FinishedUnread,
+                "3m",
+            ),
+            (ThreadStatus::Idle, "b", false, false, Other, "3m"),
+        ] {
+            let mut t = thread(id, "/repo", status, 2);
+            t.pending_approval = Some(pending);
+            t.checkout_queue = queued.then(|| Summary::new("request".into(), State::Held, 1, 1));
+            let state = thread_row_state(&t, &unread);
+            assert_eq!(state, expected);
+            assert_eq!(state.label("3m"), label);
+            // The spoken state never contradicts the visible word.
+            let spoken = state.spoken(&t);
+            match state {
+                Approval => assert_eq!(spoken, "Needs approval"),
+                FinishedUnread | Other => assert_eq!(spoken, state_label(&t)),
+                _ => assert_eq!(spoken, label),
+            }
+            threads.push(t);
+        }
+        threads[0].archived = Some(true);
+        assert_eq!(needs_me_count(&threads, &unread), 6);
+        for t in threads {
+            assert_eq!(
+                needs_me_count(std::slice::from_ref(&t), &unread) == 1,
+                t.archived != Some(true) && needs_attention(&t, &unread)
+            );
+        }
     }
     #[test]
     fn worktree_threads_list_under_the_project_they_were_made_from() {

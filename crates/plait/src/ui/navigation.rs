@@ -1,6 +1,6 @@
 use super::{
-    OpenRepository, Plait, host::WatchLease, jump::PreferenceGroup, model_picker::ModelPurpose,
-    text_field::TextField, theme::*, thread_controls::TextTooltip,
+    OpenRepository, Plait, host::WatchLease, text_field::TextField, theme::*,
+    thread_controls::TextTooltip,
 };
 use gpui::{prelude::*, *};
 use plait_client::{
@@ -16,7 +16,6 @@ use std::{
 };
 
 pub(super) struct Navigation {
-    pub filter: Entity<TextField>,
     cached_rows: HashMap<String, (ThreadRowKey, Entity<ThreadRow>)>,
     row_cache: RefCell<RowCache>,
     pub scroll: UniformListScrollHandle,
@@ -35,14 +34,11 @@ pub(super) struct Navigation {
 }
 
 impl Navigation {
-    pub fn new(cx: &mut Context<Plait>) -> Self {
+    pub fn new() -> Self {
         Self {
             cached_rows: HashMap::new(),
             row_cache: RefCell::new(RowCache::default()),
             scroll: UniformListScrollHandle::new(),
-            filter: cx.new(|cx| {
-                TextField::new("Filter projects and threads", "Find a thread…", cx).search()
-            }),
             collapsed: HashSet::new(),
             available: HashMap::new(),
             archived: false,
@@ -62,7 +58,7 @@ impl Navigation {
 #[derive(Default)]
 struct RowCache {
     key: Option<RowCacheKey>,
-    haystacks: Option<Vec<Option<String>>>,
+    needs_me: usize,
     indices: HashMap<String, usize>,
     indices_revision: Option<u64>,
     projects: Option<HashMap<PathBuf, usize>>,
@@ -74,7 +70,6 @@ struct RowCache {
 
 #[derive(PartialEq, Eq)]
 struct RowCacheKey {
-    query: String,
     threads_revision: u64,
     archived: bool,
     attention: bool,
@@ -99,10 +94,9 @@ impl Navigation {
         self.row_cache.borrow_mut().key = None;
     }
 
-    pub(super) fn invalidate_search(&self) {
+    pub(super) fn invalidate_projects(&self) {
         let mut cache = self.row_cache.borrow_mut();
         cache.key = None;
-        cache.haystacks = None;
         cache.projects = None;
     }
 
@@ -216,19 +210,18 @@ impl Plait {
         cache.indices.get(id).copied()
     }
 
-    pub(super) fn filtered_threads(&self, cx: &App) -> Vec<usize> {
-        self.ensure_navigation_rows(cx);
+    pub(super) fn filtered_threads(&self, _: &App) -> Vec<usize> {
+        self.ensure_navigation_rows();
         self.navigation.row_cache.borrow().filtered.clone()
     }
 
-    pub(super) fn navigation_rows(&self, cx: &App) -> Rc<Vec<Row>> {
-        self.ensure_navigation_rows(cx);
+    pub(super) fn navigation_rows(&self, _: &App) -> Rc<Vec<Row>> {
+        self.ensure_navigation_rows();
         self.navigation.row_cache.borrow().rows.clone()
     }
 
-    fn ensure_navigation_rows(&self, cx: &App) {
+    fn ensure_navigation_rows(&self) {
         let key = RowCacheKey {
-            query: self.navigation.filter.read(cx).text().to_lowercase(),
             threads_revision: self.host.connection.threads_revision(),
             archived: self.navigation.archived,
             attention: self.navigation.attention,
@@ -239,93 +232,29 @@ impl Plait {
         if cache.key.as_ref() == Some(&key) {
             return;
         }
-        if cache
-            .key
-            .as_ref()
-            .is_none_or(|old| old.threads_revision != key.threads_revision)
-        {
-            cache.haystacks = None;
-        }
-        // Keep list-sized work out of unchanged frames and reuse search text while typing.
-        let haystacks = cache.haystacks.get_or_insert_with(|| {
-            let projects = self
-                .state
-                .projects
-                .iter()
-                .map(|p| (p.checkout.as_path(), p))
-                .collect::<HashMap<_, _>>();
-            self.host
-                .connection
-                .threads()
-                .iter()
-                .map(|thread| {
-                    let project = projects.get(self.project_of(&thread.checkout))?;
-                    Some(
-                        format!(
-                            "{} {} {}",
-                            project.name,
-                            project.checkout.display(),
-                            self.summary_title(thread)
-                        )
-                        .to_lowercase(),
-                    )
-                })
-                .collect()
-        });
-        let projects = self
-            .state
-            .projects
-            .iter()
-            .enumerate()
-            .map(|(i, p)| (p.checkout.as_path(), i))
-            .collect::<HashMap<_, _>>();
-        let mut matches = self
-            .host
-            .connection
-            .threads()
-            .iter()
-            .enumerate()
-            .filter_map(|(index, thread)| {
-                if (!key.archived && thread.archived == Some(true))
-                    || (key.attention && !nav::needs_attention(thread, &self.lists().unread))
-                {
-                    return None;
-                }
-                let haystack = haystacks[index].as_ref()?;
-                if !key
-                    .query
-                    .split_whitespace()
-                    .all(|word| haystack.contains(word))
-                {
-                    return None;
-                }
-                let project = projects.get(self.project_of(&thread.checkout))?;
-                Some((*project, index))
-            })
-            .collect::<Vec<_>>();
-        matches.sort_by_key(|(project, _)| *project);
-        let filtered = matches
-            .into_iter()
-            .map(|(_, index)| index)
-            .collect::<Vec<_>>();
+        cache.needs_me = nav::needs_me_count(self.host.connection.threads(), &self.lists().unread);
         let mut grouped = HashMap::<&std::path::Path, Vec<usize>>::new();
-        for &index in &filtered {
+        for (index, thread) in self.host.connection.threads().iter().enumerate() {
+            if (!key.archived && thread.archived == Some(true))
+                || (key.attention && !nav::needs_attention(thread, &self.lists().unread))
+            {
+                continue;
+            }
             grouped
-                .entry(self.project_of(&self.host.connection.threads()[index].checkout))
+                .entry(self.project_of(&thread.checkout))
                 .or_default()
                 .push(index);
         }
-        let query = key.query.trim();
+        let mut filtered = Vec::new();
         let drafted = key.draft.then(|| self.project_of(&key.checkout));
         let mut rows = Vec::new();
         for (pi, project) in self.state.projects.iter().enumerate() {
             let matching = grouped.get(project.checkout.as_path());
-            let project_matches = query.is_empty() || project.name.to_lowercase().contains(query);
             let draft = drafted == Some(project.checkout.as_path());
-            if matching.is_none() && !draft && (!project_matches || key.attention) {
+            if matching.is_none() && !draft && key.attention {
                 continue;
             }
-            let open = !self.navigation.collapsed.contains(&project.checkout) || !query.is_empty();
+            let open = !self.navigation.collapsed.contains(&project.checkout);
             rows.push(Row::Project {
                 index: pi,
                 after: !rows.is_empty(),
@@ -336,8 +265,11 @@ impl Plait {
             if draft {
                 rows.push(Row::Draft);
             }
-            if open && let Some(indices) = matching {
-                rows.extend(indices.iter().copied().map(Row::Thread));
+            if let Some(indices) = matching {
+                filtered.extend_from_slice(indices);
+                if open {
+                    rows.extend(indices.iter().copied().map(Row::Thread));
+                }
             }
         }
         cache.filtered = filtered;
@@ -556,12 +488,8 @@ impl Plait {
         let menu_id = id.clone();
         let context_id = id.clone();
         let unread = self.lists().unread.contains(&id);
-        let status = nav::state_label(thread);
-        let short = if status == "Needs approval" {
-            "Approve"
-        } else {
-            status
-        };
+        let state = nav::thread_row_state(thread, &self.lists().unread);
+        let (node, title_color, detail_color) = thread_row_colors(state, selected);
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -574,16 +502,6 @@ impl Plait {
             .h(px(ROW_HEIGHT))
             .gap_0()
             .relative()
-            // Adjacent rows draw one continuous rail, so a project's threads read as its group.
-            .child(
-                div()
-                    .absolute()
-                    .left(px(RAIL_X))
-                    .top_0()
-                    .bottom_0()
-                    .w(px(1.))
-                    .bg(rgb(colors().border)),
-            )
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(move |this, _, _, cx| {
@@ -602,7 +520,7 @@ impl Plait {
                     format!(
                         "Thread {} · {} · {} / {}. {}{}{}",
                         id,
-                        status,
+                        state.spoken(thread),
                         thread.model.provider,
                         thread.model.model_id,
                         label,
@@ -630,16 +548,14 @@ impl Plait {
                 .role(Role::TreeItem)
                 .aria_level(2)
                 .aria_selected(selected)
-                .pl(px(RAIL_X + 9.))
-                .child(dot(if unread {
-                    colors().blue
-                } else {
-                    host_status_color(thread.status)
-                }))
+                .pl(px(RAIL_X - 4.))
+                .child(thread_mark(node))
                 .child(
                     title(label)
-                        .text_color(rgb(colors().text))
-                        .when(unread, |el| el.font_weight(FontWeight::SEMIBOLD)),
+                        .text_color(rgb(title_color))
+                        .when(state == nav::ThreadRowState::FinishedUnread, |el| {
+                            el.font_weight(FontWeight::MEDIUM)
+                        }),
                 )
                 // Pi needs no mark; another harness's logo says where the thread runs.
                 .when_some(
@@ -657,25 +573,13 @@ impl Plait {
                             .text_color(rgb(colors().subtle)),
                     )
                 })
-                .child(
-                    tag(
-                        "thread-status",
-                        if thread.archived == Some(true) {
-                            "Archived"
-                        } else {
-                            short
-                        },
-                        if thread.pending_approval == Some(true) {
-                            colors().amber
-                        } else {
-                            colors().muted
-                        },
-                    )
-                    .flex_shrink_0(),
-                )
-                .when(!age.is_empty() && !thread.status.busy(), |el| {
-                    el.child(tag("thread-age", age, colors().subtle).flex_shrink_0())
+                .when(thread.archived == Some(true), |el| {
+                    el.child(tag("thread-archived", "Archived", colors().subtle))
                 })
+                .child(
+                    tag("thread-status", state.label(&age).to_owned(), detail_color)
+                        .flex_shrink_0(),
+                )
                 .on_activate(cx, move |this, window, cx| {
                     this.select_host_thread(id.clone(), window, cx)
                 }),
@@ -736,73 +640,27 @@ impl Plait {
             })
     }
 
-    fn navigation_controls(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    /// Reads the thread list and folder state again, for threads older than
+    /// the host streams and folders that came back.
+    pub(super) fn refresh_thread_list(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.navigation.available.clear();
+        self.load_threads(window, cx);
+    }
+
+    /// Lists every hidden project of the selected machine again.
+    pub(super) fn show_hidden_projects(&mut self, cx: &mut Context<Self>) {
+        // Only the hidden flags change: opening a project asks the host to
+        // check its folder, and one missing folder would stop the rest.
+        self.update_lists(|lists| lists.hidden.clear(), cx);
+        self.rebuild_projects(cx);
+    }
+
+    /// Notices about the list itself. Its tools are menu and palette actions.
+    fn navigation_controls(&self) -> impl IntoElement {
         column()
             .px_2()
             .pt_2()
             .gap_2()
-            .child(self.navigation.filter.clone())
-            .child(
-                row()
-                    .gap_1()
-                    .child(
-                        chip("filter-attention", "Needs me", self.navigation.attention)
-                            .aria_label("Show only threads needing attention")
-                            .on_activate(cx, |this, _, cx| {
-                                this.navigation.attention = !this.navigation.attention;
-                                cx.notify();
-                            }),
-                    )
-                    .child(
-                        chip("filter-archived", "Archived", self.navigation.archived)
-                            .aria_label("Include archived threads")
-                            .on_activate(cx, |this, _, cx| {
-                                this.navigation.archived = !this.navigation.archived;
-                                cx.notify();
-                            }),
-                    )
-                    .child(div().flex_1())
-                    .when(!self.lists().hidden.is_empty(), |el| {
-                        el.child(
-                            tool("show-hidden-projects", "eye", "Show hidden projects")
-                                .on_activate(cx, |this, _, cx| {
-                                    let mut preferences = this.preferences.value.clone();
-                                    preferences.navigation.hidden.clear();
-                                    this.set_preferences(preferences, PreferenceGroup::View, cx);
-                                    this.rebuild_projects(cx);
-                                }),
-                        )
-                    })
-                    .child({
-                        let muted = self.preferences.value.navigation.mute_notifications;
-                        tool(
-                            "thread-alerts",
-                            if muted { "bell-off" } else { "bell" },
-                            if muted {
-                                "Alerts off: turn on notifications and attention requests"
-                            } else {
-                                "Alerts on: mute notifications and attention requests"
-                            },
-                        )
-                        .on_activate(cx, |this, _, cx| {
-                            let mut preferences = this.preferences.value.clone();
-                            preferences.navigation.mute_notifications =
-                                !preferences.navigation.mute_notifications;
-                            this.set_preferences(preferences, PreferenceGroup::View, cx);
-                        })
-                    })
-                    .child(
-                        tool(
-                            "thread-list-refresh",
-                            "refresh",
-                            "Refresh threads and folders",
-                        )
-                        .on_activate(cx, |this, window, cx| {
-                            this.navigation.available.clear();
-                            this.load_threads(window, cx);
-                        }),
-                    ),
-            )
             .when(self.navigation.managing.is_some(), |el| {
                 el.child(tag("navigation-saving", "Saving thread…", colors().subtle))
             })
@@ -945,9 +803,6 @@ impl Plait {
             return;
         }
         self.sidebar = true;
-        self.navigation
-            .filter
-            .update(cx, |field, cx| field.set_text("", cx));
         self.navigation.attention = false;
         if let Some(thread) = self
             .host
@@ -966,7 +821,7 @@ impl Plait {
         if let Some(index) = self
             .navigation_rows(cx)
             .iter()
-            .position(|row| matches!(row, Row::Thread(index) if self.host.connection.threads_mut()[*index].id == id))
+            .position(|row| matches!(row, Row::Thread(index) if self.host.connection.threads()[*index].id == id))
         {
             self.navigation
                 .scroll
@@ -1118,7 +973,7 @@ impl Plait {
                     .top_0()
                     .bottom_0()
                     .w(px(1.))
-                    .bg(rgb(colors().border)),
+                    .bg(rgb(colors().edge)),
             )
             .child(
                 nav_row(
@@ -1149,51 +1004,6 @@ impl Plait {
                     .on_activate(cx, |this, window, cx| this.discard_draft(window, cx)),
             )
             .into_any_element()
-    }
-
-    /// New thread, the model it will start with, and a way to pick another.
-    fn new_thread_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let model = self.new_thread_model().map(|model| model.name.clone());
-        let name = match &model {
-            Some(model) => format!("New thread with {model}"),
-            None => "New thread: choose a model…".to_owned(),
-        };
-        row()
-            .gap(px(1.))
-            .child(
-                nav_row("new-local-thread", name, false)
-                    .aria_keyshortcuts(self.shortcut_aria("thread.new"))
-                    .w_auto()
-                    .flex_1()
-                    .child(icon("plus").text_color(rgb(colors().mint)))
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .text_color(rgb(colors().text))
-                            .child("New thread"),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_size(px(11.))
-                            .text_color(rgb(colors().subtle))
-                            .child(model.unwrap_or_else(|| "Choose a model…".into())),
-                    )
-                    .on_activate(cx, |this, window, cx| this.open_draft(window, cx)),
-            )
-            .child(
-                icon_button("new-thread-model", "down", "New thread with another model…")
-                    .aria_keyshortcuts(self.shortcut_aria("thread.new_with_model"))
-                    .relative()
-                    .child(self.anchor_probe("new-thread-model"))
-                    .on_activate(cx, |this, window, cx| {
-                        this.open_draft(window, cx);
-                        this.anchor_next("new-thread-model");
-                        this.open_model_picker(ModelPurpose::NewThread, window, cx)
-                    }),
-            )
     }
 
     /// Which machine this window works on, and the way to another.
@@ -1272,6 +1082,34 @@ impl Plait {
         ))
     }
 
+    fn needs_me_row(&self, cx: &mut Context<Self>) -> Control {
+        self.ensure_navigation_rows();
+        let count = self.navigation.row_cache.borrow().needs_me;
+        nav_row(
+            "needs-me",
+            format!("Needs me, {count}"),
+            self.navigation.attention,
+        )
+        .aria_toggled(if self.navigation.attention {
+            Toggled::True
+        } else {
+            Toggled::False
+        })
+        .child(row().w(px(14.)).justify_center().child(dot(if count == 0 {
+            colors().subtle
+        } else {
+            colors().amber
+        })))
+        .child(title("Needs me"))
+        .when(count > 0, |el| {
+            el.child(tag("needs-me-count", count.to_string(), colors().amber))
+        })
+        .on_activate(cx, |this, _, cx| {
+            this.navigation.attention = !this.navigation.attention;
+            cx.notify();
+        })
+    }
+
     fn actions(&self, cx: &mut Context<Self>) -> impl IntoElement {
         column()
             .flex_shrink_0()
@@ -1291,21 +1129,48 @@ impl Plait {
                     .bg(rgb(colors().panel));
                 el.child(self.machine_menu(panel, cx))
             })
-            .child(self.new_thread_row(cx))
             .child(
-                nav_row("open-repository", "Open project…", false)
-                    .aria_keyshortcuts(self.shortcut_aria("repository.open"))
-                    .child(icon("folder"))
-                    .child(title("Open project…").text_color(rgb(colors().text)))
+                nav_row("new-local-thread", "New thread", false)
+                    .aria_keyshortcuts(self.shortcut_aria("thread.new"))
+                    .child(icon("plus").text_color(rgb(colors().mint)))
+                    .child(title("New thread"))
                     .child(tag(
-                        "open-repository-shortcut",
-                        self.shortcut_label("repository.open"),
+                        "new-thread-shortcut",
+                        self.shortcut_label("thread.new"),
+                        colors().subtle,
+                    ))
+                    .on_activate(cx, |this, window, cx| this.open_draft(window, cx)),
+            )
+            .child(self.needs_me_row(cx))
+            .child(
+                nav_row("find-anything", "Find anything", false)
+                    .aria_keyshortcuts(self.shortcut_aria("palette.toggle"))
+                    .child(icon("search"))
+                    .child(title("Find anything"))
+                    .child(tag(
+                        "find-anything-shortcut",
+                        self.shortcut_label("palette.toggle"),
                         colors().subtle,
                     ))
                     .on_activate(cx, |this, window, cx| {
-                        this.open_repository(&OpenRepository, window, cx)
+                        this.toggle_command_palette(window, cx)
                     }),
             )
+    }
+
+    fn open_project_row(&self, cx: &mut Context<Self>) -> Control {
+        nav_row("open-repository", "Open project…", false)
+            .aria_keyshortcuts(self.shortcut_aria("repository.open"))
+            .child(icon("folder"))
+            .child(title("Open project…").text_color(rgb(colors().subtle)))
+            .child(tag(
+                "open-repository-shortcut",
+                self.shortcut_label("repository.open"),
+                colors().subtle,
+            ))
+            .on_activate(cx, |this, window, cx| {
+                this.open_repository(&OpenRepository, window, cx)
+            })
     }
 
     /// Host state stays visible; remote entries are labeled where they appear.
@@ -1363,17 +1228,11 @@ impl Plait {
             .border_r_1()
             .border_color(rgb(colors().border))
             .child(self.actions(cx))
-            .child(self.navigation_controls(cx))
+            .child(self.navigation_controls())
             .child(self.tree(cx))
             .child(self.navigation_menu(cx))
+            .child(div().px_2().child(self.open_project_row(cx)))
             .child(self.host_footer(cx))
             .child(self.resize_handle(super::panels::Panel::Sidebar, cx))
     }
-}
-
-/// A small icon control for the filter row, named on hover.
-fn tool(id: &'static str, glyph: &'static str, name: &'static str) -> Control {
-    icon_button(id, glyph, name)
-        .size(px(24.))
-        .tooltip(move |_, cx| cx.new(|_| TextTooltip(name.into())).into())
 }

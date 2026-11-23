@@ -69,11 +69,13 @@ Choose **Use** to connect in the background; if connecting fails, Plait stays on
 
 ## Projects, threads, tabs, and drafts
 
-Opening a repository adds it to the sidebar. Selecting a thread switches its conversation, draft, and Git workspace together. Hovering or focusing a project row reveals **+** for a new thread; its **…** menu opens **Project settings…**, **Worktrees**, **Linear issues**, or hides the project (its host threads stay intact; use the eye button to show hidden projects again). Missing folders stay visible as **Missing** with readable history.
+Opening a repository adds it to the sidebar. Selecting a thread switches its conversation, draft, and Git workspace together. Hovering or focusing a project row reveals **+** for a new thread; its **…** menu opens **Project settings…**, **Worktrees**, **Linear issues**, or hides the project (its host threads stay intact; use **Show Hidden Projects** in the **Thread** menu or the palette to list them again). Missing folders stay visible as **Missing** with readable history.
 
-Filter the sidebar by search text, **Needs me** (unread activity, pending approvals, failures, interrupted runs), or **Archived**. Rename or archive threads from thread actions or the **Thread** menu; archiving only hides a thread from the default list and never stops an active run. The host streams live updates for the newest 200 threads; use **Refresh** for older threads and folder state.
+Choose **New thread** to open a draft. **Needs me** shows only threads with unread activity, pending approvals, failures, or interrupted runs. Its count excludes archived threads. Select it again to clear the filter. **Find anything** opens the palette to search threads and commands. Expand a project to see its threads and their states, or fold it to see its count. **Open project…** is below the list.
 
-The bell button toggles alerts (unread markers stay when muted). While Plait is active, alerts for other threads appear as toasts in the upper right (up to three, 8 seconds each). While inactive, a bundled app posts macOS notifications (subject to system permission and Focus).
+Use **Show or Hide Archived Threads** in the menu or palette. Rename or archive threads from thread actions or the **Thread** menu; archiving only hides a thread from the default list and never stops an active run. The host streams live updates for the newest 200 threads; use **Refresh Threads and Folders** in the **Thread** menu or the palette for older threads and folder state. **Mute or Unmute Thread Alerts** and **Show Hidden Projects** are there too.
+
+**Mute or Unmute Thread Alerts** toggles alerts (unread markers stay when muted). While Plait is active, alerts for other threads appear as toasts in the upper right (up to three, 8 seconds each). While inactive, a bundled app posts macOS notifications (subject to system permission and Focus).
 
 ### Tabs
 

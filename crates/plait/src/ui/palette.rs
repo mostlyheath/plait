@@ -1237,6 +1237,34 @@ mod tests {
     }
 
     #[test]
+    fn a_thread_is_found_by_its_folder_and_its_title_together() {
+        // Two projects of one name: only the folder's path tells them apart.
+        let entries = vec![
+            entry(
+                "a",
+                "Repair the tests",
+                "api · Done · p/m · /work/customer-a/api",
+                "Threads",
+                true,
+            ),
+            entry(
+                "b",
+                "Repair the tests",
+                "api · Done · p/m · /work/customer-b/api",
+                "Threads",
+                true,
+            ),
+        ];
+        // Matching is fuzzy, so the other may follow; the named folder is first.
+        for (query, first) in [("customer-a repair", 0), ("customer-b repair", 1)] {
+            let rows = arrange(&entries, query);
+            assert_eq!(rows[0].item(), Some(first), "{query}");
+        }
+        assert_eq!(arrange(&entries, "api repair").len(), 2);
+        assert!(arrange(&entries, "customer-c repair").is_empty());
+    }
+
+    #[test]
     fn the_detail_is_searched_and_every_term_must_match() {
         let entries = entries();
         // A provider name appears only in the detail.
