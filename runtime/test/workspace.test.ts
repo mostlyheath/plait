@@ -41,7 +41,7 @@ test('a checkout opens at its top folder, and each change moves the revision', a
   assert.equal(opened.path, repo);
   assert.equal(opened.revision, 1);
   assert.equal(notified(), 1);
-  await assert.rejects(workspace.handle({ op: 'workspace_open_project', path: join(root, 'missing') }), code('invalid_request'));
+  await assert.rejects(workspace.handle({ op: 'workspace_open_project', path: join(root, 'missing') }), code('checkout_missing'));
   await assert.rejects(workspace.handle({ op: 'workspace_open_project', path: 'relative' }), code('invalid_request'));
   await workspace.handle({ op: 'workspace_hide_project', path: repo, hidden: true });
   let view: any = await workspace.handle({ op: 'workspace_view' });

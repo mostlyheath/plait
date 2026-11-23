@@ -10,6 +10,7 @@ import { boundSnapshot, pushMessage } from './transcript.ts';
 import { title } from './text.ts';
 import { CommandOutputs } from './tool-output.ts';
 import { LinearCache } from './linear/cache.ts';
+import { checkRoot } from './safety.ts';
 import type { FileIdentity, Postimage } from './safety.ts';
 
 type Row = Record<string, unknown>;
@@ -267,6 +268,19 @@ export class Store {
     // FULL synchronous commits provenance before a tool reports completion.
     this.db.prepare('INSERT INTO postimages VALUES (?,?,?) ON CONFLICT(thread_id,path) DO UPDATE SET image=excluded.image')
       .run(id, image.path, JSON.stringify(image));
+  }
+  async refreshRootIdentity(id: string, root: string): Promise<FileIdentity> {
+    const saved = this.rootIdentity(id);
+    const current = await checkRoot(root, saved);
+    if (saved.dev !== current.dev) {
+      this.transaction(() => {
+        // Do not overwrite a newer identity observed by another operation.
+        const changed = this.db.prepare('UPDATE roots SET identity=? WHERE id=? AND identity=?')
+          .run(JSON.stringify(current), id, JSON.stringify(saved));
+        if (changed.changes !== 1) fail('permission_denied', 'Checkout identity changed while refreshing.');
+      });
+    }
+    return current;
   }
   rootIdentity(id: string): FileIdentity {
     const row = this.db.prepare('SELECT identity FROM roots WHERE id=?').get(id);

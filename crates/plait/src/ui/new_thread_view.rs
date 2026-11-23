@@ -357,8 +357,14 @@ impl Plait {
                             .flex_1()
                             .min_w_0()
                             .text_color(rgb(colors().red))
-                            .child(a11y_text("draft-error", error.clone())),
+                            .child(a11y_text(
+                                "draft-error",
+                                self.identity_recovery_message(error),
+                            )),
                     )
+                    .when(self.has_identity_recovery(error), |el| {
+                        el.child(self.identity_recovery_button(cx))
+                    })
                     .into_any_element(),
             );
         }

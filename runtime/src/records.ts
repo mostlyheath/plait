@@ -252,7 +252,7 @@ export class Records {
     if (!row) fail('not_found', 'A complete record for this thread is not available.');
     const started = Date.now();
     return this.queue(snapshot.checkout, async () => {
-      await checkRoot(snapshot.checkout, this.store.rootIdentity(thread));
+      await this.store.refreshRootIdentity(thread, snapshot.checkout);
       const lease = await acquireCheckout(snapshot.checkout, 'exclusive');
       const before = randomUUID(), id = randomUUID();
       lease.cleanup = new CleanupProof();

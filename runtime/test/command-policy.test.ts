@@ -108,8 +108,9 @@ test('agent_resources reports under the checkout\'s current policy, only for ver
     { op: 'agent_resources', checkout: f.repo },
     { op: 'agent_resources', protocol_version: 3 },
     { op: 'agent_resources', checkout: f.repo, thread_id: 't', protocol_version: 3 },
-    { op: 'agent_resources', checkout: join(f.base, 'missing'), protocol_version: 3 },
   ]) assert.equal((await send(f.store, invalid)).error?.code, 'invalid_request', JSON.stringify(invalid));
+  const missing = { op: 'agent_resources', checkout: join(f.base, 'missing'), protocol_version: 3 };
+  assert.equal((await send(f.store, missing)).error?.code, 'checkout_missing');
 });
 
 

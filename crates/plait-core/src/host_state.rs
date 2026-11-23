@@ -145,6 +145,24 @@ impl HostState {
         Ok(())
     }
 
+    /// Refresh only identities captured by the completed background check.
+    pub fn refresh_checkout(&mut self, old: &CheckoutKey, refreshed: &CheckoutKey) {
+        for key in self.expected_checkouts.values_mut() {
+            if key == old {
+                *key = refreshed.clone();
+            }
+        }
+    }
+
+    /// Rebind all threads belonging to the explicitly reopened checkout.
+    pub fn reopen_checkout(&mut self, key: &CheckoutKey) {
+        for expected in self.expected_checkouts.values_mut() {
+            if expected.host == key.host && expected.root == key.root {
+                *expected = key.clone();
+            }
+        }
+    }
+
     pub fn expected_checkout(&self, id: &str) -> Option<&CheckoutKey> {
         self.expected_checkouts.get(&self.thread_key(id))
     }

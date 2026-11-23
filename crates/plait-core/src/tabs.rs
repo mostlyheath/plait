@@ -424,6 +424,44 @@ impl WindowTabs {
         Ok(())
     }
 
+    /// Explicitly accept the newly opened identity for every tab at this path.
+    pub fn reopen_checkout(&mut self, key: &CheckoutKey) -> Result<(), TabError> {
+        let count = self
+            .tabs
+            .iter()
+            .filter(|tab| {
+                let checkout = tab.session().target().checkout();
+                checkout.host == key.host && checkout.root == key.root
+            })
+            .count() as u64;
+        self.serial
+            .checked_add(count)
+            .ok_or(TabError::IdentityExhausted)?;
+        let update = |target: &mut TabTarget| {
+            let checkout = match target {
+                TabTarget::Existing { checkout, .. }
+                | TabTarget::Draft { checkout, .. }
+                | TabTarget::Worktrees { checkout }
+                | TabTarget::Issues { checkout } => checkout,
+            };
+            if checkout.host == key.host && checkout.root == key.root {
+                *checkout = key.clone();
+            }
+        };
+        for tab in &mut self.tabs {
+            let checkout = tab.session().target().checkout();
+            if checkout.host == key.host && checkout.root == key.root {
+                self.serial += 1;
+                tab.lifetime.generation = self.serial;
+                update(&mut tab.content.session_mut().target);
+            }
+        }
+        for tab in &mut self.closed {
+            update(&mut tab.target);
+        }
+        Ok(())
+    }
+
     /// Existing threads deduplicate; each new draft carries its own identity.
     /// Connection generations come from the connection owner, never selection.
     pub fn open(&mut self, target: TabTarget, connection: Option<u64>) -> Result<TabId, TabError> {

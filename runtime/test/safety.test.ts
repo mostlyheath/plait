@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { test } from 'node:test';
 import { fileAction, dirtyPaths, identities, safePath, acquireCheckout, acquireCommonMetadata, checkoutLockName, rootIdentity, checkRoot } from '../src/safety.ts';
+import { Store } from '../src/store.ts';
 import { prepareBuildCache } from '../src/build-cache.ts';
 import { validate } from '../src/protocol.ts';
 import type { Snapshot } from '../src/protocol.ts';
@@ -91,6 +92,22 @@ test('atomic edits preserve mode and reject changed approval content; replaced c
   await writeFile(join(root, 'code.sh'), 'replacement');
   await assert.rejects(checkRoot(root, saved), /identity changed/);
   await assert.rejects(fileAction(root, 'read', 'code.sh', undefined, undefined, saved));
+});
+
+test('saved checkout identity refreshes after a device change and refuses replacements', async t => {
+  const { root, base } = await setup(t);
+  const store = new Store(base); t.after(() => store.close());
+  const current = await rootIdentity(root);
+  const saved = { ...current, dev: current.dev === '0' ? '1' : '0' };
+  store.db.prepare('INSERT INTO roots VALUES (?,?)').run('thread', JSON.stringify(saved));
+  assert.deepEqual(await store.refreshRootIdentity('thread', root), current);
+  assert.deepEqual(store.rootIdentity('thread'), current);
+  store.db.prepare('UPDATE roots SET identity=? WHERE id=?').run(JSON.stringify({ ...saved, ino: '0' }), 'thread');
+  await assert.rejects(store.refreshRootIdentity('thread', root), /identity changed/);
+  store.db.prepare('UPDATE roots SET identity=? WHERE id=?').run(JSON.stringify(saved), 'thread');
+  await rename(root, join(base, 'original')); await symlink(join(base, 'original'), root);
+  await assert.rejects(store.refreshRootIdentity('thread', root));
+  assert.deepEqual(store.rootIdentity('thread'), saved);
 });
 
 test('provenance never exempts ignored parents and never adopts a later unrelated file state', async t => {

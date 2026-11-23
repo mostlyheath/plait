@@ -429,7 +429,13 @@ impl Plait {
                     } else {
                         colors().muted
                     }))
-                    .child(a11y_text("thread-control-note", note.clone())),
+                    .child(a11y_text(
+                        "thread-control-note",
+                        self.identity_recovery_message(note),
+                    ))
+                    .when(self.has_identity_recovery(note), |el| {
+                        el.child(self.identity_recovery_button(cx))
+                    }),
             );
         }
         content.into_any_element()

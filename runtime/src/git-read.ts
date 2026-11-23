@@ -154,7 +154,9 @@ async function localRead(request: Record<string, unknown>): Promise<Buffer> {
     if (!info.isDirectory()) throw new Error('Not a directory');
     const identity = { dev: String(info.dev), ino: String(info.ino) };
     const expected = request.identity as typeof identity | null | undefined;
-    if (expected && (expected.dev !== identity.dev || expected.ino !== identity.ino)) throw new Error('Checkout identity changed.');
+    // A remounted volume can change dev after a restart; the same canonical path and inode is still this folder.
+    if (expected && expected.ino !== identity.ino) throw new Error('Checkout identity changed.');
+    if (expected && expected.dev !== identity.dev && !root.equals(path)) throw new Error('Checkout identity changed.');
     let result: unknown = { root: root.toString('base64'), identity };
     if (request.read === 'main_checkout') {
       const cwd = new TextDecoder('utf-8', { fatal: true }).decode(root);

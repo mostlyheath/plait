@@ -725,7 +725,7 @@ export class Runtime {
     let authorization: RunAuthorization | undefined;
     let admitted: Session | undefined;
     try {
-      await checkRoot(snapshot.checkout, this.store.rootIdentity(id));
+      await this.store.refreshRootIdentity(id, snapshot.checkout);
       // Recovery owns this host's lease until its record finishes. Accept now;
       // the detached run waits for it instead of blocking the request deadline.
       // A placement probe briefly holds the lease; wait for it rather than collide.
@@ -829,7 +829,7 @@ export class Runtime {
         return duplicate;
       }
       const current = this.snapshot(id);
-      this.usable(current); await checkRoot(current.checkout,this.store.rootIdentity(id));
+      this.usable(current); await this.store.refreshRootIdentity(id, current.checkout);
       const refs = this.store.images.refs(id,images);
       if (refs.length && this.imageInput(current) === 'no') fail('model_unavailable','This model cannot take images.');
       const result = { thread_id: id, request_id: request.request_id, accepted: true };

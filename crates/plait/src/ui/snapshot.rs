@@ -34,6 +34,7 @@ use plait_core::{
     model::DiffMode,
     state::Load,
 };
+use plait_engine::ownership::CheckoutKeyExt;
 use std::{
     path::{Path, PathBuf},
     process::Command,
@@ -3288,6 +3289,16 @@ fn draft_scenes_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
         plait.sync_composer(cx);
     });
     harness.capture(&format!("draft-unconfirmed-{suffix}"));
+    harness.update(|plait, _, _| {
+        let path = plait.host.creation.checkout.clone();
+        plait.draft.pending = None;
+        plait.draft.sending = None;
+        plait.draft.error = Some(Plait::identity_message(&path));
+        plait.tabs.identity.recovery = Some((path, false));
+    });
+    harness.capture(&format!("draft-project-changed-{suffix}"));
+    harness.update(|plait, _, _| plait.tabs.identity.recovery = None);
+
     harness.update(|plait, window, cx| {
         plait.draft.pending = None;
         plait.draft.error = None;
@@ -7133,6 +7144,47 @@ fn sending_stops_for_a_replaced_checkout() {
         snapshot.id = other.into();
         plait.host.thread.snapshot = Some(Arc::new(snapshot));
         assert!(!plait.can_submit(), "a known mismatch still blocks sending");
+    });
+    drop(harness);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[core::prelude::v1::test]
+fn admission_refreshes_stored_checkout_identity() {
+    if !isolated("admission_refreshes_stored_checkout_identity") {
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("plait-admission-refresh-{}", std::process::id()));
+    let repository = fixture_repository(&root);
+    let mut harness = Harness::new(&repository, None, 900., 600.);
+    harness.connect(&repository, false);
+    harness.update(|plait, _, cx| {
+        let current = plait.state.checkout_key().unwrap().clone();
+        let mut old = current.clone();
+        old.device = old.device.wrapping_add(1);
+        plait.state.reopen_checkout(old.clone());
+        plait.tabs.identity.checkouts.insert(
+            old.root.clone(),
+            plait_core::tabs::DirectoryIdentity {
+                device: old.device,
+                inode: old.inode,
+            },
+        );
+        plait.host.bind_checkout("refresh-test", &old).unwrap();
+        let refreshed = old.verify().unwrap();
+        plait.refresh_checkout_identity(&old, &refreshed, cx);
+        assert_eq!(plait.state.checkout_key(), Some(&current));
+        assert_eq!(plait.host.expected_checkout("refresh-test"), Some(&current));
+        assert_eq!(
+            plait
+                .tabs
+                .identity
+                .checkouts
+                .get(&current.root)
+                .unwrap()
+                .device,
+            current.device
+        );
     });
     drop(harness);
     std::fs::remove_dir_all(root).unwrap();

@@ -904,3 +904,17 @@ fn worktrees_share_every_window_transition_without_becoming_threads() {
     w.project_removed(&[checkout("/repo")]).unwrap();
     assert!(w.tabs().is_empty());
 }
+
+#[test]
+fn reopen_checkout_updates_all_matching_tabs() {
+    let mut w = window();
+    let a = open(&mut w, "a");
+    let b = w.open(draft("b"), Some(1)).unwrap();
+    let stamp = w.read_stamp(b).unwrap();
+    let mut resolved = checkout("/repo");
+    resolved.directory.as_mut().unwrap().inode = 99;
+    w.reopen_checkout(&resolved).unwrap();
+    assert!(!w.accepts_read(stamp));
+    assert_eq!(w.get(a).unwrap().session().target().checkout(), &resolved);
+    assert_eq!(w.get(b).unwrap().session().target().checkout(), &resolved);
+}
