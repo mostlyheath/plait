@@ -149,6 +149,24 @@ pub fn decode(bytes: &[u8], window: WindowId, context: &RestoreContext<'_>) -> R
         let Ok(mut saved) = serde_json::from_value::<SavedTab>(entry.clone()) else {
             continue;
         };
+        let checkout = match &mut saved.target {
+            TabTarget::Existing { checkout, .. }
+            | TabTarget::Draft { checkout, .. }
+            | TabTarget::Worktrees { checkout }
+            | TabTarget::Issues { checkout } => checkout,
+        };
+        if let Some(current) = context.checkouts.iter().find(|current| {
+            current.host == checkout.host
+                && current.root == checkout.root
+                && match (checkout.directory, current.directory) {
+                    // Device numbers can change when a volume is mounted again.
+                    (Some(saved), Some(current)) => saved.inode == current.inode,
+                    (None, None) => true,
+                    _ => false,
+                }
+        }) {
+            *checkout = current.clone();
+        }
         if let TabTarget::Draft { id, checkout } = &saved.target
             && id == "draft"
             && let Some(target) = context.drafts.iter().find(|t| t.checkout() == checkout)
@@ -332,6 +350,21 @@ mod tests {
         }
         let r = decode(&vec![b' '; FILE_LIMIT + 1], WindowId(99), &c.context());
         assert_eq!(r.status, RestoreStatus::TooLarge);
+    }
+
+    #[test]
+    fn restored_checkout_refreshes_device_only_for_matching_inode() {
+        let (w, mut catalog) = source(1);
+        let saved = value(&w, &catalog);
+        catalog.checkouts[0].directory.as_mut().unwrap().device = 99;
+        let restored = read(&saved, &catalog);
+        assert_eq!(restored.window.tabs().len(), 1);
+        assert_eq!(
+            restored.window.tabs()[0].session().target().checkout(),
+            &catalog.checkouts[0]
+        );
+        catalog.checkouts[0].directory.as_mut().unwrap().inode = 99;
+        assert!(read(&saved, &catalog).window.tabs().is_empty());
     }
 
     #[test]

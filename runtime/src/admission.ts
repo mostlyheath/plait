@@ -140,7 +140,7 @@ export class Admissions {
     if (request.source_thread_id) {
       const source = this.store.get(request.source_thread_id);
       if (source.checkout !== info.checkout) fail('permission_denied', 'The linked thread belongs to another checkout.');
-      await checkRoot(source.checkout, this.store.rootIdentity(source.id));
+      await this.store.refreshRootIdentity(source.id, source.checkout);
     }
     const isolated = request.placement === 'worktree' || request.placement === 'project' && info.busy && info.auto_worktree;
     const result: Admission = { request_id: request.request_id, state: 'preparing', thread_id: null, checkout: info.checkout, worktree: null, source_thread_id: request.source_thread_id ?? null, error: null };
@@ -179,7 +179,8 @@ export class Admissions {
         result.error = reply.operation.error;
         if (result.worktree) result.checkout = result.worktree.path;
       } else {
-        await checkRoot(plan.input.checkout, plan.identity);
+        plan.identity = await checkRoot(plan.input.checkout, plan.identity);
+        this.store.db.prepare('UPDATE thread_admissions SET plan=? WHERE request_id=?').run(JSON.stringify(plan), id);
         await requireCleanup(plan.input.checkout);
         const { checkout, harness, provider, model_id, mode, thinking } = plan.input;
         const reply = await this.createHere({ op: 'create_thread', protocol_version: 6, request_id: plan.here_id, checkout, harness, provider, model_id, ...(mode === undefined ? {} : { mode }), ...(thinking === undefined ? {} : { thinking }) }, plan.identity) as { thread: Snapshot };

@@ -34,7 +34,7 @@ export function commandPolicy(settings: Settings, root: string, identity: FileId
   if (saved === null) return 'trusted';
   try {
     const record = JSON.parse(saved) as { policy?: unknown; root?: Partial<FileIdentity> } | null;
-    return record?.policy === 'sandboxed' && record.root?.dev === identity.dev && record.root?.ino === identity.ino
+    return record?.policy === 'sandboxed' && record.root?.ino === identity.ino
       ? 'sandboxed' : 'trusted';
   } catch { return 'sandboxed'; }
 }

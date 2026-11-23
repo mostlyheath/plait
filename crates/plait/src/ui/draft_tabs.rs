@@ -422,10 +422,26 @@ impl Plait {
                             "Creation is still preparing. Retry with the same request.".into(),
                         )
                     });
+                if super::host::is_checkout_identity_changed(&error) {
+                    let path = created
+                        .checkout
+                        .clone()
+                        .unwrap_or_else(|| self.host.creation.checkout.clone());
+                    draft.error = Some(Self::identity_message(&path));
+                    self.tabs.identity.recovery = Some((path, false));
+                }
                 fail(&mut draft, error);
                 None
             }
             Err(error) => {
+                if super::host::is_checkout_identity_changed(&error) {
+                    let path = created
+                        .checkout
+                        .clone()
+                        .unwrap_or_else(|| self.host.creation.checkout.clone());
+                    draft.error = Some(Self::identity_message(&path));
+                    self.tabs.identity.recovery = Some((path, false));
+                }
                 fail(&mut draft, error);
                 None
             }
@@ -612,7 +628,10 @@ impl Plait {
 }
 
 fn fail(draft: &mut Draft, error: host::Error) {
-    if matches!(error, host::Error::Rejected(_)) {
+    if super::host::is_checkout_identity_changed(&error) {
+        draft.pending = None;
+        draft.sending = None;
+    } else if matches!(error, host::Error::Rejected(_)) {
         draft.pending = None;
         draft.sending = None;
         draft.error = Some(format!("Thread not created. {error}"));
