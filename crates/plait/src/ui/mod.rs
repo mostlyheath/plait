@@ -267,7 +267,7 @@ impl Plait {
         if std::mem::replace(&mut self.machines.active, machine) != self.machines.active {
             self.host.connection.threads_mut().clear();
             self.navigation.available.clear();
-            self.host_workspace = Default::default();
+            self.host_workspace = self.host_workspace.for_another_machine();
             self.switch_machine_tabs(window, cx);
             self.rebuild_projects(cx);
         }

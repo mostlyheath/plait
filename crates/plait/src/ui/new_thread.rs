@@ -116,7 +116,9 @@ impl Plait {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let root = if self.project_of(&self.host.creation.checkout) == checkout {
+        let root = if !self.host_workspace.checkout_carried
+            && self.project_of(&self.host.creation.checkout) == checkout
+        {
             self.host.creation.checkout.clone()
         } else {
             checkout

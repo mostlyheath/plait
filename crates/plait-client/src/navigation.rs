@@ -264,6 +264,29 @@ pub fn needs_attention(thread: &ThreadSummary, unread: &BTreeSet<String>) -> boo
         )
 }
 
+/// What a window does with its current folder once the selected machine's
+/// projects are known. A folder belongs to the machine it was chosen on.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Adoption {
+    /// The folder is one of this machine's projects.
+    Keep,
+    /// It is not: open this project of the machine instead.
+    Open(PathBuf),
+    /// It is not, and the machine has no project to open.
+    Unlisted,
+}
+
+pub fn adopt(current: &Path, preferences: &Preferences, projects: &[Project]) -> Adoption {
+    let project = preferences.project_of(current);
+    if projects.iter().any(|item| item.checkout == project) {
+        Adoption::Keep
+    } else if let Some(first) = projects.first() {
+        Adoption::Open(first.checkout.clone())
+    } else {
+        Adoption::Unlisted
+    }
+}
+
 /// Host list order is authoritative within a project; projects follow newest activity.
 pub fn projects(
     threads: &[ThreadSummary],
@@ -495,6 +518,60 @@ mod tests {
                 false
             )
             .is_empty()
+        );
+    }
+
+    #[test]
+    fn adoption_respects_machine_projects_and_worktree_grouping() {
+        let mut preferences = Preferences::default();
+        preferences.open(Path::new("/local"));
+        preferences.remember_worktree("/local-tree".into(), "/local".into(), "branch".into());
+        let listed = projects(&[], &preferences, Path::new("/remote"), &local(), false);
+        assert_eq!(
+            adopt(Path::new("/local"), &preferences, &listed),
+            Adoption::Keep
+        );
+        assert_eq!(
+            adopt(Path::new("/local-tree"), &preferences, &listed),
+            Adoption::Keep
+        );
+        assert_eq!(
+            adopt(Path::new("/remote"), &preferences, &listed),
+            Adoption::Open("/local".into())
+        );
+        assert_eq!(
+            adopt(Path::new("/remote"), &preferences, &[]),
+            Adoption::Unlisted
+        );
+        // A hidden project is not a place to land.
+        preferences.hide(Path::new("/local"));
+        let hidden = projects(
+            &[thread("a", "/local", ThreadStatus::Idle, 1)],
+            &preferences,
+            Path::new("/remote"),
+            &local(),
+            false,
+        );
+        assert!(hidden.is_empty());
+        assert_eq!(
+            adopt(Path::new("/remote"), &preferences, &hidden),
+            Adoption::Unlisted
+        );
+    }
+
+    #[test]
+    fn carried_checkout_is_not_added_to_projects() {
+        let preferences = Preferences {
+            opened: vec!["/local".into()],
+            ..Default::default()
+        };
+        let listed = projects(&[], &preferences, Path::new("/remote"), &local(), false);
+        assert_eq!(
+            listed
+                .iter()
+                .map(|project| project.checkout.as_path())
+                .collect::<Vec<_>>(),
+            vec![Path::new("/local")]
         );
     }
 
