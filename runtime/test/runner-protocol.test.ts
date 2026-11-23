@@ -60,3 +60,28 @@ test('commands and events reject wrong field types', () => {
   for (const event of invalidEvents) assert.throws(() => parseRunnerMessage(event));
   assert.deepEqual(parseCommand({ type: 'stop' }), { type: 'stop' });
 });
+
+
+test('recovery protocol additions validate and obey framing and sequence limits', () => {
+  const ping = { type: 'ping', nonce: 'nonce' };
+  assert.deepEqual(new FrameDecoder(COMMAND_LIMIT, parseCommand).push(encodeFrame(ping, COMMAND_LIMIT)), [ping]);
+  assert.throws(() => parseCommand({ type: 'ping', nonce: 3 }));
+  assert.throws(() => encodeFrame({ type: 'ping', nonce: 'x'.repeat(COMMAND_LIMIT) }, COMMAND_LIMIT));
+  const events = [
+    { type: 'approval_settled', seq: 1, id: 'approval' },
+    { type: 'forget', seq: 2, path: 'file' },
+    { type: 'pong', seq: 3, nonce: 'nonce' },
+  ];
+  const sequence = new EventSequence();
+  const decoder = new FrameDecoder(EVENT_LIMIT, parseRunnerMessage);
+  for (const event of events) {
+    const [parsed] = decoder.push(encodeFrame(event, EVENT_LIMIT));
+    assert.deepEqual(parsed, event);
+    if (parsed.type === 'attached') throw new Error('expected event');
+    sequence.accept(parsed);
+    assert.throws(() => sequence.accept(parsed));
+    const field = event.type === 'approval_settled' ? 'id' : event.type === 'forget' ? 'path' : 'nonce';
+    assert.throws(() => parseRunnerMessage({ ...event, [field]: null }));
+    assert.throws(() => encodeFrame({ ...event, [field]: 'x'.repeat(EVENT_LIMIT) }, EVENT_LIMIT));
+  }
+});

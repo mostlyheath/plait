@@ -226,7 +226,7 @@ test('records older than 30 days are pruned at startup and on demand, with their
   const db = new DatabaseSync(join(h.store, 'host.sqlite'));
   db.prepare('UPDATE records SET created_at=? WHERE run_request=?').run(old, 'r2');
   db.close();
-  const again = new Runtime(h.store, models(), new Set(['faux']));
+  const again = new Runtime(h.store, models(), new Set(['faux'])); await again.recover();
   t.after(() => again.close());
   await eventually(async () => pairs(again.store.db).length, count => count === 0);
   assert.deepEqual(await refs(h.store), []);

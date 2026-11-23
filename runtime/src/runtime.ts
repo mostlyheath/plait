@@ -28,6 +28,7 @@ import { openNodeSqliteDatabase } from '@earendil-works/pi-durable/storage/sqlit
 import { PROTOCOL_VERSIONS, fail, failure, queuedView, summaryView, THINKING_LEVELS, validate, version, view } from './protocol.ts';
 import type { ApprovalMode, HarnessId, ModelChoice, Protocol, QueueMode, Request, Snapshot, InputRecord, ThinkingLevel } from './protocol.ts';
 import { Store } from './store.ts';
+import { RunnerRegistry } from './runner/registry.ts';
 import { Records } from './records.ts';
 import { checkout, projectKind, gitCheckout, dirtyPaths, fileAction, acquireCheckout, rootIdentity, checkRoot, verifyExpectedIdentity } from './safety.ts';
 import type { FileIdentity, LeaseHandle } from './safety.ts';
@@ -150,7 +151,6 @@ export class Runtime {
     this.checkoutWatcher = new CheckoutWatcher((folder, refsChanged) => { if (folder && refsChanged) this.workspace.refreshSummary(folder); this.changed(WORKSPACE_TOPIC); });
     this.workspace.setWatcher(this.checkoutWatcher);
     this.linear = new LinearService(this.store, directory);
-    this.records.start();
     this.codex = new CodexHarness(this.store, { directory: join(directory, 'tools') });
     this.claude = new ClaudeHarness(this.store, { sdk: sdkDirectory(directory), cwd: directory });
     this.worktrees = new Worktrees(this.store, directory, (request, id) => this.prepareWorktreeThread(request, id), () => this.changed('#'), root => this.active.has(root) || this.records.busy(root), () => this.admitWork(), {
@@ -158,6 +158,26 @@ export class Runtime {
       removed: folder => this.workspace.removedWorktree(folder),
     });
     this.admissions = new Admissions(this.store, this.worktrees, this.capacity, (input, identity) => this.handle(input, identity), root => this.active.has(root) || this.records.busy(root) || this.store.waiters.line(root).some(waiter => waiter.kind === 'checkout' || waiter.state === 'waiting'), () => this.admitWork());
+  }
+  /** Reconcile persisted work before accepting requests. */
+  async recover(): Promise<void> {
+    const entries = await new RunnerRegistry(this.directory).scan();
+    for (const entry of entries) {
+      // TODO(PR 4): reconcile live and finished runners before interrupting threads.
+      console.error(`Runner ${entry.manifest.run_id}: ${entry.status}`);
+    }
+    for (const snapshot of this.store.recoverable()) {
+      if (snapshot.status === 'running' || snapshot.status === 'awaiting_approval') {
+        snapshot.status = 'interrupted';
+        snapshot.pending_approval = null;
+        snapshot.live_text = '';
+        snapshot.live_reasoning = ''; snapshot.retry = null;
+        snapshot.error = { code: 'interrupted', message: 'Host stopped. Effects may have completed; inspect the checkout before a new submission.' };
+        for (const tool of snapshot.tools) if (tool.status === 'running') tool.status = 'interrupted';
+        this.store.save(snapshot);
+      }
+    }
+    this.records.start();
   }
   /** Validate the selected harness before reserving filesystem effects. */
   private async prepareWorktreeThread(request: WorktreeCreate, id: string): Promise<Snapshot> {

@@ -26,4 +26,4 @@ runtime.store.images.read=(thread,id,offset)=>{
   }
   return result;
 };
-try { await serve(runtime); } finally { await runtime.close(); }
+try { await runtime.recover(); await serve(runtime); } finally { await runtime.close(); }
