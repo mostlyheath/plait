@@ -1,6 +1,6 @@
 //! Storage fixtures never read or approve a real project's output.
 use super::*;
-use plait_core::host::build_output::{Info, Kind, Phase, Progress};
+use plait_client::host::build_output::{Info, Kind, Phase, Progress};
 use plait_protocol::build_output::Outcome;
 fn choice(h: &mut Harness) {
     h.update(|p, w, cx| {

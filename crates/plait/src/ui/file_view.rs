@@ -14,7 +14,7 @@ use super::{
     ways_out,
 };
 use gpui::{prelude::*, *};
-use plait_core::{
+use plait_client::{
     file_view::{self, Contents, FIND_LIMIT, LINE_CLIP, Opened},
     highlight::{Span, Token},
     state::Load,
@@ -59,8 +59,8 @@ impl FileViewer {
 /// A file is local: a host reconnect must not strand its read. Selecting a
 /// thread or changing checkout also retires the viewer's generation.
 fn same_file_owner(
-    owner: &plait_core::ownership::ReadStamp,
-    now: &plait_core::ownership::ReadStamp,
+    owner: &plait_client::ownership::ReadStamp,
+    now: &plait_client::ownership::ReadStamp,
 ) -> bool {
     owner.checkout == now.checkout && owner.thread == now.thread
 }
@@ -78,16 +78,16 @@ pub(super) struct Find {
     pub field: Option<Entity<TextField>>,
     pub matches: Arc<Vec<Range<usize>>>,
     pub current: usize,
-    restore_match: Option<plait_core::tabs::bookmark::TextPosition>,
+    restore_match: Option<plait_client::tabs::bookmark::TextPosition>,
     generation: u64,
     _events: Option<Subscription>,
 }
 
 impl Find {
-    pub(super) fn bookmark_match(&self) -> Option<plait_core::tabs::bookmark::TextPosition> {
+    pub(super) fn bookmark_match(&self) -> Option<plait_client::tabs::bookmark::TextPosition> {
         self.matches
             .get(self.current)
-            .map(|hit| plait_core::tabs::bookmark::TextPosition {
+            .map(|hit| plait_client::tabs::bookmark::TextPosition {
                 source: "file".into(),
                 block: 0,
                 byte: hit.start as u32,
@@ -99,7 +99,7 @@ impl Plait {
     pub(super) fn restore_find_bookmark(
         &mut self,
         target: FindIn,
-        bookmark: &plait_core::tabs::bookmark::FindBookmark,
+        bookmark: &plait_client::tabs::bookmark::FindBookmark,
         cx: &mut Context<Self>,
     ) {
         let name = match target {
@@ -964,7 +964,7 @@ fn find_status(query_empty: bool, current: usize, count: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use plait_core::file_view::prepare;
+    use plait_client::file_view::prepare;
 
     #[core::prelude::v1::test]
     fn find_status_names_the_current_match_and_the_cap() {

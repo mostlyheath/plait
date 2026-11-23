@@ -1,7 +1,7 @@
 //! Capture semantic locations before shedding a thread's rendered payload.
 use super::{Plait, Workspace, file_view::FindIn, text_field::TextField};
 use gpui::*;
-use plait_core::{
+use plait_client::{
     tabs::bookmark::*,
     transcript::{self, Row},
 };
@@ -82,7 +82,7 @@ impl Plait {
                                 .get(top.item_ix)
                                 .and_then(|slot| transcript::resolve(s, *slot))
                         })
-                        .and_then(plait_core::history::Key::row)
+                        .and_then(plait_client::history::Key::row)
                         .as_ref(),
                 ),
                 pages: 1,
@@ -102,7 +102,8 @@ impl Plait {
                 } else {
                     selected.map(|key| key.path.to_string_lossy().into_owned())
                 },
-                staged: selected.is_some_and(|key| key.mode == plait_core::model::DiffMode::Staged),
+                staged: selected
+                    .is_some_and(|key| key.mode == plait_client::model::DiffMode::Staged),
                 scope: w
                     .turn_review
                     .target
@@ -303,7 +304,7 @@ impl Plait {
         {
             self.clear_turn_review();
             self.workspace.turn_review.window = Some(window.window_handle());
-            self.workspace.turn_review.target = Some(plait_core::review::recorded::Target {
+            self.workspace.turn_review.target = Some(plait_client::review::recorded::Target {
                 thread,
                 checkout: self.host.creation.checkout.clone(),
                 record: record.clone(),

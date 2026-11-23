@@ -16,8 +16,6 @@ for evidence and limits.
 
 ### Next
 
-- Split `plait-core` into `plait-protocol`, `plait-engine`, and `plait-client`
-  so clients link only the protocol and client layers; see [Architecture](ARCHITECTURE.md#crate-boundaries).
 - Show several independent machines in one sidebar.
 - Update Linux hosts in place, from the machine and from the Mac. Prebuilt
   Linux hosts are published with each release and install from the Mac.

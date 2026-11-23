@@ -1,7 +1,7 @@
 //! Creating and switching local branches.
 //!
 //! The branch name in Changes and in the Git inspector is a control that opens
-//! the palette over the open checkout's local branches. plait-core reads them
+//! the palette over the open checkout's local branches. plait-client reads them
 //! when the palette opens and runs the chosen write on the background
 //! executor; its result appears under the commit box like any other Git write.
 
@@ -14,7 +14,7 @@ use super::{
     thread_controls::{TextTooltip, locked},
 };
 use gpui::{prelude::*, *};
-use plait_core::{
+use plait_client::{
     git::{BRANCH_LIMIT, Branch, WriteOp},
     state::Load,
 };
@@ -273,7 +273,7 @@ impl Plait {
 #[cfg(test)]
 mod tests {
     use super::{branch_item, create_item};
-    use plait_core::git::Branch;
+    use plait_client::git::Branch;
 
     fn branch(name: &str, current: bool) -> Branch {
         Branch {

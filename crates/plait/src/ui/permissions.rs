@@ -13,7 +13,7 @@ use super::{
     thread_controls::TextTooltip,
 };
 use gpui::{prelude::*, *};
-use plait_core::host::harness::HarnessId;
+use plait_client::host::harness::HarnessId;
 use std::rc::Rc;
 
 /// What to do with the mode id chosen from the menu.

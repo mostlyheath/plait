@@ -12,7 +12,7 @@ use super::{
     composer::{Composer, ComposerEvent},
 };
 use gpui::*;
-use plait_core::{
+use plait_client::{
     compose::thinking_levels,
     host::{ApprovalMode, Model, ModelChoice, ThinkingLevel, harness::HarnessId},
 };
@@ -20,7 +20,7 @@ use plait_core::{
 #[derive(Default)]
 pub(super) struct Draft {
     pub(super) id: Option<String>,
-    pub(super) saved: plait_core::session::Draft,
+    pub(super) saved: plait_client::session::Draft,
     pub(super) pending: Option<super::draft_tabs::Pending>,
     /// On screen in the conversation area, in place of a thread.
     pub(super) open: bool,
@@ -52,7 +52,7 @@ pub(super) struct Sending {
     /// The creation request it waits on.
     pub(super) request_id: String,
     pub(super) text: String,
-    pub(super) images: Vec<plait_core::images::ImageRef>,
+    pub(super) images: Vec<plait_client::images::ImageRef>,
     /// The composer revision sent, so a later edit is not cleared by acceptance.
     pub(super) revision: u64,
     /// The approval mode the first run asks for, and the thread's own choice.
@@ -75,8 +75,8 @@ impl Plait {
     /// Show the draft, with any text it kept, in the active project.
     pub(super) fn open_draft(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open_tab_target(
-            plait_core::tabs::TabTarget::Draft {
-                id: plait_core::host_state::request_id(),
+            plait_client::tabs::TabTarget::Draft {
+                id: plait_client::host_state::request_id(),
                 checkout: self.tab_checkout(self.visible_project_checkout().to_owned()),
             },
             window,
@@ -122,8 +122,8 @@ impl Plait {
             checkout
         };
         self.open_tab_target(
-            plait_core::tabs::TabTarget::Draft {
-                id: plait_core::host_state::request_id(),
+            plait_client::tabs::TabTarget::Draft {
+                id: plait_client::host_state::request_id(),
                 checkout: self.tab_checkout(root),
             },
             window,
@@ -174,7 +174,7 @@ impl Plait {
         let Some(tab) = self.tabs.model.active().filter(|id| {
             self.tabs.model.get(*id).is_some_and(|tab| {
                 matches!(tab.session().target(),
-                plait_core::tabs::TabTarget::Draft { id, .. } if self.draft.id.as_ref() == Some(id))
+                plait_client::tabs::TabTarget::Draft { id, .. } if self.draft.id.as_ref() == Some(id))
             })
         }) else {
             return;
@@ -213,7 +213,7 @@ impl Plait {
         };
         if self.tabs.model.get(tab).is_some_and(|tab| {
             matches!(tab.session().target(),
-            plait_core::tabs::TabTarget::Draft { id, .. } if self.draft.id.as_ref() == Some(id))
+            plait_client::tabs::TabTarget::Draft { id, .. } if self.draft.id.as_ref() == Some(id))
         }) {
             self.request_tab(super::tab_lifecycle::Intent::Close(tab), window, cx);
         }

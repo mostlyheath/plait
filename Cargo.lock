@@ -3684,16 +3684,18 @@ dependencies = [
  "gpui_platform",
  "gpui_wgpu",
  "image",
- "plait-core",
+ "libc",
+ "plait-client",
  "plait-engine",
  "plait-protocol",
+ "plait-release",
  "serde",
  "serde_json",
  "unicode-segmentation",
 ]
 
 [[package]]
-name = "plait-core"
+name = "plait-client"
 version = "0.1.0"
 dependencies = [
  "base64",
@@ -3715,7 +3717,7 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "libc",
- "plait-core",
+ "plait-client",
  "plait-protocol",
  "plait-release",
  "plait-transport",
@@ -3742,7 +3744,7 @@ name = "plait-interop-tests"
 version = "0.1.0"
 dependencies = [
  "libc",
- "plait-core",
+ "plait-client",
  "plait-engine",
  "plait-protocol",
  "plait-release",

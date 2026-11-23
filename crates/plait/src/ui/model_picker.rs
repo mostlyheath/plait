@@ -12,7 +12,7 @@ use super::{
     theme::*,
 };
 use gpui::{prelude::*, *};
-use plait_core::{
+use plait_client::{
     host::{Model, ModelChoice, harness::HarnessId},
     preferences::{ModelKey, Preferences},
 };

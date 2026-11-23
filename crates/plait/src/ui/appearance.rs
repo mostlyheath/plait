@@ -10,7 +10,7 @@ use super::{
     thread_controls::TextTooltip,
 };
 use gpui::{prelude::*, *};
-use plait_core::theme::{self as themes, Appearance, DEFAULT_DARK, DEFAULT_LIGHT, Theme};
+use plait_client::theme::{self as themes, Appearance, DEFAULT_DARK, DEFAULT_LIGHT, Theme};
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 /// The code font choice: the families installed on this Mac, read in the

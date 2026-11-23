@@ -4,7 +4,7 @@
 use super::{CommandId, Composer, ComposerEvent, MentionFiles};
 use crate::ui::Plait;
 use gpui::*;
-use plait_core::{host::MessageRole, state::Load};
+use plait_client::{host::MessageRole, state::Load};
 
 impl Plait {
     /// The open thread's composer, or the draft's when it is open instead.

@@ -268,7 +268,7 @@ impl Plait {
         if usable == 0 {
             return Some("No model is signed in. Open Providers to sign in; its models become available as soon as the host confirms.".into());
         }
-        let providers = |models: &mut dyn Iterator<Item = &plait_core::host::Model>| {
+        let providers = |models: &mut dyn Iterator<Item = &plait_client::host::Model>| {
             models
                 .map(|model| model.provider.as_str())
                 .collect::<HashSet<_>>()
@@ -398,7 +398,7 @@ impl Plait {
 
     fn open_default_thinking(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let current = self.preferences.value.default_thinking();
-        let items = plait_core::host::ThinkingLevel::ALL
+        let items = plait_client::host::ThinkingLevel::ALL
             .iter()
             .map(|level| {
                 Item::new(
@@ -598,7 +598,7 @@ impl Plait {
             "This host asks before every edit and command. Update the host to use Automatic."
         } else {
             // Settings describes no one project, the open one included.
-            plait_core::host::policy::approval_detail(ask)
+            plait_client::host::policy::approval_detail(ask)
         };
         let harness_modes = self.harness_rows().iter().any(|row| !row.modes.is_empty());
         column()

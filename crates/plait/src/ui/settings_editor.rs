@@ -11,7 +11,7 @@ use super::{
     thread_controls::TextTooltip,
 };
 use gpui::{prelude::*, *};
-use plait_core::handoff::{self, EditorChoice, Purpose, TerminalChoice};
+use plait_client::handoff::{self, EditorChoice, Purpose, TerminalChoice};
 
 /// Which of the two settings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

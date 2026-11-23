@@ -8,7 +8,7 @@
 //! scratch host socket directly.
 
 use base64::{Engine, engine::general_purpose::STANDARD};
-use plait_core::host::Client;
+use plait_client::host::Client;
 use plait_engine::{git, host_git, lease::DirIdentity};
 use plait_protocol::host::git::{HelperInput, Outcome, Read, WireIdentity, WriteInput};
 use serde::Serialize;

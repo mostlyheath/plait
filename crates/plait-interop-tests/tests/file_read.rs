@@ -1,6 +1,6 @@
 #![cfg(unix)]
 
-use plait_core::{
+use plait_client::{
     file_view::Contents,
     host::{Client, git},
 };

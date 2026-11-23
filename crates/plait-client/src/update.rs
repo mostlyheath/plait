@@ -5,16 +5,10 @@
 //! cannot pair an older signed build with a newer version number. Blocking
 //! network and file work must run on the caller's background executor.
 
-pub mod install;
 #[cfg(target_os = "linux")]
 pub use plait_release::linux;
-pub mod setup;
 
 pub use plait_protocol::update::*;
-
-fn invalid(detail: impl Into<String>) -> Error {
-    Error::Invalid(detail.into())
-}
 
 pub use plait_release::{HostRelease, check, host_release};
 

@@ -2,7 +2,7 @@
 
 use super::{Plait, composer::Composer};
 use gpui::*;
-use plait_core::{
+use plait_client::{
     host::{MessageRole, ThreadSummary},
     session::{self, Draft, Journal, Session, Thread},
 };
@@ -350,7 +350,7 @@ impl Plait {
             let (text, revision, submitted) = composer.saved_draft();
             next.set_draft_tab(
                 id.clone(),
-                plait_core::session::DraftTab {
+                plait_client::session::DraftTab {
                     legacy: false,
                     creation: self.draft.saved_creation(),
                     checkout: self.host.creation.checkout.clone(),
@@ -368,9 +368,9 @@ impl Plait {
         // An open empty tab still survives restart before its composer is mounted.
         if self.draft.composer.is_none()
             && let Some(id) = &self.draft.id
-            && self.tabs.model.tabs().iter().any(|tab| matches!(tab.session().target(), plait_core::tabs::TabTarget::Draft { id: open, .. } if open == id))
+            && self.tabs.model.tabs().iter().any(|tab| matches!(tab.session().target(), plait_client::tabs::TabTarget::Draft { id: open, .. } if open == id))
         {
-            next.set_draft_tab(id.clone(), plait_core::session::DraftTab {
+            next.set_draft_tab(id.clone(), plait_client::session::DraftTab {
                 legacy: false,
                 creation: self.draft.saved_creation(),
                 checkout: self.host.creation.checkout.clone(),

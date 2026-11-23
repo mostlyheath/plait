@@ -1,7 +1,7 @@
 //! Tool calls in the conversation: one compact line each, a presentation per
 //! tool when opened, and one summary line for a long run of calls.
 //!
-//! What each call shows is prepared in `plait_core::tool_view`. A folded call
+//! What each call shows is prepared in `plait_client::tool_view`. A folded call
 //! keeps its list row and draws nothing, so row identity and the scroll anchor
 //! are the same whether a group is open or closed.
 
@@ -11,7 +11,7 @@ use super::{
     theme::*,
 };
 use gpui::{prelude::*, *};
-use plait_core::{
+use plait_client::{
     host::{Tool, ToolStatus},
     markdown::Kind,
     tool_view::{Part, Run, Section, ToolView},
@@ -170,7 +170,7 @@ impl Plait {
                     self.workspace.expanded_live_tools.contains(&tool.id),
                     |el| {
                         el.children(self.history_parts(
-                            plait_core::history::Key::Tool(tool.id.clone()),
+                            plait_client::history::Key::Tool(tool.id.clone()),
                             None,
                             cx,
                         ))

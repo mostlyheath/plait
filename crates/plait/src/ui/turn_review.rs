@@ -8,7 +8,7 @@ use super::{
     thread_controls::TextTooltip,
 };
 use gpui::{prelude::*, *};
-use plait_core::{
+use plait_client::{
     history::records,
     host::{self, review},
     model::{Diff, DiffMode},
@@ -388,7 +388,7 @@ impl Plait {
             self.pump(cx);
         }
     }
-    pub(super) fn recorded_file(&self) -> Option<&plait_core::review::recorded::File> {
+    pub(super) fn recorded_file(&self) -> Option<&plait_client::review::recorded::File> {
         self.workspace
             .turn_review
             .record
@@ -416,7 +416,7 @@ impl Plait {
             })
     }
     pub(super) fn recorded_current_message(&self) -> (&'static str, &str) {
-        use plait_core::state::Load;
+        use plait_client::state::Load;
         match &self.state.repository.snapshot() {
             Load::Empty | Load::Loading => (
                 "Reading diff…",

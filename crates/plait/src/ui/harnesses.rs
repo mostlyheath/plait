@@ -15,7 +15,7 @@ use super::{
     theme::*,
 };
 use gpui::{prelude::*, *};
-use plait_core::host::{
+use plait_client::host::{
     self, Model, ModelChoice, Snapshot,
     harness::{Harness, HarnessId, HarnessState, Harnesses, Request, ThreadHarness},
     providers,

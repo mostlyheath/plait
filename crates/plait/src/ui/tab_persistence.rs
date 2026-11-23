@@ -1,7 +1,7 @@
 //! Tab preferences are disposable; draft durability remains with the journal.
 use super::Plait;
 use gpui::*;
-use plait_core::{
+use plait_client::{
     session::Journal,
     tabs::{
         self, CheckoutKey, TabId, TabTarget,
@@ -25,7 +25,7 @@ use std::{
 pub(super) enum Target {
     File(PathBuf),
     Host {
-        client: plait_core::host::Client,
+        client: plait_client::host::Client,
         device: String,
         /// The device state revision last read or written, for compare-and-set.
         revision: Arc<AtomicU64>,
@@ -157,7 +157,7 @@ impl SaveRequest {
 /// Stores the tab document. A host keeps it as this device's state; a write
 /// that lost a race with another of this device's windows rereads and retries once.
 fn write_target(target: &Target, bytes: &[u8]) -> Result<(), String> {
-    use plait_core::host::device;
+    use plait_client::host::device;
     let (client, device, revision) = match target {
         Target::File(path) => return storage::write(path, bytes),
         Target::Host {
@@ -193,7 +193,7 @@ impl Plait {
     pub(super) fn device_id(&mut self, cx: &mut Context<Self>) -> String {
         if self.preferences.value.device_id.is_empty() {
             let mut preferences = self.preferences.value.clone();
-            preferences.device_id = plait_core::host_state::request_id();
+            preferences.device_id = plait_client::host_state::request_id();
             self.set_preferences(preferences, super::jump::PreferenceGroup::View, cx);
         }
         self.preferences.value.device_id.clone()
@@ -209,7 +209,7 @@ impl Plait {
         let task = cx.background_executor().spawn({
             let client = client.clone();
             let device = device.clone();
-            async move { plait_core::host::device::get_field(&client, &device, "tabs") }
+            async move { plait_client::host::device::get_field(&client, &device, "tabs") }
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = task.await;

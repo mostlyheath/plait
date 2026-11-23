@@ -2,7 +2,7 @@
 
 use super::{Plait, host::WatchLease};
 use gpui::*;
-use plait_core::{
+use plait_client::{
     host::{self, Request, ThreadSummary},
     navigation,
 };
@@ -251,7 +251,7 @@ impl Plait {
             let title = self.thread_title(&id);
             let detail = format!(
                 "{} · {}",
-                plait_core::state::project_name(&thread.checkout),
+                plait_client::state::project_name(&thread.checkout),
                 navigation::state_label(thread)
             );
             if active {
@@ -307,7 +307,7 @@ impl Plait {
             &machine,
             self.host_is_local(),
         );
-        self.no_project = plait_core::model::Project {
+        self.no_project = plait_client::model::Project {
             checkout: self.host.creation.checkout.clone(),
             name: "No project".into(),
             machines: vec![machine],

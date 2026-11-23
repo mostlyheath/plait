@@ -1,7 +1,7 @@
 //! Cold editors contain no GPUI handles, decoded pixels or completion tasks.
 use super::{Composer, draft::Draft};
 use gpui::*;
-use plait_core::tabs::bookmark::DraftBookmark;
+use plait_client::tabs::bookmark::DraftBookmark;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Serialize, Deserialize)]

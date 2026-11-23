@@ -15,7 +15,7 @@ test('production runtime edits Plait source, runs Cargo, reconnects and resumes 
   const base = await realpath(await mkdtemp('/tmp/plait-dogfood-'));
   const repo = join(base, 'repo'); const store = join(base, 'store'); const agent = join(base, 'pi');
   const source = resolve(import.meta.dirname, '../..');
-  const path = 'crates/plait-core/src/session.rs';
+  const path = 'crates/plait-client/src/session.rs';
   const before = await readFile(join(source, path), 'utf8');
   const oldConstant = 'const FILE_LIMIT: usize = 4 * 1024 * 1024;';
   const newConstant = oldConstant + '\nconst TITLE_LIMIT: usize = 72;';
@@ -28,7 +28,7 @@ test('production runtime edits Plait source, runs Cargo, reconnects and resumes 
   // Cargo builds the crate and runs the tests of the module the turn edits. The
   // whole core suite belongs to the workspace check, not inside this deadline.
   const command = (id: string) => ({ tool: { id, name: 'command', input: {
-    command: `sleep ${id === 'test_refactor' && process.env.PLAIT_VERIFY_INSTALLED_UI === '1' ? 8 : 1}; cargo test --offline --locked -p plait-core --lib session::`,
+    command: `sleep ${id === 'test_refactor' && process.env.PLAIT_VERIFY_INSTALLED_UI === '1' ? 8 : 1}; cargo test --offline --locked -p plait-client --lib session::`,
   } } });
   const replay = await replayServer([
     edit('extract_limit', '.take(72)', '.take(TITLE_LIMIT)'), edit('name_limit', oldConstant, newConstant),
@@ -48,7 +48,7 @@ test('production runtime edits Plait source, runs Cargo, reconnects and resumes 
   for (const directory of [repo, store, agent]) await mkdir(directory, { recursive: true, mode: 0o700 });
   // No user's Git metadata, ignored files, credentials, or build output enter the disposable checkout.
   await cp(join(source, 'crates'), join(repo, 'crates'), { recursive: true });
-  // plait-core embeds the bundled theme schemes at compile time.
+  // plait-client embeds the bundled theme schemes at compile time.
   await cp(join(source, 'assets', 'themes'), join(repo, 'assets', 'themes'), { recursive: true });
   for (const file of ['Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'AGENTS.md']) {
     await cp(join(source, file), join(repo, file));

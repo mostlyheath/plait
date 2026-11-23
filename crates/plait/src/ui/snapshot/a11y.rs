@@ -6,7 +6,7 @@ use super::{
 };
 use crate::ui::{Workspace, a11y::A11yFrame, settings_agent::AgentView};
 use gpui::Role;
-use plait_core::{
+use plait_client::{
     handoff::{EditorChoice, TerminalChoice},
     host::{
         MessageRole,
@@ -47,7 +47,7 @@ fn named_drafts_keep_accessibility_ids_through_title_edits() {
         p.tabs
             .model
             .open(
-                plait_core::tabs::TabTarget::Worktrees { checkout },
+                plait_client::tabs::TabTarget::Worktrees { checkout },
                 Some(p.host.connection.epoch),
             )
             .unwrap();
@@ -822,7 +822,7 @@ fn assert_admission_controls(harness: &mut Harness) {
     const WAIT: &str = "Wait needs a newer host. Nothing is queued.";
     // An idle thread whose checkout another thread is writing.
     harness.change_snapshot(|snapshot| {
-        snapshot.status = plait_core::host::ThreadStatus::Idle;
+        snapshot.status = plait_client::host::ThreadStatus::Idle;
         snapshot.pending_approval = None;
     });
     harness.update(|plait, _, _| {
@@ -835,7 +835,7 @@ fn assert_admission_controls(harness: &mut Harness) {
             .find(|thread| thread.id != snapshot.id)
             .unwrap();
         other.checkout = snapshot.checkout.clone();
-        other.status = plait_core::host::ThreadStatus::Running;
+        other.status = plait_client::host::ThreadStatus::Running;
         let other = other.id.clone();
         plait.admission.capabilities =
             Some((plait.host.connection.epoch, snapshot.checkout.clone(), true));
@@ -878,12 +878,12 @@ fn assert_admission_controls(harness: &mut Harness) {
     harness.update(|plait, window, cx| {
         plait.show_project_settings(window, cx);
         let checkout = plait.settings_checkout().to_owned();
-        let identity = plait_core::git::worktree::Identity {
+        let identity = plait_client::git::worktree::Identity {
             dev: "1".into(),
             ino: "2".into(),
         };
         plait.admission.settings_key = Some((plait.host.connection.epoch, checkout.clone()));
-        plait.admission.info = Some(plait_core::host::admission::Info {
+        plait.admission.info = Some(plait_client::host::admission::Info {
             schema: 1,
             worktree_at_start_v1: true,
             linked_continuation_v1: true,
@@ -958,9 +958,12 @@ fn checkout_queue_states_remain_accessible_wide_and_narrow() {
         for (label, state) in [
             (
                 "Waiting",
-                Some(plait_core::host::checkout_queue::State::Waiting),
+                Some(plait_client::host::checkout_queue::State::Waiting),
             ),
-            ("Held", Some(plait_core::host::checkout_queue::State::Held)),
+            (
+                "Held",
+                Some(plait_client::host::checkout_queue::State::Held),
+            ),
             ("Cancelled", None),
         ] {
             super::isolation::install_queue(&mut h, state);
@@ -1013,7 +1016,7 @@ fn checkout_queue_states_remain_accessible_wide_and_narrow() {
                 .unwrap()
                 .protocol_version = 6;
             for thread in &mut plait.host.connection.threads {
-                thread.status = plait_core::host::ThreadStatus::Idle;
+                thread.status = plait_client::host::ThreadStatus::Idle;
             }
         });
         let frame = steady_frame(&mut h, "stale-idle-summary");

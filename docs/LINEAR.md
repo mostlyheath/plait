@@ -9,7 +9,7 @@
   project binding, bounded paged issue reads and SQLite caching with offline
   fallback, local thread-to-issue links, and two durably recorded person-initiated
   writes (post comment and change workflow state).
-- **Rust client for the read and link operations (`plait-core::host::linear`).**
+- **Rust client for the read and link operations (`plait-client::host::linear`).**
   Typed requests and validated replies for sign-in status, the API key, teams,
   project binding, issue lists and details, exact resolution, and thread links,
   with the key redacted from debug output and typed rejections (offline, rate
@@ -18,11 +18,11 @@
 - **Desktop sign-in and project team (Settings → Linear, Project settings →
   Linear).** Save, replace, and sign out of the host's Linear key, and link a
   project to one Linear team, with the state models in
-  `plait-core::linear_settings`.
+  `plait-client::linear_settings`.
 - **Issues tab.** A persistent project tab lists, filters, and searches the
   linked team's issues, resolves a pasted identifier or URL exactly, and
   shows an issue's details as plain text, with Open in Linear. State lives in
-  `plait-core::linear_issues`. Start thread fills a new draft and links the
+  `plait-client::linear_issues`. Start thread fills a new draft and links the
   thread once the host creates it; Add to thread appends the reference to an
   existing thread's draft; a linked thread shows its source issue. Links are
   read once per connection with `linear_list_thread_links` (first 500).

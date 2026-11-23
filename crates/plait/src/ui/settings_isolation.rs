@@ -1,7 +1,7 @@
 //! The host stores isolation authorization against the main repository identity.
 use super::{Plait, settings, theme::*, thread_controls::TextTooltip};
 use gpui::{prelude::FluentBuilder, *};
-use plait_core::host::{
+use plait_client::host::{
     self,
     admission::{self, Request},
 };

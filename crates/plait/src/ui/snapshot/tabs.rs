@@ -1,6 +1,6 @@
 //! Injected tab states; no fixture data reaches the shipped view.
 use super::*;
-use plait_core::tabs::{CheckoutKey, TabTarget};
+use plait_client::tabs::{CheckoutKey, TabTarget};
 
 pub(super) fn install(harness: &mut Harness, count: usize) {
     install_projects(harness, count, false);
@@ -282,7 +282,7 @@ pub(super) fn cold_workspaces() {
                     .update(cx, |f, cx| f.set_text("Preserve this commit message", cx));
                 p.restore_find_bookmark(
                     super::super::file_view::FindIn::Conversation,
-                    &plait_core::tabs::bookmark::FindBookmark {
+                    &plait_client::tabs::bookmark::FindBookmark {
                         open: true,
                         query: "queue".into(),
                         current: None,
@@ -349,7 +349,7 @@ pub(super) fn cold_workspaces() {
 }
 
 pub(super) fn restore_preferences() {
-    use plait_core::{
+    use plait_client::{
         session::Journal,
         tabs::{CheckoutKey, HostKey, persistence, storage},
     };
@@ -554,7 +554,7 @@ pub(super) fn journal_limit() {
     let repository = fixture_repository(&scratch);
     let directory = scratch.join("session");
     let (journal, data) =
-        plait_core::session::Journal::open(&directory, "/tab-test-host".into()).unwrap();
+        plait_client::session::Journal::open(&directory, "/tab-test-host".into()).unwrap();
     let mut h = Harness::new(&repository, None, 900., 600.);
     h.connect(&repository, false);
     install(&mut h, 20);
@@ -605,7 +605,7 @@ pub(super) fn journal_limit() {
 }
 
 pub(super) fn unloaded_views() {
-    use plait_core::tabs::bookmark::{ConversationScroll, ThreadBookmark};
+    use plait_client::tabs::bookmark::{ConversationScroll, ThreadBookmark};
     let scratch = std::env::temp_dir().join(format!("plait-tab-views-{}", std::process::id()));
     let repository = fixture_repository(&scratch);
     let mut h = Harness::new(&repository, None, 900., 600.);
@@ -707,7 +707,7 @@ pub(super) fn created_in_front() {
         });
         p.show_tab(super::super::Workspace::Changes, w, cx);
         super::many_drafts::set_pending(p, "create-1");
-        let reply = plait_core::host::ThreadReply {
+        let reply = plait_client::host::ThreadReply {
             thread: Snapshot {
                 id: "created-thread".into(),
                 checkout: p.host.creation.checkout.clone(),
@@ -731,7 +731,7 @@ pub(super) fn created_in_front() {
 
 /// The tab file does not depend on the draft journal staying under its limit.
 pub(super) fn journal_limit_saves_tabs() {
-    use plait_core::{
+    use plait_client::{
         session::Journal,
         tabs::{CheckoutKey, HostKey, storage},
     };
@@ -788,7 +788,7 @@ pub(super) fn journal_limit_saves_tabs() {
 
 /// Saving an unchanged large view neither adds a stored record nor rewrites the tab file.
 pub(super) fn stored_views() {
-    use plait_core::{
+    use plait_client::{
         session::Journal,
         tabs::{CheckoutKey, HostKey},
     };
@@ -866,7 +866,7 @@ pub(super) fn stored_views() {
 
 /// Saved tabs restored while Settings is open stay beneath it.
 pub(super) fn restore_beneath_settings() {
-    use plait_core::{
+    use plait_client::{
         session::Journal,
         tabs::{CheckoutKey, HostKey, storage},
     };

@@ -3,7 +3,7 @@ use super::{
     composer::{Composer, ComposerEvent},
 };
 use gpui::{prelude::*, *};
-use plait_core::{
+use plait_client::{
     host::{self, Request, Snapshot},
     host_state::request_id,
     transcript::{self, Update},
@@ -26,9 +26,9 @@ pub(super) struct Created {
 /// key comes back refreshed so later requests carry the current identity.
 pub(super) fn verified_checkout(
     client: &host::Client,
-    expected: Option<&plait_core::ownership::CheckoutKey>,
+    expected: Option<&plait_client::ownership::CheckoutKey>,
     supported: bool,
-) -> Result<Option<plait_core::ownership::CheckoutKey>, host::Error> {
+) -> Result<Option<plait_client::ownership::CheckoutKey>, host::Error> {
     let Some(expected) = expected else {
         return Ok(None);
     };
@@ -46,7 +46,7 @@ pub(super) fn verified_checkout(
         }),
     )?;
     Ok(
-        (reply.identity.dev != expected.device).then(|| plait_core::ownership::CheckoutKey {
+        (reply.identity.dev != expected.device).then(|| plait_client::ownership::CheckoutKey {
             device: reply.identity.dev,
             ..expected.clone()
         }),
@@ -143,7 +143,7 @@ impl Plait {
         let image_pins = uploads
             .as_ref()
             .filter(|(_, images)| !images.is_empty())
-            .map(|(_, images)| plait_core::images::pin(images))
+            .map(|(_, images)| plait_client::images::pin(images))
             .transpose();
         let journal = self.session.journal.clone();
         let client = self.host_client();
@@ -193,7 +193,7 @@ impl Plait {
                 })();
                 let collect = image_pins.is_some();
                 drop(image_pins);
-                if collect && let Err(error) = plait_core::images::collect() {
+                if collect && let Err(error) = plait_client::images::collect() {
                     eprintln!("Plait draft images: {error}");
                 }
                 result
@@ -335,7 +335,7 @@ impl Plait {
             .and_then(|tab| self.tabs.model.get(tab))
             .is_some_and(|tab| {
                 matches!(tab.session().target(),
-                plait_core::tabs::TabTarget::Existing { id: target, .. } if target == &id)
+                plait_client::tabs::TabTarget::Existing { id: target, .. } if target == &id)
             });
         if bound {
             self.select_host_thread_content(id.clone(), window, cx);
@@ -371,7 +371,7 @@ impl Plait {
             return;
         };
         self.open_tab_target(
-            plait_core::tabs::TabTarget::Existing {
+            plait_client::tabs::TabTarget::Existing {
                 id,
                 checkout: self.tab_checkout(checkout),
             },
@@ -665,13 +665,13 @@ impl Plait {
     pub(super) fn remeasure_records(
         &mut self,
         previous: Option<&Snapshot>,
-        before: &plait_core::markdown::Transcript,
+        before: &plait_client::markdown::Transcript,
     ) {
         let (Some(previous), Some(next)) = (previous, self.workspace.history.display.as_deref())
         else {
             return;
         };
-        let moved = plait_core::history::moved_records(
+        let moved = plait_client::history::moved_records(
             (previous, &before.turn_summaries),
             (next, &self.workspace.formatted.turn_summaries),
         );
@@ -1192,7 +1192,7 @@ impl Plait {
 #[cfg(test)]
 mod identity_error_tests {
     use super::is_checkout_identity_changed;
-    use plait_core::host;
+    use plait_client::host;
 
     #[test]
     fn classifies_only_identity_refusals() {

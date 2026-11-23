@@ -4,7 +4,7 @@ use crate::ui::{
     Workspace,
     turn_records::{Stamp, TurnRecords},
 };
-use plait_core::{
+use plait_client::{
     history::records,
     host::{self, TurnRecord, UndoTurnReply},
 };
@@ -631,7 +631,7 @@ fn redo_shortcut_keeps_the_control_refusals() {
                 _ => assert!(
                     p.state
                         .repository
-                        .request_write(plait_core::git::WriteOp::StageAll)
+                        .request_write(plait_client::git::WriteOp::StageAll)
                 ),
             }
             let line = p.workspace.turn_records.lines.latest.as_ref().unwrap();

@@ -1,6 +1,6 @@
 //! Settings → Machines with injected state: no scene starts ssh.
 use super::*;
-use plait_core::{machines::Transport, remote::ssh::SshDestination};
+use plait_client::{machines::Transport, remote::ssh::SshDestination};
 
 fn open(h: &mut Harness) {
     h.update(|p, window, cx| {
@@ -11,7 +11,7 @@ fn open(h: &mut Harness) {
 }
 
 /// Adds the workstation machine to preferences and returns its id.
-fn workstation(h: &mut Harness) -> plait_core::machines::MachineId {
+fn workstation(h: &mut Harness) -> plait_client::machines::MachineId {
     let mut id = None;
     h.update(|p, _, _| {
         let added = p
@@ -85,7 +85,7 @@ fn scenes() -> [Scene; 9] {
                         id,
                         name: "workstation".into(),
                         stage: super::super::machine_install::Stage::Missing(
-                            plait_core::remote::install::Probe {
+                            plait_client::remote::install::Probe {
                                 platform: Some("linux-x86_64".into()),
                                 system: "Linux x86_64".into(),
                                 installed: false,
@@ -212,9 +212,9 @@ fn machines_snapshots() {
             p.host.connection.connected = true;
             p.machines.fresh_link = true;
             let generation = p.host_workspace_generation();
-            let view = plait_core::host::workspace::View {
+            let view = plait_client::host::workspace::View {
                 schema: 1,
-                host: plait_core::host::workspace::HostIdentity {
+                host: plait_client::host::workspace::HostIdentity {
                     id: "scene-host".into(),
                     name: "workstation".into(),
                     platform: "linux".into(),
@@ -222,7 +222,7 @@ fn machines_snapshots() {
                 revision: 1,
                 projects: ["/srv/api", "/srv/web"]
                     .into_iter()
-                    .map(|path| plait_core::host::workspace::Project {
+                    .map(|path| plait_client::host::workspace::Project {
                         path: path.into(),
                         hidden: false,
                     })
@@ -379,7 +379,7 @@ fn remote_machine_reads_git_through_its_host() {
         // Point the remote machine at an unavailable host socket, so a read
         // sent to it fails; this Mac's host must not answer for it.
         p.host_local = false;
-        p.host_client = plait_core::host::Client::local_or_unavailable();
+        p.host_client = plait_client::host::Client::local_or_unavailable();
         p.state.repository.refresh();
         p.pump(cx);
     });
@@ -401,7 +401,7 @@ fn a_remote_window_shows_only_its_hosts_workspace() {
     if !isolated("machines::a_remote_window_shows_only_its_hosts_workspace") {
         return;
     }
-    use plait_core::host::workspace::{HostIdentity, Project, View};
+    use plait_client::host::workspace::{HostIdentity, Project, View};
     let scratch = std::env::temp_dir().join(format!("plait-remote-ws-{}", std::process::id()));
     let repo = fixture_repository(&scratch);
     let mut h = Harness::new(&repo, None, 900., 600.);
@@ -409,7 +409,7 @@ fn a_remote_window_shows_only_its_hosts_workspace() {
     h.update(|p, window, cx| {
         let mac = p.lists().opened.clone();
         // Switching machines starts empty: none of this Mac's threads remain.
-        let remote = plait_core::machines::MachineId::new("workstation").unwrap();
+        let remote = plait_client::machines::MachineId::new("workstation").unwrap();
         let client = p.host_client();
         p.use_machine_client(client, remote, false, window, cx);
         assert!(p.host.connection.threads.is_empty());
@@ -457,7 +457,7 @@ fn a_watched_change_rereads_the_open_checkout() {
     if !isolated("machines::a_watched_change_rereads_the_open_checkout") {
         return;
     }
-    use plait_core::host::workspace::{HostIdentity, Project, View};
+    use plait_client::host::workspace::{HostIdentity, Project, View};
     let scratch = std::env::temp_dir().join(format!("plait-watched-{}", std::process::id()));
     let repo = fixture_repository(&scratch);
     let mut h = Harness::new(&repo, None, 900., 600.);
@@ -485,7 +485,7 @@ fn a_watched_change_rereads_the_open_checkout() {
         assert!(p.apply_workspace(generation, view(0), window, cx));
         // Drain the reread the first view asks for.
         while p.state.next_repository_job().is_some() {}
-        p.state.repository.data.snapshot = plait_core::state::Load::Empty;
+        p.state.repository.data.snapshot = plait_client::state::Load::Empty;
         assert!(p.apply_workspace(generation, view(0), window, cx));
         assert!(
             p.state.next_repository_job().is_none(),
@@ -495,7 +495,7 @@ fn a_watched_change_rereads_the_open_checkout() {
         assert!(
             matches!(
                 p.state.repository.snapshot(),
-                plait_core::state::Load::Loading
+                plait_client::state::Load::Loading
             ),
             "a moved counter did not reread the open checkout"
         );
@@ -511,14 +511,14 @@ fn switching_machines_puts_the_previous_tabs_away() {
     if !isolated("machines::switching_machines_puts_the_previous_tabs_away") {
         return;
     }
-    use plait_core::host::workspace::{HostIdentity, View};
+    use plait_client::host::workspace::{HostIdentity, View};
     let scratch = std::env::temp_dir().join(format!("plait-machine-tabs-{}", std::process::id()));
     let repo = fixture_repository(&scratch);
     let mut h = Harness::new(&repo, None, 900., 600.);
     h.connect(&repo, false);
     h.update(|p, window, cx| {
         assert!(!p.tabs.model.tabs().is_empty(), "the fixture opens a tab");
-        let remote = plait_core::machines::MachineId::new("workstation").unwrap();
+        let remote = plait_client::machines::MachineId::new("workstation").unwrap();
         let client = p.host_client();
         p.use_machine_client(client, remote, false, window, cx);
         assert!(

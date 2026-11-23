@@ -9,7 +9,7 @@ use super::{
     theme::*,
 };
 use gpui::{prelude::*, *};
-use plait_core::{
+use plait_client::{
     compose::{ContextPressure, ContextUsage, thinking_levels},
     host::{
         self, ApprovalMode, Model, ModelChoice, QueueMode, Request, ThinkingLevel,

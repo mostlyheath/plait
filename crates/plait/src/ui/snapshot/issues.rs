@@ -1,6 +1,6 @@
 //! The Issues tab with Linear state injected: no scene reaches Linear.
 use super::*;
-use plait_core::{
+use plait_client::{
     host::linear::{IssueDetail, IssueReply, Issues},
     linear_settings::Auth,
     tabs::TabTarget,
@@ -219,7 +219,7 @@ fn issues_tab_is_labelled_and_keeps_its_selection() {
         let tab = p.tabs.model.active().unwrap();
         assert!(matches!(
             p.tabs.model.get(tab).unwrap().session().bookmark(),
-            plait_core::tabs::bookmark::BookmarkRecord::Issues { selected: Some(id) } if id == "i2"
+            plait_client::tabs::bookmark::BookmarkRecord::Issues { selected: Some(id) } if id == "i2"
         ));
     });
     std::fs::remove_dir_all(scratch).unwrap();

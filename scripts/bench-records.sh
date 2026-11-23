@@ -25,7 +25,7 @@ measure() {
     fi
 }
 echo "Recorder, in process (release build):"
-measure cargo test --locked --release -p plait-core --lib record_timing -- --ignored --nocapture --test-threads=1
+measure cargo test --locked --release -p plait-engine --lib record_timing -- --ignored --nocapture --test-threads=1
 echo
 echo "Through plait-host record, as the runtime runs it (release build):"
 measure cargo test --locked --release -p plait-host --test record host_record_timing -- --ignored --nocapture --test-threads=1

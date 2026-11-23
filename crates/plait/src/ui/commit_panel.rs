@@ -1,19 +1,19 @@
 //! Staging and committing from Changes.
 //!
-//! plait-core runs each write on the background executor and refreshes status
+//! plait-client runs each write on the background executor and refreshes status
 //! afterwards; this file asks for writes and shows how they went. A write is
 //! refused while another is queued or running, so a double click is one write.
 
 use super::{Plait, theme::*};
 use gpui::{prelude::*, *};
-use plait_core::{
+use plait_client::{
     git::WriteOp,
     model::{Change, Snapshot, Tracking},
 };
 use std::path::PathBuf;
 
 pub(super) struct CommitAttempt {
-    pub(super) thread: Option<plait_core::ownership::ThreadKey>,
+    pub(super) thread: Option<plait_client::ownership::ThreadKey>,
     pub(super) revision: u64,
     pub(super) message: String,
 }
@@ -112,7 +112,7 @@ impl Plait {
 
     pub(super) fn git_write_for(
         &mut self,
-        owner: plait_core::state::CheckoutId,
+        owner: plait_client::state::CheckoutId,
         op: WriteOp,
         cx: &mut Context<Self>,
     ) {
@@ -200,7 +200,7 @@ impl Plait {
     /// if it was edited while the commit ran.
     pub(super) fn after_git_write(
         &mut self,
-        owner: plait_core::state::CheckoutId,
+        owner: plait_client::state::CheckoutId,
         cx: &mut Context<Self>,
     ) {
         if owner == self.state.checkout_id() {
@@ -516,7 +516,7 @@ impl Plait {
 #[cfg(test)]
 mod tests {
     use super::{change_paths, sync};
-    use plait_core::{
+    use plait_client::{
         git::WriteOp,
         model::{Change, Tracking},
     };

@@ -1,7 +1,7 @@
 //! Background history reads and projection; render only consumes prepared data.
 use super::{Plait, theme::*};
 use gpui::{prelude::*, *};
-use plait_core::{
+use plait_client::{
     history::{self, History, Key},
     host::{HistoryField, Snapshot},
     markdown, transcript,
@@ -228,8 +228,8 @@ impl Plait {
                     .entries
                     .iter()
                     .filter_map(|entry| match &entry.item {
-                        plait_core::host::HistoryItem::Tool { id, status, .. }
-                            if *status != plait_core::host::ToolStatus::Running
+                        plait_client::host::HistoryItem::Tool { id, status, .. }
+                            if *status != plait_client::host::ToolStatus::Running
                                 && display
                                     .tools
                                     .iter()
@@ -375,7 +375,7 @@ impl Plait {
                 )?),
                 Load::Part(key, field, restart) => {
                     let entry = cache.get(&key).ok_or_else(|| {
-                        plait_core::host::Error::Protocol(
+                        plait_client::host::Error::Protocol(
                             "This text is outside the reading window. Load its page again.".into(),
                         )
                     })?;
@@ -383,7 +383,7 @@ impl Plait {
                     cache.replace(entry);
                 }
             }
-            Ok::<_, plait_core::host::Error>(Arc::new(cache))
+            Ok::<_, plait_client::host::Error>(Arc::new(cache))
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = task.await;

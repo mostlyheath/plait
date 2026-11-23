@@ -1,5 +1,5 @@
 use super::*;
-use plait_core::images::ImageRef;
+use plait_client::images::ImageRef;
 use std::collections::HashMap;
 
 pub(super) fn fixtures() -> Vec<(ImageRef, Arc<gpui::RenderImage>)> {
@@ -11,7 +11,7 @@ pub(super) fn fixtures() -> Vec<(ImageRef, Arc<gpui::RenderImage>)> {
     .into_iter()
     .map(|bytes| {
         (
-            plait_core::images::inspect(bytes).unwrap(),
+            plait_client::images::inspect(bytes).unwrap(),
             super::super::images::decode(bytes, 192).unwrap(),
         )
     })
@@ -27,7 +27,7 @@ pub(super) fn install(harness: &mut Harness, count: usize) {
                 let mut bytes =
                     include_bytes!("../../../../../runtime/test/support/images/0.png").to_vec();
                 bytes.extend_from_slice(&index.to_be_bytes());
-                plait_core::images::inspect(&bytes).unwrap()
+                plait_client::images::inspect(&bytes).unwrap()
             }
         })
         .collect::<Vec<_>>();
@@ -64,7 +64,7 @@ pub(super) fn install(harness: &mut Harness, count: usize) {
         snapshot.status = ThreadStatus::Idle;
         plait.host.thread.snapshot = Some(Arc::new(snapshot));
         plait.workspace.history = Default::default();
-        plait.workspace.formatted = Arc::new(plait_core::markdown::Transcript::update(
+        plait.workspace.formatted = Arc::new(plait_client::markdown::Transcript::update(
             &Default::default(),
             plait.host.thread.snapshot.as_ref().unwrap(),
         ));
@@ -163,12 +163,12 @@ pub(super) fn walk(harness: &mut Harness, repository: &Path, suffix: &str) {
     harness.capture(&format!("images-unavailable-{suffix}"));
 
     let references = fixture.iter().map(|(r, _)| r.clone()).collect::<Vec<_>>();
-    let _pins = plait_core::images::pin(&references).unwrap();
+    let _pins = plait_client::images::pin(&references).unwrap();
     for bytes in [
         include_bytes!("../../../../../runtime/test/support/images/0.png").as_slice(),
         include_bytes!("../../../../../runtime/test/support/images/2.png").as_slice(),
     ] {
-        plait_core::images::persist(bytes).unwrap();
+        plait_client::images::persist(bytes).unwrap();
     }
     harness.composer(|composer, _, cx| composer.restore_images(references, cx));
     harness.capture(&format!("images-partial-restore-{suffix}"));

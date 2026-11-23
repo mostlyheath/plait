@@ -15,7 +15,7 @@ import tarfile
 from pathlib import Path
 
 PLATFORM = "macos-arm64"
-# Keep these aligned with host PROTOCOL_VERSION in crates/plait-core/src/host.rs
+# Keep these aligned with host PROTOCOL_VERSION in crates/plait-protocol/src/host/mod.rs
 # and runtime/src/protocol.ts when the protocol or storage schema changes.
 COMPATIBILITY = {"protocol": {"min": 1, "max": 6}, "storage_schema": 1}
 

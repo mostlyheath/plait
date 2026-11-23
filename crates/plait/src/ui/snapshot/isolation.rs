@@ -2,7 +2,7 @@
 
 use super::Harness;
 use crate::ui::Workspace;
-use plait_core::{host::ThreadStatus, model::DiffMode};
+use plait_client::{host::ThreadStatus, model::DiffMode};
 use std::path::Path;
 
 const CHECKOUT_BUSY: &str = "This checkout is in use by an active run or another Plait write. Wait until it finishes, then try again.";
@@ -76,12 +76,12 @@ pub(super) fn walk(
             .host
             .connection
             .threads
-            .push(plait_core::host::ThreadSummary {
+            .push(plait_client::host::ThreadSummary {
                 id: "isolated-background".into(),
                 checkout: path,
                 model: plait.host.connection.threads[0].model.clone(),
                 title: Some("New worktree thread".into()),
-                harness: Some(plait_core::host::harness::HarnessId::Codex),
+                harness: Some(plait_client::host::harness::HarnessId::Codex),
                 ..Default::default()
             });
         plait.rebuild_projects(cx);
@@ -121,7 +121,7 @@ pub(super) fn walk(
             .as_mut()
             .unwrap()
             .protocol_version = 6;
-        plait.tabs.model = plait_core::tabs::WindowTabs::new(crate::ui::tabs::fresh_window_id());
+        plait.tabs.model = plait_client::tabs::WindowTabs::new(crate::ui::tabs::fresh_window_id());
         let mut first = None;
         for (i, thread) in plait.host.connection.threads.iter_mut().enumerate() {
             if i > 0 {
@@ -142,9 +142,9 @@ pub(super) fn walk(
                 .tabs
                 .model
                 .open(
-                    plait_core::tabs::TabTarget::Existing {
+                    plait_client::tabs::TabTarget::Existing {
                         id: thread.id.clone(),
-                        checkout: plait_core::tabs::CheckoutKey {
+                        checkout: plait_client::tabs::CheckoutKey {
                             host: plait.tabs.host.clone(),
                             root: thread.checkout.clone(),
                             directory: None,
@@ -164,13 +164,13 @@ pub(super) fn walk(
         snapshot.live_text.clear();
         snapshot.live_reasoning.clear();
         for tool in &mut snapshot.tools {
-            tool.status = plait_core::host::ToolStatus::Done;
+            tool.status = plait_client::host::ToolStatus::Done;
         }
     });
     many.update(|plait, _, _| {
         plait.admission.preparing = Some((
             super::THREAD.into(),
-            Some(plait_core::host::admission::Phase::ResourceWait),
+            Some(plait_client::host::admission::Phase::ResourceWait),
         ));
     });
     many.capture(&format!("isolation-resource-wait-{suffix}"));
@@ -179,11 +179,11 @@ pub(super) fn walk(
     for (name, state) in [
         (
             "isolation-queued",
-            Some(plait_core::host::checkout_queue::State::Waiting),
+            Some(plait_client::host::checkout_queue::State::Waiting),
         ),
         (
             "isolation-queue-held",
-            Some(plait_core::host::checkout_queue::State::Held),
+            Some(plait_client::host::checkout_queue::State::Held),
         ),
         ("isolation-queue-cancelled", None),
     ] {
@@ -195,7 +195,7 @@ pub(super) fn walk(
 /// Queue facts are injected only into this test scene, just as catalog events arrive.
 pub(super) fn install_queue(
     harness: &mut Harness,
-    state: Option<plait_core::host::checkout_queue::State>,
+    state: Option<plait_client::host::checkout_queue::State>,
 ) {
     harness.change_snapshot(|snapshot| {
         snapshot.status = ThreadStatus::Idle;
@@ -220,7 +220,7 @@ pub(super) fn install_queue(
         thread.status = ThreadStatus::Idle;
         thread.pending_approval = Some(false);
         thread.checkout_queue = state.map(|state| {
-            plait_core::host::checkout_queue::Summary::new("queued-first".into(), state, 3, 1)
+            plait_client::host::checkout_queue::Summary::new("queued-first".into(), state, 3, 1)
         });
         if state.is_none() {
             plait.set_thread_notice(
