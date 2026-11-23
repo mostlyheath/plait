@@ -61,9 +61,11 @@ test('runner exits without attach and start', async t => {
   await registry.writeManifest({ run_id: runId, thread_id: 'thread', request_id: 'request', checkout: root, harness: 'test', build_id: 'test', lease: { root, identity: lease.identity } });
   const pid = await spawnRunner(resolve('src/runner/main.ts'), lease, { PLAIT_RUNNER_STORE: base, PLAIT_RUNNER_ID: runId, PLAIT_RUNNER_TEST_TURNS: '1', PLAIT_RUNNER_TEST_ORPHAN_MS: '500' });
   try {
-    await waitFor(async () => (await registry.scan())[0]?.status === 'live');
+    // The runner may come and go before a scan sees it live on a slow machine,
+    // so wait for the process itself to exit, then check what it left behind.
     await lease.close();
-    await waitFor(async () => (await registry.scan())[0]?.status === 'dead');
+    await waitFor(() => { try { process.kill(pid, 0); return false; } catch { return true; } });
+    assert.equal((await registry.scan())[0]?.status, 'dead');
     const next = await acquireCheckout(root); await next.close();
   } finally { try { process.kill(pid, 'SIGKILL'); } catch {} await lease.close(); }
 });
