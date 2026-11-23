@@ -21,10 +21,17 @@ type Row = Record<string, unknown> & { id: string; kind: string; state: string; 
 export type Pair = { run: string; before: Row; after?: Row };
 
 function rows(db: DatabaseSync): Row[] {
-  const paths = db.prepare('SELECT record,path FROM record_paths ORDER BY path').all();
-  return db.prepare('SELECT * FROM records ORDER BY rowid').all().map(row => ({
-    ...row, paths: paths.filter(path => path.record === row.id).map(path => String(path.path)),
-  }) as Row);
+  // One read transaction. The runtime commits a record's state and its paths
+  // together; two separate reads could see the new state with the old paths.
+  db.exec('BEGIN');
+  try {
+    const paths = db.prepare('SELECT record,path FROM record_paths ORDER BY path').all();
+    return db.prepare('SELECT * FROM records ORDER BY rowid').all().map(row => ({
+      ...row, paths: paths.filter(path => path.record === row.id).map(path => String(path.path)),
+    }) as Row);
+  } finally {
+    db.exec('COMMIT');
+  }
 }
 export function pairs(db: DatabaseSync): Pair[] {
   const all = rows(db);
