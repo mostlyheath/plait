@@ -76,8 +76,8 @@ pub(super) fn walk(harness: &mut Harness, repository: &Path, suffix: &str) {
 }
 
 #[core::prelude::v1::test]
-fn code_size_setting_applies_immediately_at_both_window_sizes() {
-    if !isolated("code_size::code_size_setting_applies_immediately_at_both_window_sizes") {
+fn code_size_applies_at_once_and_its_choices_are_named() {
+    if !isolated("code_size::code_size_applies_at_once_and_its_choices_are_named") {
         return;
     }
     let home = PathBuf::from(std::env::var_os("HOME").unwrap());
@@ -106,7 +106,8 @@ fn code_size_setting_applies_immediately_at_both_window_sizes() {
         }
         harness.draw();
 
-        // Changing the preference applies immediately and updates line heights.
+        // Choosing a size applies at once and moves the line heights. The
+        // control's own activation path is the shared one other tests drive.
         harness.update(|plait, _, cx| {
             plait.set_code_size(14, cx);
         });
@@ -117,7 +118,9 @@ fn code_size_setting_applies_immediately_at_both_window_sizes() {
         });
         harness.draw();
 
-        // Conversation with a code block and a diff draws cleanly at 14 points.
+        // The conversation with a code block and a diff still draws at 14
+        // points, with no duplicate accessible nodes. Clipping is checked by
+        // eye in the rendered scene, not here.
         harness.update(|plait, _, _| {
             plait.settings_open = false;
         });
