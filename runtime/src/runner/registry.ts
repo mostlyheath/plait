@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
-export type Manifest = { run_id: string; thread_id: string; request_id: string; checkout: string; harness: string; build_id: string; lease?: { root: string; identity: { dev: string; ino: string } } };
+export type Manifest = { run_id: string; thread_id: string; request_id: string; checkout: string; harness: string; build_id: string; cleanup_token?: string; lease?: { root: string; identity: { dev: string; ino: string } } };
 export type RunnerEntry = { manifest: Manifest; status: 'live' | 'finished' | 'dead'; receipt?: unknown };
 function id(value: string): string {
   if (!/^[A-Za-z0-9_-]{1,32}$/.test(value)) throw new Error('invalid runner id');
@@ -56,6 +56,14 @@ export class RunnerRegistry {
   }
   async writeManifest(value: Manifest): Promise<void> { manifest(value); await this.write(value.run_id, '.json', value); }
   async writeReceipt(runId: string, value: unknown): Promise<void> { await this.write(runId, '.done.json', value); }
+  /** Remove runner files, unlinking the manifest first so scan() never sees a half-removed entry. */
+  async remove(runId: string): Promise<void> {
+    const gone = (error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error; };
+    await unlink(this.path(runId, '.json')).catch(gone);
+    await unlink(this.path(runId, '.done.json')).catch(gone);
+    await unlink(this.socketPath(runId)).catch(gone);
+    await unlink(this.path(runId, '.lock')).catch(gone);
+  }
   async scan(): Promise<RunnerEntry[]> {
     await this.prepare(); const entries: RunnerEntry[] = [];
     for (const name of await readdir(this.directory)) {

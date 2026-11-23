@@ -5,7 +5,7 @@ export const EVENT_LIMIT = 1024 * 1024;
 export type RunnerState = 'preparing' | 'running' | 'awaiting_approval' | 'finishing';
 export type Attach = { type: 'attach'; protocol: 1; last_seq: number };
 export type Command = Attach | { type: 'start'; payload: unknown } | { type: 'approve'; approval_id: string; allow: boolean } | { type: 'stop' } | { type: 'steer'; request_id: string; text: string; images: unknown[] } | { type: 'set_mode'; mode: string } | { type: 'ack'; seq: number } | { type: 'ping'; nonce: string };
-export type Attached = { type: 'attached'; state: RunnerState; seq: number; snapshot: unknown; pending_approval: unknown; head: unknown; before_record_id: unknown };
+export type Attached = { type: 'attached'; state: RunnerState; seq: number; floor?: number; snapshot: unknown; pending_approval: unknown; head: unknown; before_record_id: unknown };
 export type Event = { type: 'phase' | 'live' | 'commit' | 'approval_needed' | 'approval_settled' | 'forget' | 'pong' | 'postimage' | 'record_before' | 'record_after' | 'finished'; seq: number; [key: string]: unknown };
 export type RunnerMessage = Attached | Event;
 
@@ -44,7 +44,7 @@ export function parseRunnerMessage(value: unknown): RunnerMessage {
   if (!object(value) || !sequence(value.seq)) throw new Error('invalid runner message');
   switch (value.type) {
     case 'attached':
-      if (['preparing', 'running', 'awaiting_approval', 'finishing'].includes(String(value.state)) && object(value.snapshot) && (value.pending_approval === null || approval(value.pending_approval)) && nullableString(value.head) && nullableString(value.before_record_id)) return value as Attached;
+      if (['preparing', 'running', 'awaiting_approval', 'finishing'].includes(String(value.state)) && object(value.snapshot) && (value.pending_approval === null || approval(value.pending_approval)) && nullableString(value.head) && nullableString(value.before_record_id) && (value.floor === undefined || sequence(value.floor))) return value as Attached;
       break;
     case 'phase': if (['preparing', 'running', 'awaiting_approval', 'finishing'].includes(String(value.state))) return value as Event; break;
     case 'live': if (object(value.payload)) return value as Event; break;
@@ -117,4 +117,31 @@ export class EventBuffer {
     if (!sequence(seq) || seq < this.acknowledged || seq > this.last) throw new Error('invalid replay sequence');
     return this.events.filter(event => event.seq > seq);
   }
+  /** Lowest sequence number not yet pruned from the buffer (`acknowledged + 1`). */
+  floor(): number { return this.acknowledged + 1; }
+  /** Replay buffered events after `seq`; callers inspect `attached.floor` to detect pruned gaps. */
+  replay(seq: number): Event[] {
+    if (!sequence(seq)) throw new Error('invalid replay sequence');
+    return this.events.filter(event => event.seq > seq);
+  }
+  unacknowledged(): Event[] { return [...this.events]; }
+}
+
+const BOUNDARY_EVENTS = new Set<Event['type']>([
+  'approval_needed', 'approval_settled', 'postimage', 'forget', 'record_before', 'record_after', 'finished',
+]);
+
+/** Filter unacknowledged events for a done receipt: keep only the latest `live` and never drop boundary events. */
+export function receiptEvents(events: Event[], maxBytes = EVENT_LIMIT): Event[] {
+  let latestLiveSeq = -1;
+  for (const event of events) {
+    if (event.type === 'live' && event.seq > latestLiveSeq) latestLiveSeq = event.seq;
+  }
+  const filtered = events.filter(event => {
+    if (event.type === 'pong') return false;
+    if (event.type === 'live') return event.seq === latestLiveSeq;
+    return true;
+  });
+  if (Buffer.byteLength(JSON.stringify(filtered), 'utf8') <= maxBytes) return filtered;
+  return filtered.filter(event => BOUNDARY_EVENTS.has(event.type) || event.type === 'live');
 }

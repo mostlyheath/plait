@@ -1,8 +1,9 @@
 import { readFile } from 'node:fs/promises';
+import { cleanupHelper } from '../cleanup.ts';
 import { adoptDescriptors } from '../safety.ts';
 import { RunnerRegistry, type Manifest } from './registry.ts';
 import { RunnerServer } from './socket.ts';
-import type { Command, Event, RunnerState } from './protocol.ts';
+import { receiptEvents, type Command, type Event, type RunnerState } from './protocol.ts';
 
 export type RunnerTurn = {
   start(payload: Record<string, unknown>, emit: (event: Omit<Event, 'seq'>) => void, signal: AbortSignal): Promise<unknown>;
@@ -21,26 +22,45 @@ async function main(): Promise<void> {
   try {
     lease = await adoptDescriptors([3, 4, 5], manifest.lease);
     let state: RunnerState = 'preparing'; let seq = 0; let started = false; let attached = false;
+    let pendingApproval: unknown = null;
     let turn: RunnerTurn | undefined; const abort = new AbortController();
     let finishAck: (() => void) | undefined; let finalSeq = 0;
     let done!: () => void; const completed = new Promise<void>(resolve => { done = resolve; });
     const emit = (event: Omit<Event, 'seq'>) => {
       const next = { ...event, seq: ++seq } as Event;
       if (next.type === 'phase') state = next.state as RunnerState;
+      else if (next.type === 'approval_needed') { state = 'awaiting_approval'; pendingApproval = next.approval; }
+      else if (next.type === 'approval_settled') { pendingApproval = null; if (state === 'awaiting_approval') state = 'running'; }
       server!.publish(next);
     };
     const finish = async (result: unknown) => {
       state = 'finishing';
-      const receipt = { result: result && typeof result === 'object' ? result : { value: result } };
+      const finalResult = result && typeof result === 'object' ? result : { value: result };
+      if (manifest.cleanup_token && lease) {
+        await cleanupHelper('finish', manifest.checkout, manifest.cleanup_token, undefined, lease).catch(() => {});
+      }
+      const receipt = { result: finalResult, events: receiptEvents(server!.unacknowledged()) };
       await registry.writeReceipt(id, receipt);
-      emit({ type: 'finished', result: receipt.result }); finalSeq = seq;
+      emit({ type: 'finished', result: finalResult }); finalSeq = seq;
       await new Promise<void>(resolve => { finishAck = resolve; setTimeout(resolve, 2000).unref(); });
       done();
     };
-    server = new RunnerServer(registry.socketPath(id), () => ({ type: 'attached', state, seq, snapshot: {}, pending_approval: null, head: null, before_record_id: null }), command => {
+    server = new RunnerServer(registry.socketPath(id), () => ({ type: 'attached', state, seq, snapshot: {}, pending_approval: pendingApproval, head: null, before_record_id: null }), command => {
       if (command.type === 'ack') { if (finalSeq && command.seq >= finalSeq) finishAck?.(); return; }
       if (command.type === 'ping') { emit({ type: 'pong', nonce: command.nonce }); return; }
-      if (command.type === 'stop') abort.abort();
+      if (command.type === 'stop') {
+        abort.abort();
+        // If the host aborts launch before `start` (e.g. acceptance failed), clean up and exit immediately.
+        if (!started) {
+          void (async () => {
+            if (manifest.cleanup_token && lease) {
+              await cleanupHelper('finish', manifest.checkout, manifest.cleanup_token, undefined, lease).catch(() => {});
+            }
+            done();
+          })().catch(() => done());
+          return;
+        }
+      }
       if (command.type === 'start') {
         if (started || !attached) return;
         started = true;

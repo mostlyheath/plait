@@ -99,15 +99,16 @@ export class Records {
     this.store = store; this.directory = resolve(directory); this.notify = notify;
   }
   /** Takes any record a host stop left unmade, then prunes now and once a day. */
-  start() {
+  start(skipCheckouts: ReadonlySet<string> = new Set()) {
     const recovery = this.recoverUndos();
     for (const row of this.store.db.prepare('SELECT DISTINCT r.checkout FROM undo_operations u JOIN records r ON r.id=u.before_id WHERE u.result IS NULL').all()) {
       const checkout = String(row.checkout);
+      if (skipCheckouts.has(checkout)) continue;
       const tail = recovery.catch(() => {});
       this.tails.set(checkout, tail);
       void tail.then(() => { if (this.tails.get(checkout) === tail) this.tails.delete(checkout); });
     }
-    this.track(recovery.then(() => { this.recover(); return this.prune(); }).catch(() => {}));
+    this.track(recovery.then(() => { this.recover(undefined, skipCheckouts); return this.prune(); }).catch(() => {}));
     this.timer = setInterval(() => void this.prune().catch(() => {}), PRUNE_INTERVAL_MS);
     this.timer.unref();
   }
@@ -163,15 +164,20 @@ export class Records {
    * restart: it may include changes made while the host was down.
    */
   recoverCheckout(checkout: string) { this.recover(checkout); }
-  private recover(checkout?: string) {
+  private recover(checkout?: string, skipCheckouts?: ReadonlySet<string>) {
     const db = this.store.db;
-    const open = db.prepare(`SELECT b.id FROM records b WHERE b.kind='before' AND b.state='ready'
-      AND NOT EXISTS (SELECT 1 FROM records a WHERE a.kind IN ('after','undo') AND a.before=b.id AND (a.state IN ('ready','undone','no_effect') OR (a.state='failed' AND a.after_restart=0))) ORDER BY b.created_at, b.rowid`).all().map(row => String(row.id));
-    // A record cut short by the stop left nothing usable; the before record of a run that never started its harness stays failed.
-    db.prepare("UPDATE records SET state='failed' WHERE kind='before' AND state='recording'").run();
-    for (const before of open) {
-      if (checkout && this.store.db.prepare('SELECT checkout FROM records WHERE id=?').get(before)?.checkout !== checkout) continue;
-      this.track(this.after(before, undefined, true));
+    const open = db.prepare(`SELECT b.id, b.checkout FROM records b WHERE b.kind='before' AND b.state='ready'
+      AND NOT EXISTS (SELECT 1 FROM records a WHERE a.kind IN ('after','undo') AND a.before=b.id AND (a.state IN ('ready','undone','no_effect') OR (a.state='failed' AND a.after_restart=0))) ORDER BY b.created_at, b.rowid`).all();
+    // A record cut short by the stop left nothing usable; skip checkouts owned by live detached runners.
+    for (const row of db.prepare("SELECT id, checkout FROM records WHERE kind='before' AND state='recording'").all()) {
+      if (skipCheckouts?.has(String(row.checkout))) continue;
+      db.prepare("UPDATE records SET state='failed' WHERE id=?").run(String(row.id));
+    }
+    for (const row of open) {
+      const rowCheckout = String(row.checkout);
+      if (checkout && rowCheckout !== checkout) continue;
+      if (skipCheckouts?.has(rowCheckout)) continue;
+      this.track(this.after(String(row.id), undefined, true));
     }
   }
   /** A busy checkout may have deferred startup recovery until its next leased run. */

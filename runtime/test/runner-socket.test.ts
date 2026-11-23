@@ -35,3 +35,42 @@ test('server closes a connection that sends an oversized frame', async () => {
     await closed;
   } finally { await server.close(); await rm(root, { recursive: true, force: true }); }
 });
+
+test('second attach replaces first client, ignores stale acks, and replays remaining events', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'plait-socket-'));
+  const sock = join(root, 'run.sock');
+  const commands: Command[] = [];
+  const server = new RunnerServer(sock, () => ({ type: 'attached', state: 'running', seq: 2, snapshot: {}, pending_approval: null, head: null, before_record_id: null }), command => commands.push(command));
+  try {
+    await server.listen();
+    server.publish({ type: 'phase', seq: 1, state: 'preparing' });
+    server.publish({ type: 'phase', seq: 2, state: 'running' });
+
+    let firstClosed = false;
+    const firstMessages: RunnerMessage[] = [];
+    const first = await RunnerClient.connect(sock, 0, message => firstMessages.push(message), () => { firstClosed = true; });
+    await new Promise(resolve => setTimeout(resolve, 60));
+    assert.deepEqual(firstMessages.map(m => m.type), ['attached', 'phase', 'phase']);
+
+    // Second client attaches with last_seq=0: first client is closed and second gets full replay.
+    const secondMessages: RunnerMessage[] = [];
+    const second = await RunnerClient.connect(sock, 0, message => secondMessages.push(message));
+    await new Promise(resolve => setTimeout(resolve, 80));
+    assert.equal(firstClosed, true);
+    assert.deepEqual(secondMessages.map(m => m.type), ['attached', 'phase', 'phase']);
+
+    // Second client acks seq 1; buffer retains seq 2.
+    second.send({ type: 'ack', seq: 1 });
+    await new Promise(resolve => setTimeout(resolve, 60));
+    assert.deepEqual(server.unacknowledged().map(e => e.seq), [2]);
+
+    // Third client attaches with older last_seq=0 (already pruned seq 1): attach succeeds and replays remaining seq 2.
+    const thirdMessages: RunnerMessage[] = [];
+    const third = await RunnerClient.connect(sock, 0, message => thirdMessages.push(message));
+    await new Promise(resolve => setTimeout(resolve, 80));
+    assert.deepEqual(thirdMessages.map(m => m.type), ['attached', 'phase']);
+    assert.equal(thirdMessages[1].seq, 2);
+
+    first.close(); second.close(); third.close();
+  } finally { await server.close(); await rm(root, { recursive: true, force: true }); }
+});

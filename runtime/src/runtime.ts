@@ -15,7 +15,7 @@ import { GitReads } from './git-read.ts';
 import { Workspace, WORKSPACE_TOPIC } from './workspace.ts';
 import { Folders } from './folders.ts';
 import { LinearService } from './linear/service.ts';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context';
@@ -28,10 +28,11 @@ import { openNodeSqliteDatabase } from '@earendil-works/pi-durable/storage/sqlit
 import { PROTOCOL_VERSIONS, fail, failure, queuedView, summaryView, THINKING_LEVELS, validate, version, view } from './protocol.ts';
 import type { ApprovalMode, HarnessId, ModelChoice, Protocol, QueueMode, Request, Snapshot, InputRecord, ThinkingLevel } from './protocol.ts';
 import { Store } from './store.ts';
-import { RunnerRegistry } from './runner/registry.ts';
+import { RunnerRegistry, type RunnerEntry } from './runner/registry.ts';
+import { RunnerSession, applyRunnerReceipt } from './runner/session.ts';
 import { Records } from './records.ts';
 import { checkout, projectKind, gitCheckout, dirtyPaths, fileAction, acquireCheckout, rootIdentity, checkRoot, verifyExpectedIdentity } from './safety.ts';
-import type { FileIdentity, LeaseHandle } from './safety.ts';
+import type { CheckoutLease, FileIdentity, LeaseHandle } from './safety.ts';
 import { registry } from './tools.ts';
 import { mcpPolicy, setMcpEnabled } from './mcp/policy.ts';
 import { fingerprint, nameKey } from './mcp/tools.ts';
@@ -39,7 +40,7 @@ import type { Observation } from './mcp/tools.ts';
 import { discover, expandInput, report } from './skills.ts';
 import type { ToolState } from './tools.ts';
 import { MAX_TURNS } from './transcript.ts';
-import { InProcessSink, TurnExecutor, type PiTurnInput, type TurnSink } from './turn-executor.ts';
+import { InProcessSink, TurnExecutor, TurnSnapshotApplier, type PiTurnInput, type TurnSink } from './turn-executor.ts';
 import { historyPage, historyText } from './history.ts';
 import type { HistorySource } from './history.ts';
 import { customTitle } from './text.ts';
@@ -100,7 +101,9 @@ export class Runtime {
   admissions: Admissions;
   capacity = new RunCapacity();
   sessions = new Map<string, Session>();
+  runnerSessions = new Map<string, RunnerSession>();
   active = new Map<string, string>();
+  private runnerRegistry: RunnerRegistry;
   models: Models;
   directory: string;
   authenticated: Set<string>;
@@ -140,6 +143,7 @@ export class Runtime {
   }
   constructor(directory: string, models: Models, authenticated: Set<string>) {
     this.directory = directory; this.models = models; this.authenticated = authenticated;
+    this.runnerRegistry = new RunnerRegistry(directory);
     this.store = new Store(directory);
     this.store.waiters.changed = () => this.changed('#');
     this.records = new Records(this.store, directory, id => this.changed(id));
@@ -161,23 +165,124 @@ export class Runtime {
   }
   /** Reconcile persisted work before accepting requests. */
   async recover(): Promise<void> {
-    const entries = await new RunnerRegistry(this.directory).scan();
+    const entries = await this.runnerRegistry.scan();
+    const liveCheckouts = new Set<string>();
+    const handledThreads = new Set<string>();
     for (const entry of entries) {
-      // TODO(PR 4): reconcile live and finished runners before interrupting threads.
-      console.error(`Runner ${entry.manifest.run_id}: ${entry.status}`);
+      const { manifest } = entry;
+      let snapshot: Snapshot;
+      try { snapshot = this.store.get(manifest.thread_id); }
+      catch {
+        if (entry.status !== 'live') await this.runnerRegistry.remove(manifest.run_id).catch(() => {});
+        continue;
+      }
+      const lastSeq = this.store.run(manifest.run_id)?.last_seq ?? 0;
+      if (entry.status === 'live') {
+        this.active.set(manifest.checkout, manifest.thread_id);
+        this.capacity.phases.set(manifest.thread_id, 'running');
+        liveCheckouts.add(manifest.checkout);
+        handledThreads.add(manifest.thread_id);
+        const session = this.createRunnerSession(manifest.run_id, manifest.thread_id, manifest.request_id, snapshot);
+        this.runnerSessions.set(manifest.thread_id, session);
+        try {
+          await session.supervisor.attach(manifest.run_id, lastSeq);
+        } catch {
+          // Runner may have exited or transiently dropped between scan() and attach(); re-check lock state.
+          let refreshed: RunnerEntry | undefined;
+          let scanFailed = false;
+          try {
+            refreshed = (await this.runnerRegistry.scan()).find(item => item.manifest.run_id === manifest.run_id);
+          } catch (scanError) {
+            scanFailed = true;
+            console.error(`Runner ${manifest.run_id} recovery rescan failed:`, scanError);
+          }
+          if (scanFailed || refreshed?.status === 'live') {
+            // Lock is still held (or scan error is unknown): keep reservation and registry files, retry with backoff.
+            session.supervisor.startReconnect(manifest.run_id, lastSeq);
+          } else {
+            session.detach();
+            this.runnerSessions.delete(manifest.thread_id);
+            this.active.delete(manifest.checkout);
+            this.capacity.phases.delete(manifest.thread_id);
+            liveCheckouts.delete(manifest.checkout);
+            if (refreshed?.status === 'finished') {
+              this.finishRunnerReceipt(manifest.run_id, snapshot, refreshed.receipt, lastSeq);
+            } else if (this.store.run(manifest.run_id)?.state !== 'finished') {
+              this.interruptDeadRunner(manifest.run_id, snapshot);
+            }
+            await this.runnerRegistry.remove(manifest.run_id).catch(() => {});
+          }
+        }
+      } else if (entry.status === 'finished') {
+        handledThreads.add(manifest.thread_id);
+        this.finishRunnerReceipt(manifest.run_id, snapshot, entry.receipt, lastSeq);
+        await this.runnerRegistry.remove(manifest.run_id).catch(() => {});
+      } else {
+        handledThreads.add(manifest.thread_id);
+        const runState = this.store.run(manifest.run_id)?.state;
+        if (runState !== 'finished' && runState !== 'gap') {
+          this.interruptDeadRunner(manifest.run_id, snapshot);
+        } else if (runState === 'gap') {
+          this.store.markRunState(manifest.run_id, 'gap', true);
+          this.store.waiters.hold(snapshot.id);
+        }
+        await this.runnerRegistry.remove(manifest.run_id).catch(() => {});
+      }
     }
     for (const snapshot of this.store.recoverable()) {
+      if (handledThreads.has(snapshot.id)) continue;
       if (snapshot.status === 'running' || snapshot.status === 'awaiting_approval') {
-        snapshot.status = 'interrupted';
-        snapshot.pending_approval = null;
-        snapshot.live_text = '';
-        snapshot.live_reasoning = ''; snapshot.retry = null;
-        snapshot.error = { code: 'interrupted', message: 'Host stopped. Effects may have completed; inspect the checkout before a new submission.' };
-        for (const tool of snapshot.tools) if (tool.status === 'running') tool.status = 'interrupted';
+        new TurnSnapshotApplier(snapshot).interrupt();
         this.store.save(snapshot);
       }
     }
-    this.records.start();
+    this.records.start(liveCheckouts);
+  }
+  private createRunnerSession(runId: string, threadId: string, requestId: string, snapshot: Snapshot): RunnerSession {
+    return new RunnerSession(runId, threadId, requestId, snapshot, {
+      store: this.store,
+      directory: this.directory,
+      notify: (id, summary) => this.notify(id, summary),
+      phase: (id, state) => this.capacity.phases.set(id, state === 'preparing' ? 'preparing' : 'running'),
+      onClosed: (session, entry, finishedResult) => this.onRunnerClosed(session, entry, finishedResult),
+    });
+  }
+  private finishRunnerReceipt(runId: string, snapshot: Snapshot, receipt: unknown, lastSeq: number): boolean {
+    const summaryChanged = applyRunnerReceipt(this.store, runId, snapshot, receipt, lastSeq);
+    if (snapshot.status === 'error' || snapshot.status === 'interrupted') this.store.waiters.hold(snapshot.id);
+    return summaryChanged;
+  }
+  private interruptDeadRunner(runId: string, snapshot: Snapshot): boolean {
+    new TurnSnapshotApplier(snapshot).interrupt();
+    const summaryChanged = this.store.saveRunEvent(runId, this.store.run(runId)?.last_seq ?? 0, snapshot, { state: 'dead', finished: true });
+    this.store.waiters.hold(snapshot.id);
+    return summaryChanged;
+  }
+  private async onRunnerClosed(session: RunnerSession, entry: RunnerEntry | undefined, finishedResult: Record<string, unknown> | undefined): Promise<void> {
+    if (this.runnerSessions.get(session.threadId) !== session) return;
+    if (entry?.status === 'live') return;
+    this.runnerSessions.delete(session.threadId);
+    if (this.active.get(session.snapshot.checkout) === session.threadId) this.active.delete(session.snapshot.checkout);
+    this.capacity.phases.delete(session.threadId);
+    const runRow = this.store.run(session.runId);
+    const lastSeq = runRow?.last_seq ?? 0;
+    const isGapped = session.gapped || runRow?.state === 'gap';
+    let summaryChanged = false;
+    if (isGapped) {
+      // Gap already marked the thread interrupted and stopped the runner; reconcile receipt effects without overwriting status.
+      const receipt = entry?.status === 'finished' && entry.receipt ? entry.receipt : {};
+      summaryChanged = applyRunnerReceipt(this.store, session.runId, session.snapshot, receipt, lastSeq, true);
+      this.store.waiters.hold(session.threadId);
+    } else if (finishedResult !== undefined || entry?.status === 'finished' || runRow?.state === 'finished') {
+      const receipt = entry?.status === 'finished' && entry.receipt ? entry.receipt : { result: finishedResult };
+      summaryChanged = this.finishRunnerReceipt(session.runId, session.snapshot, receipt, lastSeq);
+    } else {
+      summaryChanged = this.interruptDeadRunner(session.runId, session.snapshot);
+    }
+    await this.runnerRegistry.remove(session.runId).catch(() => {});
+    this.notify(session.threadId, summaryChanged);
+    this.changed('#');
+    for (const root of this.store.waiters.roots()) this.drainCheckout(root);
   }
   /** Validate the selected harness before reserving filesystem effects. */
   private async prepareWorktreeThread(request: WorktreeCreate, id: string): Promise<Snapshot> {
@@ -305,7 +410,7 @@ export class Runtime {
       fail('model_unavailable', 'Exact model is missing or has no configured authentication. Sign in to its provider in Settings.');
     }
   }
-  snapshot(id: string) { const snapshot = this.sessions.get(id)?.snapshot ?? this.store.get(id); snapshot.records_revision = this.records.revision(id); snapshot.image_input = this.imageInput(snapshot); return snapshot; }
+  snapshot(id: string) { const snapshot = this.sessions.get(id)?.snapshot ?? this.runnerSessions.get(id)?.snapshot ?? this.store.get(id); snapshot.records_revision = this.records.revision(id); snapshot.image_input = this.imageInput(snapshot); return snapshot; }
   private imageInput(snapshot: Snapshot): 'yes' | 'no' | 'unknown' {
     const selected = this.external.resolveHarness(snapshot);
     switch (selected.kind) {
@@ -337,8 +442,9 @@ export class Runtime {
       }
       if (op === 'drain_for_update') {
         this.draining = true;
-        const row = this.store.db.prepare("SELECT count(*) AS count FROM threads WHERE json_extract(snapshot,'$.status') IN ('running','awaiting_approval')").get();
-        return { draining: true, active_runs: Number(row!.count) };
+        const activeIds = new Set(this.store.db.prepare("SELECT id FROM threads WHERE json_extract(snapshot,'$.status') IN ('running','awaiting_approval')").all().map(row => String(row.id)));
+        for (const id of this.runnerSessions.keys()) activeIds.add(id);
+        return { draining: true, active_runs: activeIds.size };
       }
       this.draining = false; this.wakeQueue(); return { draining: false };
     }
@@ -473,17 +579,25 @@ export class Runtime {
         const id = String(request.thread_id);
         const snapshot = this.snapshot(id);
         const session = this.sessions.get(id);
+        const runnerSession = this.runnerSessions.get(id);
         session?.sink?.flush();
         snapshot.status = 'stopped'; snapshot.pending_approval = null;
         session?.authorization.revoke();
         // Stop also discards everything waiting behind the run.
         if (this.store.cancel(id)) snapshot.queued = [];
         this.save(snapshot); this.changed('#'); this.drainCheckout(snapshot.checkout);
+        if (runnerSession) runnerSession.stop();
         if (session) void session.root?.abort(context).catch(() => {});
         return { thread: snapshot };
       }
       case 'approve': {
-        const session = this.sessions.get(String(request.thread_id));
+        const id = String(request.thread_id);
+        const runnerSession = this.runnerSessions.get(id);
+        if (runnerSession) {
+          await runnerSession.approve(String(request.approval_id), request.allow === true);
+          return { thread: runnerSession.snapshot };
+        }
+        const session = this.sessions.get(id);
         if (!session) fail('not_found', 'Approval is stale, stopped, or already answered.');
         if (session.executor) session.executor.command({ type: 'approve', id: String(request.approval_id), allow: request.allow === true });
         else session.approvals.answer(String(request.approval_id), request.allow === true);
@@ -554,7 +668,7 @@ export class Runtime {
         return snapshot;
       }
     }
-    if (this.sessions.has(id)) fail('busy', 'Stop the run or wait for it before changing the model or thinking level.');
+    if (this.sessions.has(id) || this.runnerSessions.has(id)) fail('busy', 'Stop the run or wait for it before changing the model or thinking level.');
     if (request.mode !== undefined) snapshot.harness = { ...snapshot.harness!, mode: String(request.mode), reported: null };
     const choice = request.provider === undefined ? snapshot.model : { provider: String(request.provider), model_id: String(request.model_id) };
     const harness = snapshot.harness?.id ?? 'pi';
@@ -613,7 +727,7 @@ export class Runtime {
         placed: (low: number, high: number) => this.store.placed(id, low, high),
         typed: (entry: number) => this.store.placed(id, entry, entry).get(entry)?.text,
         journal: (rowid: number) => this.store.journal(id, rowid),
-        journalHasImages: (rowid: number) => this.store.journalHasImages(id, rowid), active: !!session,
+        journalHasImages: (rowid: number) => this.store.journalHasImages(id, rowid), active: !!(session || this.runnerSessions.has(id)),
       };
       if (session?.root) return work({ ...base, entries: entries(session.root) });
       // A Codex thread's translated transcript is its own store, read the same way.
@@ -716,14 +830,17 @@ export class Runtime {
     }
     const result = { thread_id: id, request_id: requestId, accepted: true };
     const session = this.sessions.get(id);
-    if (whenBusy && (session || this.store.queue(id).length)) {
+    const runnerSession = this.runnerSessions.get(id);
+    if (whenBusy && (session || runnerSession || this.store.queue(id).length)) {
       // An idle thread with a held queue resumes it now, which needs the checkout as any run does.
-      if (!session && this.active.has(snapshot.checkout)) fail('busy', 'This checkout already has an active run.');
+      if (!session && !runnerSession && this.active.has(snapshot.checkout)) fail('busy', 'This checkout already has an active run.');
       if (this.store.queue(id).length >= QUEUE_LIMIT) fail('busy', `This thread already has ${QUEUE_LIMIT} queued messages.`);
       this.admitWork();
       this.notify(id, this.store.enqueue(requestId, text, result, { mode: whenBusy, approval: mode }, snapshot, images));
       this.changed('#');
-      if (!session) { this.store.waiters.resumeThread(id); this.drainCheckout(snapshot.checkout); }
+      if (runnerSession) {
+        if (whenBusy === 'steer') runnerSession.steer(requestId, text, this.store.images.refs(id, images));
+      } else if (!session) { this.store.waiters.resumeThread(id); this.drainCheckout(snapshot.checkout); }
       else { session.inputs = this.store.inputs(id); await this.steer(session); }
       return result;
     }
@@ -732,9 +849,76 @@ export class Runtime {
     this.store.waiters.resumeThread(id);
     return result;
   }
+  /** Narrow test-only hook: never reachable without both detached-runner and test-turn env flags. */
+  private detachedTestPayload(snapshot: Snapshot, text: string): Record<string, unknown> | undefined {
+    if (process.env.PLAIT_DETACHED_RUNNERS !== '1' || process.env.PLAIT_RUNNER_TEST_TURNS !== '1') return undefined;
+    if (this.external.resolveHarness(snapshot).kind !== 'pi') return undefined;
+    if (!text.startsWith('__plait_runner_test__:')) return undefined;
+    const raw = text.slice('__plait_runner_test__:'.length);
+    const parsed = raw ? JSON.parse(raw) : {};
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+    return { ...(parsed as Record<string, unknown>), kind: 'test' };
+  }
+  /** Admits one detached runner: reserves checkout, hands off lease, and commits acceptance. */
+  private async startDetached(snapshot: Snapshot, requestId: string, mode: ApprovalMode, accept: () => boolean, payload: Record<string, unknown>): Promise<void> {
+    const id = snapshot.id;
+    if (this.active.has(snapshot.checkout)) fail('busy', 'This checkout already has an active run.');
+    this.capacity.admit(this.active.size);
+    this.active.set(snapshot.checkout, id);
+    this.capacity.phases.set(id, 'preparing');
+    let accepted = false;
+    let lease: CheckoutLease | undefined;
+    let cleanupToken: string | undefined;
+    let runnerSession: RunnerSession | undefined;
+    try {
+      await this.store.refreshRootIdentity(id, snapshot.checkout);
+      await this.worktrees.builds.yieldToRun(snapshot.checkout);
+      await this.admissions.probing(snapshot.checkout);
+      if (this.records.busy(snapshot.checkout)) await this.records.settled(snapshot.checkout);
+      lease = await acquireCheckout(snapshot.checkout, 'writer');
+      cleanupToken = randomUUID();
+      await cleanupHelper('begin', snapshot.checkout, cleanupToken, RESTART_REASON, lease);
+      this.admitWork();
+      // Short ids keep the runner socket path inside macOS's 104-byte Unix socket limit.
+      const runId = randomBytes(6).toString('hex');
+      runnerSession = this.createRunnerSession(runId, id, requestId, snapshot);
+      this.runnerSessions.set(id, runnerSession);
+      snapshot.status = 'running'; snapshot.error = null; snapshot.live_text = ''; snapshot.pending_approval = null;
+      snapshot.live_reasoning = ''; snapshot.retry = null;
+      snapshot.approval_mode = mode;
+      let summaryChanged = false;
+      await runnerSession.supervisor.launch({
+        runId, threadId: id, requestId, lease, payload, cleanupToken,
+        // Commit durable acceptance and run creation in ONE transaction before `start`.
+        beforeStart: () => {
+          summaryChanged = this.store.transaction(() => {
+            const changed = accept();
+            this.store.createRun(runId, id, requestId, String(payload.kind ?? 'test'));
+            return changed;
+          });
+        },
+      });
+      // Lease was handed off and closed by supervisor.launch; clear local ref so finally does not touch it.
+      lease = undefined;
+      this.notify(id, summaryChanged);
+      accepted = true;
+    } finally {
+      if (!accepted) {
+        runnerSession?.detach();
+        if (runnerSession && this.runnerSessions.get(id) === runnerSession) this.runnerSessions.delete(id);
+        try {
+          if (cleanupToken && lease) await cleanupHelper('finish', snapshot.checkout, cleanupToken, undefined, lease).catch(() => {});
+        } finally {
+          try { await lease?.close(); } finally { this.active.delete(snapshot.checkout); this.capacity.phases.delete(id); }
+        }
+      }
+    }
+  }
   /** Admits one run: reserves the checkout, creates its own authorization, then commits acceptance. */
   private async start(snapshot: Snapshot, requestId: string, text: string, mode: ApprovalMode, accept: () => boolean) {
     if (this.external.resolveHarness(snapshot).kind === 'unknown') unsupportedHarness();
+    const testPayload = this.detachedTestPayload(snapshot, text);
+    if (testPayload) return this.startDetached(snapshot, requestId, mode, accept, testPayload);
     const id = snapshot.id;
     if (this.active.has(snapshot.checkout)) fail('busy', 'This checkout already has an active run.');
     this.capacity.admit(this.active.size);
@@ -866,7 +1050,7 @@ export class Runtime {
       if (!waiter || waiter.kind !== 'checkout') fail('not_found','Checkout waiter not found.');
       if (waiter.state === 'started') {
         // Never stop a later run in the same thread with an old cancellation.
-        if (this.sessions.get(id)?.requestId === request.request_id) await this.dispatch(validate({op:'stop',thread_id:id}),1);
+        if (this.sessions.get(id)?.requestId === request.request_id || this.runnerSessions.get(id)?.requestId === request.request_id) await this.dispatch(validate({op:'stop',thread_id:id}),1);
       } else if (waiter.state === 'waiting' || waiter.state === 'held') {
         this.store.cancel(id,request.request_id); this.changed(id); this.changed('#'); this.drainCheckout(snapshot.checkout);
       }
@@ -1135,6 +1319,9 @@ export class Runtime {
     this.closing = true;
     clearTimeout(this.queueWake);
     await Promise.allSettled(this.queueDrains.values());
+    // Detached runners survive host shutdown: disconnect without stopping or interrupting.
+    for (const runnerSession of this.runnerSessions.values()) runnerSession.detach();
+    this.runnerSessions.clear();
     for (const session of this.sessions.values()) {
       if (this.active.has(session.snapshot.checkout)) {
         session.sink?.flush();

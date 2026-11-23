@@ -11,7 +11,7 @@ async function verify(socket: Socket): Promise<void> {
 export class RunnerServer {
   private server?: Server;
   private readonly sockets = new Set<Socket>();
-  private readonly attached = new Set<Socket>();
+  private current?: Socket;
   private readonly events = new EventBuffer();
   private readonly path: string;
   private readonly snapshot: () => Attached;
@@ -29,15 +29,32 @@ export class RunnerServer {
       await verify(socket); this.sockets.add(socket);
       let attached = false; const decoder = new FrameDecoder(COMMAND_LIMIT, parseCommand);
       socket.on('data', (data: Buffer) => { try { for (const message of decoder.push(data)) {
-        if (!attached) { if (message.type !== 'attach') throw new Error('attach required'); const replay = this.events.after(message.last_seq); attached = true; this.attached.add(socket); this.onAttach(); socket.write(encodeFrame(this.snapshot(), EVENT_LIMIT)); for (const event of replay) socket.write(encodeFrame(event, EVENT_LIMIT)); }
-        else { if (message.type === 'attach') throw new Error('already attached'); if (message.type === 'ack') this.events.ack(message.seq); this.command(message); }
+        if (!attached) {
+          if (message.type !== 'attach') throw new Error('attach required');
+          const floor = this.events.floor();
+          const replay = this.events.replay(message.last_seq);
+          // Enforce a single attached supervisor: close any previous client and only honor acks/commands from the current one.
+          const previous = this.current;
+          this.current = socket;
+          attached = true;
+          if (previous && previous !== socket) previous.destroy();
+          this.onAttach();
+          socket.write(encodeFrame({ ...this.snapshot(), floor }, EVENT_LIMIT));
+          for (const event of replay) socket.write(encodeFrame(event, EVENT_LIMIT));
+        } else {
+          if (message.type === 'attach') throw new Error('already attached');
+          if (this.current !== socket) { socket.destroy(); return; }
+          if (message.type === 'ack') this.events.ack(message.seq);
+          this.command(message);
+        }
       } } catch { socket.destroy(); } });
-      socket.on('close', () => { this.sockets.delete(socket); this.attached.delete(socket); }); socket.on('error', () => {}); socket.resume();
+      socket.on('close', () => { this.sockets.delete(socket); if (this.current === socket) this.current = undefined; }); socket.on('error', () => {}); socket.resume();
     } catch { socket.destroy(); }
   }
   publish(event: Event): void {
-    const frame = encodeFrame(event, EVENT_LIMIT); this.events.publish(event); for (const socket of this.attached) socket.write(frame);
+    const frame = encodeFrame(event, EVENT_LIMIT); this.events.publish(event); this.current?.write(frame);
   }
+  unacknowledged(): Event[] { return this.events.unacknowledged(); }
   async close(): Promise<void> { for (const socket of this.sockets) socket.destroy(); if (this.server) await new Promise<void>((resolve, reject) => this.server!.close(error => error ? reject(error) : resolve())); await unlink(this.path).catch((error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error; }); }
 }
 export class RunnerClient {
