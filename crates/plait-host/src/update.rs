@@ -1,7 +1,6 @@
 //! `plait-host update`: installs the newest signed release's host on this
 //! machine, for hosts that run without the desktop app.
 
-use plait_release as update;
 #[cfg(not(target_os = "linux"))]
 use plait_release::install;
 use std::io;
@@ -50,7 +49,7 @@ fn other_update(check_only: bool) -> io::Result<()> {
 
 #[cfg(target_os = "linux")]
 fn linux_update(check_only: bool) -> io::Result<()> {
-    use update::linux::{self, Decision};
+    use plait_release::linux::{self, Decision};
     let home = crate::service::user_home()?;
     let executable = std::env::current_exe()?.canonicalize()?;
     let build = linux::running_build(&home, &executable).map_err(io::Error::other)?;
