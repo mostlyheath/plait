@@ -10,9 +10,9 @@ test('host release operations are versionless and drain admission', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'plait-drain-'));
   const runtime = new Runtime(directory, createModels(), new Set());
   t.after(async () => { await runtime.close(); await rm(directory, { recursive: true, force: true }); });
-  assert.deepEqual(await runtime.handle({ op: 'host_info' }), { schema: 1, release: null, build_id: null, protocol_min: 1, protocol_max: 6, capabilities: ['drain_v1', 'checkout_identity_v1', 'project_fingerprint_v1'], storage_schema: 1 });
+  assert.deepEqual(await runtime.handle({ op: 'host_info' }), { schema: 1, release: null, build_id: null, protocol_min: 1, protocol_max: 7, capabilities: ['drain_v1', 'checkout_identity_v1', 'project_fingerprint_v1'], storage_schema: 1 });
   assert.equal((await runtime.reply({ op: 'host_info', protocol_version: 1 })).error?.code, 'invalid_request');
-  const versions = [1, 2, 3, 4, 5, 6];
+  const versions = [1, 2, 3, 4, 5, 6, 7];
   const statuses = await Promise.all(versions.map(protocol_version => runtime.handle({ op: 'status', protocol_version })));
   assert.deepEqual(await runtime.handle({ op: 'drain_for_update' }), { draining: true, active_runs: 0 });
   assert.deepEqual(await runtime.handle({ op: 'drain_for_update' }), { draining: true, active_runs: 0 });
@@ -51,6 +51,7 @@ test('drain lets a running run finish and holds the checkout queue until cancell
     release(); await until(() => runtime.active.size === 0);
     assert.equal(runtime.store.waiters.get(b, 'second')?.state, 'waiting');
     await runtime.handle({ op: 'stop', thread_id: a });
+    assert.equal(runtime.records.page(a, undefined, 1, 7).records[0].outcome, 'finished');
     await runtime.handle({ op: 'cancel_drain' });
     await until(() => runtime.store.waiters.get(b, 'second')?.state === 'started' && runtime.active.size === 0);
   } finally { release(); }

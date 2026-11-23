@@ -27,7 +27,7 @@ class ReleaseTests(unittest.TestCase):
         for component in ["client", "host"]:
             value = manifest(component, "0.1.0", "a" * 12)
             self.assertEqual(value["component"], component)
-            self.assertEqual(value["protocol_version"], 6)
+            self.assertEqual(value["protocol_version"], 7)
         for component, version, revision in [
             ("other", "0.1.0", "a" * 12),
             ("host", "../escape", "a" * 12),

@@ -40,7 +40,7 @@ def manifest(component, version, revision):
         "schema_version": 1, "component": component, "version": version,
         "revision": revision,
         # Newest protocol spoken; both components still accept version 1.
-        "protocol_version": 6,
+        "protocol_version": 7,
         "update_policy": "manual, component-specific installer",
     }
 

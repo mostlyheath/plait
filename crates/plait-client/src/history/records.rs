@@ -24,7 +24,7 @@ pub fn preview_name(name: &str) -> String {
 }
 
 /// Read the entire retained list. A cursor can continue any of its three lists.
-pub fn read(client: &Client, thread: &str) -> Result<Vec<TurnRecord>, host::Error> {
+pub fn read(client: &Client, thread: &str, protocol: u32) -> Result<Vec<TurnRecord>, host::Error> {
     let mut records = Vec::new();
     let mut cursor = None;
     let mut seen = HashSet::new();
@@ -33,6 +33,7 @@ pub fn read(client: &Client, thread: &str) -> Result<Vec<TurnRecord>, host::Erro
             thread.into(),
             cursor,
             None,
+            protocol,
         ))?;
         append(&mut records, page.records)?;
         cursor = page.before;
@@ -71,10 +72,13 @@ fn append(records: &mut Vec<TurnRecord>, fragments: Vec<TurnRecord>) -> Result<(
                 || last.undoes != part.undoes
                 || last.created_at != part.created_at
                 || last.head_moved != part.head_moved
+                || (last.outcome.is_some() && last.outcome != part.outcome)
                 || last.after_restart != part.after_restart
             {
                 return Err(invalid());
             }
+            // Completion can publish the outcome between two cursor reads.
+            last.outcome = part.outcome;
             last.paths.append(&mut part.paths);
             last.request_ids.append(&mut part.request_ids);
             last.not_covered.append(&mut part.not_covered);
@@ -136,6 +140,7 @@ pub struct Line {
     pub review_detail: String,
     pub more_label: String,
     pub more_detail: String,
+    pub outcome: Option<host::TurnOutcome>,
     pub after_restart: bool,
     pub head_moved: bool,
 }
@@ -320,6 +325,7 @@ fn line(
         files,
         not_covered,
         detail,
+        outcome: original.outcome,
         after_restart,
         head_moved,
     }

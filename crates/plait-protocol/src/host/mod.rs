@@ -19,7 +19,7 @@ pub const REQUEST_LIMIT: usize = 64 * 1024;
 /// Newest protocol this client speaks. Version 2 adds ordered tools and approval modes.
 /// Version 3 adds full history, thread metadata, a live thread list, in-thread model and
 /// thinking changes, queued inputs, usage, and reasoning. Version 4 adds agent harnesses.
-pub const PROTOCOL_VERSION: u32 = 6;
+pub const PROTOCOL_VERSION: u32 = 7;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -591,12 +591,17 @@ pub enum Request {
 }
 
 impl Request {
-    pub fn turn_records(thread_id: String, before: Option<String>, limit: Option<usize>) -> Self {
+    pub fn turn_records(
+        thread_id: String,
+        before: Option<String>,
+        limit: Option<usize>,
+        protocol_version: u32,
+    ) -> Self {
         Self::TurnRecords {
             thread_id,
             before,
             limit,
-            protocol_version: 5,
+            protocol_version,
         }
     }
     pub fn undo_turn(
@@ -837,6 +842,8 @@ pub struct TurnRecord {
     pub request_ids_total: usize,
     pub kind: RecordKind,
     pub undoes: Option<String>,
+    #[serde(default, deserialize_with = "decode_outcome")]
+    pub outcome: Option<TurnOutcome>,
     pub state: RecordState,
     pub head_moved: bool,
     pub after_restart: bool,
@@ -848,6 +855,24 @@ pub struct TurnRecord {
     pub not_covered_total: usize,
     pub created_at: u64,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TurnOutcome {
+    Finished,
+    Failed,
+    Stopped,
+    Interrupted,
+}
+
+fn decode_outcome<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<TurnOutcome>, D::Error> {
+    Ok(match Option::<String>::deserialize(d)?.as_deref() {
+        Some("finished") => Some(TurnOutcome::Finished),
+        Some("failed") => Some(TurnOutcome::Failed),
+        Some("stopped") => Some(TurnOutcome::Stopped),
+        Some("interrupted") => Some(TurnOutcome::Interrupted),
+        _ => None,
+    })
+}
+
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RecordKind {
@@ -928,7 +953,8 @@ mod wire_tests {
             serde_json::to_value(Request::turn_records(
                 "t".into(),
                 Some("4:500:0:0".into()),
-                Some(2)
+                Some(2),
+                5
             ))
             .unwrap(),
             json!({"op":"turn_records","protocol_version":5,"thread_id":"t","before":"4:500:0:0","limit":2})

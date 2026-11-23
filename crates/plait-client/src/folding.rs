@@ -12,7 +12,7 @@ use std::{
 use crate::{
     display_text,
     history::records,
-    host::{MessageRole, RecordKind, Snapshot, ThreadStatus, ToolStatus, TurnRecord},
+    host::{MessageRole, RecordKind, Snapshot, ThreadStatus, ToolStatus, TurnOutcome, TurnRecord},
     transcript::{self, Row, Slot, Splice, Update},
 };
 
@@ -136,10 +136,19 @@ pub fn segment_turns(
     for record in records {
         if record.kind == RecordKind::Turn {
             let outcome = record
-                .request_ids
-                .iter()
-                .find_map(|id| outcomes.0.get(&format!("request-{id}")))
-                .copied();
+                .outcome
+                .map(|value| match value {
+                    TurnOutcome::Finished => TurnState::Finished,
+                    TurnOutcome::Failed => TurnState::Failed,
+                    TurnOutcome::Stopped | TurnOutcome::Interrupted => TurnState::Stopped,
+                })
+                .or_else(|| {
+                    record
+                        .request_ids
+                        .iter()
+                        .find_map(|id| outcomes.0.get(&format!("request-{id}")))
+                        .copied()
+                });
             for request_id in &record.request_ids {
                 run_of_request.insert(
                     format!("request-{request_id}"),
@@ -839,7 +848,7 @@ mod tests {
             vec![],
             ThreadStatus::Idle,
         );
-        let record = TurnRecord {
+        let mut record = TurnRecord {
             id: "rec-1".into(),
             request_ids: vec!["r1".into(), "r2".into()],
             request_ids_offset: 0,
@@ -848,6 +857,7 @@ mod tests {
             undoes: None,
             state: RecordState::Ready,
             head_moved: false,
+            outcome: None,
             after_restart: false,
             paths: Vec::new(),
             paths_offset: 0,
@@ -857,6 +867,26 @@ mod tests {
             not_covered_total: 0,
             created_at: 1000,
         };
+        let mut observed = ObservedOutcomes::default();
+        observed.0.insert("request-r2".into(), TurnState::Stopped);
+        for (host, expected) in [
+            (None, TurnState::Stopped),
+            (Some(TurnOutcome::Finished), TurnState::Finished),
+            (Some(TurnOutcome::Failed), TurnState::Failed),
+            (Some(TurnOutcome::Interrupted), TurnState::Stopped),
+            (Some(TurnOutcome::Stopped), TurnState::Stopped),
+        ] {
+            record.outcome = host;
+            let turns = segment_turns(
+                &snap,
+                &transcript::layout(&snap),
+                true,
+                std::slice::from_ref(&record),
+                &observed,
+            );
+            assert_eq!(turns[0].state, expected);
+        }
+        record.outcome = None;
         let layout = build_layout(
             &snap,
             true,

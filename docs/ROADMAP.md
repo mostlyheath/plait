@@ -17,9 +17,9 @@ for evidence and limits.
   request in its [build order](../DESIGN.md#build-order). Chat view: sidebar
   rows and thread marks, a status line, the message box, This turn beside the
   conversation, folded earlier turns, and a code size setting. Work view: the
-  thread beside Changes, History, and Files panes. All of it is presentation
-  only: no change to the protocol, to state the host stores, to permissions,
-  or to Git writes.
+  thread beside Changes, History, and Files panes. The agreed protocol 7 change stores each run’s terminal
+  outcome and reports it on retained turn records for folding. The remaining
+  layout work is presentation only.
 
 ### Next
 

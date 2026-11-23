@@ -48,7 +48,7 @@ First launch only installs a missing local server. It leaves alone:
 
 First launch does nothing for source builds or when `PLAIT_HOST_STORE` points to a development store. If opened directly from a mounted DMG or Downloads, Plait asks you to drag it to Applications first.
 
-The client negotiates host protocol versions **1 through 6** per request and degrades gracefully when connected to an older host, disabling only controls that host does not support.
+The client negotiates host protocol versions **1 through 7** per request and degrades gracefully when connected to an older host, disabling only controls that host does not support.
 
 ## Machines
 

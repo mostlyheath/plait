@@ -97,6 +97,7 @@ fn long_thread(checkout: &Path) -> (Snapshot, Vec<TurnRecord>) {
             undoes: None,
             state: RecordState::Ready,
             head_moved: false,
+            outcome: None,
             after_restart: false,
             paths: vec![RecordPath {
                 path: (*path).into(),
@@ -143,6 +144,7 @@ fn long_thread(checkout: &Path) -> (Snapshot, Vec<TurnRecord>) {
         undoes: None,
         state: RecordState::Ready,
         head_moved: false,
+        outcome: None,
         after_restart: false,
         paths: vec![RecordPath {
             path: "crates/plait/src/ui/live_conversation.rs".into(),

@@ -43,13 +43,13 @@ fn snapshot() -> Snapshot {
 }
 #[test]
 fn steering_closes_once_and_queued_followups_close_separately() {
-    let records = vec![
-        decode(record("next", &["next"], "ready")),
-        decode(record("one", &["one", "steer"], "ready")),
-    ];
+    let mut steered = record("one", &["one", "steer"], "ready");
+    steered["outcome"] = json!("failed");
+    let records = vec![decode(record("next", &["next"], "ready")), decode(steered)];
     let lines = project(&snapshot(), &records, true);
     assert_eq!(lines.rows.len(), 1);
     let first = &lines.rows[&Key::Message("answer-two".into())];
+    assert_eq!(first.outcome, Some(host::TurnOutcome::Failed));
     assert_eq!(first.steps, Some(1));
     assert_eq!(first.files[0].path, PathBuf::from("cmd.txt"));
     assert_eq!(lines.latest.as_ref().unwrap().run, "next");
@@ -171,6 +171,23 @@ fn pages_append_all_three_lists_and_reject_gaps_and_changed_headers() {
     append(&mut records, vec![decode(first.clone())]).unwrap();
     append(&mut records, vec![decode(next.clone())]).unwrap();
     assert!(complete(&records[0]));
+    let mut changed = next.clone();
+    changed["outcome"] = json!("failed");
+    let mut settled = vec![decode(first.clone())];
+    append(&mut settled, vec![decode(changed.clone())]).unwrap();
+    assert!(complete(&settled[0]));
+    assert_eq!(settled[0].outcome, Some(host::TurnOutcome::Failed));
+    let mut terminal = first.clone();
+    terminal["outcome"] = json!("finished");
+    for conflicting in [next.clone(), changed] {
+        assert!(
+            append(
+                &mut vec![decode(terminal.clone())],
+                vec![decode(conflicting)]
+            )
+            .is_err()
+        );
+    }
     for field in ["paths_offset", "request_ids_offset", "not_covered_total"] {
         let mut bad = next.clone();
         bad[field] = json!(99);

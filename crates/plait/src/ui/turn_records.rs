@@ -162,9 +162,10 @@ impl Plait {
         self.workspace.turn_records.error = None;
         let thread = stamp.thread.clone();
         let client = self.host_client();
+        let protocol = self.host.protocol();
         let task = cx
             .background_executor()
-            .spawn(async move { records::read(&client, &thread).map(Arc::new) });
+            .spawn(async move { records::read(&client, &thread, protocol).map(Arc::new) });
         cx.spawn_in(window, async move |this, cx| {
             let result = task.await;
             let _ = this.update_in(cx, |this, window, cx| {
