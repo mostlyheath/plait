@@ -12,7 +12,7 @@ import tempfile
 import tomllib
 import urllib.request
 
-from release_macos import ROOT, digest, manifest, normalize_modes, payload_digest, run, write_json
+from release_macos import ROOT, copy_runtime_sources, digest, manifest, normalize_modes, payload_digest, run, write_json
 
 
 def node_config(path, arch):
@@ -113,7 +113,7 @@ def package(arch, out, node_archive, allow_dirty, tag=None):
         shutil.copy2(binary, host / "bin/plait-host")
         node_version = stage_node(host, arch, node_archive)
         runtime = host / "runtime"
-        shutil.copytree(ROOT / "runtime/src", runtime / "src")
+        copy_runtime_sources(runtime)
         for filename in ("package.json", "package-lock.json"):
             shutil.copy2(ROOT / "runtime" / filename, runtime / filename)
         env = {**os.environ, "PATH": str(host / "bin") + os.pathsep + os.environ.get("PATH", ""), "NPM_CONFIG_USERCONFIG": "/dev/null"}

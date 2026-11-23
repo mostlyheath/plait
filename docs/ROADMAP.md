@@ -20,8 +20,8 @@ for evidence and limits.
 - Update Linux hosts in place, from the machine and from the Mac. Prebuilt
   Linux hosts are published with each release and install from the Mac.
 - Complete independent client and host releases and update flows.
-- Let accepted runs survive a host restart, with runners separate from the
-  request server.
+- Verify detached Pi runners that survive a host restart; they are built behind
+  `PLAIT_DETACHED_RUNNERS=1` and remain off by default.
 
 ### Later
 

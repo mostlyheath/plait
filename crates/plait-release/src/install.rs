@@ -268,24 +268,61 @@ pub fn prune(layout: &Layout, keep: &[&Path]) {
     }
 }
 
-/// Runs a host restart would interrupt. Mirrors the runtime store's recovery
-/// query. Query-only rather than read-only: a read-only open of a WAL store
-/// fails while no host is running, because it cannot create the shared memory.
+/// Count persisted active threads and conservatively guard live runner locks.
+/// A runner can still hold a checkout after an event gap marked its thread interrupted.
 pub fn active_runs(store: &Path) -> Result<u64, Error> {
     let database = store.join("host.sqlite");
-    if !database.exists() {
-        return Ok(0);
+    let count = if database.exists() {
+        let output = run(Command::new("/usr/bin/sqlite3")
+            .args(["-cmd", "PRAGMA query_only=1"])
+            .arg(&database)
+            .arg("SELECT count(*) FROM threads WHERE json_extract(snapshot,'$.status') IN ('running','awaiting_approval')"))?;
+        output
+            .trim()
+            .parse()
+            .map_err(|_| invalid("could not read active runs"))?
+    } else {
+        0
+    };
+    if count > 0 {
+        return Ok(count);
     }
-    let output = run(Command::new("/usr/bin/sqlite3")
-        .args(["-cmd", "PRAGMA query_only=1"])
-        .arg(&database)
-        .arg(
-        "SELECT count(*) FROM threads WHERE json_extract(snapshot,'$.status') IN ('running','awaiting_approval')",
-    ))?;
-    output
-        .trim()
-        .parse()
-        .map_err(|_| invalid("could not read active runs"))
+    live_runner_locks(store)
+}
+
+#[cfg(unix)]
+fn live_runner_locks(store: &Path) -> Result<u64, Error> {
+    use std::os::fd::AsRawFd;
+    let entries = match fs::read_dir(store.join("runners")) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(error.into()),
+    };
+    let mut count = 0;
+    for entry in entries {
+        let path = entry?.path();
+        if path.extension().is_none_or(|extension| extension != "lock") {
+            continue;
+        }
+        let file = match fs::File::open(path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.into()),
+        };
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+            let error = std::io::Error::last_os_error();
+            if error.kind() != std::io::ErrorKind::WouldBlock {
+                return Err(error.into());
+            }
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
+#[cfg(not(unix))]
+fn live_runner_locks(_store: &Path) -> Result<u64, Error> {
+    Ok(0)
 }
 
 /// Installs an offered release's host for this machine. Used by `plait-host update`.
@@ -418,5 +455,29 @@ mod tests {
         .unwrap();
         assert_eq!(active_runs(&root).unwrap(), 2);
         cleanup(&root);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod runner_lock_tests {
+    use super::*;
+    use std::os::fd::AsRawFd;
+
+    #[test]
+    fn active_runs_waits_for_a_live_runner_after_interruption() {
+        let root = std::env::temp_dir().join(unique("runner-lock-test"));
+        fs::create_dir_all(root.join("runners")).unwrap();
+        run(Command::new("/usr/bin/sqlite3").arg(root.join("host.sqlite")).arg(
+            "CREATE TABLE threads (id TEXT, snapshot TEXT); INSERT INTO threads VALUES ('a', '{\"status\":\"interrupted\"}');",
+        )).unwrap();
+        let lock = fs::File::create(root.join("runners/run.lock")).unwrap();
+        assert_eq!(
+            unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
+            0
+        );
+        assert_eq!(active_runs(&root).unwrap(), 1);
+        drop(lock);
+        assert_eq!(active_runs(&root).unwrap(), 0);
+        fs::remove_dir_all(root).unwrap();
     }
 }

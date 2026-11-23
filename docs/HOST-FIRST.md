@@ -6,8 +6,8 @@ built. [Host](HOST.md) defines the implemented contract.
 
 ## Principles
 
-1. **One way in.** Host operations serve local and remote clients; an older
-   local host can fall back to desktop Git.
+1. **One way in.** Host operations serve local and remote clients; an older host must be updated
+   when it lacks the required capability.
 2. **Snapshot, then numbered events.** A client that falls behind resubscribes
    for a fresh snapshot rather than guessing.
 3. **Separate structure and content.** Small revision events signal changes;
@@ -44,7 +44,7 @@ receives `resync` and starts again; older hosts retain their existing listing
 and watch behavior. This Mac's existing lists import into its host once.
 
 Every machine's Git and file reads go through its host, including this Mac;
-an older local host falls back to desktop Git. The host watches open checkouts
+an older local host without the required capability prompts for a host update. The host watches open checkouts
 and pushes debounced status changes. The sidebar names and switches machines;
 the window title names a remote machine. Writes carry operation IDs and replay
 their first outcome on retry.
@@ -74,23 +74,20 @@ branch was recorded.
 1. **Built:** host identity and workspace stream, shared project and unread
    state, one-time import, and machine identity.
 2. **Built:** host Git and file reads, checkout watching, and speed check;
-   retain compatibility fallback for an older local host.
+   require the host capability and show an update message for an older host.
 3. **Built:** per-device tabs, layout, and selection on the host.
 4. **Built:** operation IDs for writes and replay of their first outcome.
 5. **Planned:** prompt-tree exploration, then an agreed model and view.
 6. **Planned:** several independent machines in one sidebar.
-7. **Planned:** runners that survive host restart, separate from the request
-   server.
+7. **Built behind a flag:** detached Pi runners survive host restart; the flag
+   remains off by default pending verification.
 
 Each step preserves compatibility and needs its own verification. See
 [Verification](VERIFICATION.md) for evidence and limits.
 
-## Runs that outlive the host (agreed, in progress)
+## Runs that outlive the host
 
-The agreed design separates each accepted run into a runner that can outlive
-its request server. On restart the server will rediscover a runner as live when
-its lock is held, finished when its lock is free and a terminal receipt exists,
-or dead when neither is present. Interrupted effects are never replayed.
-
-The supervision and transport foundation is in progress; current runs still
-stop on host restart. Runner execution and rediscovery are not yet connected.
+Detached Pi runners can outlive the request server when explicitly enabled.
+The host rediscovers live runners or ingests their completion receipts on restart.
+Interrupted effects are never replayed. See [Detached runners](HOST.md#detached-runners)
+for operation and recovery limits. Other runs still stop on host restart.
