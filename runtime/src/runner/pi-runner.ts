@@ -22,6 +22,7 @@ import { registry, type ToolState } from '../tools.ts';
 import { TurnExecutor, TurnSnapshotApplier, toolStateFor, type PiTurnInput, type TurnEvent, type TurnSink } from '../turn-executor.ts';
 import type { RunnerTurn, RunnerTurnContext } from './main.ts';
 import type { Command, Event } from './protocol.ts';
+import { importTestSupport } from './test-support.ts';
 
 export type PiTurnStartPayload = {
   kind: 'pi';
@@ -264,7 +265,7 @@ export class RunnerTurnSink implements TurnSink {
 async function loadPiModels(store: string, agentDir: string | undefined, signal: AbortSignal): Promise<TestProviderOverride> {
   // Test-only provider injection requires both PLAIT_TEST_SCENARIO and PLAIT_RUNNER_TEST_TURNS=1.
   if (process.env.PLAIT_RUNNER_TEST_TURNS === '1' && process.env.PLAIT_TEST_SCENARIO) {
-    const mod = await import('../../test/support/runner-test-provider.ts');
+    const mod = await importTestSupport<typeof import('../../test/support/runner-test-provider.ts')>('runner-test-provider.ts');
     return mod.loadTestProvider(store, process.env.PLAIT_TEST_SCENARIO);
   }
   const loaded = await piProviders(agentDir).load(signal);

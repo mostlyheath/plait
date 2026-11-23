@@ -5,6 +5,7 @@ import { RunnerRegistry, type Manifest } from './registry.ts';
 import { RunnerServer } from './socket.ts';
 import { receiptEvents, type Command, type Event, type RunnerState } from './protocol.ts';
 import { createPiTurn } from './pi-runner.ts';
+import { importTestSupport } from './test-support.ts';
 
 export type RunnerTurnContext = {
   store: string;
@@ -21,7 +22,7 @@ const turnKinds: Record<string, () => Promise<RunnerTurn>> = {
   pi: async () => createPiTurn(),
   test: async () => {
     if (process.env.PLAIT_RUNNER_TEST_TURNS !== '1') throw new Error('Unknown runner turn kind');
-    const mod = await import('../../test/support/runner-test-turn.ts');
+    const mod = await importTestSupport<typeof import('../../test/support/runner-test-turn.ts')>('runner-test-turn.ts');
     return mod.createTurn();
   },
 };
