@@ -142,7 +142,6 @@ impl Plait {
                         let selected = data.selected.clone();
                         this.session.journal = Some(journal);
                         this.session.data = Some(data);
-                        this.navigation.invalidate_search();
                         this.session.note = None;
                         for (id, composer) in &this.workspace.composers {
                             this.restore_composer(id, composer, cx);
@@ -472,7 +471,6 @@ impl Plait {
             journal.queue(next.clone());
         }
         self.session.data = Some(next);
-        self.navigation.invalidate_search();
         self.schedule_session_save(removed_image, cx);
     }
 
@@ -541,11 +539,8 @@ impl Plait {
     /// thread", so theirs adds the start of the ID to tell them apart.
     pub(super) fn thread_name(&self, id: &str) -> String {
         match self
-            .host
-            .connection
-            .threads()
-            .iter()
-            .find(|thread| thread.id == id)
+            .thread_index(id)
+            .map(|index| &self.host.connection.threads()[index])
             .and_then(|summary| self.chosen_title(summary))
         {
             Some(title) => title,

@@ -591,7 +591,6 @@ impl Plait {
                 },
             );
             data.clear_draft_tab(&draft_id);
-            self.navigation.invalidate_search();
         }
         if in_front {
             if let Some(composer) = draft.composer.take() {

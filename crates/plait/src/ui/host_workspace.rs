@@ -235,7 +235,7 @@ impl Plait {
         if after == before {
             return;
         }
-        self.navigation.invalidate_search();
+        self.navigation.invalidate_projects();
         // A draw can reuse the parent view without visiting the visible list.
         self.navigation.update_cached_list_flags(&after, cx);
         match self.host_workspace.source {

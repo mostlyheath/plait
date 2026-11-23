@@ -132,6 +132,8 @@ actions!(
         ToggleArchived,
         FilterThreads,
         ToggleNotifications,
+        RefreshThreadList,
+        ShowHiddenProjects,
         DenyOnce,
         AllowOnce
     ]
@@ -311,7 +313,7 @@ impl Plait {
             host,
             host_client,
             host_local: true,
-            navigation: navigation::Navigation::new(cx),
+            navigation: navigation::Navigation::new(),
             host_workspace: Default::default(),
             no_project: plait_client::model::Project {
                 checkout: PathBuf::new(),
@@ -1286,14 +1288,18 @@ impl Render for Plait {
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &FilterThreads, window, cx| {
-                this.sidebar = true;
-                window.focus(&this.navigation.filter.focus_handle(cx), cx);
-                cx.notify();
+                this.toggle_command_palette(window, cx);
             }))
             .on_action(cx.listener(|this, _: &ToggleNotifications, _, cx| {
                 let mut value = this.preferences.value.clone();
                 value.navigation.mute_notifications = !value.navigation.mute_notifications;
                 this.set_preferences(value, jump::PreferenceGroup::View, cx);
+            }))
+            .on_action(cx.listener(|this, _: &RefreshThreadList, window, cx| {
+                this.refresh_thread_list(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &ShowHiddenProjects, _, cx| {
+                this.show_hidden_projects(cx);
             }))
             .on_action(cx.listener(|this, _: &CommandPalette, window, cx| {
                 this.toggle_command_palette(window, cx)

@@ -260,7 +260,6 @@ class Acceptance:
     def select_thread(self):
         self.tab('Conversation')
         self.sidebar(True)
-        self.field('Filter projects and threads', '')
         self.ax('select', '--prefix', f'Thread {self.fixture.thread["id"]} ·', '--role', 'AXRow')
         self.find('Message to agent', 'field')
 
