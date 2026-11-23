@@ -1,7 +1,7 @@
 /target/
 /dist/
 __pycache__/
-node_modules/
+node_modules
 /.firecrawl/
 /.impeccable/
 .DS_Store
