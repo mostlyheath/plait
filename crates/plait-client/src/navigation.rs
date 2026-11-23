@@ -339,6 +339,59 @@ pub enum ThreadRowState {
     Other,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MachineActivity {
+    pub working: usize,
+    pub finished: usize,
+    pub failed: usize,
+    pub approval: usize,
+    /// Index into the same revision of the thread list.
+    pub next: Option<(usize, ThreadRowState)>,
+}
+
+pub fn machine_activity(threads: &[ThreadSummary], unread: &BTreeSet<String>) -> MachineActivity {
+    use ThreadRowState::*;
+    let mut activity = MachineActivity::default();
+    let mut oldest = None;
+    for (index, thread) in threads.iter().enumerate() {
+        if thread.archived == Some(true) {
+            continue;
+        }
+        let state = thread_row_state(thread, unread);
+        let priority = match state {
+            Approval => {
+                activity.approval += 1;
+                0
+            }
+            Failed => {
+                activity.failed += 1;
+                1
+            }
+            Interrupted => 1,
+            FinishedUnread => {
+                activity.finished += 1;
+                2
+            }
+            Working => {
+                activity.working += 1;
+                continue;
+            }
+            Other | Queued(_) => continue,
+        };
+        // Measure waiting time by last activity. IDs break timestamp ties across refreshes.
+        let key = (
+            priority,
+            thread.updated_at.or(thread.created_at),
+            thread.id.as_str(),
+        );
+        if oldest.is_none_or(|previous| key < previous) {
+            oldest = Some(key);
+            activity.next = Some((index, state));
+        }
+    }
+    activity
+}
+
 pub fn thread_row_state(thread: &ThreadSummary, unread: &BTreeSet<String>) -> ThreadRowState {
     use ThreadRowState::*;
     if thread.pending_approval == Some(true) {
@@ -449,6 +502,50 @@ mod tests {
             ..Default::default()
         }
     }
+    #[test]
+    fn machine_activity_counts_and_visits_in_attention_order() {
+        use ThreadStatus::*;
+        let mut threads = vec![
+            thread("working", "/one", Running, 1),
+            thread("done-b", "/one", Idle, 2),
+            thread("done-a", "/one", Idle, 2),
+            thread("failed", "/one", Error, 4),
+            thread("interrupted", "/one", Interrupted, 3),
+            thread("approval-new", "/one", AwaitingApproval, 6),
+            thread("approval-old", "/one", AwaitingApproval, 5),
+        ];
+        let unread = BTreeSet::from(["done-a".into(), "done-b".into()]);
+        let activity = machine_activity(&threads, &unread);
+        assert_eq!(
+            (
+                activity.working,
+                activity.finished,
+                activity.failed,
+                activity.approval
+            ),
+            (1, 2, 1, 2)
+        );
+        for id in [
+            "approval-old",
+            "approval-new",
+            "interrupted",
+            "failed",
+            "done-a",
+            "done-b",
+        ] {
+            let index = machine_activity(&threads, &unread).next.unwrap().0;
+            assert_eq!(threads[index].id, id);
+            threads[index].archived = Some(true);
+        }
+        assert_eq!(
+            machine_activity(&threads, &unread),
+            MachineActivity {
+                working: 1,
+                ..Default::default()
+            }
+        );
+    }
+
     #[test]
     fn live_overlay_adds_reorders_and_preserves_older_rows_without_regression() {
         let mut threads = vec![

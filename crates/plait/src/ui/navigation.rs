@@ -59,6 +59,7 @@ impl Navigation {
 struct RowCache {
     key: Option<RowCacheKey>,
     needs_me: usize,
+    activity: nav::MachineActivity,
     indices: HashMap<String, usize>,
     indices_revision: Option<u64>,
     projects: Option<HashMap<PathBuf, usize>>,
@@ -220,6 +221,11 @@ impl Plait {
         self.navigation.row_cache.borrow().rows.clone()
     }
 
+    pub(super) fn activity(&self) -> nav::MachineActivity {
+        self.ensure_navigation_rows();
+        self.navigation.row_cache.borrow().activity
+    }
+
     fn ensure_navigation_rows(&self) {
         let key = RowCacheKey {
             threads_revision: self.host.connection.threads_revision(),
@@ -232,6 +238,8 @@ impl Plait {
         if cache.key.as_ref() == Some(&key) {
             return;
         }
+        cache.activity =
+            nav::machine_activity(self.host.connection.threads(), &self.lists().unread);
         cache.needs_me = nav::needs_me_count(self.host.connection.threads(), &self.lists().unread);
         let mut grouped = HashMap::<&std::path::Path, Vec<usize>>::new();
         for (index, thread) in self.host.connection.threads().iter().enumerate() {
@@ -606,7 +614,7 @@ impl Plait {
         column()
             .id("project-tree")
             .role(Role::Tree)
-            .aria_label("Projects, machines, and threads")
+            .aria_label("Projects and threads")
             .audited()
             .flex_1()
             .min_h_0()
@@ -702,7 +710,7 @@ impl Plait {
             .border_color(rgb(colors().edge))
             .rounded_md()
             .bg(rgb(colors().panel));
-        // The machine list opens under the row that names the machine.
+        // The status line owns the machine menu.
         if id == "machines" {
             return div().into_any_element();
         }
@@ -1006,82 +1014,6 @@ impl Plait {
             .into_any_element()
     }
 
-    /// Which machine this window works on, and the way to another.
-    fn machine_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let machine = self.machine_label();
-        let (state, tint) = if self.host.connection.connecting || self.machines.connecting.is_some()
-        {
-            ("Connecting", colors().muted)
-        } else if self.host.connection.connected {
-            ("Connected", colors().mint)
-        } else {
-            ("Offline", colors().amber)
-        };
-        let display = self
-            .machines
-            .connecting
-            .as_ref()
-            .and_then(|id| self.preferences.value.machines.get(id))
-            .map(|machine| format!("Connecting to {}…", machine.name))
-            .unwrap_or_else(|| machine.clone());
-        nav_row(
-            "machine-switcher",
-            if self.machines.connecting.is_some() {
-                format!("{display}. Switch machine…")
-            } else {
-                format!("{display}, {state}. Switch machine…")
-            },
-            self.navigation.menu.as_deref() == Some("machines"),
-        )
-        .child(icon("machine"))
-        .child(title(display).text_color(rgb(colors().text)))
-        .child(dot(tint))
-        .child(icon("down"))
-        .on_activate(cx, |this, _, cx| {
-            this.navigation.menu = match this.navigation.menu.as_deref() {
-                Some("machines") => None,
-                _ => Some("machines".into()),
-            };
-            cx.notify();
-        })
-    }
-
-    /// The machines this device knows, and where to manage them.
-    fn machine_menu(&self, panel: Div, cx: &mut Context<Self>) -> Div {
-        let mut panel = panel.child(tag("machine-menu-heading", "Machines", colors().muted));
-        for (index, machine) in self.preferences.value.machines.list().iter().enumerate() {
-            let id = &machine.id;
-            let label = if self.machines.connecting.as_ref() == Some(id) {
-                format!("{} · Connecting…", machine.name)
-            } else if id == &self.machines.active {
-                format!("{} ✓", machine.name)
-            } else {
-                machine.name.clone()
-            };
-            let enabled = self.machines.connecting.as_ref() != Some(id)
-                && (id != &self.machines.active || self.machines.connecting.is_some());
-            let id = id.clone();
-            panel = panel.child(
-                button(("machine-use", index), label)
-                    .disabled(!enabled)
-                    .when(enabled, |el| {
-                        el.on_activate(cx, move |this, window, cx| {
-                            this.navigation.menu = None;
-                            this.use_machine(id.clone(), window, cx);
-                        })
-                    }),
-            );
-        }
-        panel.child(button("machine-manage", "Manage machines…").on_activate(
-            cx,
-            |this, window, cx| {
-                this.navigation.menu = None;
-                this.settings_tab = super::settings::SettingsTab::Machines;
-                this.show_settings(true, window, cx);
-            },
-        ))
-    }
-
     fn needs_me_row(&self, cx: &mut Context<Self>) -> Control {
         self.ensure_navigation_rows();
         let count = self.navigation.row_cache.borrow().needs_me;
@@ -1117,18 +1049,6 @@ impl Plait {
             .pt(px((CHROME_HEIGHT - ROW_HEIGHT) / 2.))
             .pb_1()
             .gap(px(1.))
-            .child(self.machine_row(cx))
-            .when(self.navigation.menu.as_deref() == Some("machines"), |el| {
-                let panel = column()
-                    .my_1()
-                    .p_2()
-                    .gap_1()
-                    .border_1()
-                    .border_color(rgb(colors().edge))
-                    .rounded_md()
-                    .bg(rgb(colors().panel));
-                el.child(self.machine_menu(panel, cx))
-            })
             .child(
                 nav_row("new-local-thread", "New thread", false)
                     .aria_keyshortcuts(self.shortcut_aria("thread.new"))
@@ -1173,52 +1093,6 @@ impl Plait {
             })
     }
 
-    /// Host state stays visible; remote entries are labeled where they appear.
-    fn host_footer(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let machine = self.machine_label();
-        let (label, tint) = if self.host.connection.connecting {
-            (format!("Connecting to {machine}…"), colors().muted)
-        } else if self.host.connection.connected {
-            (format!("{machine} connected"), colors().mint)
-        } else {
-            (format!("{machine} disconnected"), colors().amber)
-        };
-        row()
-            .h(px(40.))
-            .pl_4()
-            .pr_2()
-            .flex_shrink_0()
-            .justify_between()
-            .border_t_1()
-            .border_color(rgb(colors().border))
-            .child(
-                pill()
-                    .min_w_0()
-                    .child(dot(tint))
-                    .child(tag("host-footer-status", label, colors().muted).truncate()),
-            )
-            .child(
-                row()
-                    .gap_1()
-                    .when(self.update_available(), |el| {
-                        el.child(
-                            toned_button("sidebar-update", "Update", Tone::Filled)
-                                .aria_label("Update available. Open Settings to install.")
-                                .on_activate(cx, |this, window, cx| {
-                                    this.show_settings(true, window, cx)
-                                }),
-                        )
-                    })
-                    .child(
-                        icon_button("settings", "sliders", "Settings…")
-                            .aria_keyshortcuts(self.shortcut_aria("app.settings"))
-                            .on_activate(cx, |this, window, cx| {
-                                this.show_settings(true, window, cx)
-                            }),
-                    ),
-            )
-    }
-
     pub(super) fn navigation(&self, cx: &mut Context<Self>) -> impl IntoElement {
         column()
             .relative()
@@ -1232,7 +1106,6 @@ impl Plait {
             .child(self.tree(cx))
             .child(self.navigation_menu(cx))
             .child(div().px_2().child(self.open_project_row(cx)))
-            .child(self.host_footer(cx))
             .child(self.resize_handle(super::panels::Panel::Sidebar, cx))
     }
 }

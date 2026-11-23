@@ -53,6 +53,7 @@ mod settings_project;
 mod settings_providers;
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 mod snapshot;
+mod status_line;
 mod tab_bookmark;
 mod tab_identity;
 mod tab_lifecycle;
@@ -115,6 +116,7 @@ actions!(
         SwitchBranch,
         NewBranch,
         NextThread,
+        NextThreadNeedingMe,
         PreviousThread,
         UndoLastTurn,
         Tab,
@@ -1392,6 +1394,9 @@ impl Render for Plait {
             .on_action(
                 cx.listener(|this, _: &NewBranch, window, cx| this.open_branches(true, window, cx)),
             )
+            .on_action(cx.listener(|this, _: &NextThreadNeedingMe, window, cx| {
+                this.next_needing_me(window, cx)
+            }))
             .on_action(
                 cx.listener(|this, _: &NextThread, window, cx| this.step_thread(true, window, cx)),
             )
@@ -1528,6 +1533,7 @@ impl Render for Plait {
             )
             // Timings stay available without spending a permanent chrome row on them.
             .when(self.diagnostics, |el| el.child(self.diagnostics_bar()))
+            .child(self.status_line(wide, cx))
             .when_some(self.tab_list(cx), |el, list| el.child(list))
             // Above the workspace, beneath images, Settings, and pickers.
             .when_some(self.toast_stack(cx), |el, toasts| el.child(toasts))

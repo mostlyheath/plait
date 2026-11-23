@@ -34,6 +34,7 @@ This table matches `ACTIONS` in `crates/plait/src/ui/actions.rs` (checked by aut
 | Cmd-G | Find Next | `file.find_next` |
 | Cmd-Shift-G | Find Previous | `file.find_previous` |
 | Cmd-Option-Down | Next Thread | `thread.next` |
+| Cmd-Option-J | Next Thread Needing Me | `thread.next_needing_me` |
 | Cmd-Option-Up | Previous Thread | `thread.previous` |
 | Option-Down | Next Changed File | `git.next_file` |
 | Option-Up | Previous Changed File | `git.previous_file` |

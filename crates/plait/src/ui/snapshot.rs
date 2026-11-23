@@ -2646,6 +2646,11 @@ fn reading_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
 
     // Drag from inside the first paragraph into a later block: the table when
     // the window is tall enough to show it, otherwise a list item.
+    if suffix == "narrow" {
+        // Start at the prose reply so both ends of the drag fit in the viewport.
+        harness.update(|plait, _, _| plait.workspace.live_scroll.scroll_to(at(1)));
+        harness.draw();
+    }
     let from = caret(
         harness,
         1,
