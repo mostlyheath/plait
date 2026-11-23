@@ -116,14 +116,21 @@ export class Store {
     const user = snapshot.messages.findLast(message => message.role === 'user');
     // The transcript can be clipped. Use the durable input position and use the
     // visible request to break ties between admissions at the same position.
-    const inputs = this.db.prepare(`SELECT id,COALESCE(entry,anchor,0) AS position,entry IS NULL AS pending
+    const inputs = this.db.prepare(`SELECT id,entry,COALESCE(entry,anchor,0) AS position,entry IS NULL AS pending
       FROM requests WHERE scope=? AND state IS NULL AND input IS NOT NULL
       ORDER BY position DESC,pending DESC,('request-' || id=?) DESC LIMIT 2`).all(snapshot.id, user?.id ?? '');
     const [latest, prior] = inputs;
     const tied = prior && latest.position === prior.position && latest.pending === prior.pending;
     const matches = latest && (user ? user.id === `request-${latest.id}` : !tied);
+    // A placed input belongs to the most recent turn start at or before its entry.
+    // Include rowless turns here so their inputs cannot match an older runs row.
+    const owner = matches && latest.entry !== null && this.db.prepare(`SELECT r.run_request FROM records r
+      JOIN requests q ON q.scope=r.thread AND q.id=r.run_request
+      WHERE r.thread=? AND r.kind='before' AND q.entry<=?
+        AND NOT EXISTS (SELECT 1 FROM records a WHERE a.before=r.id AND a.kind='undo')
+      ORDER BY q.entry DESC LIMIT 1`).get(snapshot.id, latest.entry);
     const current = matches && this.db.prepare(`SELECT run_id FROM runs WHERE thread_id=?
-      AND request_id=? AND finished_at IS NULL`).get(snapshot.id, latest.id);
+      AND request_id=? AND finished_at IS NULL`).get(snapshot.id, owner ? owner.run_request : latest.id);
     if (current) this.saveRunEvent(String(current.run_id), 0, snapshot, { state: 'dead', finished: true });
     else this.save(snapshot);
     // A rollback may have left other admissions open. Their snapshots are gone.

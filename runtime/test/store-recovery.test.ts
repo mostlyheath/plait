@@ -5,8 +5,9 @@ import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createModels } from '@earendil-works/pi-ai/models';
-import type { Snapshot } from '../src/protocol.ts';
+import { inputMessage, type Snapshot } from '../src/protocol.ts';
 import { Runtime } from '../src/runtime.ts';
+import { rootIdentity } from '../src/safety.ts';
 
 for (const status of ['running', 'awaiting_approval'] as const) {
   test(`startup interrupts ${status} only during recovery`, async () => {
@@ -33,6 +34,47 @@ for (const status of ['running', 'awaiting_approval'] as const) {
       assert.equal(reply.thread.live_text, '');
       assert.equal(reply.thread.error?.code, 'interrupted');
     } finally { await runtime.close(); await rm(directory, { recursive: true, force: true }); }
+  });
+}
+
+for (const mode of ['one steer', 'two steers', 'rowless follow-up'] as const) {
+  test(`restart resolves the active turn with ${mode}`, async t => {
+    const directory = await mkdtemp(join(tmpdir(), 'plait-recovery-'));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const open = () => new Runtime(directory, createModels(), new Set());
+    const first = open();
+    const { store } = first;
+    const snapshot: Snapshot = { id: 'thread', checkout: directory, model: { provider: 'faux', model_id: 'model' },
+      status: 'running', messages: [], tools: [], live_text: '', pending_approval: null, error: null, truncated: false };
+    const before = (request: string) => store.db.prepare(`INSERT INTO records(id,thread,run_request,kind,checkout,state,created_at)
+      VALUES (?, 'thread', ?, 'before', ?, 'failed', 0)`).run(request, request, directory);
+    store.admit('thread', 'original', 'first', { accepted: true }, snapshot, await rootIdentity(directory));
+    store.createRun('run', 'thread', 'original', 'pi');
+    before('original');
+    store.place('thread', 'original', 1);
+    for (let entry = 2; entry <= (mode === 'two steers' ? 3 : 2); entry++) {
+      const id = `steer-${entry}`;
+      store.enqueue(id, id, { accepted: true }, { mode: 'steer', approval: 'ask' }, snapshot);
+      snapshot.messages.push(inputMessage(store.waitingInput('thread', id)));
+      store.place('thread', id, entry);
+      store.save(snapshot);
+    }
+    store.enqueue('next', 'next', { accepted: true }, { mode: 'follow_up', approval: 'ask' }, snapshot);
+    if (mode === 'rowless follow-up') {
+      store.dequeue(store.waitingInput('thread', 'next'), snapshot);
+      before('next'); // The older host records the turn but creates no runs row.
+      store.place('thread', 'next', 4);
+    }
+    await first.close();
+    const current = open();
+    t.after(() => current.close());
+    await current.recover();
+    assert.equal(current.store.get('thread').status, 'interrupted');
+    const turns = current.records.page('thread', undefined, 2, 7).records;
+    const original = turns.at(-1)!;
+    assert.deepEqual(original.request_ids, mode === 'two steers' ? ['original', 'steer-2', 'steer-3'] : ['original', 'steer-2']);
+    assert.equal(original.outcome, mode === 'rowless follow-up' ? undefined : 'interrupted');
+    if (mode === 'rowless follow-up') assert.deepEqual(turns[0].request_ids, ['next']);
   });
 }
 
