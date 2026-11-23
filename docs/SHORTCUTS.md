@@ -26,6 +26,8 @@ This table matches `ACTIONS` in `crates/plait/src/ui/actions.rs` (checked by aut
 | Cmd-K | Command Palette… | `palette.toggle` |
 | Cmd-B | Toggle Sidebar | `view.toggle_sidebar` |
 | Cmd-Backslash | Toggle Work View | `view.toggle_work` |
+| Cmd-Option-Right | Focus Next Pane | `pane.next` |
+| Cmd-Option-Left | Focus Previous Pane | `pane.previous` |
 | Cmd-L | Toggle This Turn | `view.toggle_inspector` |
 | Cmd-Shift-D | Toggle Diagnostics | `view.toggle_diagnostics` |
 | Cmd-Shift-1 | Conversation | `view.conversation` |
@@ -60,6 +62,14 @@ Notes on application shortcuts:
 - **Rebinding rules:** Text-editing keys and reserved macOS system shortcuts (such as `Cmd-Space`, `Cmd-Tab`, and `Cmd-Shift-3`–`5`) cannot be assigned. `Tab` and `Shift-Tab` always keep a binding. Each numbered jump set (`tab_jump.1`–`9` and `jump.1`–`9`) changes modifiers as one set.
 - **Approvals (`Cmd-Option-Y`, `Cmd-Option-period`) and Undo (`Cmd-Option-U`):** Act only in the visible conversation with no modal or palette open over it. Holding an approval key answers at most one card.
 - **Unbound menu actions:** Actions without a default shortcut (such as **Worktrees**, **Linear Issues**, **Project Settings…**, **Show in Finder**, **Files**, **Rename Thread…**, **Archive or Unarchive Thread**, **Stage All Changes**, **Push**, **Pull**, **Fetch**, and **New Branch…**) can still be assigned a shortcut in **Settings → Keyboard**.
+
+Work view also has these assignable pane actions.
+
+| Shortcut | Action | ID |
+| --- | --- | --- |
+| — | Split Pane Right | `pane.split_right` |
+| — | Split Pane Down | `pane.split_down` |
+| — | Close Pane | `pane.close` |
 
 ## Composer and text fields
 

@@ -3,6 +3,9 @@
 //! Manages split layout, focus, kind uniqueness, and resize constraints without
 //! UI types, serialization, or I/O. The desktop crate presents `PaneLayout`.
 
+use crate::tabs::bookmark::{
+    ChangesBookmark, ConversationBookmark, FileBookmark, HistoryBookmark, ThreadBookmark,
+};
 use std::fmt;
 
 /// Minimum window width in points required to enter or draw Work view.
@@ -72,6 +75,15 @@ impl PaneKind {
     }
 }
 
+#[derive(Clone, Copy)]
+pub enum PaneCommand {
+    Next,
+    Previous,
+    Split(SplitDirection),
+    Close,
+    Kind(PaneKind),
+}
+
 /// Orientation of a split node's two children.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SplitDirection {
@@ -86,6 +98,7 @@ pub enum SplitDirection {
 /// Each variant provides plain-language text suitable for disabled-control hover text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PaneRefusal {
+    WorkViewRequired,
     /// Window is narrower than `WORK_VIEW_MIN_WINDOW_WIDTH`.
     WindowTooNarrow,
     /// The tab already holds `MAX_PANES` panes.
@@ -93,7 +106,9 @@ pub enum PaneRefusal {
     /// Every non-thread pane kind is already open in this tab.
     NoKindAvailable,
     /// Splitting would make at least one half smaller than the minimum pane size.
-    TooSmallToSplit { direction: SplitDirection },
+    TooSmallToSplit {
+        direction: SplitDirection,
+    },
     /// The requested kind is already open in this tab.
     KindAlreadyOpen(PaneKind),
     /// The Thread pane cannot be closed.
@@ -114,6 +129,7 @@ impl PaneRefusal {
     /// Human-readable explanation for hover text or error reporting.
     pub fn reason(self) -> &'static str {
         match self {
+            Self::WorkViewRequired => "Pane actions are available in Work view.",
             Self::WindowTooNarrow => "Work view needs a window at least 800 points wide.",
             Self::AtPaneLimit => "A tab holds at most four panes.",
             Self::NoKindAvailable => "Every pane kind is already open.",
@@ -154,10 +170,44 @@ pub fn check_work_view_width(window_width: f32) -> Result<(), PaneRefusal> {
     }
 }
 
+/// Semantic locations only. Loaded content stays with the active workspace.
+#[derive(Default, Clone)]
+pub struct PaneLocations {
+    conversation: ConversationBookmark,
+    changes: ChangesBookmark,
+    pub focus: crate::tabs::bookmark::FocusTarget,
+    history: HistoryBookmark,
+    files: FileBookmark,
+}
+
+impl PaneLocations {
+    pub fn capture(bookmark: &ThreadBookmark) -> Self {
+        Self {
+            conversation: bookmark.conversation.clone(),
+            changes: bookmark.changes.clone(),
+            focus: bookmark.focus,
+            history: bookmark.history.clone(),
+            files: bookmark.files.clone(),
+        }
+    }
+
+    pub fn restore(&self, bookmark: &mut ThreadBookmark) {
+        bookmark.conversation.clone_from(&self.conversation);
+        bookmark.changes.clone_from(&self.changes);
+        bookmark.history.clone_from(&self.history);
+        bookmark.files.clone_from(&self.files);
+    }
+}
+
 /// Transient presentation choices of an open thread tab.
 #[derive(Default)]
 pub struct WorkView {
     pub tree: Option<PaneTree>,
+    pub chat_review: Option<(crate::review::recorded::Target, bool)>,
+    pub chat_locations: Option<PaneLocations>,
+    pub pane_locations: Option<PaneLocations>,
+    pub kind_menu: Option<PaneId>,
+    pub diff_find: crate::tabs::bookmark::FindBookmark,
     pub open: bool,
     pub sidebar: bool,
     pub recorded: bool,
@@ -166,8 +216,8 @@ pub struct WorkView {
 
 impl WorkView {
     pub fn toggle(&mut self, width: f32, has_record: Option<bool>) -> Result<(), PaneRefusal> {
-        check_work_view_width(width)?;
         if !self.open {
+            check_work_view_width(width)?;
             if self.tree.is_none() {
                 self.tree = Some(PaneTree::new(PaneKind::Changes)?);
                 self.recorded = has_record.unwrap_or(false);
@@ -175,6 +225,7 @@ impl WorkView {
             }
             self.sidebar = false;
         }
+        self.kind_menu = None;
         self.open = !self.open;
         Ok(())
     }
@@ -206,34 +257,76 @@ impl WorkView {
             .map(|tree| tree.layout(width, height))
     }
 
-    /// Return true when a pane handled the view action. History and Files
-    /// keep their existing single-view navigation until those panes are built.
+    /// Route view shortcuts into the visible tree.
     pub fn route(&mut self, view: crate::thread_view::ThreadView, visible: bool) -> bool {
         use crate::thread_view::ThreadView;
         if !self.open {
             return false;
         }
         let kind = match view {
-            ThreadView::History | ThreadView::Files => {
-                self.open = false;
-                return false;
-            }
+            ThreadView::History => PaneKind::History,
+            ThreadView::Files => PaneKind::Files,
             ThreadView::Conversation => PaneKind::Thread,
             ThreadView::Changes => PaneKind::Changes,
         };
         if visible && let Some(tree) = self.tree.as_mut() {
+            self.kind_menu = None;
             tree.focus_kind(kind);
             true
         } else {
+            if view != ThreadView::Conversation {
+                self.open = false;
+                self.kind_menu = None;
+            }
             false
         }
     }
 
-    pub fn sidebar(&self, chat: bool) -> bool {
-        if self.open { self.sidebar } else { chat }
+    pub fn toggle_kind_menu(&mut self, pane: PaneId) {
+        let Some(tree) = self.tree.as_mut().filter(|_| self.open) else {
+            return;
+        };
+        if !tree.available_kinds_for(pane).is_empty() && tree.focus(pane).is_ok() {
+            self.kind_menu = (self.kind_menu != Some(pane)).then_some(pane);
+        }
     }
-    pub fn toggle_sidebar(&mut self, chat: &mut bool) {
-        let sidebar = if self.open { &mut self.sidebar } else { chat };
+
+    pub fn apply(
+        &mut self,
+        command: PaneCommand,
+        width: f32,
+        height: f32,
+    ) -> Result<(), PaneRefusal> {
+        let Some(tree) = self.tree.as_mut().filter(|_| self.open) else {
+            return Err(PaneRefusal::WorkViewRequired);
+        };
+        let pane = tree.focused();
+        self.kind_menu = None;
+        match command {
+            PaneCommand::Next => {
+                tree.focus_next();
+            }
+            PaneCommand::Previous => {
+                tree.focus_previous();
+            }
+            PaneCommand::Split(direction) => {
+                tree.split(pane, direction, width, height)?;
+            }
+            PaneCommand::Close => {
+                if tree.close(pane)? == CloseOutcome::ReturnToChat {
+                    self.open = false;
+                }
+            }
+            PaneCommand::Kind(kind) => tree.set_kind(pane, kind)?,
+        }
+        Ok(())
+    }
+
+    pub fn sidebar(&self, chat: bool, visible: bool) -> bool {
+        if visible { self.sidebar } else { chat }
+    }
+    pub fn toggle_sidebar(&mut self, chat: &mut bool, visible: bool) {
+        let sidebar = if visible { &mut self.sidebar } else { chat };
         *sidebar = !*sidebar;
     }
 }
@@ -1726,6 +1819,27 @@ mod tests {
 mod work_view_tests {
     use super::*;
     #[test]
+    fn commands_use_the_focused_pane_and_stop_in_chat() {
+        let mut work = WorkView::default();
+        assert_eq!(
+            work.apply(PaneCommand::Next, 900., 600.),
+            Err(PaneRefusal::WorkViewRequired)
+        );
+        work.toggle(900., Some(false)).unwrap();
+        let side = work.tree.as_ref().unwrap().last_focused_side();
+        work.toggle_kind_menu(side);
+        assert_eq!(work.kind_menu, Some(side));
+        work.apply(PaneCommand::Kind(PaneKind::History), 900., 600.)
+            .unwrap();
+        assert_eq!(work.kind_menu, None);
+        work.apply(PaneCommand::Split(SplitDirection::Stacked), 900., 600.)
+            .unwrap();
+        work.apply(PaneCommand::Close, 900., 600.).unwrap();
+        work.apply(PaneCommand::Close, 900., 600.).unwrap();
+        assert!(!work.open);
+    }
+
+    #[test]
     fn finds_only_displayed_patch_rows() {
         let mut patch = crate::model::Diff::message("line to find", Default::default());
         assert_eq!(matching_diff_rows(&patch, "FIND"), vec![0..1]);
@@ -1749,16 +1863,28 @@ mod work_view_tests {
     #[test]
     fn routing_and_sidebar_are_transient() {
         use crate::thread_view::ThreadView;
-        let mut work = WorkView::default();
-        let mut chat = true;
-        work.toggle(900., Some(false)).unwrap();
-        work.toggle_sidebar(&mut chat);
-        assert!(work.sidebar(chat));
-        assert!(work.route(ThreadView::Changes, true));
-        let tree = work.tree.as_ref().unwrap();
-        assert_eq!(tree.pane_kind(tree.focused()), Some(PaneKind::Changes));
-        assert!(!work.route(ThreadView::History, true));
-        assert!(work.sidebar(chat));
+        for initial in [true, false] {
+            for destination in [ThreadView::Changes, ThreadView::History, ThreadView::Files] {
+                let mut work = WorkView::default();
+                let mut chat = initial;
+                work.toggle(900., Some(false)).unwrap();
+                assert!(!work.sidebar(chat, true));
+                work.toggle_sidebar(&mut chat, true);
+                assert!(work.sidebar(chat, true));
+                let fallback = work.fits(799., 799., 500.);
+                assert!(!fallback);
+                assert_eq!(work.sidebar(chat, fallback), initial);
+                work.toggle_sidebar(&mut chat, fallback);
+                assert_eq!(chat, !initial);
+                assert!(work.sidebar(chat, true));
+                assert!(work.route(destination, work.fits(900., 660., 500.)));
+                assert!(!work.route(destination, false));
+                assert!(!work.open);
+                assert!(!work.route(ThreadView::Conversation, false));
+                assert!(work.layout(900., 900., 500.).is_none());
+                assert_eq!(work.sidebar(chat, false), !initial);
+            }
+        }
     }
 
     #[test]
@@ -1775,7 +1901,7 @@ mod work_view_tests {
                 work.layout(900., 900., 500.).unwrap().panes[0].rect.width,
                 420.
             );
-            work.toggle(800., Some(!recorded)).unwrap();
+            work.toggle(799., Some(!recorded)).unwrap();
             assert!(work.layout(900., 900., 500.).is_none());
             work.toggle(800., Some(!recorded)).unwrap();
             assert_eq!(work.recorded, recorded);

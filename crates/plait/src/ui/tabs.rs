@@ -386,7 +386,7 @@ impl Plait {
             return true;
         }
         self.capture_session(cx);
-        let bookmark = self.capture_tab_bookmark(None, cx);
+        let bookmark = self.durable_tab_bookmark(None, cx);
         match plait_client::tabs::bookmark::BookmarkRecord::capture(&bookmark) {
             Ok(bookmark) => {
                 let result = self.tabs.model.save_bookmark(id, bookmark);

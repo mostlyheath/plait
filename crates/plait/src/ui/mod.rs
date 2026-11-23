@@ -131,6 +131,11 @@ actions!(
         CommandPalette,
         ToggleInspector,
         ToggleWorkView,
+        FocusNextPane,
+        FocusPreviousPane,
+        SplitPaneRight,
+        SplitPaneDown,
+        ClosePane,
         ToggleChangedFiles,
         RenameThread,
         ArchiveThread,
@@ -212,7 +217,8 @@ pub struct Plait {
     panels: panels::Panels,
     focus: FocusHandle,
     /// The conversation field that gets focus back after changing views.
-    work_focus: [FocusHandle; 2],
+    kind_menu_focus: FocusHandle,
+    work_focus: [FocusHandle; 4],
     conversation_focus: Option<FocusHandle>,
     /// The window control that had focus before conversation find opened.
     conversation_find_focus: Option<FocusHandle>,
@@ -365,7 +371,8 @@ impl Plait {
             remote_listing: None,
             panels: Default::default(),
             focus,
-            work_focus: [cx.focus_handle(), cx.focus_handle()],
+            kind_menu_focus: cx.focus_handle(),
+            work_focus: std::array::from_fn(|_| cx.focus_handle()),
             conversation_focus: None,
             conversation_find_focus: None,
             sidebar: true,
@@ -562,6 +569,7 @@ impl Plait {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.leave_work_fallback(window, cx);
         let same_recorded_file = self.workspace.turn_review.current
             && self.recorded_file().is_some_and(|recorded| {
                 self.state
@@ -853,8 +861,9 @@ impl Plait {
     fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // Keep the shortcut context alive when its focused child is removed.
         window.focus(&self.focus, cx);
+        let visible = self.draws_work();
         if let Some(work) = self.tabs.model.work_mut() {
-            work.toggle_sidebar(&mut self.sidebar);
+            work.toggle_sidebar(&mut self.sidebar, visible);
         } else {
             self.sidebar = !self.sidebar;
         }
@@ -922,7 +931,8 @@ impl Plait {
             }
             self.refresh_turn_review(cx);
         }
-        if tab == Workspace::History {
+        if tab == Workspace::History || self.remembers_kind(plait_client::panes::PaneKind::History)
+        {
             self.state.repository.request_history();
             if self.workspace.restore_pending[2]
                 && let Some(commit) = self
@@ -937,7 +947,7 @@ impl Plait {
         } else {
             self.state.repository.leave_history();
         }
-        if tab == Workspace::Files {
+        if tab == Workspace::Files || self.remembers_kind(plait_client::panes::PaneKind::Files) {
             self.check_file(cx);
         }
         if tab == Workspace::Conversation
@@ -1304,6 +1314,28 @@ impl Render for Plait {
             .on_action(
                 cx.listener(|this, _: &ToggleWorkView, window, cx| this.toggle_work(window, cx)),
             )
+            .when(!self.settings_open && self.draws_work(), |el| {
+                el.on_action(cx.listener(|this, _: &FocusNextPane, window, cx| {
+                    use plait_client::panes::*;
+                    this.pane_command(PaneCommand::Next, window, cx)
+                }))
+                .on_action(cx.listener(|this, _: &FocusPreviousPane, window, cx| {
+                    use plait_client::panes::*;
+                    this.pane_command(PaneCommand::Previous, window, cx)
+                }))
+                .on_action(cx.listener(|this, _: &SplitPaneRight, window, cx| {
+                    use plait_client::panes::*;
+                    this.pane_command(PaneCommand::Split(SplitDirection::SideBySide), window, cx)
+                }))
+                .on_action(cx.listener(|this, _: &SplitPaneDown, window, cx| {
+                    use plait_client::panes::*;
+                    this.pane_command(PaneCommand::Split(SplitDirection::Stacked), window, cx)
+                }))
+                .on_action(cx.listener(|this, _: &ClosePane, window, cx| {
+                    use plait_client::panes::*;
+                    this.pane_command(PaneCommand::Close, window, cx)
+                }))
+            })
             .on_action(cx.listener(|this, _: &ToggleInspector, window, cx| {
                 this.toggle_inspector(window, cx)
             }))
@@ -1585,7 +1617,11 @@ impl Render for Plait {
                                             ))
                                             .into_any_element()
                                     } else if self.workspace.tab == Workspace::History {
-                                        self.history_view(wide, cx).into_any_element()
+                                        self.history_view(
+                                            self.workspace.work_area.size.width.into(),
+                                            cx,
+                                        )
+                                        .into_any_element()
                                     } else if self.workspace.tab == Workspace::Files {
                                         self.file_view(cx)
                                     } else if self.workspace.tab == Workspace::Changes {

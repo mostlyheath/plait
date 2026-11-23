@@ -611,7 +611,7 @@ impl Plait {
                                 if checkout != this.host.creation.checkout {
                                     this.change_checkout(checkout, window, cx);
                                 }
-                                this.open_file(path.clone(), None, cx);
+                                this.open_file_in_view(path.clone(), window, cx);
                             },
                         ))
                     })

@@ -277,6 +277,7 @@ impl Plait {
         {
             return;
         }
+        self.leave_work_fallback(window, cx);
         if self.workspace.turn_review.older
             && let Some(path) = &target.path
         {
@@ -299,7 +300,9 @@ impl Plait {
             self.refresh_turn_review(cx);
         }
         self.show_tab(Workspace::Changes, window, cx);
-        window.focus(&self.focus, cx);
+        if !self.draws_work() {
+            window.focus(&self.focus, cx);
+        }
         if self.workspace.turn_review.older {
             self.workspace.turn_review.error = Some((
                 "Older host",

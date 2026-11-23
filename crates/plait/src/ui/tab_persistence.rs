@@ -553,7 +553,7 @@ impl Plait {
                 .model
                 .active()
                 .filter(|_| !self.worktrees_visible())
-                .map(|id| (id, self.capture_tab_bookmark(window, cx))),
+                .map(|id| (id, self.durable_tab_bookmark(window, cx))),
             target: state
                 .target
                 .clone()

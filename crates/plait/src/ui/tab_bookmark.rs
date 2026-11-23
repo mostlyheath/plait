@@ -46,6 +46,20 @@ pub(super) fn row_key(row: Row<'_>) -> String {
 }
 
 impl Plait {
+    pub(super) fn durable_tab_bookmark(&self, window: Option<&Window>, cx: &App) -> ThreadBookmark {
+        let mut bookmark = self.capture_tab_bookmark(window, cx);
+        if let Some(chat) = self
+            .tabs
+            .model
+            .work()
+            .filter(|w| w.open)
+            .and_then(|w| w.chat_locations.as_ref())
+        {
+            chat.restore(&mut bookmark);
+        }
+        bookmark
+    }
+
     pub(super) fn capture_tab_bookmark(&self, window: Option<&Window>, cx: &App) -> ThreadBookmark {
         let w = &self.workspace;
         let top = w.live_scroll.logical_scroll_top();
@@ -265,10 +279,19 @@ impl Plait {
 
     pub(super) fn restore_tab_bookmark(
         &mut self,
-        bookmark: ThreadBookmark,
+        mut bookmark: ThreadBookmark,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(locations) = self
+            .tabs
+            .model
+            .work()
+            .filter(|w| w.open)
+            .and_then(|w| w.pane_locations.as_ref())
+        {
+            locations.restore(&mut bookmark);
+        }
         self.workspace.tab = bookmark.view;
         self.workspace.thread_files.collapsed = bookmark.panels.changed_files_collapsed;
         self.workspace.thread_controls.usage_open = bookmark.panels.context_open;
@@ -288,6 +311,15 @@ impl Plait {
             }
         }
         self.restore_find_bookmark(FindIn::Conversation, &bookmark.conversation.find, cx);
+        if let Some(saved) = self
+            .tabs
+            .model
+            .work()
+            .map(|w| w.diff_find.clone())
+            .filter(|f| f.open || !f.query.is_empty())
+        {
+            self.restore_find_bookmark(FindIn::Changes, &saved, cx);
+        }
         self.restore_find_bookmark(FindIn::File, &bookmark.files.find, cx);
         self.workspace.file_viewer.path = bookmark.files.path.as_ref().map(Into::into);
         self.workspace.file_viewer.root = self.file_root();

@@ -73,6 +73,7 @@ impl Plait {
             }
             body = body.child(
                 button("open-in-work", "Open in Work view")
+                    .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
                     .child(self.shortcut_label("view.toggle_work"))
                     .aria_keyshortcuts(self.shortcut_aria("view.toggle_work"))
                     .on_activate(cx, |this, window, cx| {

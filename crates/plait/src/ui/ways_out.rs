@@ -82,6 +82,14 @@ impl Plait {
         if !self.host_is_local() || self.settings_open {
             return None;
         }
+        if let Some(kind) = self.focused_work_kind() {
+            use plait_client::panes::PaneKind;
+            return match kind {
+                PaneKind::Changes if !self.work_recorded() => self.changes_target(),
+                PaneKind::Files => self.files_target(),
+                _ => None,
+            };
+        }
         match self.workspace.tab {
             Workspace::Files => self.files_target(),
             Workspace::Changes => self.changes_target(),
