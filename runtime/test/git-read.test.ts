@@ -14,6 +14,8 @@ const code = (fn: () => unknown, expected: string) => assert.throws(fn, (error: 
 test('Git reads accept only known reads and their fields', () => {
   const valid = { op: 'git_read', read: 'diff', checkout, identity: { dev: '1', ino: '18446744073709551615' }, change: {}, mode: 'Staged' };
   assert.equal(validateGitRead(valid).read, 'diff');
+  assert.equal(validateGitRead({ op: 'git_read', read: 'checkout_summary', checkout, roots: false }).roots, false);
+  for (const roots of [undefined, null, 'true', 1]) code(() => validateGitRead({ op: 'git_read', read: 'checkout_summary', checkout, roots }), 'invalid_request');
   assert.equal(validateGitRead({ op: 'git_read', read: 'status', checkout, identity: null }).read, 'status');
   for (const input of [null, [], { ...valid, read: 'write' }, { ...valid, protocol_version: 6 }, { ...valid, path: 'x' },
     { ...valid, checkout: '' }, { ...valid, checkout: '/repo' }, { ...valid, identity: { dev: 1, ino: '2' } },

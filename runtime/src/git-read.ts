@@ -20,7 +20,7 @@ const KEEP_MS = 120_000;
 const DOCUMENTS = 4;
 
 const reads: Record<string, string[]> = {
-  status: [], checkout_summary: [], files: [], branches: [], main_checkout: [], identity: [],
+  status: [], checkout_summary: ['roots'], files: [], branches: [], main_checkout: [], identity: [],
   diff: ['change', 'mode'],
   log: ['tip', 'skip', 'limit'],
   show: ['id'],
@@ -33,6 +33,8 @@ const reads: Record<string, string[]> = {
 const operations = new Set(['git_read', 'git_read_page', 'git_write']);
 const digits = (value: unknown) => typeof value === 'string' && /^[0-9]{1,20}$/.test(value);
 const base64 = (value: unknown) => typeof value === 'string' && value.length > 0 && value.length <= 8192 && value.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(value);
+
+export type CheckoutSummary = { vcs: string; fingerprint?: { roots: string[]; remote: string | null } | null; branch?: { branch: string; named: boolean; tracking: unknown } | null; main_checkout?: string | null };
 
 type Document = { bytes: Buffer; touched: number };
 export type Helper = (input: unknown, operation: 'git-read' | 'git-write') => Promise<Buffer>;
@@ -58,6 +60,7 @@ export function validateGitRead(input: unknown): Record<string, unknown> & { op:
   const allowed = ['op', 'read', 'checkout', 'identity', ...(kind ?? [])];
   if (!kind || Object.keys(request).some(key => !allowed.includes(key))) fail('invalid_request', 'Unknown operation or field.');
   if (!base64(request.checkout)) fail('invalid_request', 'Invalid checkout.');
+  if (request.read === 'checkout_summary' && typeof request.roots !== 'boolean') fail('invalid_request', 'Invalid roots.');
   if (request.identity != null && !identityValid(request.identity)) fail('invalid_request', 'Invalid checkout identity.');
   return request;
 }
@@ -78,6 +81,12 @@ export class GitReads {
   private operationStore?: Store;
   constructor(helper: Helper = runHelper, now = Date.now, store: string | null = null, operationStore?: Store) {
     this.operationStore = operationStore; this.helper = helper; this.now = now; this.store = store === null ? null : Buffer.from(store).toString('base64');
+  }
+  async checkoutSummary(path: string, roots: boolean): Promise<CheckoutSummary> {
+    const bytes = await this.helper({ read: 'checkout_summary', roots, checkout: Buffer.from(path).toString('base64') }, 'git-read');
+    const reply = JSON.parse(bytes.toString()) as { ok?: { result?: CheckoutSummary } };
+    if (!reply.ok?.result || !['git', 'folder'].includes(reply.ok.result.vcs)) throw new Error('Invalid checkout summary.');
+    return reply.ok.result;
   }
   handles(input: unknown) { return !!input && typeof input === 'object' && operations.has(String((input as { op?: unknown }).op)); }
   async handle(input: unknown) {

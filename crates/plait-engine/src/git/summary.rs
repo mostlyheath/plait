@@ -16,7 +16,7 @@ fn text(raw: &super::Raw) -> Result<&str> {
     std::str::from_utf8(&raw.out.bytes).map_err(|_| "Git returned non-UTF-8 summary data.".into())
 }
 
-pub fn checkout_summary(root: &Path) -> Result<CheckoutSummary> {
+pub fn checkout_summary(root: &Path, include_roots: bool) -> Result<CheckoutSummary> {
     if plain_folder(root) {
         if !root.is_dir() {
             return Err("The folder is missing.".into());
@@ -89,23 +89,7 @@ pub fn checkout_summary(root: &Path) -> Result<CheckoutSummary> {
             return Err("Invalid tracking counts.".into());
         }
     }
-    // Callers should cache roots: they change only after a history rewrite or first commit.
-    let roots_raw = query(root, &["rev-list", "--max-parents=0", "HEAD"])?;
-    let roots = if roots_raw.status.success() {
-        let mut roots: Vec<String> = text(&roots_raw)?
-            .lines()
-            .map(str::to_ascii_lowercase)
-            .collect();
-        if roots.len() > 32 || roots.iter().any(|id| !super::log::is_object_id(id)) {
-            return Err("Git returned too many or invalid root commits.".into());
-        }
-        roots.sort();
-        roots
-    } else if branch.is_none() {
-        Vec::new()
-    } else {
-        return Err(roots_raw.failure());
-    };
+    let no_branch_ref = branch.is_none();
     if branch.is_none() {
         if let Some(head_ref) = head_ref {
             branch = Some(BranchSummary {
@@ -117,9 +101,6 @@ pub fn checkout_summary(root: &Path) -> Result<CheckoutSummary> {
                 tracking: None,
             });
         } else {
-            if !roots_raw.status.success() {
-                return Err(roots_raw.failure());
-            }
             let detached = query(root, &["rev-parse", "--short", "HEAD"])?;
             if !detached.status.success() {
                 return Err(detached.failure());
@@ -131,20 +112,41 @@ pub fn checkout_summary(root: &Path) -> Result<CheckoutSummary> {
             });
         }
     }
-    let config = query(root, &["config", "--get-regexp", "^remote\\..*\\.url$"])?;
-    if !config.status.success() && config.status.code() != Some(1) {
-        return Err(config.failure());
-    }
-    let mut remotes: Vec<_> = text(&config)?
-        .lines()
-        .filter_map(|line| line.split_once(' '))
-        .collect();
-    remotes.sort_by_key(|(name, _)| *name);
-    let remote = remotes
-        .iter()
-        .find(|(name, _)| *name == "remote.origin.url")
-        .or_else(|| remotes.first())
-        .and_then(|(_, url)| normalize_remote(url));
+    let fingerprint = if include_roots {
+        let roots_raw = query(root, &["rev-list", "--max-parents=0", "HEAD"])?;
+        let roots = if roots_raw.status.success() {
+            let mut roots: Vec<String> = text(&roots_raw)?
+                .lines()
+                .map(str::to_ascii_lowercase)
+                .collect();
+            if roots.len() > 32 || roots.iter().any(|id| !super::log::is_object_id(id)) {
+                return Err("Git returned too many or invalid root commits.".into());
+            }
+            roots.sort();
+            roots
+        } else if no_branch_ref && head_ref.is_some() {
+            Vec::new()
+        } else {
+            return Err(roots_raw.failure());
+        };
+        let config = query(root, &["config", "--get-regexp", "^remote\\..*\\.url$"])?;
+        if !config.status.success() && config.status.code() != Some(1) {
+            return Err(config.failure());
+        }
+        let mut remotes: Vec<_> = text(&config)?
+            .lines()
+            .filter_map(|line| line.split_once(' '))
+            .collect();
+        remotes.sort_by_key(|(name, _)| *name);
+        let remote = remotes
+            .iter()
+            .find(|(name, _)| *name == "remote.origin.url")
+            .or_else(|| remotes.first())
+            .and_then(|(_, url)| normalize_remote(url));
+        Some(Fingerprint { roots, remote })
+    } else {
+        None
+    };
     let worktrees = query(root, &["worktree", "list", "--porcelain", "-z"])?;
     if !worktrees.status.success() {
         return Err(worktrees.failure());
@@ -167,7 +169,7 @@ pub fn checkout_summary(root: &Path) -> Result<CheckoutSummary> {
     };
     Ok(CheckoutSummary {
         vcs: Vcs::Git,
-        fingerprint: Some(Fingerprint { roots, remote }),
+        fingerprint,
         branch,
         main_checkout,
     })
@@ -249,7 +251,7 @@ mod tests {
     fn summary_repository_states() {
         use crate::git::tests::Repo;
         let repo = Repo::new();
-        let unborn = checkout_summary(&repo.0).unwrap();
+        let unborn = checkout_summary(&repo.0, true).unwrap();
         assert!(unborn.fingerprint.unwrap().roots.is_empty());
         assert_eq!(unborn.branch.unwrap().branch, "main");
         repo.write("file", "one");
@@ -260,7 +262,10 @@ mod tests {
             "origin",
             "https://user:secret@EXAMPLE.com/org/repo.git",
         ]);
-        let initial = checkout_summary(&repo.0).unwrap();
+        let without_roots = checkout_summary(&repo.0, false).unwrap();
+        assert!(without_roots.fingerprint.is_none());
+        assert_eq!(without_roots.branch.unwrap().branch, "main");
+        let initial = checkout_summary(&repo.0, true).unwrap();
         let fp = initial.fingerprint.unwrap();
         assert_eq!(fp.roots.len(), 1);
         assert_eq!(fp.remote.as_deref(), Some("example.com/org/repo"));
@@ -268,7 +273,7 @@ mod tests {
         repo.git(&["branch", "--set-upstream-to=origin/main"]);
         repo.write("file", "two");
         repo.commit();
-        let tracking = checkout_summary(&repo.0)
+        let tracking = checkout_summary(&repo.0, true)
             .unwrap()
             .branch
             .unwrap()
@@ -282,7 +287,7 @@ mod tests {
         repo.git(&["reset", "--hard", "HEAD^"]);
         repo.write("another", "divergence");
         repo.commit();
-        let tracking = checkout_summary(&repo.0)
+        let tracking = checkout_summary(&repo.0, true)
             .unwrap()
             .branch
             .unwrap()
@@ -291,7 +296,7 @@ mod tests {
         assert_eq!((tracking.ahead, tracking.behind), (1, 1));
         repo.git(&["update-ref", "-d", "refs/remotes/origin/main"]);
         assert!(
-            checkout_summary(&repo.0)
+            checkout_summary(&repo.0, true)
                 .unwrap()
                 .branch
                 .unwrap()
@@ -300,7 +305,7 @@ mod tests {
                 .gone
         );
         repo.git(&["checkout", "--detach"]);
-        let detached = checkout_summary(&repo.0).unwrap().branch.unwrap();
+        let detached = checkout_summary(&repo.0, true).unwrap().branch.unwrap();
         assert!(!detached.named);
         assert_ne!(detached.branch, "HEAD");
         let copy = repo.0.join("differently-named-copy");
@@ -317,24 +322,30 @@ mod tests {
             "origin",
             "git@example.com:org/repo.git",
         ]);
-        assert_eq!(checkout_summary(&copy).unwrap().fingerprint.unwrap(), fp);
+        assert_eq!(
+            checkout_summary(&copy, true).unwrap().fingerprint.unwrap(),
+            fp
+        );
         let worktree = repo.0.join("linked");
         repo.git(&["worktree", "add", "--detach", worktree.to_str().unwrap()]);
         assert_eq!(
-            checkout_summary(&worktree)
+            checkout_summary(&worktree, true)
                 .unwrap()
                 .main_checkout
                 .as_deref(),
             Some(repo.0.as_path())
         );
         assert_eq!(
-            checkout_summary(&worktree).unwrap().fingerprint.unwrap(),
+            checkout_summary(&worktree, true)
+                .unwrap()
+                .fingerprint
+                .unwrap(),
             fp
         );
         let folder = repo.0.join("plain");
         std::fs::create_dir(&folder).unwrap();
         // A folder under a checkout belongs to that checkout.
-        assert_eq!(checkout_summary(&folder).unwrap().vcs, Vcs::Git);
+        assert_eq!(checkout_summary(&folder, true).unwrap().vcs, Vcs::Git);
     }
 
     #[test]
@@ -358,7 +369,11 @@ mod tests {
         drop(input);
         assert!(child.wait().unwrap().success());
         assert_eq!(
-            checkout_summary(&repo.0).unwrap().branch.unwrap().branch,
+            checkout_summary(&repo.0, true)
+                .unwrap()
+                .branch
+                .unwrap()
+                .branch,
             "main"
         );
     }
@@ -368,7 +383,7 @@ mod tests {
         let path = std::env::temp_dir().join(format!("plait-summary-{}", std::process::id()));
         std::fs::create_dir_all(&path).unwrap();
         crate::git::SPAWNED.with(|n| n.set(0));
-        assert_eq!(checkout_summary(&path).unwrap().vcs, Vcs::Folder);
+        assert_eq!(checkout_summary(&path, true).unwrap().vcs, Vcs::Folder);
         crate::git::SPAWNED.with(|n| assert_eq!(n.get(), 0));
         std::fs::remove_dir_all(path).unwrap();
     }
@@ -390,7 +405,10 @@ mod tests {
             "origin",
             "ssh://git@example.com/upstream/repo.git",
         ]);
-        let first = checkout_summary(&repo.0).unwrap().fingerprint.unwrap();
+        let first = checkout_summary(&repo.0, true)
+            .unwrap()
+            .fingerprint
+            .unwrap();
         assert_eq!(first.roots.len(), 2);
         assert!(first.roots[0] < first.roots[1]);
         repo.git(&[
@@ -399,7 +417,10 @@ mod tests {
             "origin",
             "git@example.com:fork/repo.git",
         ]);
-        let fork = checkout_summary(&repo.0).unwrap().fingerprint.unwrap();
+        let fork = checkout_summary(&repo.0, true)
+            .unwrap()
+            .fingerprint
+            .unwrap();
         assert_eq!(first.roots, fork.roots);
         assert_ne!(first.remote, fork.remote);
     }

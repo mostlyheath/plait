@@ -495,10 +495,12 @@ mod tests {
                 Project {
                     path: "/srv/a".into(),
                     hidden: false,
+                    ..Default::default()
                 },
                 Project {
                     path: "/srv/b".into(),
                     hidden: true,
+                    ..Default::default()
                 },
             ],
             worktrees: vec![workspace::Worktree {

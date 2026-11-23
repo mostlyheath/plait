@@ -14,7 +14,9 @@ use std::path::PathBuf;
 #[serde(tag = "read", rename_all = "snake_case")]
 pub enum Read {
     Status,
-    CheckoutSummary,
+    CheckoutSummary {
+        roots: bool,
+    },
     MainCheckout,
     Identity,
     Diff {
@@ -247,9 +249,11 @@ mod summary_tests {
             summary
         );
         assert_eq!(
-            serde_json::from_str::<Read>(&serde_json::to_string(&Read::CheckoutSummary).unwrap())
-                .unwrap(),
-            Read::CheckoutSummary
+            serde_json::from_str::<Read>(
+                &serde_json::to_string(&Read::CheckoutSummary { roots: true }).unwrap()
+            )
+            .unwrap(),
+            Read::CheckoutSummary { roots: true }
         );
         let minimal = serde_json::json!({"vcs":"folder"});
         let decoded: CheckoutSummary = serde_json::from_value(minimal).unwrap();

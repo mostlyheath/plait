@@ -19,8 +19,8 @@ function affectsStatus(filename: string | null): boolean {
 export class CheckoutWatcher {
   private watched = new Map<string, Watched>();
   private folders: string[] = [];
-  private changed: () => void;
-  constructor(changed: () => void) { this.changed = changed; }
+  private changed: (folder?: string) => void;
+  constructor(changed: (folder?: string) => void) { this.changed = changed; }
 
   sync(folders: string[]) {
     const listed = new Set(folders);
@@ -56,7 +56,7 @@ export class CheckoutWatcher {
     clearTimeout(entry.timer);
     // Quiet for a moment, and at most once a second; the last change is always announced.
     const wait = Math.max(DEBOUNCE_MS, entry.last + MIN_INTERVAL_MS - Date.now());
-    entry.timer = setTimeout(() => { entry.counter++; entry.last = Date.now(); entry.timer = undefined; this.changed(); }, wait);
+    entry.timer = setTimeout(() => { entry.counter++; entry.last = Date.now(); entry.timer = undefined; this.changed(folder); }, wait);
   }
 
   private remove(folder: string) {

@@ -112,3 +112,108 @@ test('opens a plain folder', async t => {
   await workspace.handle({ op: 'workspace_open_project', path: folder });
   assert.deepEqual(workspace.view().projects, [{ path: folder, hidden: false, vcs: 'folder' }]);
 });
+
+test('summaries refresh, persist fingerprints, and avoid unchanged revisions', async t => {
+  const { store, repo, root } = await setup(t);
+  let branch = 'main';
+  const fingerprint = { roots: ['abc'], remote: 'example.com/repo' };
+  const read = async (folder: string) => folder === repo
+    ? { vcs: 'git', fingerprint, branch: { branch, named: true, tracking: null } }
+    : { vcs: 'folder' };
+  const workspace = new Workspace(store, () => {}, read);
+  const settle = () => new Promise(resolve => setTimeout(resolve, 20));
+  await workspace.handle({ op: 'workspace_open_project', path: repo });
+  await settle();
+  assert.deepEqual(workspace.view().projects[0].fingerprint, fingerprint);
+  const revision = workspace.view().revision;
+  workspace.refreshSummary(repo); await settle();
+  assert.equal(workspace.view().revision, revision);
+  branch = 'next'; workspace.refreshSummary(repo); await settle();
+  assert.equal(workspace.view().revision, revision + 1);
+  assert.equal(workspace.view().projects[0].branch?.branch, 'next');
+  const restarted = new Workspace(store, () => {}, () => new Promise(() => {}));
+  assert.deepEqual(restarted.view().projects[0].fingerprint, fingerprint);
+  assert.equal(restarted.view().projects[0].branch, undefined);
+  const folder = join(root, 'plain-summary'); await mkdir(folder);
+  await workspace.handle({ op: 'workspace_open_project', path: folder }); await settle();
+  const plain = workspace.view().projects.find(project => project.path === folder)!;
+  assert.equal(plain.vcs, 'folder'); assert.equal(plain.fingerprint, undefined);
+  await rm(repo, { recursive: true });
+  const missing = new Workspace(store, () => {}, async () => { throw new Error('missing'); });
+  await settle();
+  assert.deepEqual(missing.view().projects.find(project => project.path === repo)?.fingerprint, fingerprint);
+  assert.equal(missing.view().projects.find(project => project.path === repo)?.branch, undefined);
+});
+
+test('summary reads are bounded and repeated changes are coalesced', async t => {
+  const { store } = await setup(t);
+  let active = 0; let maximum = 0;
+  const releases: (() => void)[] = [];
+  const workspace = new Workspace(store, () => {}, async () => {
+    active++; maximum = Math.max(maximum, active);
+    await new Promise<void>(resolve => releases.push(resolve));
+    active--; return { vcs: 'git' };
+  });
+  for (const folder of ['/a', '/b', '/c', '/d']) {
+    store.db.prepare('INSERT INTO workspace_projects(path,hidden,added_at) VALUES (?,0,0)').run(folder);
+    workspace.refreshSummary(folder);
+  }
+  workspace.refreshSummary('/a'); workspace.refreshSummary('/a');
+  while (releases.length || active) {
+    releases.splice(0).forEach(release => release());
+    await new Promise(resolve => setTimeout(resolve, 0));
+  }
+  assert.equal(maximum, 2);
+});
+
+test('watcher summaries reuse persisted roots and refresh unborn roots', async t => {
+  const { store, repo } = await setup(t);
+  const fingerprint = { roots: ['abc'], remote: 'example.com/repo' };
+  store.db.prepare('INSERT INTO workspace_projects(path,hidden,added_at,vcs,fingerprint) VALUES (?,0,0,?,?)').run(repo, 'git', JSON.stringify(fingerprint));
+  const requests: boolean[] = [];
+  const workspace = new Workspace(store, () => {}, async (_folder, roots) => {
+    requests.push(roots);
+    return { vcs: 'git', fingerprint: roots ? fingerprint : null, branch: { branch: 'next', named: true, tracking: null } };
+  });
+  const settle = () => new Promise(resolve => setTimeout(resolve, 20));
+  await settle();
+  workspace.refreshSummary(repo); await settle();
+  assert.deepEqual(requests, [false, false]);
+  assert.deepEqual(workspace.view().projects[0].fingerprint, fingerprint);
+  assert.equal(workspace.view().projects[0].branch?.branch, 'next');
+
+  const unborn = '/unborn';
+  store.db.prepare('INSERT INTO workspace_projects(path,hidden,added_at,vcs,fingerprint) VALUES (?,0,0,?,?)').run(unborn, 'git', JSON.stringify({ roots: [], remote: null }));
+  const unbornRequests: boolean[] = [];
+  const restarted = new Workspace(store, () => {}, async (folder, roots) => {
+    if (folder === unborn) unbornRequests.push(roots);
+    return { vcs: 'git', fingerprint: { roots: [], remote: null } };
+  });
+  await settle();
+  restarted.refreshSummary(unborn); await settle();
+  assert.deepEqual(unbornRequests, [true, true]);
+});
+
+test('pending root refresh is not downgraded by a watcher tick', async t => {
+  const { store } = await setup(t);
+  const folder = '/queued';
+  // A saved fingerprint means startup itself requests no root walk.
+  new Workspace(store, () => {});
+  store.db.prepare("INSERT INTO workspace_projects(path,hidden,added_at,fingerprint) VALUES (?,0,0,'{\"roots\":[\"old\"],\"remote\":null}')").run(folder);
+  const requests: boolean[] = [];
+  const releases: (() => void)[] = [];
+  const workspace = new Workspace(store, () => {}, async (_folder, roots) => {
+    requests.push(roots);
+    await new Promise<void>(resolve => releases.push(resolve));
+    return { vcs: 'git', fingerprint: roots ? { roots: ['abc'], remote: null } : null };
+  });
+  workspace.refreshSummary(folder, false);
+  workspace.refreshSummary(folder, true);
+  workspace.refreshSummary(folder, false);
+  releases.shift()!();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.deepEqual(requests, [false, true]);
+  releases.shift()!();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.deepEqual(workspace.view().projects[0].fingerprint?.roots, ['abc']);
+});
