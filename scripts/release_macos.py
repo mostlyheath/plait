@@ -192,6 +192,11 @@ def stage_node(destination):
     return config["version"]
 
 
+def copy_runtime_sources(runtime):
+    """Keep runner imports adjacent to the packaged runtime entry point."""
+    shutil.copytree(ROOT / "runtime/src", runtime / "src")
+
+
 def stage_host(work, version, revision):
     host = work / "host-tree"
     (host / "bin").mkdir(parents=True)
@@ -200,7 +205,7 @@ def stage_host(work, version, revision):
     verify_macho(host / "bin/plait-host")
     node_version = stage_node(host)
     runtime = host / "runtime"
-    shutil.copytree(ROOT / "runtime/src", runtime / "src")
+    copy_runtime_sources(runtime)
     for name in ["package.json", "package-lock.json"]:
         shutil.copy2(ROOT / "runtime" / name, runtime / name)
     environment = {**os.environ, "NPM_CONFIG_USERCONFIG": "/dev/null"}

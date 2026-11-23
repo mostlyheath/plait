@@ -48,6 +48,14 @@ test('detached Pi turn survives host kill -9 mid-turn, keeps continuous transcri
   // Wait until streaming / first tool is visible and runner PID is written.
   await until(() => f.watch(thread.id), s => s.status === 'running' && s.tools.some(tool => tool.id === 'read-1' && tool.status === 'done'), 15000);
   runnerPid = await readRunnerPid(pidFile);
+  const drain = await request(f.store, { op: 'drain_for_update' });
+  assert.equal((drain.result as unknown as { active_runs: number }).active_runs, 1);
+  // The installer and active-runs CLI read the same persisted status used by the runtime.
+  const db = new DatabaseSync(join(f.store, 'host.sqlite'), { readOnly: true });
+  try {
+    assert.equal(db.prepare("SELECT count(*) AS count FROM threads WHERE json_extract(snapshot,'$.status') IN ('running','awaiting_approval')").get()?.count, 1);
+  } finally { db.close(); }
+  await request(f.store, { op: 'cancel_drain' });
 
   // history works read-only (WAL) while the detached Pi runner is actively writing <thread_id>.sqlite.
   const midHistory = await request(f.store, { op: 'history', protocol_version: 6, thread_id: thread.id });

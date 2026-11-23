@@ -37,9 +37,31 @@ runtime dependencies; it does not need a development checkout or shell Node.
   replays interrupted work. The packaged host uses adjacent immutable Node and
   runtime paths, not a build-machine source path. It removes inherited
   `NODE_OPTIONS` and `NODE_PATH` before starting its sidecar.
-- Startup marks interrupted work as `interrupted`. It does not run the model
+- Startup marks work without a surviving detached runner as `interrupted`. It does not run the model
   or replay commands. A new user submission resumes the saved conversation.
   Thread IDs, submitted request IDs, and exact model choice survive restart.
+
+## Detached runners
+
+Detached Pi runners are available with `PLAIT_DETACHED_RUNNERS=1` in the host
+runtime environment. The default is off pending verification. When enabled, an
+accepted Pi run can continue through a host or sidecar restart, including an
+approval wait. The restarted host reconnects to a live runner or applies its
+completion receipt; it does not replay the run. Other harnesses use the existing
+in-process behavior. Recovery checks for existing runners even if the flag is
+subsequently turned off. Host updates wait for active runs and live runner locks.
+
+`STORE/runners` holds runner manifests, locks, logs, and completion receipts;
+`STORE/r` holds their sockets. A detached runner writes command output to the
+per-thread `STORE/<thread_id>.outputs.sqlite`; older output remains readable from
+`host.sqlite`. The host remains the only writer of `host.sqlite`.
+
+If a runner dies without a completion receipt, the host marks the thread
+`interrupted`. The checkout can require cleanup confirmation before further
+writes; inspect its effects before confirming. If runner events needed for
+recovery have been lost, the host marks the run interrupted and stops the
+runner rather than applying later events over incomplete state. Interrupted
+commands and effects are not replayed.
 
 ## Transport
 
