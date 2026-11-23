@@ -45,7 +45,7 @@ and watch behavior. This Mac's existing lists import into its host once.
 
 Every machine's Git and file reads go through its host, including this Mac;
 an older local host without the required capability prompts for a host update. The host watches open checkouts
-and pushes debounced status changes. The sidebar names and switches machines;
+and pushes debounced status changes. The status line names and switches machines;
 the window title names a remote machine. Writes carry operation IDs and replay
 their first outcome on retry.
 

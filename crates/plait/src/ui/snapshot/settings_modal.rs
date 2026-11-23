@@ -409,17 +409,17 @@ fn a_settings_picker_closes_before_the_modal() {
 }
 
 #[core::prelude::v1::test]
-fn menu_palette_and_sidebar_open_settings() {
-    if !isolated("settings_modal::menu_palette_and_sidebar_open_settings") {
+fn menu_palette_and_status_line_open_settings() {
+    if !isolated("settings_modal::menu_palette_and_status_line_open_settings") {
         return;
     }
     let scratch = std::env::temp_dir().join(format!("plait-modal-open-{}", std::process::id()));
     let repository = fixture_repository(&scratch);
-    let mut harness = Harness::new(&repository, None, 900., 600.);
+    let mut harness = Harness::with_host(&repository, None, 900., 600., None);
     harness.connect(&repository, false);
     harness.draw();
-    click(&mut harness, 218., 580.);
-    harness.update(|plait, _, _| assert!(plait.settings_open, "sidebar footer"));
+    click(&mut harness, 880., 587.);
+    harness.update(|plait, _, _| assert!(plait.settings_open, "status line"));
     harness.keystroke("escape");
     harness.update(|_, window, cx| window.dispatch_action(Box::new(crate::ui::Settings), cx));
     harness.update(|plait, _, _| assert!(plait.settings_open, "menu action"));

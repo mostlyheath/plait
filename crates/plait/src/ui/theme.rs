@@ -345,21 +345,6 @@ pub fn tag(id: impl Into<ElementId>, text: impl Into<SharedString>, color: u32) 
         .child(a11y_text(id, text))
 }
 
-/// Rounded, outlined label for metadata: a machine, a state. Callers add children.
-pub fn pill() -> Div {
-    row()
-        .gap(px(5.))
-        .h(px(20.))
-        .px(px(7.))
-        .min_w_0()
-        .flex_shrink_0()
-        .rounded_full()
-        .border_1()
-        .border_color(rgb(colors().edge))
-        .text_size(px(11.))
-        .text_color(rgb(colors().muted))
-}
-
 pub fn host_status_color(status: host::ThreadStatus) -> u32 {
     match status {
         host::ThreadStatus::Idle => colors().mint,
