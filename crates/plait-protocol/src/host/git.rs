@@ -14,6 +14,8 @@ use std::path::PathBuf;
 #[serde(tag = "read", rename_all = "snake_case")]
 pub enum Read {
     Status,
+    MainCheckout,
+    Identity,
     Diff {
         change: WireChange,
         mode: DiffMode,

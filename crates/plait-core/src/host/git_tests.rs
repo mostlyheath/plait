@@ -305,3 +305,26 @@ fn write_request_operation_id_is_optional() {
         assert_eq!(value.get("op_id").and_then(|v| v.as_str()), id.as_deref());
     }
 }
+
+#[test]
+fn checkout_identity_reads_use_wire_paths_and_expected_identity() {
+    for (read, name) in [
+        (Read::Identity, "identity"),
+        (Read::MainCheckout, "main_checkout"),
+    ] {
+        let request = Request::GitRead {
+            checkout: "/repo".into(),
+            identity: Some(DirIdentity { dev: 7, ino: 9 }.into()),
+            read,
+        };
+        assert_eq!(
+            serde_json::to_value(request).unwrap(),
+            serde_json::json!({
+                "op": "git_read", "checkout": "L3JlcG8=", "identity": {"dev": "7", "ino": "9"}, "read": name
+            })
+        );
+    }
+    let read: Remote<CheckoutIdentity> = decode(br#"{"ok":{"identity":{"dev":"7","ino":"9"},"result":{"root":"L3JlcG8=","identity":{"dev":"7","ino":"9"}}}}"#).unwrap();
+    assert_eq!(read.result.root, PathBuf::from("/repo"));
+    assert_eq!(read.result.identity.parse().unwrap(), read.identity);
+}

@@ -6,7 +6,6 @@
 //! which Plait follows, so there is one place to manage them. Every string the
 //! page and the composer draw is made once, on the background executor, when
 //! the reply arrives; rendering formats nothing.
-use plait_core::ownership::CheckoutKeyExt;
 
 use super::{Plait, composer::AgentCommand, settings, theme::*, thread_controls::TextTooltip};
 use gpui::{prelude::*, *};
@@ -392,14 +391,24 @@ impl Plait {
             (key.1 == self.host.creation.checkout).then_some(self.host.creation.generation);
         let expected = self.settings_checkout_key(&key.1).cloned();
         let client = self.host_client();
+        let supported = self.host.connection.has_checkout_identity;
+        let local = self.host_is_local();
         let task = cx.background_executor().spawn(async move {
-            let identity = Self::identify_settings_checkout(&checkout, expected)?;
+            let identity =
+                Self::identify_settings_checkout(&client, &checkout, supported, local, expected)?;
             let canonical = identity.root.clone();
             let request = match change {
                 Some((name, enabled, definition)) => {
                     Request::set_mcp_server(canonical.clone(), name, enabled, definition)
                 }
-                None => Request::agent_resources(canonical.clone()),
+                None => Request::AgentResources {
+                    checkout: canonical.clone(),
+                    identity: supported.then(|| plait_core::host::git::WireIdentity {
+                        dev: identity.device.to_string(),
+                        ino: identity.inode.to_string(),
+                    }),
+                    protocol_version: 3,
+                },
             };
             let reply: AgentResources = client.send(&request)?;
             if reply.checkout != canonical {
@@ -407,9 +416,13 @@ impl Plait {
                     "Host returned another checkout's agent setup.".into(),
                 ));
             }
-            identity
-                .verify()
-                .map_err(plait_core::host::Error::Protocol)?;
+            Self::identify_settings_checkout(
+                &client,
+                &identity.root,
+                supported,
+                local,
+                Some(identity.clone()),
+            )?;
             Ok((AgentView::new(reply), identity))
         });
         cx.spawn(async move |this, cx| {

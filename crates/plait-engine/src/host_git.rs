@@ -176,7 +176,9 @@ fn dispatch(root: &Path, read: &Read) -> Result<serde_json::Value, String> {
             )
         }
         Read::FileStamp { path } => value(file_view::stamp(root, path)),
-        Read::WorktreeSize { .. } => Err("Not a plain read.".into()),
+        Read::WorktreeSize { .. } | Read::MainCheckout | Read::Identity => {
+            Err("Not a plain read.".into())
+        }
     }
 }
 

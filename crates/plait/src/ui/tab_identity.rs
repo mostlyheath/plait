@@ -5,7 +5,7 @@ use plait_core::{
     host::{self},
     tabs::{CheckoutKey, DirectoryIdentity, HostKey, TabTarget},
 };
-use std::{collections::HashMap, os::unix::fs::MetadataExt, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf};
 
 #[derive(Default)]
 pub(super) struct Identity {
@@ -22,6 +22,7 @@ pub(super) struct Identity {
 }
 
 pub(super) fn directory(root: &std::path::Path) -> Option<DirectoryIdentity> {
+    use std::os::unix::fs::MetadataExt;
     let meta = std::fs::metadata(root).ok()?;
     meta.is_dir().then_some(DirectoryIdentity {
         device: meta.dev(),
@@ -67,6 +68,7 @@ impl Plait {
         roots.sort();
         roots.dedup();
         let client = self.host_client();
+        let supported = self.host.connection.has_checkout_identity;
         let local = self.host_is_local();
         let task = cx.background_executor().spawn(async move {
             let host = host::identity::read(&client).ok().or_else(|| {
@@ -77,20 +79,30 @@ impl Plait {
             let checkouts = roots
                 .into_iter()
                 .filter_map(|root| {
-                    // The remote host verifies its own checkout identity.
-                    if local {
-                        directory(&root).map(|directory| CheckoutKey {
-                            host: host.clone(),
-                            root,
-                            directory: Some(directory),
-                        })
-                    } else {
-                        Some(CheckoutKey {
-                            host: host.clone(),
-                            root,
-                            directory: None,
-                        })
+                    if !supported {
+                        return if local {
+                            directory(&root).map(|directory| CheckoutKey {
+                                host: host.clone(),
+                                root,
+                                directory: Some(directory),
+                            })
+                        } else {
+                            Some(CheckoutKey {
+                                host: host.clone(),
+                                root,
+                                directory: None,
+                            })
+                        };
                     }
+                    let result = host::git::identity(&client, &root, None).ok()?;
+                    Some(CheckoutKey {
+                        host: host.clone(),
+                        root: result.result.root,
+                        directory: Some(DirectoryIdentity {
+                            device: result.identity.dev,
+                            inode: result.identity.ino,
+                        }),
+                    })
                 })
                 .collect::<Vec<_>>();
             Some((host, checkouts))
@@ -240,21 +252,46 @@ impl Plait {
         let host = self.tabs.host.clone();
         let root = target.checkout().root.clone();
         let worktrees = target.is_worktrees();
+        let client = self.host_client();
+        let epoch = self.host.connection.epoch;
+        let supported = self.host.connection.has_checkout_identity;
         let local = self.host_is_local();
         let task = cx.background_executor().spawn(async move {
-            let root = if local && worktrees {
-                plait_core::git::worktree::main_checkout(&root).unwrap_or(root)
+            if !supported {
+                let root = if local && worktrees {
+                    plait_core::git::worktree::main_checkout(&root).unwrap_or(root)
+                } else {
+                    root
+                };
+                let identity = if local { directory(&root) } else { None };
+                return (root, identity);
+            }
+            let root = if worktrees {
+                host::git::main_checkout(&client, &root, None)
+                    .map(|read| read.result)
+                    .unwrap_or(root)
             } else {
                 root
             };
-            // Remote checkout identity is checked by its host.
-            let identity = if local { directory(&root) } else { None };
-            (root, identity)
+            let identity = host::git::identity(&client, &root, None).ok();
+            match identity {
+                Some(read) => (
+                    read.result.root,
+                    Some(DirectoryIdentity {
+                        device: read.identity.dev,
+                        inode: read.identity.ino,
+                    }),
+                ),
+                None => (root, None),
+            }
         });
         cx.spawn_in(window, async move |this, cx| {
             let (root, directory) = task.await;
             let _ = this.update_in(cx, |this, window, cx| {
-                if this.tabs.identity.opening != opening || this.tabs.host != host {
+                if this.tabs.identity.opening != opening
+                    || this.tabs.host != host
+                    || this.host.connection.epoch != epoch
+                {
                     return;
                 }
                 let checkout = match &mut target {

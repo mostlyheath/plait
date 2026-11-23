@@ -6,7 +6,6 @@ use plait_core::host::{
     policy::{self, CommandPolicy, PolicyReply, Request},
     providers,
 };
-use plait_core::ownership::CheckoutKeyExt;
 use std::path::PathBuf;
 
 #[derive(Default)]
@@ -118,8 +117,11 @@ impl Plait {
             (key.1 == self.host.creation.checkout).then_some(self.host.creation.generation);
         let expected = self.settings_checkout_key(&key.1).cloned();
         let client = self.host_client();
+        let supported = self.host.connection.has_checkout_identity;
+        let local = self.host_is_local();
         let task = cx.background_executor().spawn(async move {
-            let identity = Self::identify_settings_checkout(&checkout, expected)?;
+            let identity =
+                Self::identify_settings_checkout(&client, &checkout, supported, local, expected)?;
             let canonical = identity.root.clone();
             let request = match value {
                 Some(policy) => Request::SetCommandPolicy {
@@ -128,6 +130,10 @@ impl Plait {
                 },
                 None => Request::CommandPolicy {
                     checkout: canonical.clone(),
+                    identity: supported.then(|| plait_core::host::git::WireIdentity {
+                        dev: identity.device.to_string(),
+                        ino: identity.inode.to_string(),
+                    }),
                 },
             };
             let reply: PolicyReply = client.send(&request)?;
@@ -136,9 +142,13 @@ impl Plait {
                     "Host returned another checkout's policy.".into(),
                 ));
             }
-            identity
-                .verify()
-                .map_err(plait_core::host::Error::Protocol)?;
+            Self::identify_settings_checkout(
+                &client,
+                &identity.root,
+                supported,
+                local,
+                Some(identity.clone()),
+            )?;
             Ok((reply, identity))
         });
         cx.spawn(async move |this, cx| {

@@ -426,9 +426,13 @@ pub enum Request {
     },
     ListThreads {
         checkout: PathBuf,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        identity: Option<git::WireIdentity>,
     },
     CreateThread {
         checkout: PathBuf,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        identity: Option<git::WireIdentity>,
         provider: String,
         model_id: String,
         request_id: String,
@@ -445,6 +449,8 @@ pub enum Request {
         protocol_version: Option<u32>,
     },
     SubmitCheckout {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        identity: Option<git::WireIdentity>,
         thread_id: String,
         request_id: String,
         text: String,
@@ -472,6 +478,8 @@ pub enum Request {
         thread_id: String,
     },
     Submit {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        identity: Option<git::WireIdentity>,
         #[serde(skip_serializing_if = "Vec::is_empty")]
         images: Vec<String>,
         thread_id: String,
@@ -614,6 +622,7 @@ impl Request {
         approval: Option<ApprovalMode>,
     ) -> Self {
         Self::Submit {
+            identity: None,
             images: Vec::new(),
             thread_id,
             request_id,
@@ -634,6 +643,7 @@ impl Request {
         when_busy: QueueMode,
     ) -> Self {
         Self::Submit {
+            identity: None,
             images: Vec::new(),
             thread_id,
             request_id,
@@ -726,6 +736,7 @@ impl Request {
         };
         Self::CreateThread {
             checkout,
+            identity: None,
             provider: choice.provider.clone(),
             model_id: choice.model_id.clone(),
             request_id,
@@ -934,5 +945,35 @@ mod wire_tests {
         let page: ThreadsPage = serde_json::from_value(json!({"threads":[{"id":"t","checkout":"/repo","model":{"provider":"p","model_id":"m"},"status":"awaiting_approval","title":"Fix it","created_at":5,"updated_at":9,"archived":false,"pending_approval":true}],"next_cursor":"9:1"})).unwrap();
         assert_eq!(page.threads[0].status, ThreadStatus::AwaitingApproval);
         assert_eq!(page.next_cursor.as_deref(), Some("9:1"));
+    }
+}
+
+#[cfg(test)]
+mod identity_compatibility_tests {
+    use super::*;
+    #[test]
+    fn requests_without_identity_keep_legacy_wire_shape() {
+        assert_eq!(
+            serde_json::to_value(Request::ListThreads {
+                checkout: "/repo".into(),
+                identity: None
+            })
+            .unwrap(),
+            serde_json::json!({"op":"list_threads","checkout":"/repo"})
+        );
+        assert_eq!(
+            serde_json::to_value(Request::submit(
+                "thread".into(),
+                "request".into(),
+                "hello".into(),
+                None
+            ))
+            .unwrap(),
+            serde_json::json!({"op":"submit","thread_id":"thread","request_id":"request","text":"hello"})
+        );
+        assert_eq!(
+            serde_json::to_value(agent::Request::agent_resources("/repo".into())).unwrap(),
+            serde_json::json!({"op":"agent_resources","checkout":"/repo","protocol_version":3})
+        );
     }
 }

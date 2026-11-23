@@ -98,15 +98,13 @@ impl Plait {
             let path = requested
                 .or_else(|| data.checkout.clone())
                 .unwrap_or_else(|| PathBuf::from("."));
-            let path = std::fs::canonicalize(&path)
-                .or_else(|_| {
-                    if path.is_absolute() {
-                        Ok(path.clone())
-                    } else {
-                        std::env::current_dir().map(|root| root.join(&path))
-                    }
-                })
-                .map_err(|error| format!("Cannot restore checkout: {error}"))?;
+            let path = if path.is_absolute() {
+                path
+            } else {
+                std::env::current_dir()
+                    .map(|root| root.join(&path))
+                    .map_err(|error| format!("Cannot restore checkout: {error}"))?
+            };
             Ok::<_, String>((journal, data, path))
         });
         cx.spawn_in(window, async move |this, cx| {

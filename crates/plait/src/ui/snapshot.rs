@@ -63,6 +63,7 @@ mod toasts;
 mod turn_review;
 mod undo;
 mod ways_out;
+mod worktree_fixture;
 mod worktrees;
 mod worktrees_view;
 

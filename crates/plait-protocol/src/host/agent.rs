@@ -21,6 +21,8 @@ pub enum Request {
     },
     AgentResources {
         checkout: PathBuf,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        identity: Option<super::git::WireIdentity>,
         protocol_version: u32,
     },
 }
@@ -44,6 +46,7 @@ impl Request {
     pub fn agent_resources(checkout: PathBuf) -> Self {
         Self::AgentResources {
             checkout,
+            identity: None,
             protocol_version: 3,
         }
     }

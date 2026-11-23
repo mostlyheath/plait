@@ -5,7 +5,6 @@ use plait_core::host::{
     self,
     admission::{self, Request},
 };
-use plait_core::ownership::CheckoutKeyExt;
 impl Plait {
     pub(super) fn prepare_isolation_settings(&mut self, cx: &mut Context<Self>) {
         let key = (
@@ -35,8 +34,11 @@ impl Plait {
         self.admission.settings_busy = true;
         let checkout = key.1.clone();
         let client = self.host_client();
+        let supported = self.host.connection.has_checkout_identity;
+        let local = self.host_is_local();
         let task = cx.background_executor().spawn(async move {
-            let identity = Self::identify_settings_checkout(&checkout, expected)?;
+            let identity =
+                Self::identify_settings_checkout(&client, &checkout, supported, local, expected)?;
 
             let info = if let Some(value) = value {
                 let info = previous.ok_or_else(|| {
@@ -53,7 +55,13 @@ impl Plait {
             } else {
                 admission::info(&client, identity.root.clone())?
             };
-            identity.verify().map_err(host::Error::Protocol)?;
+            Self::identify_settings_checkout(
+                &client,
+                &identity.root,
+                supported,
+                local,
+                Some(identity.clone()),
+            )?;
             if info
                 .as_ref()
                 .is_some_and(|info| info.checkout != identity.root)

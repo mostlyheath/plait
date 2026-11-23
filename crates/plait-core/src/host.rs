@@ -931,6 +931,7 @@ mod tests {
         );
         assert_eq!(
             wire(Request::ListThreads {
+                identity: None,
                 checkout: "/repo".into()
             }),
             json(r#"{"op":"list_threads","checkout":"/repo"}"#)
