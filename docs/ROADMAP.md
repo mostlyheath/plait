@@ -13,6 +13,13 @@ for evidence and limits.
   Complete their verification and compatibility work.
 - Explore the prompt tree with mockups before agreeing its model and view.
   See [Host-first Plait](HOST-FIRST.md#the-prompt-tree).
+- Rebuild the desktop layout to the [design](../DESIGN.md), one step per pull
+  request in its [build order](../DESIGN.md#build-order). Chat view: sidebar
+  rows and thread marks, a status line, the message box, This turn beside the
+  conversation, folded earlier turns, and a code size setting. Work view: the
+  thread beside Changes, History, and Files panes. All of it is presentation
+  only: no change to the protocol, to state the host stores, to permissions,
+  or to Git writes.
 
 ### Next
 
@@ -166,7 +173,6 @@ Live API verification remains open. See [Linear](LINEAR.md).
 - Run person-selected checks after a turn and show their results.
 - Trace lines to turns, expand turn records, shelve results, or bisect turns.
 - Provide an interactive proof of sandbox and undo behavior.
-- Show conversation, files, and changes side by side.
 - Offer hosted machines or unattended automations.
 - Add a browser, rendered documents, or a file editor.
 - Extend editor and terminal handoffs.
