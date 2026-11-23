@@ -3711,6 +3711,7 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "libc",
+ "plait-core",
  "plait-protocol",
  "serde",
  "serde_json",
@@ -3722,7 +3723,20 @@ name = "plait-host"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "plait-engine",
+ "plait-protocol",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "plait-interop-tests"
+version = "0.1.0"
+dependencies = [
+ "libc",
  "plait-core",
+ "plait-engine",
+ "plait-protocol",
  "serde_json",
  "sha2",
 ]

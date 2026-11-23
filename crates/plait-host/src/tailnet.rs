@@ -149,7 +149,7 @@ fn authorize(api: &LocalApi, peer: SocketAddr, store: &Path) -> bool {
     }
     allowed
 }
-fn handle(stream: TcpStream, store: &Path, allowed: bool) {
+pub(crate) fn handle(stream: TcpStream, store: &Path, allowed: bool) {
     if allowed && let Ok(output) = stream.try_clone() {
         let _ = crate::bridge::run(stream, output, store);
     }
@@ -357,39 +357,6 @@ mod tests {
         );
         add_with_api(&root, "allow", "--me", &api).unwrap();
         assert!(listed(&allowlist(&root).unwrap(), "logins", "owner"));
-        let _ = fs::remove_dir_all(root);
-    }
-    #[test]
-    fn loopback_handler_accepts_and_refuses() {
-        let root = root();
-        let owner = UnixListener::bind(root.join("host.sock")).unwrap();
-        fs::set_permissions(root.join("host.sock"), fs::Permissions::from_mode(0o600)).unwrap();
-        thread::spawn(move || {
-            let (mut socket, _) = owner.accept().unwrap();
-            let mut request = [0; 16];
-            let _ = socket.read(&mut request).unwrap();
-            socket.write_all(b"{\"ok\":true}\n").unwrap();
-        });
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let store = root.clone();
-        thread::spawn(move || {
-            let (stream, _) = listener.accept().unwrap();
-            handle(stream, &store, true);
-        });
-        assert!(plait_core::remote::tailnet::connect("127.0.0.1", port).is_ok());
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let store = root.clone();
-        thread::spawn(move || {
-            let (stream, _) = listener.accept().unwrap();
-            handle(stream, &store, false);
-        });
-        let error = match plait_core::remote::tailnet::connect("127.0.0.1", port) {
-            Ok(_) => panic!("unexpected connection"),
-            Err(error) => error,
-        };
-        assert!(error.to_string().contains("refused this device"));
         let _ = fs::remove_dir_all(root);
     }
     #[test]

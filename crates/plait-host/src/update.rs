@@ -1,9 +1,9 @@
 //! `plait-host update`: installs the newest signed release's host on this
 //! machine, for hosts that run without the desktop app.
 
-use plait_core::update;
+use plait_engine::update;
 #[cfg(not(target_os = "linux"))]
-use plait_core::update::install;
+use plait_engine::update::install;
 use std::io;
 
 pub fn run(args: Vec<String>) -> io::Result<()> {
@@ -27,7 +27,7 @@ fn other_update(check_only: bool) -> io::Result<()> {
             "host updates currently install only on macOS",
         ));
     }
-    let current = update::current_version();
+    let current = plait_protocol::update::current_version();
     let running = current
         .as_ref()
         .map_or("a source build".to_owned(), |version| {
@@ -54,9 +54,14 @@ fn linux_update(check_only: bool) -> io::Result<()> {
     let home = crate::service::user_home()?;
     let executable = std::env::current_exe()?.canonicalize()?;
     let build = linux::running_build(&home, &executable).map_err(io::Error::other)?;
-    let release = update::host_release(update::platform()).map_err(io::Error::other)?;
-    match linux::decide(&release, &build, update::current_version().as_ref())
-        .map_err(io::Error::other)?
+    let release =
+        update::host_release(plait_protocol::update::platform()).map_err(io::Error::other)?;
+    match linux::decide(
+        &release,
+        &build,
+        plait_protocol::update::current_version().as_ref(),
+    )
+    .map_err(io::Error::other)?
     {
         Decision::Current => println!("Host {build} is current."),
         Decision::Offer(version) => {

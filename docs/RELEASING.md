@@ -58,7 +58,7 @@ or sign test builds with it.
 Create a key only when none exists, then store it as the secret:
 
 ```sh
-cargo run -p plait-core --example update-key -- generate <private-key-file>
+cargo run -p plait-protocol --example update-key -- generate <private-key-file>
 gh secret set PLAIT_UPDATE_SIGNING_KEY < <private-key-file>
 ```
 

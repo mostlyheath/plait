@@ -2,6 +2,7 @@
 
 pub mod build_output;
 pub mod file_view;
+pub mod frame;
 pub mod git;
 pub mod host_git;
 pub mod lease;

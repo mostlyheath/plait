@@ -295,7 +295,7 @@ jobs:
       - name: Build the update signing tool
         run: |
           rustup toolchain install --profile minimal --no-self-update
-          cargo build --locked -p plait-core --example update-key
+          cargo build --locked -p plait-protocol --example update-key
       - name: Write and sign the update manifest
         env:
           PLAIT_UPDATE_SIGNING_KEY: ${{ secrets.PLAIT_UPDATE_SIGNING_KEY }}

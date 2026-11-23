@@ -1,7 +1,8 @@
 //! One Git or file read, or one Git write, for a remote desktop: JSON on
 //! stdin, the outcome on stdout. Git's own deadlines bound each command; the
 //! runtime bounds the whole.
-use plait_core::host::git::{HelperInput, WriteInput, execute, execute_write};
+use plait_engine::host_git::{execute, execute_write};
+use plait_protocol::host::git::{HelperInput, WriteInput};
 use std::io::{self, Read, Write};
 
 /// Requests are small; the runtime already refused anything over its limit.
