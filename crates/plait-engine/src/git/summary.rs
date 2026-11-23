@@ -338,11 +338,9 @@ mod tests {
         let worktree = repo.0.join("linked");
         repo.git(&["worktree", "add", "--detach", worktree.to_str().unwrap()]);
         assert_eq!(
-            checkout_summary(&worktree, true)
-                .unwrap()
-                .main_checkout
-                .as_deref(),
-            Some(repo.0.as_path())
+            checkout_summary(&worktree, true).unwrap().main_checkout,
+            // Git reports the canonical path; macOS temp folders sit behind a symlink.
+            Some(repo.0.canonicalize().unwrap())
         );
         assert_eq!(
             checkout_summary(&worktree, true)
