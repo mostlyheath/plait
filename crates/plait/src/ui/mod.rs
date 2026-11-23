@@ -74,7 +74,7 @@ mod worktree;
 mod worktrees_view;
 
 use gpui::{prelude::*, *};
-use plait_core::{
+use plait_client::{
     host_state::HostState,
     model::DiffMode,
     state::{AppState, Load},
@@ -138,7 +138,7 @@ actions!(
 );
 
 /// The workspace beside the sidebar (presentation-independent view kind from core).
-pub(super) use plait_core::thread_view::ThreadView as Workspace;
+pub(super) use plait_client::thread_view::ThreadView as Workspace;
 
 /// Below this width the Git inspector is not shown; Git stays in Changes.
 const WIDE_WINDOW: f32 = 1150.;
@@ -147,16 +147,16 @@ pub struct Plait {
     tabs: tabs::Tabs,
     state: AppState,
     host: HostState,
-    host_client: plait_core::host::Client,
+    host_client: plait_client::host::Client,
     host_local: bool,
     navigation: navigation::Navigation,
     host_workspace: host_workspace::HostWorkspace,
     /// What a window on a machine with no projects yet shows as its project.
-    no_project: plait_core::model::Project,
+    no_project: plait_client::model::Project,
     /// Presentation state for the single selected thread workspace.
     workspace: thread_workspace::ThreadWorkspace,
     commit_sends:
-        std::collections::HashMap<plait_core::state::CheckoutId, commit_panel::CommitAttempt>,
+        std::collections::HashMap<plait_client::state::CheckoutId, commit_panel::CommitAttempt>,
     /// Window modal, independent of the thread workspace.
     settings_open: bool,
     settings_page: settings::SettingsPage,
@@ -201,7 +201,7 @@ pub struct Plait {
     /// Whether the open remote-folder picker's host can list folders.
     remote_browser: Option<std::rc::Rc<std::cell::Cell<bool>>>,
     remote_browser_generation: u64,
-    remote_listing: Option<plait_core::host::folders::Listing>,
+    remote_listing: Option<plait_client::host::folders::Listing>,
     panels: panels::Panels,
     focus: FocusHandle,
     /// The conversation field that gets focus back after changing views.
@@ -217,7 +217,7 @@ pub struct Plait {
     code_font: appearance::CodeFont,
     updates: update::UpdateState,
     server_setup: server_setup::ServerSetup,
-    toasts: plait_core::toasts::Toasts,
+    toasts: plait_client::toasts::Toasts,
     toast_timer: Option<Task<()>>,
     session: session::SessionState,
     picker_open: bool,
@@ -232,7 +232,7 @@ pub struct Plait {
 }
 
 impl Plait {
-    fn host_client(&self) -> plait_core::host::Client {
+    fn host_client(&self) -> plait_client::host::Client {
         self.host_client.clone()
     }
     fn host_is_local(&self) -> bool {
@@ -248,14 +248,14 @@ impl Plait {
     }
 
     /// Repository operations run on the selected machine’s host.
-    pub(super) fn repository_backend(&self) -> plait_core::state::Backend {
-        plait_core::state::Backend::Host(self.host_client())
+    pub(super) fn repository_backend(&self) -> plait_client::state::Backend {
+        plait_client::state::Backend::Host(self.host_client())
     }
     #[allow(dead_code)]
     fn use_machine_client(
         &mut self,
-        client: plait_core::host::Client,
-        machine: plait_core::machines::MachineId,
+        client: plait_client::host::Client,
+        machine: plait_client::machines::MachineId,
         local: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -286,7 +286,7 @@ impl Plait {
         Self::with_host_client(
             path,
             startup,
-            plait_core::host::Client::local_or_unavailable(),
+            plait_client::host::Client::local_or_unavailable(),
             window,
             cx,
         )
@@ -295,7 +295,7 @@ impl Plait {
     fn with_host_client(
         path: PathBuf,
         startup: Instant,
-        host_client: plait_core::host::Client,
+        host_client: plait_client::host::Client,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -313,11 +313,11 @@ impl Plait {
             host_local: true,
             navigation: navigation::Navigation::new(cx),
             host_workspace: Default::default(),
-            no_project: plait_core::model::Project {
+            no_project: plait_client::model::Project {
                 checkout: PathBuf::new(),
                 name: "No project".into(),
-                machines: vec![plait_core::model::Machine {
-                    name: plait_core::machine::local_name(),
+                machines: vec![plait_client::model::Machine {
+                    name: plait_client::machine::local_name(),
                     local: true,
                 }],
             },
@@ -448,8 +448,8 @@ impl Plait {
         cx.spawn(async move |this, cx| {
             let (job, reply) = task.await;
             let _ = this.update(cx, |this, cx| {
-                let status = matches!(job.job, plait_core::state::Job::Status { .. });
-                let write = matches!(job.job, plait_core::state::Job::Write { .. });
+                let status = matches!(job.job, plait_client::state::Job::Status { .. });
+                let write = matches!(job.job, plait_client::state::Job::Write { .. });
                 let owner = job.owner;
                 let active = this.state.complete_repository_job(job, reply);
                 if write {
@@ -1357,11 +1357,11 @@ impl Render for Plait {
             // Show Changes, where the result and any error appear.
             .on_action(cx.listener(|this, _: &StageAll, window, cx| {
                 this.show_tab(Workspace::Changes, window, cx);
-                this.git_write(plait_core::git::WriteOp::StageAll, cx)
+                this.git_write(plait_client::git::WriteOp::StageAll, cx)
             }))
             .on_action(cx.listener(|this, _: &UnstageAll, window, cx| {
                 this.show_tab(Workspace::Changes, window, cx);
-                this.git_write(plait_core::git::WriteOp::UnstageAll, cx)
+                this.git_write(plait_client::git::WriteOp::UnstageAll, cx)
             }))
             .on_action(
                 cx.listener(|this, _: &CommitStaged, window, cx| this.focus_commit(window, cx)),
@@ -1376,7 +1376,7 @@ impl Render for Plait {
             }))
             .on_action(cx.listener(|this, _: &Fetch, window, cx| {
                 this.show_tab(Workspace::Changes, window, cx);
-                this.git_write(plait_core::git::WriteOp::Fetch, cx)
+                this.git_write(plait_client::git::WriteOp::Fetch, cx)
             }))
             .on_action(cx.listener(|this, _: &SwitchBranch, window, cx| {
                 this.open_branches(false, window, cx)

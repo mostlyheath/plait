@@ -61,7 +61,7 @@ impl Reveals {
             .advance(key, reasoning.saturating_sub(1).max(1), at);
     }
 }
-use plait_core::{
+use plait_client::{
     history::{self, Key},
     host::{
         Approval, ApprovalMode, HistoryField, Message, MessageRole, Snapshot, ThreadStatus,
@@ -500,8 +500,8 @@ impl Plait {
     pub(super) fn advance_reveals(&mut self, window: &mut Window) {
         let key = self.host.thread.selected.as_deref().unwrap_or_default();
         let now = Instant::now();
-        let total = |parsed: Option<&std::sync::Arc<plait_core::markdown::Message>>| {
-            parsed.map_or(0, |parsed| plait_core::reveal::total(&parsed.blocks))
+        let total = |parsed: Option<&std::sync::Arc<plait_client::markdown::Message>>| {
+            parsed.map_or(0, |parsed| plait_client::reveal::total(&parsed.blocks))
         };
         let text = total(self.workspace.formatted.live.as_ref());
         let reasoning = total(self.workspace.formatted.live_reasoning.as_ref());
@@ -515,7 +515,7 @@ impl Plait {
 
     /// The part of live `blocks` on screen this frame: whole blocks and a cut last one.
     fn revealed<'a>(&self, shown: usize, blocks: &'a [Block]) -> (&'a [Block], Option<Block>) {
-        let (whole, tail) = plait_core::reveal::visible(blocks, shown);
+        let (whole, tail) = plait_client::reveal::visible(blocks, shown);
         (&blocks[..whole], tail)
     }
 
@@ -1395,7 +1395,7 @@ mod tests {
             details: details.into(),
             id: "a1".into(),
             tool_id: "t1".into(),
-            kind: plait_core::host::ApprovalKind::Command,
+            kind: plait_client::host::ApprovalKind::Command,
             summary: "git status".into(),
             dirty_paths: Vec::new(),
             risk: String::new(),

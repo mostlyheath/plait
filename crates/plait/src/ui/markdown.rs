@@ -6,7 +6,7 @@ use super::{
     theme::*,
 };
 use gpui::{prelude::*, *};
-use plait_core::{
+use plait_client::{
     diff::Change,
     highlight::Token,
     markdown::{self, Align, Block, DiffLine, Kind, Style, Table},

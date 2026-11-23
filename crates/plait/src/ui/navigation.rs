@@ -3,7 +3,7 @@ use super::{
     text_field::TextField, theme::*, thread_controls::TextTooltip,
 };
 use gpui::{prelude::*, *};
-use plait_core::{
+use plait_client::{
     host::{Request, ThreadReply, ThreadSummary},
     navigation as nav,
 };
@@ -109,7 +109,7 @@ fn title(text: impl Into<SharedString>) -> Div {
 }
 
 impl Plait {
-    pub(super) fn active_project(&self) -> &plait_core::model::Project {
+    pub(super) fn active_project(&self) -> &plait_client::model::Project {
         self.state
             .projects
             .iter()
@@ -502,7 +502,7 @@ impl Plait {
                 .when_some(
                     thread
                         .harness
-                        .filter(|harness| *harness != plait_core::host::harness::HarnessId::Pi)
+                        .filter(|harness| *harness != plait_client::host::harness::HarnessId::Pi)
                         .and_then(harness_logo),
                     |el, logo| el.child(logo.size(px(12.)).text_color(rgb(colors().subtle))),
                 )
@@ -918,7 +918,7 @@ impl Plait {
     pub(super) fn finish_thread_management(
         &mut self,
         operation: ThreadManagement,
-        reply: Result<ThreadReply, plait_core::host::Error>,
+        reply: Result<ThreadReply, plait_client::host::Error>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {

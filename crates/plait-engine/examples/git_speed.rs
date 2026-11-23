@@ -6,7 +6,7 @@ use std::{
     time::Instant,
 };
 
-use plait_core::host::{Client, git as host_git};
+use plait_client::host::{Client, git as host_git};
 use plait_engine::git;
 use plait_protocol::model::DiffMode;
 

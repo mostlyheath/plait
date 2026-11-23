@@ -1,5 +1,5 @@
 use super::*;
-use plait_core::update::{self, Offer, install};
+use plait_client::update::{self, Offer, install};
 use std::sync::Arc;
 
 /// Release update progress. Network and install work run on the background executor.

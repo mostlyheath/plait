@@ -14,7 +14,7 @@ use super::{
     thread_controls::{approval_label, thinking_value},
 };
 use gpui::{prelude::*, *};
-use plait_core::host::{ApprovalMode, harness::HarnessId};
+use plait_client::host::{ApprovalMode, harness::HarnessId};
 use std::rc::Rc;
 
 impl Plait {

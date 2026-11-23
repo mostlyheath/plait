@@ -78,7 +78,7 @@ not replay interrupted effects.
 | Area | Responsibility |
 | --- | --- |
 | `crates/plait` | GPUI presentation, input, focus, and background-work dispatch |
-| `crates/plait-core` | Plain models, state transitions, client and recovery; no GPUI |
+| `crates/plait-client` | Plain models, state transitions, client and recovery; no GPUI |
 | `crates/plait-host` | Host lifetime, protocol, repository and process operations |
 | `runtime/` | Pi integration, approvals, durable execution, and command policy |
 

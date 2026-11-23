@@ -1,7 +1,7 @@
 //! Provider configuration is requested from the host. Secrets live only in forms.
 use super::{Plait, settings, text_field::TextField, theme::*};
 use gpui::{prelude::*, *};
-use plait_core::host::{
+use plait_client::host::{
     self,
     harness::HarnessId,
     providers::{self, Provider, ProviderAction, Request, Secret},

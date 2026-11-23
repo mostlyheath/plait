@@ -7,7 +7,7 @@
 //! An agent command only inserts its text; the runtime expands it on send.
 
 use gpui::SharedString;
-use plait_core::fuzzy::fuzzy_match;
+use plait_client::fuzzy::fuzzy_match;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum CommandId {

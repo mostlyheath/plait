@@ -72,7 +72,7 @@ narrow widths.
 
 ## Tokens
 
-Colors are semantic roles in `plait_core::theme::Palette`. The default dark
+Colors are semantic roles in `plait_client::theme::Palette`. The default dark
 palette is Stillwater:
 
 | Role | Color |

@@ -1,7 +1,7 @@
 //! Only the selected tab owns a GPUI workspace. Parking is a save boundary.
 use super::{Plait, composer::ParkedEditor, tabs::TabNavigation};
 use gpui::*;
-use plait_core::tabs::{
+use plait_client::tabs::{
     TabId, TabTarget,
     bookmark::{self, BookmarkRecord, ThreadBookmark},
 };
@@ -35,7 +35,7 @@ pub(super) struct Lifecycle {
 }
 
 impl Lifecycle {
-    pub(super) fn reopen_checkout(&mut self, key: &plait_core::tabs::CheckoutKey) {
+    pub(super) fn reopen_checkout(&mut self, key: &plait_client::tabs::CheckoutKey) {
         let update = |target: &mut TabTarget| {
             let checkout = match target {
                 TabTarget::Existing { checkout, .. }
@@ -59,9 +59,9 @@ impl Lifecycle {
 
     pub(super) fn verify_pending(
         &mut self,
-        previous: &plait_core::tabs::HostKey,
-        host: &plait_core::tabs::HostKey,
-        checkouts: &[plait_core::tabs::CheckoutKey],
+        previous: &plait_client::tabs::HostKey,
+        host: &plait_client::tabs::HostKey,
+        checkouts: &[plait_client::tabs::CheckoutKey],
     ) {
         for intent in &mut self.pending {
             if let Intent::Open(target) = intent {

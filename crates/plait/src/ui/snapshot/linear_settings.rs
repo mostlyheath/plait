@@ -1,6 +1,6 @@
 //! Settings → Linear, with account state injected: no scene reaches Linear.
 use super::*;
-use plait_core::linear_settings::{Auth, Pending, TeamPending};
+use plait_client::linear_settings::{Auth, Pending, TeamPending};
 
 fn open(h: &mut Harness) {
     h.update(|p, window, cx| {
@@ -18,7 +18,7 @@ fn signed_in() -> Auth {
     }
 }
 
-fn set(h: &mut Harness, change: impl FnOnce(&mut plait_core::linear_settings::Account)) {
+fn set(h: &mut Harness, change: impl FnOnce(&mut plait_client::linear_settings::Account)) {
     h.update(|p, _, _| change(&mut p.linear.account));
 }
 
@@ -93,7 +93,7 @@ fn open_project(h: &mut Harness) {
     h.settle();
 }
 
-fn teams() -> plait_core::host::linear::Teams {
+fn teams() -> plait_client::host::linear::Teams {
     serde_json::from_value(serde_json::json!({
         "teams": [
             {"id": "t-plait", "key": "PLA", "name": "Plait", "states": []},

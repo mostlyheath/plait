@@ -1,6 +1,6 @@
 use super::{Plait, panels::Panel, theme::*};
 use gpui::{prelude::*, *};
-use plait_core::host::ApprovalMode;
+use plait_client::host::ApprovalMode;
 
 impl Plait {
     /// Git for the checkout beside the conversation on wide windows.
@@ -43,7 +43,7 @@ impl Plait {
         } else if self.host.connection.threads.is_empty() {
             (
                 "No threads yet",
-                plait_core::host::policy::idle_detail(
+                plait_client::host::policy::idle_detail(
                     self.next_approval_mode() != Some(ApprovalMode::Auto),
                     self.command_policy(),
                 )

@@ -4,7 +4,7 @@
 
 use super::{Plait, Workspace, theme::*};
 use gpui::{prelude::*, *};
-use plait_core::{
+use plait_client::{
     git::LineCount,
     host::{self, Request},
     model::DiffMode,

@@ -1,6 +1,6 @@
 //! Independent drafts through the actual headless window and recovery boundary.
 use super::*;
-use plait_core::{
+use plait_client::{
     host::admission::{Placement, Request},
     tabs::TabTarget,
 };
@@ -41,7 +41,7 @@ pub(super) fn pending_choice(p: &Plait) -> (String, ModelChoice) {
         },
     )
 }
-pub(super) fn pending_thinking(p: &Plait) -> Option<plait_core::host::ThinkingLevel> {
+pub(super) fn pending_thinking(p: &Plait) -> Option<plait_client::host::ThinkingLevel> {
     let Request::CreateAdmittedThread { thinking, .. } = &p.draft.pending.as_ref().unwrap().request
     else {
         panic!("creation");
@@ -51,7 +51,7 @@ pub(super) fn pending_thinking(p: &Plait) -> Option<plait_core::host::ThinkingLe
 pub(super) fn finish(
     p: &mut Plait,
     request: &str,
-    reply: Result<plait_core::host::ThreadReply, plait_core::host::Error>,
+    reply: Result<plait_client::host::ThreadReply, plait_client::host::Error>,
     w: &mut Window,
     cx: &mut Context<Plait>,
 ) {
@@ -197,7 +197,7 @@ fn two_creations_complete_once_in_their_tabs_after_switch_and_close() {
         let a=p.tabs.model.tabs()[1].id();
         // B can complete while A is still preparing; closing A must preserve its operation.
         p.request_tab(crate::ui::tab_lifecycle::Intent::Close(a),w,cx);
-        let reply=|id:&str| Ok(plait_core::host::ThreadReply { thread: Snapshot { id:id.into(),checkout:repo.clone(),model:choice(),..Default::default() } });
+        let reply=|id:&str| Ok(plait_client::host::ThreadReply { thread: Snapshot { id:id.into(),checkout:repo.clone(),model:choice(),..Default::default() } });
         finish(p,"send-b",reply("created-b"),w,cx);
         assert_eq!(p.tabs.model.active(),Some(b));
         finish(p,"send-a",reply("created-a"),w,cx);
@@ -301,13 +301,13 @@ fn drafts_restart_in_order_with_images_settings_and_evicted_history() {
     if !isolated("many_drafts::drafts_restart_in_order_with_images_settings_and_evicted_history") {
         return;
     }
-    use plait_core::{
+    use plait_client::{
         session::Journal,
         tabs::{CheckoutKey, HostKey, storage},
     };
     let scratch = std::env::temp_dir().join(format!("plait-many-restart-{}", std::process::id()));
     let repo = fixture_repository(&scratch);
-    let (directory, store) = plait_core::session::locations().unwrap();
+    let (directory, store) = plait_client::session::locations().unwrap();
     let (journal, data) = Journal::open(&directory, store.clone()).unwrap();
     let host = HostKey {
         id: "test-host".into(),
@@ -319,7 +319,7 @@ fn drafts_restart_in_order_with_images_settings_and_evicted_history() {
         directory: crate::ui::tab_identity::directory(&repo),
     };
     let path = scratch.join("tabs.json");
-    let image = plait_core::images::persist(include_bytes!(
+    let image = plait_client::images::persist(include_bytes!(
         "../../../../../runtime/test/support/images/0.png"
     ))
     .unwrap();
@@ -541,7 +541,7 @@ fn restore_keeps_open_drafts_behind_worktrees() {
 }
 
 fn restore_with_open_empty_draft(worktrees_front: bool) {
-    use plait_core::{
+    use plait_client::{
         session::{Draft, DraftSettings, DraftTab, Session},
         tabs::{CheckoutKey, HostKey},
     };
@@ -717,7 +717,7 @@ fn titles_follow_edits_without_rebuilding_sibling_rows() {
             assert_eq!(p.tabs.rows[1].title, "New thread");
         })
         .unwrap();
-    let image = plait_core::images::persist(include_bytes!(
+    let image = plait_client::images::persist(include_bytes!(
         "../../../../../runtime/test/support/images/0.png"
     ))
     .unwrap();
@@ -749,8 +749,8 @@ fn discard_closes_only_its_draft_without_journal_or_history_recovery() {
     }
     let scratch = std::env::temp_dir().join(format!("plait-draft-discard-{}", std::process::id()));
     let repo = fixture_repository(&scratch);
-    let (directory, store) = plait_core::session::locations().unwrap();
-    let (journal, data) = plait_core::session::Journal::open(&directory, store).unwrap();
+    let (directory, store) = plait_client::session::locations().unwrap();
+    let (journal, data) = plait_client::session::Journal::open(&directory, store).unwrap();
     let mut h = Harness::new(&repo, None, 900., 600.);
     h.connect(&repo, false);
     h.update(|p, w, cx| {
@@ -844,9 +844,11 @@ fn discard_closes_only_its_draft_without_journal_or_history_recovery() {
     h.update(|p, _, _| assert!(p.tabs.model.tabs().is_empty()));
     drop(h);
     drop(journal);
-    let (_, saved) =
-        plait_core::session::Journal::open(&directory, plait_core::session::locations().unwrap().1)
-            .unwrap();
+    let (_, saved) = plait_client::session::Journal::open(
+        &directory,
+        plait_client::session::locations().unwrap().1,
+    )
+    .unwrap();
     assert!(saved.draft_tabs.is_empty());
     assert!(saved.new_drafts.is_empty());
     assert!(saved.new_draft.is_none());
@@ -861,8 +863,8 @@ fn discard_waits_for_a_creation_that_blocks_closing_its_tab() {
     let scratch =
         std::env::temp_dir().join(format!("plait-discard-blocked-{}", std::process::id()));
     let repo = fixture_repository(&scratch);
-    let (directory, store) = plait_core::session::locations().unwrap();
-    let (journal, data) = plait_core::session::Journal::open(&directory, store).unwrap();
+    let (directory, store) = plait_client::session::locations().unwrap();
+    let (journal, data) = plait_client::session::Journal::open(&directory, store).unwrap();
     let mut h = Harness::new(&repo, None, 900., 600.);
     h.connect(&repo, false);
     h.update(|p, w, cx| {
@@ -925,8 +927,8 @@ fn closing_a_draft_keeps_it_for_reopen_and_discarding_does_not() {
     }
     let scratch = std::env::temp_dir().join(format!("plait-close-discard-{}", std::process::id()));
     let repo = fixture_repository(&scratch);
-    let (directory, store) = plait_core::session::locations().unwrap();
-    let (journal, data) = plait_core::session::Journal::open(&directory, store).unwrap();
+    let (directory, store) = plait_client::session::locations().unwrap();
+    let (journal, data) = plait_client::session::Journal::open(&directory, store).unwrap();
     let mut h = Harness::new(&repo, None, 900., 600.);
     h.connect(&repo, false);
     h.update(|p, w, cx| {
@@ -981,8 +983,8 @@ fn escape_closes_only_a_draft_that_holds_nothing() {
     }
     let scratch = std::env::temp_dir().join(format!("plait-draft-escape-{}", std::process::id()));
     let repo = fixture_repository(&scratch);
-    let (directory, store) = plait_core::session::locations().unwrap();
-    let (journal, data) = plait_core::session::Journal::open(&directory, store).unwrap();
+    let (directory, store) = plait_client::session::locations().unwrap();
+    let (journal, data) = plait_client::session::Journal::open(&directory, store).unwrap();
     let mut h = Harness::new(&repo, None, 900., 600.);
     h.connect(&repo, false);
     h.update(|p, w, cx| {
@@ -1014,7 +1016,7 @@ fn escape_closes_only_a_draft_that_holds_nothing() {
         })
         .unwrap();
     // Only an image: it stays too.
-    let image = plait_core::images::persist(include_bytes!(
+    let image = plait_client::images::persist(include_bytes!(
         "../../../../../runtime/test/support/images/0.png"
     ))
     .unwrap();
@@ -1109,7 +1111,7 @@ fn waiting_first_send_binds_only_its_draft_with_images_and_exact_retry() {
     let repo = fixture_repository(&scratch);
     let mut h = Harness::new(&repo, None, 900., 600.);
     h.connect(&repo, false);
-    let image = plait_core::images::persist(include_bytes!(
+    let image = plait_client::images::persist(include_bytes!(
         "../../../../../runtime/test/support/images/0.png"
     ))
     .unwrap();
@@ -1149,7 +1151,7 @@ fn waiting_first_send_binds_only_its_draft_with_images_and_exact_retry() {
         finish(
             p,
             "wait-create",
-            Ok(plait_core::host::ThreadReply { thread: snapshot }),
+            Ok(plait_client::host::ThreadReply { thread: snapshot }),
             w,
             cx,
         );
@@ -1165,7 +1167,7 @@ fn waiting_first_send_binds_only_its_draft_with_images_and_exact_retry() {
         assert_eq!(pending.draft_revision, Some(7));
         assert!(matches!(
             pending.request("waiting-new-thread"),
-            plait_core::host::Request::SubmitCheckout { .. }
+            plait_client::host::Request::SubmitCheckout { .. }
         ));
     });
     drop(h);
@@ -1236,10 +1238,10 @@ fn waiting_first_send_journal_stays_readable_by_the_released_build() {
         let mut draft = creation.message.clone();
         draft.creation = p.draft.legacy_creation();
         assert!(draft.creation.is_some(), "the legacy mirror is written too");
-        let mut session = plait_core::session::Session::empty("/host".into());
+        let mut session = plait_client::session::Session::empty("/host".into());
         session.set_draft_tab(
             "waiting".into(),
-            plait_core::session::DraftTab {
+            plait_client::session::DraftTab {
                 legacy: false,
                 creation: Some(creation),
                 checkout: repo.clone(),
@@ -1259,11 +1261,12 @@ fn waiting_first_send_journal_stays_readable_by_the_released_build() {
             ReleasedPlacement::Project
         );
         // This build still reads the choice back as Wait, from either copy.
-        let restored: plait_core::session::Session = serde_json::from_slice(&bytes).unwrap();
+        let restored: plait_client::session::Session = serde_json::from_slice(&bytes).unwrap();
         let tab = &restored.draft_tabs["waiting"];
         let saved = tab.creation.as_ref().unwrap();
         assert_eq!(saved.placement.from_journal(saved.wait), Placement::Wait);
-        let legacy = plait_core::session::DraftTabCreation::from_legacy(&tab.draft, &repo).unwrap();
+        let legacy =
+            plait_client::session::DraftTabCreation::from_legacy(&tab.draft, &repo).unwrap();
         assert_eq!(legacy.placement.from_journal(legacy.wait), Placement::Wait);
     });
     drop(h);

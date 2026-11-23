@@ -2,13 +2,13 @@
 //!
 //! Every piece of selectable text paints through [`Selectable`], which records
 //! where it landed. Pointer events map those records to positions in the
-//! conversation; `plait_core::selection` decides order, ranges, and the copied
+//! conversation; `plait_client::selection` decides order, ranges, and the copied
 //! text. The selection is drawn as a background on the text runs, so it follows
 //! wrapping exactly, and it is kept by row identity so it survives streaming.
 
 use super::{Plait, theme::*};
 use gpui::{prelude::*, *};
-use plait_core::{
+use plait_client::{
     markdown::{self, Block},
     selection::{self, Position, Span},
     transcript::{self, Row},
@@ -126,11 +126,11 @@ impl Reading {
     pub(super) fn bookmark_selection(
         &self,
     ) -> Option<(
-        plait_core::tabs::bookmark::TextPosition,
-        plait_core::tabs::bookmark::TextPosition,
+        plait_client::tabs::bookmark::TextPosition,
+        plait_client::tabs::bookmark::TextPosition,
     )> {
         let selection = self.selection.as_ref()?;
-        let position = |a: &Anchor| plait_core::tabs::bookmark::TextPosition {
+        let position = |a: &Anchor| plait_client::tabs::bookmark::TextPosition {
             source: match &a.owner {
                 Owner::Message(id) => format!("message:{id}"),
                 Owner::Reasoning(id) => format!("reasoning:{id}"),
@@ -147,11 +147,11 @@ impl Reading {
     pub(super) fn restore_selection(
         &mut self,
         thread: &str,
-        details: &plait_core::tabs::bookmark::ViewDetails,
+        details: &plait_client::tabs::bookmark::ViewDetails,
     ) {
         self.groups_thread = thread.into();
         self.open_groups = details.folded.iter().cloned().collect();
-        let anchor = |p: &plait_core::tabs::bookmark::TextPosition| -> Option<Anchor> {
+        let anchor = |p: &plait_client::tabs::bookmark::TextPosition| -> Option<Anchor> {
             let owner = if let Some(id) = p.source.strip_prefix("message:") {
                 Owner::Message(id.to_owned().into())
             } else if let Some(id) = p.source.strip_prefix("reasoning:") {
@@ -383,7 +383,7 @@ impl Plait {
         range: Range<usize>,
         text: StyledText,
         by_line: bool,
-        spans: &[(Range<usize>, plait_core::markdown::Style)],
+        spans: &[(Range<usize>, plait_client::markdown::Style)],
     ) -> Selectable {
         let links = spans
             .iter()

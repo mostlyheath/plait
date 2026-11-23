@@ -2,7 +2,7 @@
 //! owns the policy; an unread policy is never called sandboxed.
 use super::{Plait, settings, theme::*};
 use gpui::{prelude::*, *};
-use plait_core::host::{
+use plait_client::host::{
     policy::{self, CommandPolicy, PolicyReply, Request},
     providers,
 };
@@ -130,7 +130,7 @@ impl Plait {
                 },
                 None => Request::CommandPolicy {
                     checkout: canonical.clone(),
-                    identity: supported.then(|| plait_core::host::git::WireIdentity {
+                    identity: supported.then(|| plait_client::host::git::WireIdentity {
                         dev: identity.device.to_string(),
                         ino: identity.inode.to_string(),
                     }),
@@ -138,7 +138,7 @@ impl Plait {
             };
             let reply: PolicyReply = client.send(&request)?;
             if reply.checkout != canonical {
-                return Err(plait_core::host::Error::Protocol(
+                return Err(plait_client::host::Error::Protocol(
                     "Host returned another checkout's policy.".into(),
                 ));
             }
@@ -175,7 +175,7 @@ impl Plait {
         &mut self,
         key: &(u64, PathBuf),
         value: Option<CommandPolicy>,
-        result: Result<PolicyReply, plait_core::host::Error>,
+        result: Result<PolicyReply, plait_client::host::Error>,
         cx: &mut Context<Self>,
     ) -> bool {
         if self.host.connection.epoch != key.0 {

@@ -1,7 +1,7 @@
 //! Explicit checks and updates for the connected SSH host.
 use super::{Plait, theme::*};
 use gpui::*;
-use plait_core::{
+use plait_client::{
     host::release,
     machines::{MachineId, Transport},
     remote::{install, ssh::SshOptions},
@@ -39,7 +39,7 @@ impl Plait {
     ) -> Option<(
         MachineId,
         String,
-        plait_core::remote::ssh::SshDestination,
+        plait_client::remote::ssh::SshDestination,
         SshOptions,
     )> {
         if !self.host.connection.connected || self.machines.connecting.is_some() {

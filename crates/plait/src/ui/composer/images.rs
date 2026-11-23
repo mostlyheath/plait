@@ -1,6 +1,6 @@
 use super::super::{images::decode, thread_controls::TextTooltip};
 use super::*;
-use plait_core::images::{self, ImageRef};
+use plait_client::images::{self, ImageRef};
 use std::{collections::HashMap, path::PathBuf};
 
 #[derive(Default)]
@@ -87,7 +87,7 @@ impl Composer {
         self.restore_thread_images_with_client(
             references,
             thread,
-            plait_core::host::Client::from_environment().expect("local host configuration"),
+            plait_client::host::Client::from_environment().expect("local host configuration"),
             cx,
         );
     }
@@ -95,7 +95,7 @@ impl Composer {
         &mut self,
         references: Vec<ImageRef>,
         thread: String,
-        client: plait_core::host::Client,
+        client: plait_client::host::Client,
         cx: &mut Context<Self>,
     ) {
         self.restore_originals(references, Some(thread), Some(client), cx);
@@ -104,7 +104,7 @@ impl Composer {
         &mut self,
         references: Vec<ImageRef>,
         thread: Option<String>,
-        client: Option<plait_core::host::Client>,
+        client: Option<plait_client::host::Client>,
         cx: &mut Context<Self>,
     ) {
         self.images.generation += 1;
@@ -372,7 +372,7 @@ impl Composer {
 fn restore_original(
     reference: &ImageRef,
     thread: Option<&str>,
-    client: Option<&plait_core::host::Client>,
+    client: Option<&plait_client::host::Client>,
 ) -> Result<Arc<RenderImage>, String> {
     let bytes = images::local(reference).or_else(|error| {
         let Some(thread) = thread else {

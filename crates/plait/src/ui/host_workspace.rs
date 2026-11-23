@@ -3,7 +3,7 @@
 //! used only with a local host too old to keep them, and are imported into
 //! a newer local host once.
 use super::{host::WatchLease, jump::PreferenceGroup, *};
-use plait_core::{
+use plait_client::{
     host::{
         self as host_api,
         workspace::{self, HostIdentity, Seen, View},
@@ -387,7 +387,7 @@ impl Plait {
         if changed.contains(&open)
             && !matches!(
                 self.state.repository.snapshot(),
-                plait_core::state::Load::Loading
+                plait_client::state::Load::Loading
             )
         {
             self.state.repository.refresh();
@@ -431,7 +431,7 @@ impl Plait {
         self.host_workspace.importing = true;
         let mut preferences = saved.clone();
         if preferences.device_id.is_empty() {
-            preferences.device_id = plait_core::host_state::request_id();
+            preferences.device_id = plait_client::host_state::request_id();
         }
         let device = preferences.device_id.clone();
         let projects = preferences.navigation.opened.clone();
@@ -480,7 +480,7 @@ impl Plait {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use plait_core::host::workspace::Project;
+    use plait_client::host::workspace::Project;
 
     fn view() -> View {
         View {

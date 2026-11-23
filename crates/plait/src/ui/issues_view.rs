@@ -4,7 +4,7 @@
 //! Open in Linear opens the issue's own https address in the browser.
 use super::{Plait, settings, text_field::TextField, text_field::TextFieldEvent, theme::*};
 use gpui::{prelude::*, *};
-use plait_core::{
+use plait_client::{
     host::linear::{self, IssueDetail, IssueSummary},
     linear_issues::{self, FILTERS, IssueRef, IssuesView, ListRequest, Load},
     linear_settings::Auth,

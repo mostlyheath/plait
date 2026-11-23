@@ -1,7 +1,7 @@
 //! Branch graph fixtures are confined to scenes and tests.
 use super::super::worktrees_view::Again;
 use super::*;
-use plait_core::{
+use plait_client::{
     git::{
         log::{Commit, GraphCommit},
         worktree::inventory::Preservation,
@@ -53,7 +53,7 @@ pub(super) fn install(h: &mut Harness, count: usize) {
             let title=match i {0=>"Main checkout".into(),1=>"Retry requests after rate limits".into(),2=>"Read the local project settings".into(),3=>"Keep attachments across restarts".into(),_=>format!("Worktree {i}")};
             let id=format!("worktree-scene-{i}");
             if i > 0 { p.host.connection.threads.push(ThreadSummary{id:id.clone(),checkout:path.clone(),title:Some(title),status:if i==1{ThreadStatus::Running}else if i==2{ThreadStatus::AwaitingApproval}else{ThreadStatus::Idle},..Default::default()}); }
-            rows.push(Checkout { build_directories: Vec::new(), build_output: None,path,main:i==0,branch:Some(if i==0{"main".into()}else{format!("plait/topic-{i}")}),head:Some(oid(if i==0{10}else{100+i})),base:(i>0).then(||oid(9-i.min(6))),thread_id:(i>0).then_some(id),identity:Some(plait_core::git::worktree::Identity{dev:"1".into(),ino:(i+1).to_string()}),missing:false,removed:false,preservation:Preservation { build_output: None,changed:Some(if i==2{3}else{0}),unpushed:Some(if i==1{2}else{0}),exclusive:Some(0),can_keep_local:i>0 && i!=2,refusal:if i==1{Some("This worktree has unpushed commits. Push them or explicitly confirm preserving only the local branch.".into())}else if i==2{Some("This worktree has uncommitted or ignored files. Preserve or remove them before removing the worktree.".into())}else if i==0{Some("The main checkout cannot be removed here.".into())}else{None}},creation_id:(i>0).then(||format!("creation-{i}")),last_used:Some(super::super::commits::now() as u64*1000-i as u64*300000)});
+            rows.push(Checkout { build_directories: Vec::new(), build_output: None,path,main:i==0,branch:Some(if i==0{"main".into()}else{format!("plait/topic-{i}")}),head:Some(oid(if i==0{10}else{100+i})),base:(i>0).then(||oid(9-i.min(6))),thread_id:(i>0).then_some(id),identity:Some(plait_client::git::worktree::Identity{dev:"1".into(),ino:(i+1).to_string()}),missing:false,removed:false,preservation:Preservation { build_output: None,changed:Some(if i==2{3}else{0}),unpushed:Some(if i==1{2}else{0}),exclusive:Some(0),can_keep_local:i>0 && i!=2,refusal:if i==1{Some("This worktree has unpushed commits. Push them or explicitly confirm preserving only the local branch.".into())}else if i==2{Some("This worktree has uncommitted or ignored files. Preserve or remove them before removing the worktree.".into())}else if i==0{Some("The main checkout cannot be removed here.".into())}else{None}},creation_id:(i>0).then(||format!("creation-{i}")),last_used:Some(super::super::commits::now() as u64*1000-i as u64*300000)});
             if i>0 {commits.push(commit(100+i,9-i.min(6),(if i==1{"Retry transient failures"}else if i==2{"Validate project overrides"}else{"Preserve draft attachments"}).to_string()));}
         }
         for n in (1..=10).rev(){commits.push(commit(n,n-1,match n {10=>"Keep thread tabs independent".into(),9=>"Read host-owned worktrees".into(),8=>"Preserve the checkout identity".into(),_=>format!("Project change {n}")}));}
@@ -156,7 +156,7 @@ pub(super) fn walk(repo: &Path, out: Option<&Path>, suffix: &str, width: f32, he
         h.capture(&format!("worktrees-empty-{theme}-{suffix}"));
         h.update(|p, _, _| {
             p.worktrees.park();
-            p.worktrees.error = Some(plait_core::host::worktree::OLDER_HOST.into());
+            p.worktrees.error = Some(plait_client::host::worktree::OLDER_HOST.into());
         });
         h.capture(&format!("worktrees-old-host-{theme}-{suffix}"));
         h.update(|p, _, _| {
@@ -312,7 +312,7 @@ fn remove_asks_for_the_worktree_that_was_drawn() {
         p.worktrees.rows[other].preservation.refusal = None;
         p.ask_remove_view_worktree(&path, id.as_ref(), window, cx);
         assert!(p.worktrees.removal.asking.is_none());
-        let replaced = plait_core::git::worktree::Identity {
+        let replaced = plait_client::git::worktree::Identity {
             dev: "1".into(),
             ino: "999".into(),
         };
@@ -382,7 +382,7 @@ fn a_summary_reads_nothing_and_a_run_end_reads_one_row() {
         let one = sample(1);
         let apply = |p: &mut Plait, live: Vec<ThreadSummary>, cx: &mut Context<Plait>| {
             let (relabel, ended) = p.worktree_summaries(&live);
-            plait_core::navigation::merge_threads(&mut p.host.connection.threads, live).unwrap();
+            plait_client::navigation::merge_threads(&mut p.host.connection.threads, live).unwrap();
             p.worktrees_after_summaries(relabel, ended, cx);
         };
         // Mid-run: a new title and still working.
@@ -527,12 +527,12 @@ fn removal_here_marks_the_folder_missing_for_the_sidebar() {
         let attempt = p
             .worktrees
             .removal
-            .answer(Some(plait_core::worktree_removal::Choice::RemoveIfPushed))
+            .answer(Some(plait_client::worktree_removal::Choice::RemoveIfPushed))
             .unwrap();
-        let removed = plait_core::host::worktree::Operation {
+        let removed = plait_client::host::worktree::Operation {
             request_id: "creation-3".into(),
             thread_id: "12345678-1234-4abc-8abc-123456789abc".into(),
-            state: plait_core::host::worktree::Stage::Removed,
+            state: plait_client::host::worktree::Stage::Removed,
             worktree: None,
             error: None,
         };
@@ -553,14 +553,14 @@ fn removal_here_marks_the_folder_missing_for_the_sidebar() {
         let attempt = p
             .worktrees
             .removal
-            .answer(Some(plait_core::worktree_removal::Choice::RemoveIfPushed))
+            .answer(Some(plait_client::worktree_removal::Choice::RemoveIfPushed))
             .unwrap();
-        let refused = plait_core::host::worktree::Operation {
+        let refused = plait_client::host::worktree::Operation {
             request_id: "creation-1".into(),
             thread_id: "12345678-1234-4abc-8abc-123456789abc".into(),
-            state: plait_core::host::worktree::Stage::Ready,
+            state: plait_client::host::worktree::Stage::Ready,
             worktree: None,
-            error: Some(plait_core::host::HostError {
+            error: Some(plait_client::host::HostError {
                 retry_after_seconds: None,
                 code: "busy".into(),
                 message: "New work appeared.".into(),
@@ -603,7 +603,7 @@ fn an_unconfirmed_removal_stays_with_its_project() {
         let attempt = p
             .worktrees
             .removal
-            .answer(Some(plait_core::worktree_removal::Choice::RemoveIfPushed))
+            .answer(Some(plait_client::worktree_removal::Choice::RemoveIfPushed))
             .unwrap();
         assert!(
             p.worktrees
@@ -676,7 +676,7 @@ fn reopen_returns_worktrees_only_for_a_present_project() {
             }
             let root = p.host.creation.checkout.clone();
             let meta = std::fs::metadata(&root).unwrap();
-            let identity = plait_core::tabs::DirectoryIdentity {
+            let identity = plait_client::tabs::DirectoryIdentity {
                 device: meta.dev(),
                 inode: meta.ino(),
             };
@@ -782,7 +782,7 @@ fn removal_prompt_freezes_choices_and_identity_across_resort_and_refresh() {
     ) {
         return;
     }
-    use plait_core::{host::worktree::Request, worktree_removal::Choice};
+    use plait_client::{host::worktree::Request, worktree_removal::Choice};
     use std::{cell::RefCell, rc::Rc};
     let scratch =
         std::env::temp_dir().join(format!("plait-worktree-prompt-{}", std::process::id()));
@@ -895,7 +895,7 @@ fn a_remote_host_measures_its_own_worktrees() {
         p.worktrees.cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         // Point the remote host at an unavailable socket; this Mac must not measure the fixture.
         p.host_local = false;
-        p.host_client = plait_core::host::Client::local_or_unavailable();
+        p.host_client = plait_client::host::Client::local_or_unavailable();
         p.worktrees.rows[0].path = repo.clone();
         p.worktrees.sizes[1] = Some(Err("The checkout folder is missing.".into()));
         for i in [0, 2, 3] {

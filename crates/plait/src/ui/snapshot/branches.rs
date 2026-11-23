@@ -3,7 +3,7 @@
 
 use super::{Harness, fixture_repository, git, isolated, press, set_query, shown};
 use crate::ui::{Plait, Workspace};
-use plait_core::{
+use plait_client::{
     git::{Branch, Branches, WriteOp},
     host::ThreadStatus,
     state::Load,

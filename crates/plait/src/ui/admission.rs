@@ -1,7 +1,7 @@
 //! Placement is negotiated off-thread before creation; replies retain their owner.
 use super::{Plait, host::Created, theme::*};
 use gpui::{prelude::*, *};
-use plait_core::host::{
+use plait_client::host::{
     self, Client,
     admission::{self, Placement, Request, Stage},
 };
@@ -288,7 +288,7 @@ impl Plait {
         let snapshot = snapshot.clone();
         let harness = super::harnesses::harness_of(&snapshot);
         let mode = snapshot.harness.as_ref().and_then(|h| h.mode.clone());
-        let request_id = plait_core::host_state::request_id();
+        let request_id = plait_client::host_state::request_id();
         self.admission.source = Some(snapshot.id.clone());
         self.admission.continuation = None;
         self.admission.pending = Some(Request::CreateAdmittedThread {
@@ -453,7 +453,7 @@ impl Plait {
                         if let Some(receipt) = receipt
                             && let Some(tree) = receipt.worktree {
                                 if let Some(identity) = &tree.identity {
-                                    this.tabs.identity.checkouts.insert(tree.path.clone(), plait_core::tabs::DirectoryIdentity {
+                                    this.tabs.identity.checkouts.insert(tree.path.clone(), plait_client::tabs::DirectoryIdentity {
                                         device: identity.dev.parse().unwrap(), inode: identity.ino.parse().unwrap(),
                                     });
                                 }

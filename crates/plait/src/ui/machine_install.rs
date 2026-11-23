@@ -2,7 +2,7 @@
 //! Machines. Offered after an SSH connection fails because the host is missing.
 use super::{Plait, theme::*};
 use gpui::*;
-use plait_core::{
+use plait_client::{
     machines::{MachineId, Transport},
     remote::{
         install::{self, Probe},

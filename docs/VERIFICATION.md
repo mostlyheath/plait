@@ -11,7 +11,7 @@ requirements and required checks.
 checks, the headless dependency guard, Clippy, Rust tests, runtime type checks
 and tests, and release builds. It installs runtime dependencies from the
 lockfile without lifecycle scripts. On macOS it checks the workspace; on
-Linux it checks `plait-core` and `plait-host`. Use
+Linux it checks `plait-client` and `plait-host`. Use
 `bash scripts/check.sh --require-command-sandbox` on macOS to require the
 real command sandbox tests. That gate fails on Linux while a containment
 backend is unavailable.
@@ -27,7 +27,7 @@ cargo test --locked --workspace
 Rust tests cover parsers, protocol framing, state transitions and stale
 asynchronous replies, recovery, Git reads and writes against temporary
 repositories, checkout identity, leases, and filesystem edge cases. On Linux,
-use `-p plait-core -p plait-host` in place of `--workspace` for Clippy and
+use `-p plait-client -p plait-host` in place of `--workspace` for Clippy and
 tests.
 
 For the runtime, first build `plait-host`, then run:

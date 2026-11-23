@@ -8,7 +8,7 @@
 
 use super::*;
 use crate::ui::Workspace;
-use plait_core::{
+use plait_client::{
     git::{Commit, History as CommitHistory},
     model::{Diff, DiffKind, DiffLine},
     state::DiffKey,
@@ -212,8 +212,8 @@ fn big_diff(count: usize) -> Arc<Diff> {
         })
         .collect();
     // Drawn rows and the widest of them, as the parser reports them.
-    let plait_core::patch::Rows { rows, widest } =
-        plait_core::patch::rows(&lines, plait_core::patch::FileHeaders::Omit);
+    let plait_client::patch::Rows { rows, widest } =
+        plait_client::patch::rows(&lines, plait_client::patch::FileHeaders::Omit);
     let hunks = (0..lines.len())
         .filter(|&index| matches!(lines[index].kind, DiffKind::Hunk))
         .collect();
@@ -362,7 +362,7 @@ fn install_thread(harness: &mut Harness, id: &'static str, snapshot: Snapshot) {
         plait.host.thread.selected = Some(id.into());
         plait.workspace.history = Default::default();
         plait.host.thread.snapshot = Some(Arc::new(snapshot));
-        plait.workspace.formatted = Arc::new(plait_core::markdown::Transcript::update(
+        plait.workspace.formatted = Arc::new(plait_client::markdown::Transcript::update(
             &Default::default(),
             plait.host.thread.snapshot.as_ref().unwrap(),
         ));
@@ -470,7 +470,7 @@ pub fn run() -> Vec<Row> {
                         thread
                     })
                     .collect();
-                plait_core::navigation::merge_threads(
+                plait_client::navigation::merge_threads(
                     &mut plait.host.connection.threads,
                     summaries,
                 )

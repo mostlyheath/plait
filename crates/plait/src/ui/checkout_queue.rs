@@ -1,7 +1,7 @@
 //! Checkout queue controls use the shared catalog; they own no watch or timer.
 use super::{Plait, theme::*, thread_controls::TextTooltip};
 use gpui::*;
-use plait_core::host::{Request, checkout_queue};
+use plait_client::host::{Request, checkout_queue};
 impl Plait {
     pub(super) fn wait_in_checkout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.admission.queue || !self.can_submit() {

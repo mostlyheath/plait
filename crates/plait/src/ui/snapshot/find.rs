@@ -8,7 +8,7 @@ use crate::ui::{
     theme::{CHROME_HEIGHT, ROW_HEIGHT},
 };
 use gpui::{prelude::*, *};
-use plait_core::{
+use plait_client::{
     conversation_find::Matches,
     host::{Message, MessageRole, Snapshot, ThreadStatus},
 };
@@ -296,7 +296,7 @@ fn a_stale_conversation_search_is_dropped() {
         .window
         .update(&mut harness.cx, |plait, _, _| {
             let stale = plait.found_now("fixture", invented());
-            plait.workspace.formatted = Arc::new(plait_core::markdown::Transcript::update(
+            plait.workspace.formatted = Arc::new(plait_client::markdown::Transcript::update(
                 &plait.workspace.formatted,
                 plait.host.thread.snapshot.as_ref().unwrap(),
             ));

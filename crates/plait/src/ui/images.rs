@@ -1,7 +1,7 @@
 //! Image decoding is background work; frames only draw prepared pixels.
 use super::{Plait, theme::*, thread_controls::TextTooltip};
 use gpui::{prelude::*, *};
-use plait_core::images::{self, ImageRef};
+use plait_client::images::{self, ImageRef};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     sync::Arc,
@@ -406,7 +406,7 @@ fn thumbnail_transfer_bench() {
         image: ImageRef,
     }
     let input: Input = serde_json::from_str(&std::env::var("PLAIT_IMAGE_BENCH").unwrap()).unwrap();
-    let client = plait_core::host::Client::from_environment().unwrap();
+    let client = plait_client::host::Client::from_environment().unwrap();
     let mut samples = Vec::new();
     for index in 0..12 {
         let started = Instant::now();
@@ -459,7 +459,7 @@ fn thumbnail_scrollback_bench() {
     let input: Input =
         serde_json::from_str(&std::env::var("PLAIT_IMAGE_SCROLL_BENCH").unwrap()).unwrap();
     assert_eq!(input.images.len(), 50);
-    let client = plait_core::host::Client::from_environment().unwrap();
+    let client = plait_client::host::Client::from_environment().unwrap();
     let key = (1, 1, input.thread.clone());
     let mut cache = ImageCache {
         key: Some(key.clone()),

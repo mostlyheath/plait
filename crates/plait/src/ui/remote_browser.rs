@@ -9,7 +9,7 @@ use super::{
     theme::colors,
 };
 use gpui::*;
-use plait_core::host::folders::{self, Listing};
+use plait_client::host::folders::{self, Listing};
 use std::{
     cell::Cell,
     path::{Path, PathBuf},
@@ -236,7 +236,7 @@ impl Plait {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use plait_core::host::folders::Entry;
+    use plait_client::host::folders::Entry;
 
     #[core::prelude::v1::test]
     fn stale_requests_and_old_connections_cannot_replace_a_listing() {

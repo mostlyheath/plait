@@ -45,7 +45,7 @@ and no release, from when tags were pushed by hand; they stay as they are.
 ## Update signing key
 
 Plait accepts only manifests signed by the key whose public half is
-`PUBLIC_KEY` in `crates/plait-core/src/update.rs`. The private half is the
+`PUBLIC_KEY` in `crates/plait-client/src/update.rs`. The private half is the
 Actions secret **`PLAIT_UPDATE_SIGNING_KEY`**: 64 hex digits. The publish job
 fails if the secret is missing or does not match the built-in public key.
 
