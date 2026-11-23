@@ -13,7 +13,8 @@ in what order the design is built. Each part carries one of four marks:
 - **Built** — in the app today. Keep it working.
 - **Planned** — presentation only. It needs no change to the protocol, to
   state the host stores, to permissions, or to Git writes. See
-  [Build order](#build-order).
+  [Build order](#build-order). Nothing is marked Planned at present: the
+  parts that were are built.
 - **Needs agreement** — needs a product or contract decision first. Do not
   build it, and do not show a placeholder or disabled control for it.
 - **Direction** — where Plait is heading. Not specified enough to build.
@@ -75,7 +76,7 @@ hidden. Preserve a readable workspace at narrow widths.
 
 ## Chat view
 
-### Sidebar — Planned
+### Sidebar — Built
 
 Top to bottom, on the navigation fill:
 
@@ -115,7 +116,7 @@ Top to bottom, on the navigation fill:
 4. A last row, `Open project…`, in hint text with its key hint.
 
 Nothing else lives in the sidebar. The machine, its connection, Update, and
-Settings move to the [status line](#status-line--planned). Archived threads
+Settings move to the [status line](#status-line--built). Archived threads
 show through Show or Hide Archived Threads in the menu and palette.
 
 ### Tab bar — Built
@@ -128,15 +129,15 @@ Tabs retain their own view, scroll position, find state, and draft. A new
 thread action creates a separate draft. Closing a tab does not stop its run.
 Virtualize long lists and hidden tab content.
 
-### Workspace bar — Built, with one Planned control
+### Workspace bar — Built
 
 Left: `project / machine · branch` in 12-point secondary text, with the full
 path in hover text. Omit machine at narrow widths. Right, in order: the view
-switcher (`Conversation`, `Changes N`, `History`, `Files`); **Planned**, a
+switcher (`Conversation`, `Changes N`, `History`, `Files`); a
 `Chat │ Work` switch; and the toggle for This turn. Content with no subviews
 omits this bar.
 
-### Conversation — Built, with folding Planned
+### Conversation — Built
 
 The conversation is a log of turns on the line. Requests and replies have
 visible author labels; requests use a raised neutral panel. Reasoning and tool
@@ -149,7 +150,7 @@ controls reflect availability; explain conflicts and excluded paths. Recorded
 diffs remain distinct from current Git changes and do not offer file or hunk
 writes.
 
-**Planned — earlier turns fold.** A turn before the latest draws as two rows
+**Earlier turns fold.** A turn before the latest draws as two rows
 on the line: its ring with the first line of the request and the age at the
 right, then its node with the closing line unchanged. An earlier turn uses the
 host’s recorded outcome, falls back to what the tab observed, and otherwise
@@ -165,7 +166,7 @@ folds when eligible.
   Find's "loaded messages only" note behave as before.
 - Settings → Appearance has `Fold earlier turns`, on by default.
 
-### Message box — Planned
+### Message box — Built
 
 One raised outline in the control outline color, 12-point corners, capped at
 760. Inside, two rows:
@@ -188,7 +189,7 @@ while project and harness stay in the row above. Pending messages and their
 actions stay above the box. Suggestions keep focus in the draft. Keep IME
 composition from submitting and preserve unsent revisions.
 
-### This turn — Planned
+### This turn — Built
 
 This turn takes the place of the Git inspector's working-tree panel beside the
 conversation. It is the same panel: same width, drag handle, key, and
@@ -220,7 +221,7 @@ changed files only when the record is ready. With no recorded turn to show (a
 new thread, a plain folder, an older host) the panel shows the working tree as
 built.
 
-### Status line — Planned
+### Status line — Built
 
 One line across the bottom of the window, in both views: navigation fill,
 hairline above, 12-point secondary text. Left to right:
@@ -240,7 +241,7 @@ hairline above, 12-point secondary text. Left to right:
 When the window is narrow, drop the counts first, then shorten the thread
 title. The optional diagnostics line sits above the status line.
 
-## Work view — Planned
+## Work view — Built
 
 Work view shows the thread beside the things it changed. It is for thread
 tabs. Enter and leave it with the `Chat │ Work` switch, the Toggle Work View
@@ -452,7 +453,7 @@ Use system sans-serif at 11–15 points, with 13-point body and navigation text
 and 12-point text in the workspace bar, pane headers, and status line.
 Conversation text uses 21-point line height. Code, paths, and commands use the
 device's code font, the system monospaced font unless the person names one, at
-12 points. **Planned:** Settings → Appearance adds `Code size`, 12 to 14,
+12 points. Settings → Appearance has `Code size`, 12 to 14,
 because some faces run small. Conversation, message box, and settings content
 are capped at 760 points. Spacing follows a 4-point base. Preserve gradients
 in supplied brand artwork only; avoid decorative gradients, shadows, and cards.
@@ -484,6 +485,14 @@ agreement, do not build, mock in the shipped app, or hint at any of them.
   back by: the Git write allowlist.
 
 ## Build order
+
+**Steps 0 to 9 are built** and were released in `v0.1.0-preview.80`. They were
+checked by tests and by scenes rendered on Linux; the native app was not
+inspected at a wide and a narrow window before release, which the list below
+asks for. That inspection, and what the scenes already show needs fixing, is
+tracked in [#130](https://github.com/mostlyheath/plait/issues/130). The order
+is kept here as the record of how the design was built and as the pattern for
+the parts that still need agreement.
 
 Each step is one small pull request with one owner, as
 [Contributing](CONTRIBUTING.md) requires, and can be built on its own unless

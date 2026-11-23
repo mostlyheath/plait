@@ -96,6 +96,21 @@ that the application's frame or latency goals are met.
 
 ## Known gaps
 
+- The rebuilt desktop layout (sidebar, status line, message box, This turn,
+  folded turns, Work view) was released without inspection in the native app.
+  Its scenes were rendered and looked at on Linux only. See
+  [#130](https://github.com/mostlyheath/plait/issues/130).
+- Some tests depend on timing and fail now and then on unrelated changes; one
+  such failure left a test fixture running and hung a release build. Passing
+  runs are not yet evidence that these tests are sound. See
+  [#128](https://github.com/mostlyheath/plait/issues/128).
+- The installed-runtime suite runs only in a release build, so a break that
+  only it catches is found when releasing, not at merge. Runtime tests that
+  depend on macOS paths are not caught by Linux runs.
+- Host rollback after the protocol 7 store change was tested by writing a
+  store as an older host would, not by running a previous host binary. One
+  recovery case after a rollback is known and open; see
+  [#131](https://github.com/mostlyheath/plait/issues/131).
 - A live remote check from macOS to a Linux host over both SSH and Tailscale,
   including a run continuing while the client is closed, remains open.
 - Linux has no validated command sandbox. Trusted execution tests do not
