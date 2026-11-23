@@ -82,7 +82,9 @@ fn independent_drafts_and_creation_keeps_tab_but_changes_lifetime() {
     w.activate(a).unwrap();
     w.save_bookmark(a, bookmark(ThreadView::Changes)).unwrap();
     let old = w.read_stamp(a).unwrap();
+    assert!(w.open_turn(a, "request-1".into()));
     w.bind_created(a, target("created")).unwrap();
+    assert!(w.get(a).unwrap().session().opened_turns().is_empty());
     assert_eq!(w.active(), Some(a));
     assert!(!w.accepts_lifetime(old.lifetime));
     assert!(!w.accepts_read(old));

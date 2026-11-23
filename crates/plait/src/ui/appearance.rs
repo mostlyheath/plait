@@ -554,6 +554,39 @@ impl Plait {
         self.apply_theme(cx);
     }
 
+    pub(super) fn set_fold_earlier_turns(&mut self, fold: bool, cx: &mut Context<Self>) {
+        let mut value = self.preferences.value.clone();
+        value.fold_earlier_turns = Some(fold);
+        self.set_preferences(value, PreferenceGroup::View, cx);
+        self.reconcile_live_folding();
+        cx.notify();
+    }
+
+    fn fold_earlier_turns_setting(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let fold = self.preferences.value.fold_earlier_turns();
+        let mut choices = segmented();
+        for (index, (label, value)) in [("On", true), ("Off", false)].into_iter().enumerate() {
+            choices = choices.child(
+                segment(("fold-earlier-turns", index), label, value == fold)
+                    .role(Role::RadioButton)
+                    .aria_toggled(if value == fold {
+                        Toggled::True
+                    } else {
+                        Toggled::False
+                    })
+                    .aria_label(format!("Fold earlier turns: {label}"))
+                    .on_activate(cx, move |this, _, cx| {
+                        this.set_fold_earlier_turns(value, cx)
+                    }),
+            );
+        }
+        super::settings::setting(
+            "Fold earlier turns",
+            "Show turns before the latest as their request and closing line. Activate a folded request to open it.",
+            choices,
+        )
+    }
+
     fn set_theme(&mut self, light: bool, name: String, cx: &mut Context<Self>) {
         let mut value = self.preferences.value.clone();
         // The default is stored as unset, so it follows future defaults.
@@ -667,6 +700,7 @@ impl Plait {
             )
             .child(self.code_font_setting(cx))
             .child(self.code_size_setting(cx))
+            .child(self.fold_earlier_turns_setting(cx))
     }
 
     fn theme_list(&self, light: bool, cx: &mut Context<Self>) -> impl IntoElement {

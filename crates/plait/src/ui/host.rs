@@ -552,6 +552,9 @@ impl Plait {
                                     cx.notify();
                                     return false;
                                 }
+                                if let Some(live) = this.host.thread.snapshot.as_deref() {
+                                    this.tabs.model.observe_active_snapshot(live);
+                                }
                                 let review_changed = previous.as_ref().is_none_or(|old| {
                                     this.host.thread.snapshot.as_ref().is_some_and(|new| {
                                         old.status != new.status
@@ -624,6 +627,104 @@ impl Plait {
         cx.notify();
     }
 
+    fn build_live_layout(&self, snapshot: &Snapshot) -> plait_client::folding::Layout {
+        let live_end = !self.workspace.history.cache.detached;
+        let find_match_message = self
+            .workspace
+            .conversation_find
+            .open
+            .then(|| self.current_hit().map(|hit| hit.message))
+            .flatten();
+        let unknown = Default::default();
+        let outcomes = self
+            .tabs
+            .model
+            .active()
+            .and_then(|id| self.tabs.model.get(id))
+            .map_or(&unknown, |tab| tab.session().outcomes());
+        plait_client::folding::build_layout(
+            snapshot,
+            live_end,
+            &self.workspace.turn_records.data,
+            &self.workspace.opened_turns,
+            find_match_message.as_deref(),
+            self.preferences.value.fold_earlier_turns(),
+            outcomes,
+        )
+    }
+
+    /// Re-apply folding rules to the snapshot already on screen without
+    /// rebuilding unrelated row measurements.
+    pub(super) fn reconcile_live_folding(&mut self) {
+        let Some(snapshot) = self.workspace.history.display.clone() else {
+            return;
+        };
+        let next_layout = self.build_live_layout(&snapshot);
+        if next_layout.rows == self.workspace.live_layout.rows {
+            self.workspace.live_layout = next_layout;
+            return;
+        }
+        match plait_client::folding::diff_layout(
+            Some((
+                snapshot.as_ref(),
+                self.workspace.live_layout.rows.as_slice(),
+            )),
+            Some((snapshot.as_ref(), next_layout.rows.as_slice())),
+        ) {
+            Update::Reset(count) => self.workspace.live_scroll.reset(count),
+            Update::Patch { splices, remeasure } => {
+                for splice in splices {
+                    self.workspace
+                        .live_scroll
+                        .splice(splice.range, splice.count);
+                }
+                for range in remeasure {
+                    self.workspace.live_scroll.remeasure_items(range);
+                }
+            }
+        }
+        self.workspace.live_layout = next_layout;
+        self.workspace.live_count = self.workspace.live_layout.len();
+        debug_assert_eq!(
+            self.workspace.live_scroll.item_count(),
+            self.workspace.live_count
+        );
+    }
+
+    /// Open a folded earlier turn for the lifetime of this tab while keeping
+    /// the activated row where it sits on screen.
+    pub(super) fn open_folded_turn(&mut self, turn_id: &str, cx: &mut Context<Self>) {
+        self.workspace.opened_turns.insert(turn_id.to_owned());
+        if let Some(tab_id) = self.tabs.model.active() {
+            self.tabs.model.open_turn(tab_id, turn_id.to_owned());
+        }
+        let folded_ix = self.workspace.live_layout.folded_row_index(turn_id);
+        // A bottom-aligned list pinned to its end would push an opened earlier
+        // turn upward; pin the current viewport top first so the row stays put.
+        if self.workspace.live_scroll.logical_scroll_top().item_ix >= self.workspace.live_count {
+            let scroll = &self.workspace.live_scroll;
+            // Resolve the end sentinel against the measured height, including
+            // the blank space above a short, bottom-aligned transcript.
+            scroll.scroll_to_end();
+            let height = -scroll.scroll_px_offset_for_scrollbar().y;
+            let top = height + px(super::live_conversation::LIST_TOP_PADDING)
+                - scroll.viewport_bounds().size.height;
+            scroll.scroll_to(ListOffset {
+                item_ix: 0,
+                offset_in_item: top.min(px(0.)),
+            });
+            if top > px(0.) {
+                scroll.scroll_by(top);
+            }
+        }
+        let anchor = self.workspace.live_scroll.logical_scroll_top();
+        self.reconcile_live_folding();
+        if folded_ix == Some(anchor.item_ix) {
+            self.workspace.live_scroll.scroll_to(anchor);
+        }
+        cx.notify();
+    }
+
     pub(super) fn refresh_live_list(&mut self, previous: Option<&Snapshot>) {
         self.workspace.history.display = self.host.thread.snapshot.clone();
         self.reconcile_live_list(previous);
@@ -634,8 +735,14 @@ impl Plait {
     /// measured heights.
     pub(super) fn reconcile_live_list(&mut self, previous: Option<&Snapshot>) -> bool {
         let next = self.workspace.history.display.as_deref();
+        let next_layout = next
+            .map(|snapshot| self.build_live_layout(snapshot))
+            .unwrap_or_default();
         let mut spliced = false;
-        match transcript::changes(previous, next) {
+        match plait_client::folding::diff_layout(
+            previous.map(|snap| (snap, self.workspace.live_layout.rows.as_slice())),
+            next.map(|snap| (snap, next_layout.rows.as_slice())),
+        ) {
             Update::Reset(count) => {
                 self.workspace.live_scroll.reset(count);
                 self.workspace.expanded_live_tools.clear();
@@ -661,8 +768,8 @@ impl Plait {
                 });
             }
         }
-        // Cached once per snapshot; rendering resolves visible rows by position.
-        self.workspace.live_layout = next.map(transcript::layout).unwrap_or_default();
+        // Cached once per snapshot or fold change; rendering resolves visible rows by position.
+        self.workspace.live_layout = next_layout;
         self.workspace.live_count = self.workspace.live_layout.len();
         debug_assert_eq!(
             self.workspace.live_scroll.item_count(),
@@ -690,12 +797,18 @@ impl Plait {
         );
         for message in moved {
             let slot = transcript::Slot::Message(message);
-            if let Some(row) = self
-                .workspace
-                .live_layout
-                .iter()
-                .position(|shown| *shown == slot)
-            {
+            if let Some(row) = self.workspace.live_layout.rows.iter().position(|shown| {
+                matches!(
+                    shown,
+                    plait_client::folding::DisplayRow::Slot(shown) if *shown == slot
+                ) || matches!(
+                    shown,
+                    plait_client::folding::DisplayRow::FoldedTurn {
+                        closing_slot: Some(shown),
+                        ..
+                    } if *shown == slot
+                )
+            }) {
                 self.workspace.live_scroll.remeasure_items(row..row + 1);
             }
         }

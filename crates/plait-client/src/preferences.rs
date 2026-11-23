@@ -146,6 +146,10 @@ pub struct Preferences {
     /// Read it through `code_size` and change it through `set_code_size`.
     #[serde(deserialize_with = "lenient_code_size")]
     pub code_size: Option<u8>,
+    /// Fold turns before the latest in the conversation. `None` means on; read
+    /// through `fold_earlier_turns`.
+    #[serde(deserialize_with = "lenient_bool")]
+    pub fold_earlier_turns: Option<bool>,
     /// The harness a new thread's draft starts in, when it is ready. Never `Other`:
     /// one this client does not know reads, and is written, as Pi.
     #[serde(deserialize_with = "lenient_harness", serialize_with = "known_harness")]
@@ -199,6 +203,15 @@ fn lenient_code_size<'de, D: serde::Deserializer<'de>>(
     Ok(clamped)
 }
 
+/// An unexpected value for a boolean preference reads as unset rather than
+/// failing the whole file.
+fn lenient_bool<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<bool>, D::Error> {
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(value.and_then(|value| value.as_bool()))
+}
+
 /// A harness this client cannot run (from a newer one) reads as Pi rather
 /// than failing the whole file.
 fn lenient_harness<'de, D: serde::Deserializer<'de>>(
@@ -250,6 +263,12 @@ impl Preferences {
     pub fn set_code_size(&mut self, size: u8) {
         let clamped = clamp_code_size(size);
         self.code_size = (clamped != CODE_SIZE_DEFAULT).then_some(clamped);
+    }
+
+    /// Whether turns before the latest draw folded. On by default, including
+    /// for files saved before the preference existed.
+    pub fn fold_earlier_turns(&self) -> bool {
+        self.fold_earlier_turns.unwrap_or(true)
     }
 
     pub fn is_favorite(&self, choice: &ModelChoice) -> bool {
@@ -653,6 +672,35 @@ mod tests {
         assert_eq!(loaded.code_size(), 14);
         assert!(loaded.hide_inspector);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn fold_earlier_turns_defaults_to_on_and_survives_older_files() {
+        assert!(Preferences::default().fold_earlier_turns());
+        // A file saved before the setting existed still loads with folding on.
+        let older: Preferences = serde_json::from_str(r#"{"hide_inspector":true}"#).unwrap();
+        assert!(older.fold_earlier_turns());
+        assert!(older.hide_inspector);
+        // Explicit false and true round-trip cleanly.
+        let off: Preferences = serde_json::from_str(r#"{"fold_earlier_turns":false}"#).unwrap();
+        assert!(!off.fold_earlier_turns());
+        let written = serde_json::to_string(&off).unwrap();
+        let restored: Preferences = serde_json::from_str(&written).unwrap();
+        assert!(!restored.fold_earlier_turns());
+        // A malformed value falls back to on without dropping other settings.
+        let bad: Preferences =
+            serde_json::from_str(r#"{"fold_earlier_turns":"always","hide_inspector":true}"#)
+                .unwrap();
+        assert!(bad.fold_earlier_turns());
+        assert!(bad.hide_inspector);
+        // Startup merge preserves a saved false when untouched during startup.
+        let untouched = Preferences {
+            hide_inspector: true,
+            ..Default::default()
+        };
+        let merged = merge_startup(off, &untouched).unwrap();
+        assert!(!merged.fold_earlier_turns());
+        assert!(merged.hide_inspector);
     }
 
     #[test]

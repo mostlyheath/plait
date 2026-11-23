@@ -1040,12 +1040,22 @@ fn a_blocked_earlier_run_remeasures_its_row() {
         })
     });
     harness.draw();
+    // The disclosure and closing line share one measured list item.
+    let closing_item = harness
+        .window
+        .update(&mut harness.cx, |p, _, _| {
+            p.workspace
+                .live_layout
+                .folded_row_index("request-first")
+                .unwrap()
+        })
+        .unwrap();
     let before = harness
         .window
         .update(&mut harness.cx, |p, _, _| {
             p.workspace
                 .live_scroll
-                .bounds_for_item(1)
+                .bounds_for_item(closing_item)
                 .unwrap()
                 .size
                 .height
@@ -1059,7 +1069,7 @@ fn a_blocked_earlier_run_remeasures_its_row() {
         .update(&mut harness.cx, |p, _, _| {
             p.workspace
                 .live_scroll
-                .bounds_for_item(1)
+                .bounds_for_item(closing_item)
                 .unwrap()
                 .size
                 .height
@@ -1075,7 +1085,7 @@ fn a_blocked_earlier_run_remeasures_its_row() {
         assert_eq!(
             p.workspace
                 .live_scroll
-                .bounds_for_item(1)
+                .bounds_for_item(closing_item)
                 .unwrap()
                 .size
                 .height,

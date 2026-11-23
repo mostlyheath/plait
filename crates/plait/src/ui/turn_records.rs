@@ -196,8 +196,14 @@ impl Plait {
         let Some(snapshot) = self.conversation_snapshot() else {
             return;
         };
-        for (index, slot) in self.workspace.live_layout.iter().enumerate() {
-            if let Some(key) = transcript::resolve(snapshot, *slot).and_then(records::closing_key)
+        for (index, row) in self.workspace.live_layout.rows.iter().enumerate() {
+            let slot = match row {
+                plait_client::folding::DisplayRow::Slot(slot) => Some(*slot),
+                plait_client::folding::DisplayRow::FoldedTurn { closing_slot, .. } => *closing_slot,
+            };
+            if let Some(key) = slot
+                .and_then(|slot| transcript::resolve(snapshot, slot))
+                .and_then(records::closing_key)
                 && (old.rows.get(&key) != self.workspace.turn_records.lines.rows.get(&key)
                     || old.covered.contains(&key)
                         != self.workspace.turn_records.lines.covered.contains(&key))
@@ -210,8 +216,14 @@ impl Plait {
         let Some(snapshot) = self.conversation_snapshot() else {
             return;
         };
-        for (index, slot) in self.workspace.live_layout.iter().enumerate() {
-            if let Some(key) = transcript::resolve(snapshot, *slot).and_then(records::closing_key)
+        for (index, row) in self.workspace.live_layout.rows.iter().enumerate() {
+            let slot = match row {
+                plait_client::folding::DisplayRow::Slot(slot) => Some(*slot),
+                plait_client::folding::DisplayRow::FoldedTurn { closing_slot, .. } => *closing_slot,
+            };
+            if let Some(key) = slot
+                .and_then(|slot| transcript::resolve(snapshot, slot))
+                .and_then(records::closing_key)
                 && self
                     .workspace
                     .turn_records

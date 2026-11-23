@@ -48,6 +48,7 @@ mod admission;
 mod branches;
 mod code_size;
 mod find;
+mod folded_turns;
 mod isolation;
 mod issues;
 mod linear_settings;
@@ -2414,6 +2415,7 @@ fn walk(output: Option<&Path>) {
         messages::walk(&mut harness, &repository, suffix);
         code_size::walk(&mut harness, &repository, suffix);
         find::find_walk(&mut harness, &repository, suffix);
+        folded_turns::walk(&mut harness, &repository, suffix);
         #[cfg(debug_assertions)]
         if suffix == "wide" {
             work_view::scenes(&repository, output);
@@ -2479,6 +2481,10 @@ fn walk(output: Option<&Path>) {
 }
 
 fn streaming_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
+    // These scenes, and the ones after them in this walk, were drawn with
+    // every turn shown: they count rows and select text in earlier turns.
+    // Folding has its own scenes, which turn it on themselves.
+    harness.update(|p, _, _| p.preferences.value.fold_earlier_turns = Some(false));
     harness.connect(repository, false);
     harness.change_snapshot(|snapshot| {
         snapshot.messages.extend((3..40).map(|index| Message {
