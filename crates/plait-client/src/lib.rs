@@ -19,6 +19,7 @@ pub mod images;
 pub use plait_protocol::lease;
 pub mod linear_issues;
 pub mod linear_settings;
+#[cfg(feature = "local-host")]
 pub mod local_socket;
 pub mod machine;
 pub mod machines;

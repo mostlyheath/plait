@@ -10,7 +10,7 @@ publish = false
 [dependencies]
 gpui.workspace = true
 gpui_platform.workspace = true
-plait-client = { path = "../plait-client" }
+plait-client = { path = "../plait-client", features = ["local-host", "ssh"] }
 plait-protocol = { path = "../plait-protocol" }
 plait-release = { path = "../plait-release" }
 libc = "=0.2.191"
@@ -25,7 +25,7 @@ image = { version = "=0.25.10", default-features = false, features = ["png", "jp
 # feature, so `cargo build` and release builds do not compile it.
 [dev-dependencies]
 # Enables the test-host transport for scene tests only.
-plait-client = { path = "../plait-client", features = ["test-host"] }
+plait-client = { path = "../plait-client", features = ["local-host", "ssh", "test-host"] }
 # Already pinned by plait-client; builds tool arguments in README scenes and pages test host reads.
 base64 = "=0.22.1"
 # Test harness only: backs scene tests' in-process host with the real engine; production `plait` never links it.

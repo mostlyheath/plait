@@ -7,8 +7,7 @@ rules, and operation details. [REMOTE.md](REMOTE.md) covers remote setup.
 
 ## Crate boundaries
 
-The split, with one step left (moving Mac-only code out of `plait-client` and
-building it without Unix-only features):
+The Rust code is split into crates with a checked dependency direction:
 
 - `plait-protocol`: wire data and serialization with no platform I/O,
   including host requests, snapshots and provider data, update manifests and
@@ -21,6 +20,14 @@ building it without Unix-only features):
   stream, and GPUI-free view models, reusable by other clients such as a
   future iOS app.
 - `plait`: GPUI rendering on top of `plait-client`.
+
+`plait-client` has two default features: `local-host` (finding and connecting
+to a host on the same machine over its socket) and `ssh` (starting `ssh` to
+reach, install and probe remote hosts). Mac-only work, such as opening editors
+and terminals and installing app updates, lives in `plait`. Without the
+features, `plait-client` still builds for iOS with machine records, state and
+host protocol models; a client without them has no transport yet, since an
+authenticated network transport is not built.
 
 Neither the desktop nor `plait-client` links `plait-engine`; everything a
 client needs from a machine goes through a host. `scripts/check.sh` enforces

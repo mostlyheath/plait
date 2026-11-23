@@ -8,9 +8,11 @@ pub use crate::{
     thread_view::{ChangesViewState, DiffKey, HistoryViewState, ThreadRepositoryView},
 };
 use crate::{
-    git, machine,
-    model::{Diff, DiffMode, Machine, Project, Snapshot},
+    git,
+    model::{Diff, DiffMode, Project, Snapshot},
 };
+#[cfg(feature = "local-host")]
+use crate::{machine, model::Machine};
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
@@ -758,6 +760,7 @@ pub fn project_name(path: &std::path::Path) -> String {
 
 impl AppState {
     /// One project, the opened checkout, on this machine. Remote machines arrive with M3.
+    #[cfg(feature = "local-host")]
     pub fn new(path: PathBuf) -> Self {
         Self {
             projects: vec![Project {

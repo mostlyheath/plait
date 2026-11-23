@@ -69,6 +69,12 @@ if grep -Eq '^gpui([-_ ]|$)' <<< "$dependencies"; then
     echo 'Headless crates must not depend on GPUI.' >&2
     exit 1
 fi
+cargo check --locked -p plait-client --no-default-features
+if rustup target list --installed | grep -qx aarch64-apple-ios; then
+    cargo check --locked -p plait-client --no-default-features --target aarch64-apple-ios
+else
+    echo 'Skipping iOS client check: aarch64-apple-ios target is not installed.'
+fi
 # The interop tests start a real host on the runtime's test fixture, so its packages come first.
 # Optional packages are only the Agent SDK's platform builds of Claude Code, which no test runs.
 (cd runtime && npm ci --ignore-scripts --omit=optional)

@@ -78,6 +78,7 @@ pub struct Client {
 }
 #[derive(Clone)]
 enum Transport {
+    #[cfg(feature = "local-host")]
     Local(PathBuf),
     Link(std::sync::Arc<crate::remote::link::Link>),
     /// Routes repository reads (and writes when no scripted host socket is
@@ -88,9 +89,11 @@ enum Transport {
         git: PathBuf,
     },
     /// The local environment named no usable host; each request reports why.
+    #[cfg(feature = "local-host")]
     Unavailable(String),
 }
 impl Client {
+    #[cfg(feature = "local-host")]
     pub fn from_environment() -> Result<Self, Error> {
         let path = if let Some(path) = std::env::var_os("PLAIT_HOST_STORE") {
             PathBuf::from(path).join("host.sock")
@@ -113,6 +116,7 @@ impl Client {
     /// This Mac's host, or a client whose every request returns the
     /// configuration error, so a bad environment is a connection error,
     /// not a failure to start.
+    #[cfg(feature = "local-host")]
     pub fn local_or_unavailable() -> Self {
         Self::from_environment().unwrap_or_else(|error| Self {
             transport: Transport::Unavailable(error.to_string()),
@@ -120,7 +124,7 @@ impl Client {
     }
 
     /// A client for a test host's socket.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "local-host"))]
     pub(crate) fn at_socket(path: PathBuf) -> Self {
         Self {
             transport: Transport::Local(path),
@@ -144,6 +148,7 @@ impl Client {
 
     fn socket(&self) -> std::io::Result<UnixStream> {
         match &self.transport {
+            #[cfg(feature = "local-host")]
             Transport::Local(path) => crate::local_socket::connect(path),
             Transport::Link(link) => link.open(),
             #[cfg(feature = "test-host")]
@@ -155,6 +160,7 @@ impl Client {
                 std::io::ErrorKind::NotFound,
                 "No test host socket is configured.",
             )),
+            #[cfg(feature = "local-host")]
             Transport::Unavailable(reason) => Err(std::io::Error::other(reason.clone())),
         }
     }

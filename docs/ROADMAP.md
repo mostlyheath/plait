@@ -16,9 +16,6 @@ for evidence and limits.
 
 ### Next
 
-- Finish the crate split: move Mac-only code out of `plait-client` and build it
-  without Unix-only features, so other clients can reuse it; see
-  [Architecture](ARCHITECTURE.md#crate-boundaries).
 - Show several independent machines in one sidebar.
 - Update Linux hosts in place, from the machine and from the Mac. Prebuilt
   Linux hosts are published with each release and install from the Mac.
