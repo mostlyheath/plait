@@ -6,7 +6,7 @@
 //! does not wait for it: only a command that cannot start, or exits at once
 //! with an error, is reported, in the notice line.
 
-use super::{Plait, Workspace, file_view::LINE_HEIGHT, theme::*, thread_controls::TextTooltip};
+use super::{Plait, Workspace, file_view::line_height, theme::*, thread_controls::TextTooltip};
 use crate::handoff::{self};
 use gpui::{prelude::*, *};
 use plait_client::handoff::Launch;
@@ -55,15 +55,15 @@ pub(super) fn on_disk(change: &Change) -> bool {
     change.worktree != b'D' && !(change.index == b'D' && change.worktree == b' ')
 }
 
-/// The first line on screen in a list of `LINE_HEIGHT` rows, zero-based. A
-/// scroll asked for but not yet drawn counts as done.
+/// The first line on screen in a list of `file_view::line_height()` rows,
+/// zero-based. A scroll asked for but not yet drawn counts as done.
 fn top_line(scroll: &UniformListScrollHandle) -> usize {
     let state = scroll.0.borrow();
     if let Some(deferred) = &state.deferred_scroll_to_item {
         return deferred.item_index;
     }
     let scrolled = -f32::from(state.base_handle.offset().y);
-    (scrolled / LINE_HEIGHT).floor().max(0.) as usize
+    (scrolled / line_height()).floor().max(0.) as usize
 }
 
 impl Plait {

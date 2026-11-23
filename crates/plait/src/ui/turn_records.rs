@@ -617,6 +617,7 @@ impl Plait {
                                 .min_w_0()
                                 .truncate()
                                 .font_family(mono())
+                                .text_size(px(code_size()))
                                 .text_color(rgb(colors().blue))
                                 .underline()
                                 .child(file.name.clone()),
@@ -732,12 +733,13 @@ impl Plait {
             .max_h(px(132.))
             .overflow_y_scroll()
             .gap_1()
-            .children(
-                blocked
-                    .changed
-                    .iter()
-                    .map(|path| div().font_family(mono()).child(path.clone())),
-            )
+            .children(blocked.changed.iter().map(|path| {
+                div()
+                    .font_family(mono())
+                    .text_size(px(code_size()))
+                    .line_height(px(code_line_height()))
+                    .child(path.clone())
+            }))
             .when(!covered.is_empty(), |el| {
                 el.child(div().mt_2().child("Not covered"))
             })

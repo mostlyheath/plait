@@ -390,6 +390,7 @@ impl Plait {
         this.load_preferences(cx);
         this.observe_appearance(window, cx);
         this.apply_theme(cx);
+        this.apply_code_size(cx);
         this.load_themes(cx);
         // An open picker shows host state; keep it current as replies land.
         cx.observe_self(|this, cx| {

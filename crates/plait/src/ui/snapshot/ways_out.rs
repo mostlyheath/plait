@@ -6,9 +6,7 @@
 
 use super::{Harness, SettingsTab, fixture_repository, isolated};
 use crate::handoff;
-use crate::ui::{
-    Plait, Workspace, file_view::LINE_HEIGHT, settings::SettingsPage, settings_editor::Opens,
-};
+use crate::ui::{Plait, Workspace, file_view, settings::SettingsPage, settings_editor::Opens};
 use gpui::*;
 use plait_client::{
     handoff::{EditorChoice, Launch, TerminalChoice},
@@ -98,7 +96,7 @@ fn open_what_is_on_screen() {
 
     // The first line on screen after scrolling.
     harness.update(|plait, _, _| {
-        let offset = point(px(0.), px(-LINE_HEIGHT * 40.));
+        let offset = point(px(0.), px(-file_view::line_height() * 40.));
         plait
             .workspace
             .file_viewer

@@ -301,6 +301,23 @@ impl Plait {
         }
     }
 
+    /// Draw code at the saved point size, remeasuring open views when it changes.
+    pub(super) fn apply_code_size(&mut self, cx: &mut Context<Self>) {
+        if set_code_size(self.preferences.value.code_size()) {
+            // A different point size changes wrapped code, diff, and tool heights.
+            self.workspace.live_scroll.remeasure();
+            cx.refresh_windows();
+        }
+    }
+
+    /// Save a new code font size and apply it immediately to open views.
+    pub(super) fn set_code_size(&mut self, size: u8, cx: &mut Context<Self>) {
+        let mut value = self.preferences.value.clone();
+        value.set_code_size(size);
+        self.set_preferences(value, PreferenceGroup::View, cx);
+        self.apply_code_size(cx);
+    }
+
     /// Settings is opening: make the field that names a family, show the
     /// saved choice in it, and learn which families are installed now.
     pub(super) fn prepare_code_font(&mut self, cx: &mut Context<Self>) {
@@ -503,6 +520,33 @@ impl Plait {
         )
     }
 
+    /// Settings → Appearance: the point size code, paths, and commands are drawn at.
+    fn code_size_setting(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let chosen = self.preferences.value.code_size();
+        let mut choices = segmented();
+        for (index, (label, size)) in [("12 pt", 12u8), ("13 pt", 13), ("14 pt", 14)]
+            .into_iter()
+            .enumerate()
+        {
+            choices = choices.child(
+                segment(("code-size", index), label, size == chosen)
+                    .role(Role::RadioButton)
+                    .aria_toggled(if size == chosen {
+                        Toggled::True
+                    } else {
+                        Toggled::False
+                    })
+                    .aria_label(format!("Code size: {label}"))
+                    .on_activate(cx, move |this, _, cx| this.set_code_size(size, cx)),
+            );
+        }
+        super::settings::setting(
+            "Code size",
+            "Point size for code, file paths, and commands (12–14).",
+            choices,
+        )
+    }
+
     fn set_appearance(&mut self, appearance: Appearance, cx: &mut Context<Self>) {
         let mut value = self.preferences.value.clone();
         value.appearance = appearance;
@@ -622,6 +666,7 @@ impl Plait {
                     })),
             )
             .child(self.code_font_setting(cx))
+            .child(self.code_size_setting(cx))
     }
 
     fn theme_list(&self, light: bool, cx: &mut Context<Self>) -> impl IntoElement {

@@ -108,6 +108,10 @@ thread_local! {
     /// the palette, so parallel UI tests do not see each other's choice.
     static CODE_FONT: std::cell::RefCell<SharedString> =
         const { std::cell::RefCell::new(SharedString::new_static(SYSTEM_MONO)) };
+    /// The point size code, paths, and commands are drawn at. Per thread, like
+    /// the palette and code font, so parallel UI tests stay isolated.
+    static CODE_SIZE: std::cell::Cell<f32> =
+        const { std::cell::Cell::new(plait_client::preferences::CODE_SIZE_DEFAULT as f32) };
 }
 
 /// The code font's family. Read during render; cheap.
@@ -126,6 +130,30 @@ pub fn set_mono(family: SharedString) -> bool {
         *font.borrow_mut() = family;
         true
     })
+}
+
+/// The code font's point size (12–14). Read during render; cheap.
+pub fn code_size() -> f32 {
+    CODE_SIZE.with(std::cell::Cell::get)
+}
+
+/// Draw code at `points` (clamped to 12–14) from now on. False when unchanged.
+pub fn set_code_size(points: u8) -> bool {
+    let points = plait_client::preferences::clamp_code_size(points) as f32;
+    CODE_SIZE.with(|size| {
+        if (size.get() - points).abs() < f32::EPSILON {
+            return false;
+        }
+        size.set(points);
+        true
+    })
+}
+
+/// Line height for monospace code blocks, inline conversation diffs, and tool
+/// command output: 7 points of leading over the code font size (19 at 12,
+/// 20 at 13, 21 at 14) so 13- and 14-point faces never clip.
+pub fn code_line_height() -> f32 {
+    code_size() + 7.
 }
 
 pub fn row() -> Div {
@@ -404,8 +432,8 @@ pub fn code_block() -> Div {
         .border_l_1()
         .border_color(rgb(colors().border))
         .font_family(mono())
-        .text_size(px(12.))
-        .line_height(px(19.))
+        .text_size(px(code_size()))
+        .line_height(px(code_line_height()))
         .text_color(rgb(colors().muted))
 }
 

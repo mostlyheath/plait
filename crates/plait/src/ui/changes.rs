@@ -8,7 +8,12 @@ use plait_client::{
 };
 use std::{path::Path, sync::Arc};
 
-const DIFF_LINE_HEIGHT: f32 = 21.;
+/// Row height for diff lines and file headings: 9 points of leading over the
+/// code size (21 at 12, 22 at 13, 23 at 14) so 13- and 14-point faces fit
+/// without clipping while keeping uniform_list rows equal height.
+fn diff_line_height() -> f32 {
+    code_size() + 9.
+}
 
 pub(super) fn diff_limit_notice(recorded: bool) -> (&'static str, &'static str) {
     if recorded {
@@ -101,7 +106,7 @@ fn hunk_button(target: &HunkTarget, hunk: usize, header: &str, cx: &mut Context<
         if stage { "Stage hunk" } else { "Unstage hunk" },
         "diff-hunk",
     )
-    .h(px(DIFF_LINE_HEIGHT - 2.))
+    .h(px(diff_line_height() - 2.))
     .font_family(".SystemUIFont")
     .text_size(px(11.))
     .disabled(target.busy)
@@ -131,7 +136,7 @@ fn discard_hunk_button(
         |name| name.to_string_lossy().into_owned(),
     );
     quiet_button(("hunk-discard", hunk), "Discard hunk…", "diff-hunk")
-        .h(px(DIFF_LINE_HEIGHT - 2.))
+        .h(px(diff_line_height() - 2.))
         .font_family(".SystemUIFont")
         .text_size(px(11.))
         .disabled(target.busy)
@@ -179,7 +184,7 @@ fn file_heading(line: usize, name: &Arc<str>, directory: &Arc<str>) -> AnyElemen
         .aria_label(path)
         .audited()
         .w_full()
-        .h(px(DIFF_LINE_HEIGHT))
+        .h(px(diff_line_height()))
         .px_4()
         .bg(rgb(colors().rail))
         .border_t_1()
@@ -796,9 +801,12 @@ impl Plait {
                 let elapsed = diff.elapsed;
                 let truncated = diff.truncated;
                 let (limit_label, limit_detail) = diff_limit_notice(id == "recorded-patch");
-                let gutter = || {
+                let size = code_size();
+                let line_height = diff_line_height();
+                let gutter_width = (size * 3.7).round();
+                let gutter = move || {
                     div()
-                        .w(px(44.))
+                        .w(px(gutter_width))
                         .flex_shrink_0()
                         .text_right()
                         .text_color(rgb(colors().subtle))
@@ -897,15 +905,15 @@ impl Plait {
                                             .audited()
                                             .gap_0()
                                             .w_full()
-                                            .h(px(DIFF_LINE_HEIGHT))
+                                            .h(px(line_height))
                                             .bg(rgb(if picked {
                                                 mix(c.bg, c.blue, 0.22)
                                             } else {
                                                 bg
                                             }))
                                             .font_family(mono())
-                                            .text_size(px(12.))
-                                            .line_height(px(DIFF_LINE_HEIGHT))
+                                            .text_size(px(size))
+                                            .line_height(px(line_height))
                                             .child(numbers)
                                             .child(
                                                 div()

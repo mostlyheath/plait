@@ -46,6 +46,7 @@ use std::{
 mod a11y;
 mod admission;
 mod branches;
+mod code_size;
 mod find;
 mod isolation;
 mod issues;
@@ -2407,6 +2408,7 @@ fn walk(output: Option<&Path>) {
         tool_states_walk(&mut harness, &repository, suffix);
         reading_walk(&mut harness, &repository, suffix);
         messages::walk(&mut harness, &repository, suffix);
+        code_size::walk(&mut harness, &repository, suffix);
         find::find_walk(&mut harness, &repository, suffix);
         undo::undo_walk(&mut harness, &repository, suffix);
         turn_review::walk(&mut harness, &repository, suffix);

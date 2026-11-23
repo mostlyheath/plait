@@ -616,7 +616,12 @@ impl Plait {
                     panel = panel.child(
                         row()
                             .gap_2()
-                            .child(div().font_family("Menlo").child(code.clone()))
+                            .child(
+                                div()
+                                    .font_family(mono())
+                                    .text_size(px(code_size()))
+                                    .child(code.clone()),
+                            )
                             .child(button("copy-provider-code", "Copy code").on_activate(
                                 cx,
                                 move |_, _, cx| {

@@ -356,7 +356,7 @@ fn counts(added: Option<usize>, removed: Option<usize>) -> Div {
         .gap_1()
         .flex_shrink_0()
         .font_family(mono())
-        .text_size(px(11.))
+        .text_size(px(code_size()))
         .when_some(added.filter(|n| *n > 0), |el, n| {
             el.child(div().text_color(rgb(colors().mint)).child(format!("+{n}")))
         })

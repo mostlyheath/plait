@@ -129,8 +129,8 @@ impl Plait {
             .w_full()
             .overflow_x_scroll()
             .font_family(mono())
-            .text_size(px(12.))
-            .line_height(px(19.))
+            .text_size(px(code_size()))
+            .line_height(px(code_line_height()))
             .whitespace_nowrap()
             .child(self.block_text(site, block, 0..block.text.len(), true))
     }
@@ -340,8 +340,8 @@ impl Plait {
             .overflow_x_scroll()
             .py_1()
             .font_family(mono())
-            .text_size(px(12.))
-            .line_height(px(19.))
+            .text_size(px(code_size()))
+            .line_height(px(code_line_height()))
             .whitespace_nowrap()
             // Tints reach the widest line, or the edge when every line is short.
             .child(column().flex_none().min_w_full().children(rows))
