@@ -73,6 +73,7 @@ impl Blocked {
 }
 #[derive(Default)]
 pub(super) struct TurnRecords {
+    pub(super) selection: plait_client::history::this_turn::Selection,
     pub(super) stamp: Option<Stamp>,
     pub data: Arc<Vec<TurnRecord>>,
     pub lines: Arc<Lines>,
@@ -190,6 +191,7 @@ impl Plait {
     /// Called with the background conversation projection, never from render.
     pub(super) fn install_record_lines(&mut self, lines: Arc<Lines>, generation: u64) {
         self.workspace.turn_records.projected_generation = generation;
+        self.workspace.turn_records.selection.retain(&lines);
         let old = std::mem::replace(&mut self.workspace.turn_records.lines, lines);
         let Some(snapshot) = self.conversation_snapshot() else {
             return;
@@ -222,51 +224,24 @@ impl Plait {
             }
         }
     }
-    pub(super) fn undo_refusal(&self, line: &Line) -> Option<(&'static str, &'static str)> {
-        if !self.host.connection.connected {
-            return Some(("Offline", "Reconnect to the host to undo this run."));
+    pub(super) fn undo_context(&self) -> plait_client::history::this_turn::UndoContext<'_> {
+        plait_client::history::this_turn::UndoContext {
+            note: self.workspace.turn_records.note.as_ref(),
+            connected: self.host.connection.connected,
+            current: self.records_current(),
+            pending: self.workspace.turn_records.pending.is_some(),
+            busy: self.state.repository.write().busy()
+                || self.host.thread.controlling
+                || self.host.thread.snapshot.as_ref().is_some_and(|s| {
+                    s.status.busy() || self.host.connection.checkout_has_run(&s.checkout)
+                }),
         }
-        if self.workspace.turn_records.pending.is_some() {
-            return Some(("Working", "An undo is waiting for the host's reply."));
-        }
-        if !self.records_current() {
-            return Some(("Loading", "Waiting for the current run records."));
-        }
-        if self.state.repository.write().busy()
-            || self.host.thread.controlling
-            || self
-                .host
-                .thread
-                .snapshot
-                .as_ref()
-                .is_some_and(|s| s.status.busy())
-            || self.host.thread.snapshot.as_ref().is_some_and(|s| {
-                self.host
-                    .connection
-                    .threads()
-                    .iter()
-                    .any(|t| t.checkout == s.checkout && t.status.busy())
-            })
-        {
-            return Some((
-                "Wait",
-                "A run or another write is active in this checkout. Wait until it finishes.",
-            ));
-        }
-        match line.availability {
-            Availability::Recording => {
-                Some(("Recording", "The host is still taking this run's record."))
-            }
-            Availability::Failed => Some((
-                "Unavailable",
-                "The record could not be made, so this run cannot be undone.",
-            )),
-            Availability::Unavailable => Some((
-                "Unavailable",
-                "The record needed to undo this run is no longer retained.",
-            )),
-            Availability::Ready => None,
-        }
+    }
+    pub(super) fn undo_refusal(
+        &self,
+        line: &Line,
+    ) -> Option<plait_client::history::this_turn::Refusal> {
+        self.undo_context().refusal(line)
     }
     pub(super) fn shortcut_undo(&self) -> Option<String> {
         if self.settings_open
@@ -486,55 +461,12 @@ impl Plait {
         let available = line.availability == Availability::Ready;
         let older = self.workspace.turn_review.older;
 
-        let refusal = self.undo_refusal(line);
-        let note = self
-            .workspace
-            .turn_records
-            .note
-            .as_ref()
-            .filter(|(id, _, _)| id == run);
-        let label = refusal
-            .map(|(label, _)| label)
-            .or_else(|| note.map(|(_, label, _)| *label))
-            .unwrap_or(if line.undone { "Redo" } else { "Undo" });
-        let detail = refusal
-            .map(|(_, reason)| reason.to_owned())
-            .or_else(|| note.map(|(_, _, reason)| reason.clone()))
-            .unwrap_or_else(|| line.detail.clone());
-        let action = if latest {
-            button(SharedString::from(format!("undo-{run}")), label)
-        } else {
-            quiet_button(SharedString::from(format!("undo-{run}")), label, group)
-        };
-        let retryable = note.is_none_or(|(_, label, _)| matches!(*label, "Retry" | "Wait"));
-        let action = action
-            .h(px(22.))
-            .tooltip(move |_, cx| cx.new(|_| TextTooltip(detail.clone())).into())
-            .when(refusal.is_some() || !retryable, |el| {
-                el.text_color(rgb(colors().subtle))
-                    .cursor_default()
-                    .a11y_synthetic_children(|builder| builder.parent_node().set_disabled())
-            })
-            .when(refusal.is_none() && retryable, |el| {
-                el.on_activate(cx, {
-                    let run = run.clone();
-                    move |this, window, cx| {
-                        if let Some(attempt) = this
-                            .workspace
-                            .turn_records
-                            .retry
-                            .clone()
-                            .filter(|p| p.run == run)
-                        {
-                            if this.workspace.turn_records.pending.is_none() {
-                                this.send_undo(attempt, window, cx);
-                            }
-                        } else {
-                            this.undo_run(&run, false, window, cx);
-                        }
-                    }
-                })
-            });
+        let action = self.record_undo_button(
+            line,
+            self.undo_context().action(line),
+            (!latest).then_some(group),
+            cx,
+        );
         let tip = line.detail.clone();
         let mut content = row()
             .id(SharedString::from(format!("run-record-{run}")))
@@ -578,14 +510,38 @@ impl Plait {
             );
         } else if let Some(steps) = line.steps {
             let target = target.clone();
-            let review_detail = line.review_detail.clone();
-            content = content.child(button(SharedString::from(format!("review-steps-{run}")),
-                format!("{steps} {}", if steps == 1 { "step" } else { "steps" }))
-                .h(px(22.)).px_0().flex_shrink_0().text_color(rgb(colors().muted))
-                .aria_label(if older { "Turn review needs a newer host." } else { "Review this turn's recorded changes" })
-                .disabled(!available)
-                .tooltip(move |_, cx| cx.new(|_| TextTooltip(if older { "Turn review needs a newer host. Current Changes and supported undo remain available.".into() } else { review_detail.clone() })).into())
-                .on_activate(cx,move |this,window,cx| { if available && let Some(target)=&target { this.open_turn_review(target.clone(),window,cx); } }));
+            let show_panel = !latest && !older;
+            let detail = if show_panel {
+                "Show this earlier turn beside the conversation.".to_owned()
+            } else if older {
+                "Turn review needs a newer host. Current Changes and supported undo remain available.".to_owned()
+            } else {
+                line.review_detail.clone()
+            };
+            content = content.child(
+                button(
+                    SharedString::from(format!("review-steps-{run}")),
+                    format!("{steps} {}", if steps == 1 { "step" } else { "steps" }),
+                )
+                .h(px(22.))
+                .px_0()
+                .flex_shrink_0()
+                .text_color(rgb(colors().muted))
+                .aria_label(detail.clone())
+                .disabled(!available && !show_panel)
+                .tooltip(move |_, cx| cx.new(|_| TextTooltip(detail.clone())).into())
+                .on_activate(cx, move |this, window, cx| {
+                    let Some(target) = &target else {
+                        return;
+                    };
+                    // A window too narrow for the panel still opens the recorded diff.
+                    if show_panel && (Self::wide(window) || !available) {
+                        this.show_earlier_turn(&target.original, window, cx);
+                    } else if available {
+                        this.open_turn_review(target.clone(), window, cx);
+                    }
+                }),
+            );
         }
         content = content
             .child(
@@ -719,7 +675,52 @@ impl Plait {
             .children(self.undo_panel(line, cx))
             .into_any_element()
     }
-    fn undo_panel(&self, line: &Line, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(super) fn record_undo_button(
+        &self,
+        line: &Line,
+        model: plait_client::history::this_turn::UndoAction<'_>,
+        group: Option<SharedString>,
+        cx: &mut Context<Self>,
+    ) -> Control {
+        let run = &line.run;
+        let label = model.label;
+        let detail = model.detail.to_owned();
+        let action = if let Some(group) = group {
+            quiet_button(SharedString::from(format!("undo-{run}")), label, group)
+        } else {
+            button(SharedString::from(format!("undo-{run}")), label)
+        };
+        action
+            .h(px(22.))
+            .aria_description(detail.clone())
+            .tooltip(move |_, cx| cx.new(|_| TextTooltip(detail.clone())).into())
+            .when(!model.enabled, |el| {
+                el.text_color(rgb(colors().subtle))
+                    .cursor_default()
+                    .a11y_synthetic_children(|builder| builder.parent_node().set_disabled())
+            })
+            .when(model.enabled, |el| {
+                el.on_activate(cx, {
+                    let run = run.clone();
+                    move |this, window, cx| {
+                        if let Some(attempt) = this
+                            .workspace
+                            .turn_records
+                            .retry
+                            .clone()
+                            .filter(|p| p.run == run)
+                        {
+                            if this.workspace.turn_records.pending.is_none() {
+                                this.send_undo(attempt, window, cx);
+                            }
+                        } else {
+                            this.undo_run(&run, false, window, cx);
+                        }
+                    }
+                })
+            })
+    }
+    pub(super) fn undo_panel(&self, line: &Line, cx: &mut Context<Self>) -> Option<AnyElement> {
         let blocked = self
             .workspace
             .turn_records

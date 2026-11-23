@@ -60,6 +60,7 @@ mod tab_persistence;
 mod tabs;
 mod text_field;
 pub mod theme;
+mod this_turn;
 mod thread_controls;
 mod thread_files;
 mod thread_workspace;
@@ -142,7 +143,7 @@ actions!(
 /// The workspace beside the sidebar (presentation-independent view kind from core).
 pub(super) use plait_client::thread_view::ThreadView as Workspace;
 
-/// Below this width the Git inspector is not shown; Git stays in Changes.
+/// Below this width This turn is not shown; Git stays in Changes.
 const WIDE_WINDOW: f32 = 1150.;
 
 pub struct Plait {
@@ -775,14 +776,14 @@ impl Plait {
         window.viewport_size().width > px(WIDE_WINDOW)
     }
 
-    /// The Git inspector beside the conversation: wide windows, unless hidden.
+    /// This turn beside the conversation: wide windows, unless hidden.
     pub(super) fn shows_inspector(&self, wide: bool) -> bool {
         wide && !self.worktrees_visible()
             && self.tabs.model.active().is_some()
             && !self.preferences.value.hide_inspector
     }
 
-    /// Show or hide the Git inspector and remember the choice. A narrow window
+    /// Show or hide This turn and remember the choice. A narrow window
     /// has no room for it, so the toggle says where Git is instead.
     fn toggle_inspector(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !Self::wide(window) {
@@ -800,7 +801,7 @@ impl Plait {
         row()
             .id("inspector-note")
             .role(Role::Group)
-            .aria_label("Git inspector unavailable at this window width")
+            .aria_label("This turn unavailable at this window width")
             .audited()
             .flex_shrink_0()
             .px_4()
@@ -812,7 +813,7 @@ impl Plait {
             .child(div().flex_1().min_w_0().text_color(rgb(colors().muted)).child(a11y_text(
                 "inspector-note-detail",
                 format!(
-                    "The Git inspector needs a window wider than {WIDE_WINDOW} points. Git status and diffs are in Changes."
+                    "This turn needs a window wider than {WIDE_WINDOW} points. Git status and diffs are in Changes."
                 ),
             )))
             .child(
@@ -1019,9 +1020,9 @@ impl Plait {
                     "toggle-inspector",
                     "panel-right",
                     if wide {
-                        "Toggle Git inspector"
+                        "Toggle This Turn"
                     } else {
-                        "Git inspector (needs a wider window)"
+                        "This turn (needs a wider window)"
                     },
                 )
                 .map(|el| self.covered_tab_control(el))

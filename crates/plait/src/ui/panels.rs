@@ -109,7 +109,7 @@ impl Plait {
     pub(super) fn resize_handle(&self, panel: Panel, cx: &mut Context<Self>) -> impl IntoElement {
         let (id, label) = match panel {
             Panel::Sidebar => ("resize-sidebar", "Resize sidebar"),
-            Panel::Inspector => ("resize-inspector", "Resize Git inspector"),
+            Panel::Inspector => ("resize-inspector", "Resize This turn"),
         };
         div()
             .id(id)

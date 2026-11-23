@@ -25,7 +25,7 @@ This table matches `ACTIONS` in `crates/plait/src/ui/actions.rs` (checked by aut
 | Cmd-Shift-W | Close Window | `window.close` |
 | Cmd-K | Command Palette… | `palette.toggle` |
 | Cmd-B | Toggle Sidebar | `view.toggle_sidebar` |
-| Cmd-L | Toggle Git Inspector | `view.toggle_inspector` |
+| Cmd-L | Toggle This Turn | `view.toggle_inspector` |
 | Cmd-Shift-D | Toggle Diagnostics | `view.toggle_diagnostics` |
 | Cmd-Shift-1 | Conversation | `view.conversation` |
 | Cmd-Shift-2 | Changes | `view.changes` |
