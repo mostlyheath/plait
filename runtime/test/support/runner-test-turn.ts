@@ -5,6 +5,7 @@ import type { Command } from '../../src/runner/protocol.ts';
 export function createTurn(): RunnerTurn {
   let approve: ((allow: boolean) => void) | undefined;
   let steerFile: string | undefined;
+  const acceptedSteers = new Set<string>();
   return {
     async start(payload, emit, signal) {
       if (typeof payload.pid_file === 'string') await writeFile(payload.pid_file, String(process.pid));
@@ -34,7 +35,11 @@ export function createTurn(): RunnerTurn {
     },
     command(command: Command) {
       if (command.type === 'approve' && command.approval_id === 'approval') approve?.(command.allow);
-      if (command.type === 'steer' && steerFile) void writeFile(steerFile, JSON.stringify(command)).catch(() => {});
+      if (command.type === 'steer' && steerFile) {
+        if (acceptedSteers.has(command.request_id)) return;
+        acceptedSteers.add(command.request_id);
+        void writeFile(steerFile, JSON.stringify(command)).catch(() => {});
+      }
     },
   };
 }

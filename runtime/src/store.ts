@@ -81,7 +81,7 @@ export class Store {
           AND root_ino=(SELECT json_extract(identity,'$.ino') FROM roots WHERE id=${row}.thread); END;`);
     }
     this.db.exec('CREATE INDEX IF NOT EXISTS threads_recent ON threads(updated_at DESC)');
-    this.outputs = new CommandOutputs(this.db);
+    this.outputs = new CommandOutputs(this.db, { threadOutputsDir: directory });
     this.images = new Images(this.db);
     this.linear = new LinearCache(this.db);
     // Repair queued cancellations made by earlier image-capable hosts, without reading BLOBs.

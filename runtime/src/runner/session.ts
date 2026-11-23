@@ -1,5 +1,7 @@
-import { fail } from '../protocol.ts';
+import { fail, queuedView } from '../protocol.ts';
 import type { Approval, Snapshot } from '../protocol.ts';
+import { nameKey, type Observation } from '../mcp/tools.ts';
+import type { Records } from '../records.ts';
 import type { Postimage } from '../safety.ts';
 import type { Store } from '../store.ts';
 import { TurnSnapshotApplier } from '../turn-executor.ts';
@@ -15,7 +17,12 @@ export type RunnerReceipt = {
   events?: unknown[];
 };
 
-export type RunnerCallbacks = {
+export type RunnerEventHooks = {
+  records?: Records;
+  onMcpObserved?: (checkout: string, rootDev: string, rootIno: string, name: string, fingerprint: string, observation: Observation) => void;
+};
+
+export type RunnerCallbacks = RunnerEventHooks & {
   store: Store;
   directory: string;
   notify(id: string, summary: boolean): void;
@@ -31,6 +38,7 @@ export function applyRunnerEvent(
   applier: TurnSnapshotApplier,
   event: Event,
   onPhase?: (state: RunnerState) => void,
+  hooks?: RunnerEventHooks,
 ): boolean {
   switch (event.type) {
     case 'phase': {
@@ -43,10 +51,28 @@ export function applyRunnerEvent(
     }
     case 'live':
       applier.livePayload(event.payload as Record<string, unknown>);
+      for (const tool of snapshot.tools) {
+        if (tool.name.startsWith('mcp__')) tool.name = store.setting(nameKey(snapshot.id, tool.name)) ?? tool.name;
+      }
       return store.saveRunEvent(runId, event.seq, snapshot);
     case 'commit': {
       const head = typeof event.head === 'string' && /^\d+$/.test(event.head) ? Number(event.head) : 0;
-      return store.saveRunEvent(runId, event.seq, snapshot, { head });
+      const placedEntries = Array.isArray((event.item as { placed_entries?: unknown } | undefined)?.placed_entries)
+        ? (event.item as { placed_entries: unknown[] }).placed_entries
+        : [];
+      return store.saveRunEvent(runId, event.seq, snapshot, {
+        head,
+        extra: placedEntries.length ? () => {
+          for (const raw of placedEntries) {
+            if (!raw || typeof raw !== 'object') continue;
+            const entry = raw as { request_id?: unknown; entry?: unknown };
+            if (typeof entry.request_id === 'string' && typeof entry.entry === 'number' && Number.isSafeInteger(entry.entry)) {
+              store.place(snapshot.id, entry.request_id, entry.entry);
+            }
+          }
+          snapshot.queued = store.queue(snapshot.id).map(queuedView);
+        } : undefined,
+      });
     }
     case 'approval_needed':
       applier.approvalNeeded(event.approval as Approval);
@@ -66,7 +92,34 @@ export function applyRunnerEvent(
       });
     case 'record_before':
     case 'record_after':
-      return store.saveRunEvent(runId, event.seq, snapshot);
+      return store.saveRunEvent(runId, event.seq, snapshot, {
+        extra: () => hooks?.records?.indexRunnerRecord(
+          event.type === 'record_before' ? 'before' : 'after',
+          event.record as Record<string, unknown>,
+        ),
+      });
+    case 'tool_label': {
+      const name = String(event.name);
+      const label = String(event.label);
+      return store.saveRunEvent(runId, event.seq, snapshot, {
+        extra: () => {
+          const key = nameKey(snapshot.id, name);
+          if (store.setting(key) === null) store.setSetting(key, label);
+          for (const tool of snapshot.tools) if (tool.name === name) tool.name = label;
+        },
+      });
+    }
+    case 'mcp_observed':
+      hooks?.onMcpObserved?.(
+        String(event.checkout),
+        String(event.root_dev),
+        String(event.root_ino),
+        String(event.name),
+        String(event.fingerprint),
+        event.observation as Observation,
+      );
+      store.advanceRunSeq(runId, event.seq);
+      return false;
     case 'pong':
       store.advanceRunSeq(runId, event.seq);
       return false;
@@ -77,7 +130,7 @@ export function applyRunnerEvent(
   }
 }
 
-const GAP_EFFECT_EVENTS = new Set<Event['type']>(['postimage', 'forget', 'record_before', 'record_after', 'approval_settled']);
+const GAP_EFFECT_EVENTS = new Set<Event['type']>(['postimage', 'forget', 'record_before', 'record_after', 'approval_settled', 'tool_label']);
 
 /** Apply unacknowledged receipt events after `lastSeq`, then the terminal status, idempotently. */
 export function applyRunnerReceipt(
@@ -87,6 +140,7 @@ export function applyRunnerReceipt(
   receipt: unknown,
   lastSeq: number,
   gapped = false,
+  hooks?: RunnerEventHooks,
 ): boolean {
   const applier = new TurnSnapshotApplier(snapshot);
   const parsed = receipt && typeof receipt === 'object' ? receipt as RunnerReceipt : {};
@@ -107,9 +161,9 @@ export function applyRunnerReceipt(
       if (isGapped) {
         // After a gap, still apply effect-carrying boundary events idempotently without overwriting the interrupted snapshot.
         if (!GAP_EFFECT_EVENTS.has(event.type)) continue;
-        summaryChanged = applyRunnerEvent(store, runId, snapshot, applier, event) || summaryChanged;
+        summaryChanged = applyRunnerEvent(store, runId, snapshot, applier, event, undefined, hooks) || summaryChanged;
       } else {
-        summaryChanged = applyRunnerEvent(store, runId, snapshot, applier, event) || summaryChanged;
+        summaryChanged = applyRunnerEvent(store, runId, snapshot, applier, event, undefined, hooks) || summaryChanged;
       }
       seq = event.seq;
     }
@@ -147,6 +201,7 @@ export class RunnerSession {
     this.supervisor = new RunnerSupervisor({
       store: callbacks.directory,
       onEvent: event => this.onEvent(event),
+      onReattach: () => this.resendSteers(),
       onDisconnect: entry => this.onDisconnect(entry),
       onGap: () => this.onGap(),
     });
@@ -174,8 +229,9 @@ export class RunnerSession {
       this.applier,
       event,
       state => this.callbacks.phase(this.threadId, state),
+      this.callbacks,
     );
-    if (event.type !== 'pong') this.callbacks.notify(this.threadId, summaryChanged);
+    if (event.type !== 'pong' && event.type !== 'mcp_observed') this.callbacks.notify(this.threadId, summaryChanged);
     if (event.type === 'finished' || (event.type === 'approval_settled' && this.approvalWaiter?.id === String(event.id))) {
       this.settleApprovalWaiter();
     }
@@ -221,6 +277,14 @@ export class RunnerSession {
 
   stop(): void {
     try { this.supervisor.stop(); } catch { /* Runner may already be disconnecting. */ }
+  }
+
+  private resendSteers(): void {
+    this.steered.clear();
+    for (const input of this.callbacks.store.queue(this.threadId)) {
+      if (input.queued?.mode !== 'steer') continue;
+      this.steer(input.request_id, input.text, input.images ?? []);
+    }
   }
 
   steer(requestId: string, text: string, images: unknown[]): void {
