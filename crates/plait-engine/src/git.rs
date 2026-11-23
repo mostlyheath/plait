@@ -808,8 +808,10 @@ mod counts;
 pub mod log;
 pub mod record;
 pub mod review;
+pub mod summary;
 pub mod undo;
 pub mod worktree;
+pub use summary::checkout_summary;
 mod write;
 #[cfg(test)]
 use branch::parse_branches;

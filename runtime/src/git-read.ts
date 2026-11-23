@@ -20,7 +20,7 @@ const KEEP_MS = 120_000;
 const DOCUMENTS = 4;
 
 const reads: Record<string, string[]> = {
-  status: [], files: [], branches: [], main_checkout: [], identity: [],
+  status: [], checkout_summary: [], files: [], branches: [], main_checkout: [], identity: [],
   diff: ['change', 'mode'],
   log: ['tip', 'skip', 'limit'],
   show: ['id'],
