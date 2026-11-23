@@ -50,6 +50,10 @@ impl FileViewer {
     pub(super) fn clear_checkout(&mut self) {
         *self = Self {
             generation: self.generation + 1,
+            find: Find {
+                generation: self.find.generation + 1,
+                ..Default::default()
+            },
             ..Default::default()
         };
     }
@@ -90,6 +94,9 @@ pub(super) struct Find {
 
 impl Find {
     pub(super) fn bookmark_match(&self) -> Option<plait_client::tabs::bookmark::TextPosition> {
+        if self.restore_match.is_some() {
+            return self.restore_match.clone();
+        }
         self.matches
             .get(self.current)
             .map(|hit| plait_client::tabs::bookmark::TextPosition {

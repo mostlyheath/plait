@@ -59,6 +59,9 @@ pub(super) struct Found {
 
 impl ConversationFind {
     pub(super) fn bookmark_match(&self) -> Option<plait_client::tabs::bookmark::TextPosition> {
+        if self.restore_match.is_some() {
+            return self.restore_match.clone();
+        }
         self.matches
             .hits
             .get(self.current)

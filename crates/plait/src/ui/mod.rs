@@ -907,11 +907,25 @@ impl Plait {
             self.watch_thread(id, window, cx);
         }
         self.queue_tab_save(cx);
+        self.load_workspace_locations(cx);
+        if tab == Workspace::Conversation
+            && self.conversation_snapshot().is_some()
+            && window.is_window_active()
+            && !self.settings_open
+            && let Some(id) = self.host.thread.selected.clone()
+        {
+            self.mark_thread_read(&id, cx);
+        }
+        cx.notify();
+    }
+
+    fn load_workspace_locations(&mut self, cx: &mut Context<Self>) {
+        let tab = self.workspace.tab;
         let work = self
             .tabs
             .model
             .work()
-            .filter(|w| w.open)
+            .filter(|w| w.chat_locations.is_some())
             .map(|w| w.recorded);
         if tab == Workspace::Changes || work.is_some() {
             if work != Some(true)
@@ -931,7 +945,8 @@ impl Plait {
             }
             self.refresh_turn_review(cx);
         }
-        if tab == Workspace::History || self.remembers_kind(plait_client::panes::PaneKind::History)
+        if tab == Workspace::History
+            || work.is_some() && self.remembers_kind(plait_client::panes::PaneKind::History)
         {
             self.state.repository.request_history();
             if self.workspace.restore_pending[2]
@@ -947,18 +962,11 @@ impl Plait {
         } else {
             self.state.repository.leave_history();
         }
-        if tab == Workspace::Files || self.remembers_kind(plait_client::panes::PaneKind::Files) {
+        if tab == Workspace::Files
+            || work.is_some() && self.remembers_kind(plait_client::panes::PaneKind::Files)
+        {
             self.check_file(cx);
         }
-        if tab == Workspace::Conversation
-            && self.conversation_snapshot().is_some()
-            && window.is_window_active()
-            && !self.settings_open
-            && let Some(id) = self.host.thread.selected.clone()
-        {
-            self.mark_thread_read(&id, cx);
-        }
-        cx.notify();
     }
 
     /// Where the conversation can hold the keyboard: its composer, and its
@@ -1239,6 +1247,9 @@ impl Render for Plait {
         // Full screen hides the traffic lights the header otherwise clears.
         let fullscreen = window.is_fullscreen();
         self.panels.viewport = f32::from(window.viewport_size().width);
+        if self.workspace.work_area.size.height > px(0.) {
+            self.sync_work_locations(window, cx);
+        }
         self.advance_reveals(window);
         self.settle_find_reveal(window);
         let project = self.active_project();

@@ -497,3 +497,111 @@ fn fallback_routes_only_chat_actions() {
     h.update(|p, _, _| assert!(!p.tabs.model.work().unwrap().open));
     std::fs::remove_dir_all(scratch).unwrap();
 }
+
+#[core::prelude::v1::test]
+fn files_round_trip() {
+    if isolated("work_view::files_round_trip") {
+        selection_round_trip(crate::ui::Workspace::Files);
+    }
+}
+
+#[core::prelude::v1::test]
+fn history_round_trip() {
+    if isolated("work_view::history_round_trip") {
+        selection_round_trip(crate::ui::Workspace::History);
+    }
+}
+
+fn selection_round_trip(view: crate::ui::Workspace) {
+    use crate::ui::{Workspace, tab_lifecycle::Intent};
+    let scratch = std::env::temp_dir().join(format!("plait-view-memory-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    let mut h = this_turn::harness(&repo, None, 820., 800.);
+    h.connect(&repo, false);
+    tabs::install(&mut h, 2);
+    let log = plait_engine::git::log(&repo, None, 0, 2).unwrap();
+    let (chat, pane) = if view == Workspace::Files {
+        ("README.md", "src/review.rs")
+    } else {
+        (log.commits[0].id.as_str(), log.commits[1].id.as_str())
+    };
+    let select = |p: &mut Plait, value: &str, cx: &mut Context<Plait>| {
+        if view == Workspace::Files {
+            p.open_file(value.into(), None, cx);
+        } else {
+            p.workspace.restore_pending[2] = false;
+            p.state.repository.select_commit(value.into());
+        }
+    };
+    let check = |p: &Plait, value: &str| {
+        if view == Workspace::Files {
+            assert_eq!(
+                p.workspace.file_viewer.path.as_deref(),
+                Some(Path::new(value))
+            );
+        } else {
+            assert_eq!(
+                p.state.repository.view.history.selected.as_deref(),
+                Some(value)
+            );
+        }
+    };
+    h.draw();
+    h.update(|p, w, cx| {
+        p.host.connection.connected = false;
+        p.show_tab(view, w, cx);
+        select(p, chat, cx);
+        p.toggle_work(w, cx);
+        assert!(p.route_work_tab(view, w, cx));
+        select(p, pane, cx);
+        p.toggle_work(w, cx);
+        p.show_tab(view, w, cx);
+        check(p, chat);
+        p.toggle_work(w, cx);
+        check(p, pane);
+        let next = p.tabs.model.tabs()[1].id();
+        p.request_tab(Intent::Activate(next), w, cx);
+    });
+    h.draw();
+    h.update(|p, w, cx| {
+        assert_eq!(p.tabs.model.active(), Some(p.tabs.model.tabs()[1].id()));
+        let first = p.tabs.model.tabs()[0].id();
+        p.request_tab(Intent::Activate(first), w, cx);
+    });
+    h.draw();
+    h.update(|p, w, cx| {
+        assert!(p.draws_work());
+        check(p, pane);
+        p.toggle_work(w, cx);
+        p.show_tab(view, w, cx);
+        check(p, chat);
+        let next = p.tabs.model.tabs()[1].id();
+        p.request_tab(Intent::Activate(next), w, cx);
+    });
+    h.draw();
+    h.update(|p, w, cx| {
+        let first = p.tabs.model.tabs()[0].id();
+        p.request_tab(Intent::Activate(first), w, cx);
+    });
+    h.draw();
+    h.update(|p, w, cx| {
+        p.show_tab(view, w, cx);
+        check(p, chat);
+        p.toggle_work(w, cx);
+        check(p, pane);
+        p.tabs.model.work_mut().unwrap().sidebar = true;
+    });
+    h.draw();
+    h.update(|p, _, _| {
+        assert!(p.work_fallback());
+        check(p, chat);
+        p.tabs.model.work_mut().unwrap().sidebar = false;
+    });
+    h.draw();
+    h.update(|p, _, _| {
+        assert!(p.draws_work());
+        check(p, pane);
+    });
+    drop(h);
+    std::fs::remove_dir_all(scratch).unwrap();
+}
