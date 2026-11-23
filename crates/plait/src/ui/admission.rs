@@ -5,7 +5,6 @@ use plait_core::host::{
     self, Client,
     admission::{self, Placement, Request, Stage},
 };
-use plait_core::ownership::CheckoutKeyExt;
 use std::{
     path::PathBuf,
     time::{Duration, Instant},
@@ -360,23 +359,18 @@ impl Plait {
         let journal = self.session.journal.clone();
         let polling = cx.background_executor().clone();
         let client = self.host_client();
+        let supported = self.host.connection.has_checkout_identity;
         let task = cx.background_executor().spawn(async move {
             if let Some(journal) = journal
                 && let Err(error) = journal.flush()
             {
                 return (None, Err(host::Error::Protocol(error)));
             }
-            let refreshed = expected
-                .as_ref()
-                .map(|key| {
-                    key.verify()
-                        .map_err(|_| super::host::checkout_identity_changed())
-                })
-                .transpose();
-            let refreshed = match refreshed {
-                Ok(key) => key,
-                Err(error) => return (None, Err(error)),
-            };
+            let refreshed =
+                match super::host::verified_checkout(&client, expected.as_ref(), supported) {
+                    Ok(key) => key,
+                    Err(error) => return (None, Err(error)),
+                };
             let result = async {
                 let Request::CreateAdmittedThread {
                     checkout,

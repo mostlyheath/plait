@@ -97,24 +97,6 @@ pub(crate) const DIFF_CACHE: usize = 16;
 /// Commits listed per history page.
 pub const HISTORY_PAGE: usize = 100;
 
-impl Job {
-    pub fn run(&self) -> Reply {
-        match self {
-            Self::Status { path, .. } => Reply::Status(git::status(path).map(Arc::new)),
-            Self::Diff { key, snapshot, .. } => Reply::Diff(
-                git::diff(&snapshot.root, &snapshot.changes[key.file], key.mode).map(Arc::new),
-            ),
-            Self::Files { root, .. } => Reply::Files(git::files(root).map(Arc::new)),
-            Self::Write { root, op } => Reply::Write(git::write(root, op)),
-            Self::Log {
-                root, tip, skip, ..
-            } => Reply::Log(git::log(root, tip.as_deref(), *skip, HISTORY_PAGE)),
-            Self::Show { root, id, .. } => Reply::Show(git::show(root, id).map(Arc::new)),
-            Self::Branches { root, .. } => Reply::Branches(git::branches(root).map(Arc::new)),
-        }
-    }
-}
-
 /// Coordinates shared checkout repository data (`data`) with the single
 /// selected workspace slot's Git view selection (`view`).
 pub struct RepositoryState {

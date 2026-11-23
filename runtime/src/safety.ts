@@ -22,6 +22,10 @@ async function git(root: string, args: string[], input?: string) {
 export type ProjectVcs = 'git' | 'folder';
 export async function projectKind(path: string): Promise<{root: string; vcs: ProjectVcs}> {
   if (!isAbsolute(path)) fail('invalid_request', 'Checkout must be absolute.');
+  // A distinct code lets a client offer to choose the project again instead of retrying.
+  try { await lstat(path); } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') fail('checkout_missing', 'The folder no longer exists.');
+  }
   try {
     const root = await realpath(path);
     if (!(await lstat(root)).isDirectory()) throw new Error('Not a directory');

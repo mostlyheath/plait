@@ -23,10 +23,7 @@ fn write_checked(input: &WriteInput) -> Result<(DirIdentity, WriteOutcome), Stri
     if !input.checkout.is_absolute() {
         return Err("The checkout path must be absolute.".into());
     }
-    let expected = input.identity.parse()?;
-    if identity(&input.checkout)? != expected {
-        return Err("Checkout identity changed.".into());
-    }
+    let expected = current_identity(&input.checkout, input.identity.parse()?)?;
     if git::toplevel(&input.checkout).and_then(|top| identity(&top))? != expected {
         return Err("Open the top folder of the checkout.".into());
     }
@@ -62,12 +59,10 @@ fn run_checked(input: &HelperInput) -> Result<(DirIdentity, serde_json::Value), 
     if !root.is_absolute() {
         return Err("The checkout path must be absolute.".into());
     }
-    let before = identity(root)?;
-    if let Some(expected) = &input.identity
-        && expected.parse()? != before
-    {
-        return Err("Checkout identity changed.".into());
-    }
+    let before = match &input.identity {
+        Some(expected) => current_identity(root, expected.parse()?)?,
+        None => identity(root)?,
+    };
     // A plain folder has no work tree; its identity checks still apply.
     if !git::plain_folder(root) {
         let top = git::toplevel(root)?;
@@ -83,6 +78,21 @@ fn run_checked(input: &HelperInput) -> Result<(DirIdentity, serde_json::Value), 
         return Err("Checkout identity changed.".into());
     }
     Ok((before, result))
+}
+
+/// The folder's identity now, if it is still the expected folder. macOS can
+/// assign a volume a new device number after a restart, so the same canonical
+/// path with the same inode is still the same folder; replies carry the new
+/// identity so clients refresh what they stored.
+fn current_identity(path: &Path, expected: DirIdentity) -> Result<DirIdentity, String> {
+    let current = identity(path)?;
+    let same_inode_after_remount =
+        current.ino == expected.ino && path.canonicalize().ok().as_deref() == Some(path);
+    if current == expected || same_inode_after_remount {
+        Ok(current)
+    } else {
+        Err("Checkout identity changed.".into())
+    }
 }
 
 fn identity(path: &Path) -> Result<DirIdentity, String> {

@@ -306,3 +306,30 @@ fn a_worktree_is_measured_with_the_hosts_own_store() {
     assert!(message(size(None, false, None)).contains("store"));
     let _ = std::fs::remove_dir_all(repo.parent().unwrap());
 }
+
+#[test]
+fn a_remounted_folder_keeps_its_identity_but_a_replaced_one_does_not() {
+    let base = std::env::temp_dir()
+        .canonicalize()
+        .unwrap()
+        .join(format!("plait-remount-{}", std::process::id()));
+    let root = base.join("project");
+    std::fs::create_dir_all(&root).unwrap();
+    let now = super::identity(&root).unwrap();
+    // A restart can give the volume a new device number; the inode stays.
+    let remounted = DirIdentity {
+        dev: now.dev.wrapping_add(1),
+        ino: now.ino,
+    };
+    assert_eq!(super::current_identity(&root, remounted), Ok(now));
+    let replaced = DirIdentity {
+        dev: now.dev,
+        ino: now.ino.wrapping_add(1),
+    };
+    assert!(super::current_identity(&root, replaced).is_err());
+    // A symlinked path is not the canonical checkout, so a device change there is refused.
+    let link = base.join("link");
+    std::os::unix::fs::symlink(&root, &link).unwrap();
+    assert!(super::current_identity(&link, remounted).is_err());
+    std::fs::remove_dir_all(base).unwrap();
+}

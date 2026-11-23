@@ -31,36 +31,20 @@ impl Plait {
         client: &plait_core::host::Client,
         checkout: &Path,
         supported: bool,
-        local: bool,
+        _local: bool,
         expected: Option<plait_core::ownership::CheckoutKey>,
     ) -> Result<plait_core::ownership::CheckoutKey, plait_core::host::Error> {
         if !supported {
-            use plait_core::ownership::{CheckoutKeyExt, HostKeyExt};
-            let identity = match expected {
-                Some(key) => key,
-                None if local => plait_core::ownership::CheckoutKey::resolve(
-                    plait_core::ownership::HostKey::local(),
-                    checkout,
-                )
-                .map_err(plait_core::host::Error::Protocol)?,
-                None => plait_core::ownership::CheckoutKey {
-                    host: None,
-                    root: checkout.to_owned(),
-                    device: 0,
-                    inode: 0,
-                },
-            };
-            if local {
-                identity
-                    .verify()
-                    .map_err(plait_core::host::Error::Protocol)?;
-            }
-            return Ok(identity);
+            return Err(plait_core::host::Error::Protocol(
+                "Update the host to verify the checkout.".into(),
+            ));
         }
-        let id = expected.as_ref().map(|key| plait_core::lease::DirIdentity {
-            dev: key.device,
-            ino: key.inode,
-        });
+        let id = expected
+            .as_ref()
+            .map(|key| plait_protocol::lease::DirIdentity {
+                dev: key.device,
+                ino: key.inode,
+            });
         let read = plait_core::host::git::identity(client, checkout, id)?;
         Ok(plait_core::ownership::CheckoutKey {
             host: expected.and_then(|key| key.host),

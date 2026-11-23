@@ -6,6 +6,8 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+plait-transport = { path = "../plait-transport" }
+plait-release = { path = "../plait-release" }
 plait-engine = { path = "../plait-engine" }
 plait-protocol = { path = "../plait-protocol" }
 libc = "=0.2.191"

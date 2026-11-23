@@ -3,7 +3,6 @@ use crate::git;
 use std::{
     io::{BufRead, BufReader, Write},
     os::unix::{fs::PermissionsExt, net::UnixListener},
-    process::Command,
 };
 
 fn scratch(name: &str) -> PathBuf {
@@ -12,50 +11,6 @@ fn scratch(name: &str) -> PathBuf {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
     dir.canonicalize().unwrap()
-}
-
-fn repository(name: &str) -> PathBuf {
-    let dir = scratch(name).join("repo");
-    std::fs::create_dir_all(dir.join("src")).unwrap();
-    let git = |args: &[&str]| {
-        let out = Command::new("git")
-            .args([
-                "-c",
-                "user.name=Plait",
-                "-c",
-                "user.email=plait@example.invalid",
-            ])
-            .args(args)
-            .current_dir(&dir)
-            .output()
-            .unwrap();
-        assert!(
-            out.status.success(),
-            "{}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-    };
-    git(&["init", "-q", "-b", "main"]);
-    std::fs::write(dir.join("src/lib.rs"), "fn one() {}\n").unwrap();
-    git(&["add", "."]);
-    git(&["commit", "-q", "-m", "First"]);
-    std::fs::write(dir.join("src/lib.rs"), "fn one() {}\nfn two() {}\n").unwrap();
-    std::fs::write(dir.join("new.txt"), "hello\n").unwrap();
-    dir
-}
-
-fn run<T: DeserializeOwned>(
-    checkout: &Path,
-    identity: Option<WireIdentity>,
-    read: Read,
-) -> Result<Remote<T>, Error> {
-    let input = HelperInput {
-        checkout: checkout.into(),
-        store: None,
-        identity,
-        read,
-    };
-    decode(&execute(&input))
 }
 
 #[test]
@@ -92,39 +47,6 @@ fn additive_request_has_no_version_and_reaches_the_helper_intact() {
     let input: HelperInput = serde_json::from_value(value).unwrap();
     assert_eq!(input.read, read);
     assert_eq!(input.identity.unwrap().parse().unwrap().ino, u64::MAX);
-}
-
-#[test]
-fn file_bytes_classify_as_the_local_viewer_does() {
-    let repo = repository("file");
-    let remote: Remote<FileBytes> = run(
-        &repo,
-        None,
-        Read::File {
-            path: "src/lib.rs".into(),
-        },
-    )
-    .unwrap();
-    let bytes = remote.result.base64.map(|b| STANDARD.decode(b).unwrap());
-    let opened = file_view::classify(remote.result.stamp, bytes, Path::new("src/lib.rs"));
-    assert_eq!(
-        opened,
-        file_view::read(&repo, Path::new("src/lib.rs")).unwrap()
-    );
-    std::os::unix::fs::symlink("src/lib.rs", repo.join("link")).unwrap();
-    let error = run::<FileBytes>(
-        &repo,
-        None,
-        Read::File {
-            path: "link".into(),
-        },
-    )
-    .unwrap_err();
-    assert!(
-        matches!(error, Error::Protocol(_)),
-        "a symlink was followed"
-    );
-    let _ = std::fs::remove_dir_all(repo.parent().unwrap());
 }
 
 fn page(total: usize, data: &[u8], token: Option<&str>) -> Page {

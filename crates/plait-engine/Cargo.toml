@@ -8,6 +8,8 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+plait-transport = { path = "../plait-transport" }
+plait-release = { path = "../plait-release" }
 plait-protocol = { path = "../plait-protocol" }
 base64 = "=0.22.1"
 libc = "=0.2.191"

@@ -3,7 +3,6 @@ use super::{
     composer::{Composer, ComposerEvent},
 };
 use gpui::{prelude::*, *};
-use plait_core::ownership::CheckoutKeyExt;
 use plait_core::{
     host::{self, Request, Snapshot},
     host_state::request_id,
@@ -22,13 +21,36 @@ pub(super) struct Created {
     pub(super) checkout: Option<std::path::PathBuf>,
 }
 
-/// A local identity refusal has the same finality as a host rejection.
-pub(super) fn checkout_identity_changed() -> host::Error {
-    host::Error::Rejected(host::HostError {
-        retry_after_seconds: None,
-        code: "checkout_identity_changed".into(),
-        message: "This folder changed since it was opened.".into(),
-    })
+/// Asks the host whether the expected checkout is still the same folder. The
+/// host accepts a volume whose device number changed after a restart, and the
+/// key comes back refreshed so later requests carry the current identity.
+pub(super) fn verified_checkout(
+    client: &host::Client,
+    expected: Option<&plait_core::ownership::CheckoutKey>,
+    supported: bool,
+) -> Result<Option<plait_core::ownership::CheckoutKey>, host::Error> {
+    let Some(expected) = expected else {
+        return Ok(None);
+    };
+    if !supported {
+        return Err(host::Error::Protocol(
+            "Update the host to verify the checkout.".into(),
+        ));
+    }
+    let reply = host::git::identity(
+        client,
+        &expected.root,
+        Some(plait_protocol::lease::DirIdentity {
+            dev: expected.device,
+            ino: expected.inode,
+        }),
+    )?;
+    Ok(
+        (reply.identity.dev != expected.device).then(|| plait_core::ownership::CheckoutKey {
+            device: reply.identity.dev,
+            ..expected.clone()
+        }),
+    )
 }
 
 pub(super) fn is_checkout_identity_changed(error: &host::Error) -> bool {
@@ -92,7 +114,6 @@ impl Plait {
         {
             *identity = self.host.connection.checkout_identity(expected.as_ref());
         }
-        let captured_expected = expected.clone();
         let persist = matches!(
             request,
             Request::Submit { .. } | Request::SubmitCheckout { .. }
@@ -126,7 +147,6 @@ impl Plait {
             .transpose();
         let journal = self.session.journal.clone();
         let client = self.host_client();
-        let local = self.host_is_local();
         let is_status =
             self.host.connection.connecting && matches!(request, Request::Status { .. });
         let task = cx.background_executor().spawn(async move {
@@ -145,7 +165,6 @@ impl Plait {
                 None
             };
             let image_pins = image_pins.map_err(host::Error::Protocol);
-            let mut refreshed = None;
             let result = image_pins.and_then(|image_pins| {
                 let result = (|| {
                     if persist {
@@ -156,16 +175,16 @@ impl Plait {
                         })?;
                         journal.flush().map_err(std::io::Error::other)?;
                     }
-                    if local && !supported {
-                        if let Request::ListThreads { checkout, .. }
-                        | Request::CreateThread { checkout, .. } = &mut request
-                        {
-                            *checkout = std::fs::canonicalize(&*checkout)?;
-                        }
-                        if let Some(expected) = &expected {
-                            refreshed =
-                                Some(expected.verify().map_err(|_| checkout_identity_changed())?);
-                        }
+                    if !supported
+                        && (expected.is_some()
+                            || matches!(
+                                request,
+                                Request::ListThreads { .. } | Request::CreateThread { .. }
+                            ))
+                    {
+                        return Err(host::Error::Protocol(
+                            "Update the host to verify the checkout.".into(),
+                        ));
                     }
                     if let Some((thread, images)) = uploads {
                         client.upload_images(&thread, &images)?;
@@ -179,10 +198,10 @@ impl Plait {
                 }
                 result
             });
-            (result, capability, refreshed)
+            (result, capability)
         });
         cx.spawn_in(window, async move |this, cx| {
-            let (result, capability, refreshed) = task.await;
+            let (result, capability) = task.await;
             let _ = this.update_in(cx, |this, window, cx| {
                 if this.host.identity != identity
                     || (!acknowledgement && this.host.connection.epoch != epoch)
@@ -191,11 +210,6 @@ impl Plait {
                 }
                 if let Some(capability) = capability {
                     this.host.connection.has_checkout_identity = capability;
-                }
-                if this.host.connection.epoch == epoch
-                    && let (Some(old), Some(new)) = (&captured_expected, &refreshed)
-                {
-                    this.refresh_checkout_identity(old, new, cx);
                 }
                 complete(this, result, window, cx);
                 this.sync_composer(cx);
@@ -1177,12 +1191,11 @@ impl Plait {
 
 #[cfg(test)]
 mod identity_error_tests {
-    use super::{checkout_identity_changed, is_checkout_identity_changed};
+    use super::is_checkout_identity_changed;
     use plait_core::host;
 
     #[test]
     fn classifies_only_identity_refusals() {
-        assert!(is_checkout_identity_changed(&checkout_identity_changed()));
         let rejected = |code: &str, message: &str| {
             host::Error::Rejected(host::HostError {
                 retry_after_seconds: None,
@@ -1190,6 +1203,10 @@ mod identity_error_tests {
                 message: message.into(),
             })
         };
+        assert!(is_checkout_identity_changed(&rejected(
+            "checkout_identity_changed",
+            "Checkout identity changed."
+        )));
         assert!(is_checkout_identity_changed(&rejected(
             "invalid_request",
             "This folder changed since it was opened."

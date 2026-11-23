@@ -6,10 +6,7 @@ use std::{
     time::Instant,
 };
 
-use plait_core::{
-    file_view,
-    host::{Client, git as host_git},
-};
+use plait_core::host::{Client, git as host_git};
 use plait_engine::git;
 use plait_protocol::model::DiffMode;
 
@@ -191,7 +188,7 @@ fn run() -> Result<bool, String> {
     row(
         "file",
         measure(
-            || file_view::read(&root, &file).map(|_| ()),
+            || plait_engine::file_view::read_bytes(&root, &file).map(|_| ()),
             || {
                 host_git::file(&client, &root, None, &file)
                     .map(|_| ())

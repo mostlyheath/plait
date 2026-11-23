@@ -71,8 +71,8 @@ test('the policy is per canonical checkout and per store, durable, and trusted b
   for (const invalid of [
     { op: 'set_command_policy', checkout: f.repo, policy: 'open' },
     { op: 'set_command_policy', checkout: 'repo', policy: 'trusted' },
-    { op: 'command_policy', checkout: join(f.base, 'missing') },
   ]) assert.equal((await send(f.store, invalid)).error?.code, 'invalid_request', JSON.stringify(invalid));
+  assert.equal((await send(f.store, { op: 'command_policy', checkout: join(f.base, 'missing') })).error?.code, 'checkout_missing');
   assert.equal((await read(f)).result.policy, 'sandboxed');
   // A folder outside any repository is a plain project with its own policy.
   assert.deepEqual((await read(f, f.base)).result, { checkout: f.base, policy: 'trusted' });
@@ -108,8 +108,9 @@ test('agent_resources reports under the checkout\'s current policy, only for ver
     { op: 'agent_resources', checkout: f.repo },
     { op: 'agent_resources', protocol_version: 3 },
     { op: 'agent_resources', checkout: f.repo, thread_id: 't', protocol_version: 3 },
-    { op: 'agent_resources', checkout: join(f.base, 'missing'), protocol_version: 3 },
   ]) assert.equal((await send(f.store, invalid)).error?.code, 'invalid_request', JSON.stringify(invalid));
+  const missing = { op: 'agent_resources', checkout: join(f.base, 'missing'), protocol_version: 3 };
+  assert.equal((await send(f.store, missing)).error?.code, 'checkout_missing');
 });
 
 

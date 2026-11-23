@@ -4,6 +4,7 @@
 //! Plait creates them beside the repository, in `<name>.worktrees/`, and removes
 //! them only through `git worktree remove`, which refuses uncommitted work.
 
+pub use plait_protocol::git::worktree::{ManagedStage, ManagedWorktree, Parent};
 pub mod inventory;
 
 use super::{
@@ -213,18 +214,6 @@ impl IdentityExt for Identity {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct Parent {
-    pub root: PathBuf,
-    pub identity: Identity,
-    pub main: PathBuf,
-    pub main_identity: Identity,
-    pub common: PathBuf,
-    pub common_identity: Identity,
-    pub base: String,
-}
-
 /// Capture the explicit base and resolve linked checkouts to their main root.
 /// Reads never run checkout hooks, filters, external diff or textconv.
 pub fn worktree_parent(root: &Path) -> Result<Parent> {
@@ -334,29 +323,6 @@ fn verify_repository(parent: &Parent) -> Result<()> {
         return Err(changed());
     }
     Ok(())
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ManagedStage {
-    Reserved,
-    Creating,
-    Ready,
-    Failed,
-    Removing,
-    Removed,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct ManagedWorktree {
-    pub thread_id: String,
-    pub parent: Parent,
-    pub path: PathBuf,
-    pub branch: String,
-    pub identity: Option<Identity>,
-    pub stage: ManagedStage,
-    pub error: Option<String>,
 }
 
 fn uuid_hex(id: &str) -> Result<String> {

@@ -1,4 +1,4 @@
-use plait_engine::local_socket;
+use plait_transport::local_socket;
 use serde_json::{Value, json};
 #[cfg(test)]
 use std::io::BufRead;

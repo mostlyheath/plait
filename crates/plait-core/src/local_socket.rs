@@ -1,6 +1,6 @@
 //! Owner-only local connections shared by clients and the daemon.
 
-pub use plait_engine::local_socket::{connect, require_same_user};
+pub use plait_transport::local_socket::{connect, require_same_user};
 
 #[cfg(test)]
 mod tests {

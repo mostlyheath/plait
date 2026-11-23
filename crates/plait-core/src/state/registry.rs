@@ -1,7 +1,6 @@
 //! Repository job routing. Parked checkouts retain identity and write outcomes,
 //! not a thread view or background read demand.
 use super::*;
-use crate::ownership::CheckoutKeyExt;
 use crate::ownership::HostKeyExt;
 use crate::ownership::{CheckoutKey, HostKey};
 use std::collections::HashMap;
@@ -54,73 +53,11 @@ pub struct RepositoryReply {
 }
 
 impl RepositoryJob {
-    /// Blocking. Runs on this Mac or on the checkout's host.
+    /// Blocking. Repository operations run on the checkout's host.
     pub fn run_on(&self, backend: &super::backend::Backend) -> RepositoryReply {
         match backend {
-            super::backend::Backend::Local => self.run(),
             super::backend::Backend::Host(client) => self.run_remote(client),
         }
-    }
-
-    /// Blocking. The target is checked before any Git operation and again before
-    /// its reply can be installed; a root replacement is never a cache hit.
-    pub fn run(&self) -> RepositoryReply {
-        if self.expected.is_none() && matches!(self.job, Job::Write { .. }) {
-            return RepositoryReply {
-                identity: None,
-                reply: self
-                    .job
-                    .failure("Checkout identity is not verified.".into()),
-            };
-        }
-        if let Some(key) = &self.expected
-            && let Err(error) = key.verify()
-        {
-            return RepositoryReply {
-                identity: None,
-                reply: self.job.failure(error),
-            };
-        }
-        let mut reply = match (&self.job, &self.expected) {
-            (Job::Write { root, op }, Some(key)) => Reply::Write(git::write_checked(
-                root,
-                Some(crate::lease::DirIdentity {
-                    dev: key.device,
-                    ino: key.inode,
-                }),
-                op,
-            )),
-            _ => self.job.run(),
-        };
-        let identity = match &reply {
-            Reply::Status(Ok(snapshot)) => {
-                match CheckoutKey::resolve(self.host.clone(), &snapshot.root) {
-                    Ok(key)
-                        if self
-                            .expected
-                            .as_ref()
-                            .is_none_or(|expected| expected == &key) =>
-                    {
-                        Some(key)
-                    }
-                    Ok(_) => {
-                        reply = self.job.failure("Checkout identity changed.".into());
-                        None
-                    }
-                    Err(error) => {
-                        reply = self.job.failure(error);
-                        None
-                    }
-                }
-            }
-            _ => None,
-        };
-        if let Some(key) = &self.expected
-            && let Err(error) = key.verify()
-        {
-            reply = self.job.failure(error);
-        }
-        RepositoryReply { identity, reply }
     }
 }
 
@@ -549,21 +486,17 @@ mod reopen_identity_tests {
 
     #[test]
     fn reopen_replaces_expected_identity() {
-        // macOS reaches its temp directory through a symlink; checkout roots are canonical.
-        let dir = std::env::temp_dir()
-            .canonicalize()
-            .unwrap()
-            .join(format!("plait-reopen-{}", crate::host_state::request_id()));
-        let root = dir.join("project");
-        std::fs::create_dir_all(&root).unwrap();
+        let root = PathBuf::from("/projects/plait");
+        let key = |inode| CheckoutKey {
+            host: None,
+            root: root.clone(),
+            device: 1,
+            inode,
+        };
         let mut state = AppState::new(root.clone());
-        let old = CheckoutKey::resolve(None, &root).unwrap();
-        state.reopen_checkout(old);
-        std::fs::rename(&root, dir.join("old")).unwrap();
-        std::fs::create_dir(&root).unwrap();
-        let resolved = CheckoutKey::resolve(None, &root).unwrap();
-        state.reopen_checkout(resolved.clone());
-        assert_eq!(state.checkout_key(), Some(&resolved));
-        std::fs::remove_dir_all(dir).unwrap();
+        state.reopen_checkout(key(10));
+        // A folder replaced at the same path has a new inode; reopening adopts it.
+        state.reopen_checkout(key(11));
+        assert_eq!(state.checkout_key(), Some(&key(11)));
     }
 }

@@ -1,7 +1,8 @@
 //! Additive checkout cleanup reads and explicit, token-bound confirmation.
 use super::git::WireIdentity;
 use super::{Client, Error};
-use crate::{lease::cleanup::Cleanup, ownership::CheckoutKey};
+use crate::ownership::CheckoutKey;
+use plait_protocol::lease::cleanup::Cleanup;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -43,11 +44,12 @@ pub fn read(
     identity: &CheckoutKey,
     action: Option<(&str, bool)>,
     supported: bool,
-    local: bool,
+    _local: bool,
 ) -> Result<Option<Cleanup>, Error> {
-    use crate::ownership::CheckoutKeyExt;
-    if !supported && local {
-        identity.verify().map_err(Error::Protocol)?;
+    if !supported {
+        return Err(Error::Protocol(
+            "Update the host to verify the checkout.".into(),
+        ));
     }
     let wire = supported.then(|| WireIdentity {
         dev: identity.device.to_string(),
@@ -72,9 +74,6 @@ pub fn read(
         },
     };
     let reply: Reply = client.send(&request)?;
-    if !supported && local {
-        identity.verify().map_err(Error::Protocol)?;
-    }
     if reply.checkout != identity.root
         || reply.cleanup.as_ref().is_some_and(|state| {
             state.token.is_empty()
@@ -97,4 +96,24 @@ pub fn read(
         return Err(Error::Protocol("Invalid checkout cleanup reply.".into()));
     }
     Ok(reply.cleanup)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn older_hosts_cannot_clean_up_without_identity_verification() {
+        let client = Client::at_socket(PathBuf::from("/unused/host.sock"));
+        let identity = CheckoutKey {
+            host: None,
+            root: PathBuf::from("/checkout"),
+            device: 1,
+            inode: 2,
+        };
+        for local in [false, true] {
+            let error = read(&client, &identity, None, false, local).unwrap_err();
+            assert!(error.to_string().contains("Update the host"));
+        }
+    }
 }

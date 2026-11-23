@@ -23,7 +23,7 @@ case "$(uname -s)" in
             echo 'Linux command-sandbox acceptance is blocked. See docs/LINUX-SANDBOX.md.' >&2
             exit 1
         fi
-        packages=(-p plait-core -p plait-engine -p plait-protocol -p plait-host -p plait-interop-tests)
+        packages=(-p plait-core -p plait-engine -p plait-protocol -p plait-transport -p plait-release -p plait-host -p plait-interop-tests)
         echo 'Checking Linux headless development. Native UI and Linux command execution are not validated.'
         ;;
     *)
@@ -56,19 +56,27 @@ if grep -Eq '^plait-core( |$)' <<< "$host_dependencies"; then
     echo 'The host must not depend on plait-core.' >&2
     exit 1
 fi
+for package in plait-core plait; do
+    dependencies=$(cargo tree --locked -p "$package" -e normal --prefix none)
+    if grep -Eq '^plait-engine( |$)' <<< "$dependencies"; then
+        echo "$package must not depend on plait-engine." >&2
+        exit 1
+    fi
+done
 # The daemon and shared core must stay independent of desktop dependencies.
 dependencies=$(cargo tree --locked -p plait-core -p plait-host --edges normal,build,dev --prefix none)
 if grep -Eq '^gpui([-_ ]|$)' <<< "$dependencies"; then
     echo 'Headless crates must not depend on GPUI.' >&2
     exit 1
 fi
+# The interop tests start a real host on the runtime's test fixture, so its packages come first.
+# Optional packages are only the Agent SDK's platform builds of Claude Code, which no test runs.
+(cd runtime && npm ci --ignore-scripts --omit=optional)
 cargo clippy --locked "${packages[@]}" --all-targets -- -D warnings
 cargo test --locked "${packages[@]}"
 cargo build --locked -p plait-host
 (
     cd runtime
-    # Optional packages are only the Agent SDK's platform builds of Claude Code, which no test runs.
-    npm ci --ignore-scripts --omit=optional
     npm run check
     if "$require_sandbox"; then
         npm run test:sandbox

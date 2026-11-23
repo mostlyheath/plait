@@ -24,3 +24,9 @@ test('project kind requires no Git entry in any ancestor', async t => {
   const file = join(base, 'file'); await mkdir(file); await writeFile(join(file, '.git'), 'gitdir: /missing\n');
   await assert.rejects(projectKind(file), /accessible Git working tree/);
 });
+
+test('a missing project folder is reported as missing, not inaccessible', async t => {
+  const base = await realpath(await mkdtemp(join(tmpdir(), 'plait-missing-')));
+  t.after(() => rm(base, { recursive: true, force: true }));
+  await assert.rejects(projectKind(join(base, 'gone')), (error: any) => error.code === 'checkout_missing' && /no longer exists/.test(error.message));
+});

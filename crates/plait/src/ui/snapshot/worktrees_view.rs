@@ -893,8 +893,9 @@ fn a_remote_host_measures_its_own_worktrees() {
     h.update(|p, _, cx| {
         // The scene leaves an earlier read cancelled; this is a fresh one.
         p.worktrees.cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        // The test's host has no socket; this Mac would measure the fixture.
+        // Point the remote host at an unavailable socket; this Mac must not measure the fixture.
         p.host_local = false;
+        p.host_client = plait_core::host::Client::local_or_unavailable();
         p.worktrees.rows[0].path = repo.clone();
         p.worktrees.sizes[1] = Some(Err("The checkout folder is missing.".into()));
         for i in [0, 2, 3] {

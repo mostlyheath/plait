@@ -75,15 +75,7 @@ struct Seed {
     #[serde(default)]
     verified_at: u64,
 }
-/// What a published seed holds, as recorded when it was taken: logical bytes,
-/// not a promise of reclaimable space (its blocks are shared copy-on-write).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SeedSummary {
-    pub bytes: u64,
-    pub files: u64,
-    pub verified_at: u64,
-}
+pub use plait_protocol::build_output::store::SeedSummary;
 /// Reads the pointer only: no walk, no Git.
 pub fn seed_summary(store: &Path, main_identity: &Identity) -> io::Result<Option<SeedSummary>> {
     Ok(

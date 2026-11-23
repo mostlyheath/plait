@@ -1,5 +1,5 @@
 //! Bounded logical storage accounting. No Git, symlink following, or reclamation promise.
-pub use plait_protocol::worktree_size::{BUILD_DIRS, DirId, Size};
+pub use plait_protocol::worktree_size::{BUILD_DIRS, DirId, Key, Size};
 use std::{
     collections::HashSet,
     ffi::{CStr, CString},
@@ -288,16 +288,6 @@ pub fn measure_verified(
         cancelled,
         &key.build_directories,
     )
-}
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Key {
-    pub root: PathBuf,
-    pub identity: Option<crate::git::worktree::Identity>,
-    pub head: Option<String>,
-    pub last_used: Option<u64>,
-    pub changed: Option<u64>,
-    pub removed: bool,
-    pub build_directories: Vec<String>,
 }
 #[derive(Default)]
 pub struct Cache(Vec<(Key, Size)>);

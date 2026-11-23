@@ -3678,12 +3678,15 @@ checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 name = "plait"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "gpui",
  "gpui_apple",
  "gpui_platform",
  "gpui_wgpu",
  "image",
  "plait-core",
+ "plait-engine",
+ "plait-protocol",
  "serde",
  "serde_json",
  "unicode-segmentation",
@@ -3696,8 +3699,9 @@ dependencies = [
  "base64",
  "ed25519-dalek",
  "libc",
- "plait-engine",
  "plait-protocol",
+ "plait-release",
+ "plait-transport",
  "pulldown-cmark",
  "serde",
  "serde_json",
@@ -3713,6 +3717,8 @@ dependencies = [
  "libc",
  "plait-core",
  "plait-protocol",
+ "plait-release",
+ "plait-transport",
  "serde",
  "serde_json",
  "sha2",
@@ -3725,6 +3731,8 @@ dependencies = [
  "libc",
  "plait-engine",
  "plait-protocol",
+ "plait-release",
+ "plait-transport",
  "serde_json",
  "sha2",
 ]
@@ -3737,6 +3745,8 @@ dependencies = [
  "plait-core",
  "plait-engine",
  "plait-protocol",
+ "plait-release",
+ "plait-transport",
  "serde_json",
  "sha2",
 ]
@@ -3751,6 +3761,25 @@ dependencies = [
  "serde_json",
  "sha2",
  "unicode-properties",
+]
+
+[[package]]
+name = "plait-release"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "plait-protocol",
+ "plait-transport",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "plait-transport"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "plait-protocol",
 ]
 
 [[package]]

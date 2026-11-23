@@ -11,8 +11,8 @@ use plait_core::{
     tabs::{ReadStamp, TabTarget},
     worktree_graph::{self, Graph},
     worktree_removal::{self, Choices},
-    worktree_size::{Cache, Key, Size},
 };
+use plait_protocol::worktree_size::Size;
 use std::{
     path::PathBuf,
     sync::{
@@ -21,6 +21,33 @@ use std::{
     },
 };
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Key {
+    root: PathBuf,
+    identity: Option<plait_protocol::git::worktree::Identity>,
+    head: Option<String>,
+    last_used: Option<u64>,
+    changed: Option<u64>,
+    removed: bool,
+    build_directories: Vec<String>,
+}
+#[derive(Default)]
+struct Cache(Vec<(Key, Size)>);
+impl Cache {
+    fn get(&self, key: &Key) -> Option<&Size> {
+        self.0.iter().find(|(k, _)| k == key).map(|(_, s)| s)
+    }
+    fn put(&mut self, key: Key, size: Size) {
+        self.0.retain(|(k, _)| k.root != key.root);
+        self.0.push((key, size));
+        if self.0.len() > 256 {
+            self.0.remove(0);
+        }
+    }
+    fn clear(&mut self) {
+        self.0.clear();
+    }
+}
 actions!(plait, [Worktrees]);
 #[derive(Clone)]
 pub(super) enum Item {
@@ -56,7 +83,7 @@ pub(super) struct View {
     pub generation: u64,
     pub cancelled: Arc<AtomicBool>,
     pub scroll: UniformListScrollHandle,
-    pub cache: Cache,
+    cache: Cache,
     pub sort_size: bool,
     pub removal: plait_core::worktree_removal::Removal,
     /// The project whose view asked for `removal`: one window has one removal
@@ -699,9 +726,7 @@ impl Plait {
             })
             .collect();
         let cancelled = self.worktrees.cancelled.clone();
-        let store = self.tabs.host.store.clone();
-        // A remote host measures its own disk and store.
-        let backend = self.repository_backend();
+        let client = self.host_client();
         let project = self.visible_project_checkout().to_owned();
         let task = cx.background_executor().spawn(async move {
             let mut results = Vec::new();
@@ -709,19 +734,28 @@ impl Plait {
                 if cancelled.load(Ordering::Acquire) {
                     break;
                 }
-                let others = checkouts
+                let others: std::collections::HashSet<_> = checkouts
                     .iter()
                     .filter(|(path, _)| *path != key.root)
                     .map(|(_, id)| *id)
                     .collect();
-                let size = backend.worktree_size(
-                    &project,
-                    &key,
-                    thread.as_deref(),
-                    &others,
-                    &store,
-                    &cancelled,
-                );
+                let read = host::git::Read::WorktreeSize {
+                    worktree: key.root.clone(),
+                    worktree_identity: key.identity.as_ref().map(|id| host::git::WireIdentity {
+                        dev: id.dev.clone(),
+                        ino: id.ino.clone(),
+                    }),
+                    thread,
+                    removed: key.removed,
+                    others: others
+                        .into_iter()
+                        .map(|(dev, ino)| plait_protocol::lease::DirIdentity { dev, ino }.into())
+                        .collect(),
+                    build_directories: key.build_directories.clone(),
+                };
+                let size = host::git::read::<Size>(&client, &project, None, read)
+                    .map(|reply| reply.result)
+                    .map_err(|error| error.to_string());
                 results.push((i, key, size));
             }
             results
@@ -838,5 +872,31 @@ impl Plait {
             window,
             cx,
         );
+    }
+}
+
+#[cfg(test)]
+mod size_cache_tests {
+    use super::*;
+
+    #[core::prelude::v1::test]
+    fn changed_checkout_identity_does_not_reuse_size() {
+        let mut cache = Cache::default();
+        let mut key = Key {
+            root: "/repo".into(),
+            identity: Some(plait_protocol::git::worktree::Identity {
+                dev: "1".into(),
+                ino: "2".into(),
+            }),
+            head: None,
+            last_used: None,
+            changed: None,
+            removed: false,
+            build_directories: Vec::new(),
+        };
+        cache.put(key.clone(), Size::default());
+        assert!(cache.get(&key).is_some());
+        key.identity.as_mut().unwrap().ino = "3".into();
+        assert!(cache.get(&key).is_none());
     }
 }

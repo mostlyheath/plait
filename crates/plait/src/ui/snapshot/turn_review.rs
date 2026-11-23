@@ -6,6 +6,84 @@ use plait_core::review::recorded::{Record, Target};
 use serde_json::{Value, json};
 
 const PATCH: &str = "diff --git a/src/review.rs b/src/review.rs\n--- a/src/review.rs\n+++ b/src/review.rs\n@@ -1,3 +1,4 @@\n pub fn refresh() {\n-    read_on_frame();\n+    queue_status();\n+    notify_when_ready();\n }\n";
+// These synthetic patches need only the line and hunk metadata drawn by the scene.
+fn fixture_diff(bytes: &[u8], truncated: bool, elapsed: Duration) -> plait_protocol::model::Diff {
+    use plait_protocol::model::{Diff, DiffKind, DiffLine};
+    use plait_protocol::patch::{self, FileHeaders};
+    let mut lines = Vec::new();
+    let mut hunks = Vec::new();
+    let (mut old, mut new) = (None, None);
+    for line in String::from_utf8_lossy(bytes).lines() {
+        if line.starts_with("diff ") {
+            old = None;
+            new = None;
+        }
+        if let Some(hunk) = line.strip_prefix("@@ ") {
+            let mut ranges = hunk.split_whitespace();
+            old = ranges
+                .next()
+                .and_then(|v| v.strip_prefix('-'))
+                .and_then(|v| v.split(',').next())
+                .and_then(|v| v.parse::<usize>().ok());
+            new = ranges
+                .next()
+                .and_then(|v| v.strip_prefix('+'))
+                .and_then(|v| v.split(',').next())
+                .and_then(|v| v.parse::<usize>().ok());
+        }
+        let kind = if line.starts_with("@@") {
+            DiffKind::Hunk
+        } else if old.is_none() && new.is_none() {
+            DiffKind::Header
+        } else if line.starts_with('+') {
+            DiffKind::Added
+        } else if line.starts_with('-') {
+            DiffKind::Removed
+        } else {
+            DiffKind::Context
+        };
+        let old_line = if kind == DiffKind::Removed || line.starts_with(' ') {
+            old
+        } else {
+            None
+        };
+        let new_line = if kind == DiffKind::Added || line.starts_with(' ') {
+            new
+        } else {
+            None
+        };
+        if old_line.is_some() {
+            old = old.map(|n| n.saturating_add(1));
+        }
+        if new_line.is_some() {
+            new = new.map(|n| n.saturating_add(1));
+        }
+        if kind == DiffKind::Hunk {
+            hunks.push(lines.len());
+        }
+        lines.push(DiffLine {
+            text: Arc::from(plait_core::display_text::escape(line)),
+            kind,
+            old_line,
+            new_line,
+        });
+    }
+    if lines.is_empty() {
+        return Diff::message(
+            "No text diff in this layer. The file may have changed; Refresh to update status.",
+            elapsed,
+        );
+    }
+    let patch::Rows { rows, widest } = patch::rows(&lines, FileHeaders::Omit);
+    Diff {
+        lines,
+        rows,
+        widest_row: widest,
+        hunks,
+        truncated,
+        elapsed,
+    }
+}
 fn target(p: &Plait, record: &str, path: Option<&str>) -> Target {
     Target {
         thread: p.host.thread.selected.clone().unwrap(),
@@ -33,7 +111,7 @@ pub(super) fn scene(
         let target=target(p,id,None);
         let mut saved=Record::prepare(&p.workspace.turn_records.data,&target).unwrap();
         saved.describe(&p.workspace.turn_records.data,p.host.thread.snapshot.as_deref());
-        p.workspace.turn_review=TurnReview { selected:saved.selected(&target), target:Some(target), record:Some(Arc::new(saved)), diff:(!matches!(kind,"empty"|"loading"|"unavailable"|"old")).then(||lines.unwrap_or_else(||Arc::new(plait_core::git::recorded_diff(PATCH.as_bytes(),false,Duration::from_millis(18))))), epoch:Some(p.host.connection.epoch), ..Default::default() };
+        p.workspace.turn_review=TurnReview { selected:saved.selected(&target), target:Some(target), record:Some(Arc::new(saved)), diff:(!matches!(kind,"empty"|"loading"|"unavailable"|"old")).then(||lines.unwrap_or_else(||Arc::new(fixture_diff(PATCH.as_bytes(),false,Duration::from_millis(18))))), epoch:Some(p.host.connection.epoch), ..Default::default() };
         if kind=="loading" {p.workspace.turn_review.loading=true;}
         if kind=="unavailable" {p.workspace.turn_review.error=Some(("Unavailable","The saved content is unavailable.".into()));}
         if kind=="old" {p.workspace.turn_review.older=true;p.workspace.turn_review.error=Some(("Older host","Turn review needs a newer host. Current Git changes are still available.".into()));}
@@ -59,7 +137,7 @@ pub(super) fn walk(h: &mut Harness, repository: &Path, suffix: &str) {
         h,
         repository,
         "ready",
-        Some(Arc::new(plait_core::git::recorded_diff(
+        Some(Arc::new(fixture_diff(
             PATCH.as_bytes(),
             true,
             Duration::ZERO,
@@ -71,7 +149,7 @@ pub(super) fn walk(h: &mut Harness, repository: &Path, suffix: &str) {
         ("empty-deleted", "deleted", b"diff --git a/empty b/empty\ndeleted file mode 100644\n--- a/empty\n+++ /dev/null\n".as_slice()),
         ("latin1", "modified", b"diff --git a/latin1 b/latin1\n--- a/latin1\n+++ b/latin1\n@@ -1 +1 @@\n-caf\xe9\n+caf\xe8\n".as_slice()),
     ] {
-        scene(h, repository, "ready", Some(Arc::new(plait_core::git::recorded_diff(patch, false, Duration::ZERO))));
+        scene(h, repository, "ready", Some(Arc::new(fixture_diff(patch, false, Duration::ZERO))));
         h.update(|p, _, _| {
             let mut data = record("last", &["last"], "ready");
             data["paths"] = json!([{ "path": if name == "latin1" { "latin1" } else { "empty" }, "change": change, "added": if name == "latin1" { 1 } else { 0 }, "removed": if name == "latin1" { 1 } else { 0 } }]);
@@ -783,7 +861,7 @@ fn recorded_wording_names_only_available_states() {
         &mut h,
         &repository,
         "ready",
-        Some(Arc::new(plait_core::git::recorded_diff(
+        Some(Arc::new(fixture_diff(
             PATCH.as_bytes(),
             true,
             Duration::ZERO,

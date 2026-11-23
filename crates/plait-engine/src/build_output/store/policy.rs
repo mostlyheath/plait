@@ -3,7 +3,7 @@ use crate::{
     build_output,
     git::{self, worktree::Identity},
 };
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Serialize, de::DeserializeOwned};
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
@@ -11,15 +11,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Policy {
-    pub schema: u32,
-    pub project: PathBuf,
-    pub identity: Identity,
-    pub revision: u64,
-    pub paths: Vec<String>,
-}
+pub use plait_protocol::build_output::store::policy::Policy;
 pub fn private_directory(path: &Path, create: bool) -> io::Result<()> {
     if create {
         match fs::DirBuilder::new().mode(0o700).create(path) {
