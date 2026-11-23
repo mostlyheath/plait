@@ -16,8 +16,10 @@ export class RunnerServer {
   private readonly path: string;
   private readonly snapshot: () => Attached;
   private readonly command: (command: Command) => void;
-  constructor(path: string, snapshot: () => Attached, command: (command: Command) => void) { this.path = path; this.snapshot = snapshot; this.command = command; }
+  private readonly onAttach: () => void;
+  constructor(path: string, snapshot: () => Attached, command: (command: Command) => void, onAttach: () => void = () => {}) { this.path = path; this.snapshot = snapshot; this.command = command; this.onAttach = onAttach; }
   async listen(): Promise<void> {
+    socketPathFits(this.path);
     const server = createServer(socket => { socket.pause(); void this.accept(socket); }); this.server = server;
     await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(this.path, () => { server.off('error', reject); resolve(); }); });
     await chmod(this.path, 0o600);
@@ -27,8 +29,8 @@ export class RunnerServer {
       await verify(socket); this.sockets.add(socket);
       let attached = false; const decoder = new FrameDecoder(COMMAND_LIMIT, parseCommand);
       socket.on('data', (data: Buffer) => { try { for (const message of decoder.push(data)) {
-        if (!attached) { if (message.type !== 'attach') throw new Error('attach required'); const replay = this.events.after(message.last_seq); attached = true; this.attached.add(socket); socket.write(encodeFrame(this.snapshot(), EVENT_LIMIT)); for (const event of replay) socket.write(encodeFrame(event, EVENT_LIMIT)); }
-        else { if (message.type === 'attach') throw new Error('already attached'); if (message.type === 'ack') this.events.ack(message.seq); else this.command(message); }
+        if (!attached) { if (message.type !== 'attach') throw new Error('attach required'); const replay = this.events.after(message.last_seq); attached = true; this.attached.add(socket); this.onAttach(); socket.write(encodeFrame(this.snapshot(), EVENT_LIMIT)); for (const event of replay) socket.write(encodeFrame(event, EVENT_LIMIT)); }
+        else { if (message.type === 'attach') throw new Error('already attached'); if (message.type === 'ack') this.events.ack(message.seq); this.command(message); }
       } } catch { socket.destroy(); } });
       socket.on('close', () => { this.sockets.delete(socket); this.attached.delete(socket); }); socket.on('error', () => {}); socket.resume();
     } catch { socket.destroy(); }
@@ -41,15 +43,20 @@ export class RunnerServer {
 export class RunnerClient {
   private readonly socket: Socket;
   private constructor(socket: Socket) { this.socket = socket; }
-  static async connect(path: string, lastSeq: number, receive: (message: RunnerMessage) => void): Promise<RunnerClient> {
+  static async connect(path: string, lastSeq: number, receive: (message: RunnerMessage) => void, onClose: () => void = () => {}): Promise<RunnerClient> {
     const stat = await lstat(path); const parent = await lstat(path.substring(0, path.lastIndexOf('/')) || '/');
     if (!stat.isSocket() || stat.uid !== process.getuid?.() || (stat.mode & 0o077) !== 0 || !parent.isDirectory() || parent.uid !== process.getuid?.() || (parent.mode & 0o077) !== 0) throw new Error('invalid runner socket');
     const socket = createConnection(path); socket.pause();
     try { await new Promise<void>((resolve, reject) => { socket.once('connect', resolve); socket.once('error', reject); }); await verify(socket);
-      const decoder = new FrameDecoder(EVENT_LIMIT, parseRunnerMessage); socket.on('data', (data: Buffer) => { try { for (const message of decoder.push(data)) receive(message); } catch { socket.destroy(); } }); socket.on('error', () => {});
+      const decoder = new FrameDecoder(EVENT_LIMIT, parseRunnerMessage); socket.on('data', (data: Buffer) => { try { for (const message of decoder.push(data)) receive(message); } catch { socket.destroy(); } }); socket.on('error', () => {}); socket.on('close', onClose);
       socket.write(encodeFrame({ type: 'attach', protocol: 1, last_seq: lastSeq }, COMMAND_LIMIT)); socket.resume(); return new RunnerClient(socket);
     } catch (error) { socket.destroy(); throw error; }
   }
   send(command: Exclude<Command, { type: 'attach' }>): void { this.socket.write(encodeFrame(parseCommand(command), COMMAND_LIMIT)); }
   close(): void { this.socket.destroy(); }
+}
+
+/** macOS refuses Unix socket paths over 103 bytes; fail with a reason instead of a silent timeout. */
+export function socketPathFits(path: string): void {
+  if (Buffer.byteLength(path) > 103) throw new Error(`Runner socket path is too long (${Buffer.byteLength(path)} bytes): ${path}`);
 }
