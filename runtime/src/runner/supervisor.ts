@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { releaseAfterHandoff, type CheckoutLease } from '../safety.ts';
 import { RunnerRegistry, type RunnerEntry } from './registry.ts';
@@ -20,7 +20,8 @@ export class RunnerSupervisor {
   private detached = false;
   constructor(options: Options) { this.options = options; this.registry = new RunnerRegistry(options.store); }
   async launch(args: { threadId: string; requestId: string; lease: CheckoutLease; payload: Record<string, unknown> }): Promise<{ runId: string; pid: number }> {
-    const runId = randomUUID(); this.runId = runId;
+    // Short ids keep the runner socket path inside macOS's 104-byte Unix socket limit.
+    const runId = randomBytes(6).toString('hex'); this.runId = runId;
     let handedOff = false;
     try {
       await this.registry.writeManifest({ run_id: runId, thread_id: args.threadId, request_id: args.requestId, checkout: args.lease.root, harness: String(args.payload.kind ?? 'unknown'), build_id: 'runner-skeleton', lease: { root: args.lease.root, identity: args.lease.identity } });
@@ -42,7 +43,7 @@ export class RunnerSupervisor {
     const attached = new Promise<void>((resolve, reject) => { resolveAttached = resolve; rejectAttached = reject; });
     const timer = setTimeout(() => rejectAttached(new Error('Runner attach timed out')), timeoutMs);
     try {
-      this.client = await RunnerClient.connect(this.registry.path(runId, '.sock'), lastSeq, message => {
+      this.client = await RunnerClient.connect(this.registry.socketPath(runId), lastSeq, message => {
         if (message.type === 'attached') resolveAttached(); else this.receive(message);
       }, () => { rejectAttached(new Error('Runner disconnected')); void this.disconnected(); });
       await attached;

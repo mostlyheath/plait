@@ -19,6 +19,7 @@ export class RunnerServer {
   private readonly onAttach: () => void;
   constructor(path: string, snapshot: () => Attached, command: (command: Command) => void, onAttach: () => void = () => {}) { this.path = path; this.snapshot = snapshot; this.command = command; this.onAttach = onAttach; }
   async listen(): Promise<void> {
+    socketPathFits(this.path);
     const server = createServer(socket => { socket.pause(); void this.accept(socket); }); this.server = server;
     await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(this.path, () => { server.off('error', reject); resolve(); }); });
     await chmod(this.path, 0o600);
@@ -53,4 +54,9 @@ export class RunnerClient {
   }
   send(command: Exclude<Command, { type: 'attach' }>): void { this.socket.write(encodeFrame(parseCommand(command), COMMAND_LIMIT)); }
   close(): void { this.socket.destroy(); }
+}
+
+/** macOS refuses Unix socket paths over 103 bytes; fail with a reason instead of a silent timeout. */
+export function socketPathFits(path: string): void {
+  if (Buffer.byteLength(path) > 103) throw new Error(`Runner socket path is too long (${Buffer.byteLength(path)} bytes): ${path}`);
 }

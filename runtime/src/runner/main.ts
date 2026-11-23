@@ -37,7 +37,7 @@ async function main(): Promise<void> {
       await new Promise<void>(resolve => { finishAck = resolve; setTimeout(resolve, 2000).unref(); });
       done();
     };
-    server = new RunnerServer(registry.path(id, '.sock'), () => ({ type: 'attached', state, seq, snapshot: {}, pending_approval: null, head: null, before_record_id: null }), command => {
+    server = new RunnerServer(registry.socketPath(id), () => ({ type: 'attached', state, seq, snapshot: {}, pending_approval: null, head: null, before_record_id: null }), command => {
       if (command.type === 'ack') { if (finalSeq && command.seq >= finalSeq) finishAck?.(); return; }
       if (command.type === 'ping') { emit({ type: 'pong', nonce: command.nonce }); return; }
       if (command.type === 'stop') abort.abort();
