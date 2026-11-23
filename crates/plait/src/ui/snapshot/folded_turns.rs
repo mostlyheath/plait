@@ -208,6 +208,12 @@ fn type_find_query(plait: &mut Plait, query: &'static str, cx: &mut Context<Plai
 
 /// Capture all four folded-turn scenes at both window sizes.
 pub(super) fn walk(harness: &mut Harness, repository: &Path, suffix: &str) {
+    // These scenes fold; the walk they sit in may not, and gets its choice back.
+    let mut before = None;
+    harness.update(|plait, _, cx| {
+        before = plait.preferences.value.fold_earlier_turns;
+        plait.set_fold_earlier_turns(true, cx);
+    });
     install_long_thread(harness, repository);
     // 1. Long thread with earlier turns folded.
     harness.update(|plait, _, _| {
@@ -239,8 +245,9 @@ pub(super) fn walk(harness: &mut Harness, repository: &Path, suffix: &str) {
         plait.workspace.live_scroll.scroll_to(ListOffset::default());
     });
     harness.capture(&format!("folded-turns-off-{suffix}"));
-    harness.update(|plait, _, cx| {
-        plait.set_fold_earlier_turns(true, cx);
+    harness.update(|plait, _, _| {
+        plait.preferences.value.fold_earlier_turns = before;
+        plait.reconcile_live_folding();
     });
 }
 

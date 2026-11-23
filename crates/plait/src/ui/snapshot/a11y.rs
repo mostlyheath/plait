@@ -474,6 +474,8 @@ fn a11y_tree_has_no_duplicates_and_exposes_required_nodes() {
     let _ = std::fs::remove_dir_all(&scratch);
     let repository = fixture_repository(&scratch);
     let mut harness = Harness::new(&repository, None, 1380., 860.);
+    // This audit checks the full message nodes of earlier turns.
+    harness.update(|p, _, _| p.preferences.value.fold_earlier_turns = Some(false));
     harness.connect(&repository, false);
     tabs::install(&mut harness, 3);
 

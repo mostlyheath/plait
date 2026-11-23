@@ -2481,6 +2481,10 @@ fn walk(output: Option<&Path>) {
 }
 
 fn streaming_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
+    // These scenes, and the ones after them in this walk, were drawn with
+    // every turn shown: they count rows and select text in earlier turns.
+    // Folding has its own scenes, which turn it on themselves.
+    harness.update(|p, _, _| p.preferences.value.fold_earlier_turns = Some(false));
     harness.connect(repository, false);
     harness.change_snapshot(|snapshot| {
         snapshot.messages.extend((3..40).map(|index| Message {
