@@ -129,7 +129,8 @@ impl Plait {
             FindIn::Changes => {
                 let find = &mut self.workspace.diff_find;
                 find.field = Some(field);
-                find.open = true;
+                find.open = bookmark.open;
+                find.restore_match = bookmark.current.clone();
                 find._events = Some(events);
             }
             FindIn::File => {
@@ -195,7 +196,13 @@ impl Plait {
                         .work_patch()
                         .is_some_and(|now| Arc::ptr_eq(now, &source))
                 {
-                    this.workspace.diff_find.matches = Arc::new(rows);
+                    let find = &mut this.workspace.diff_find;
+                    find.current = find
+                        .restore_match
+                        .take()
+                        .and_then(|pos| rows.iter().position(|r| r.start == pos.byte as usize))
+                        .unwrap_or(0);
+                    find.matches = Arc::new(rows);
                     this.show_diff_match(cx);
                 }
             });
@@ -219,6 +226,22 @@ impl Plait {
         )
     }
 
+    pub(super) fn open_file_in_view(
+        &mut self,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.leave_work_fallback(window, cx);
+        self.open_file(path, None, cx);
+        if self.shows_kind(plait_client::panes::PaneKind::Files) {
+            window.focus(
+                &self.work_focus[plait_client::panes::PaneKind::Files as usize],
+                cx,
+            );
+        }
+    }
+
     /// Show `path` in the Files tab, at `line` (zero-based) when given.
     pub(super) fn open_file(&mut self, path: PathBuf, line: Option<usize>, cx: &mut Context<Self>) {
         if !self.ensure_view_tab() {
@@ -226,16 +249,21 @@ impl Plait {
             return;
         }
         self.tabs.lifecycle.view_revision += 1;
-        self.pause_conversation(None, cx);
+        let visible = self.draws_work();
+        let routed = self
+            .tabs
+            .model
+            .work_mut()
+            .is_some_and(|w| w.route(Workspace::Files, visible));
+        if !routed {
+            self.pause_conversation(None, cx);
+            self.workspace.tab = Workspace::Files;
+        }
         self.workspace.restore_pending[3] = false;
         let root = self.file_root();
         let viewer = &mut self.workspace.file_viewer;
         let same = viewer.path.as_ref() == Some(&path) && viewer.root == root;
         viewer.reveal = line;
-        if let Some(work) = self.tabs.model.work_mut() {
-            work.open = false;
-        }
-        self.workspace.tab = Workspace::Files;
         self.queue_tab_save(cx);
         self.settings_open = false;
         if same && self.workspace.file_viewer.opened.is_some() {
@@ -315,15 +343,16 @@ impl Plait {
 
     /// Reread the open file if its size or time changed. Cheap: one stat.
     pub(super) fn check_file(&mut self, cx: &mut Context<Self>) {
-        if self.workspace.tab != Workspace::Files {
+        if self.workspace.tab != Workspace::Files
+            && !self.remembers_kind(plait_client::panes::PaneKind::Files)
+        {
             return;
         }
         let owner = self.host.read_stamp();
         let cancelled = self.workspace.cancelled.clone();
         let expected = self.state.checkout_key().cloned();
         let viewer = &self.workspace.file_viewer;
-        if self.workspace.tab == Workspace::Files
-            && viewer.path.is_some()
+        if viewer.path.is_some()
             && viewer.opened.is_none()
             && viewer.error.is_none()
             && !viewer.loading
@@ -447,7 +476,7 @@ impl Plait {
 
     /// Cmd-F: show the find field over the open file.
     pub(super) fn open_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.workspace.tab != Workspace::Files || self.workspace.file_viewer.opened.is_none() {
+        if self.find_target() != Some(FindIn::File) || self.workspace.file_viewer.opened.is_none() {
             return;
         }
         let field = match self.workspace.file_viewer.find.field.clone() {
@@ -597,8 +626,15 @@ impl Plait {
             )),
             _ => None,
         };
+        let in_pane = self.shows_kind(plait_client::panes::PaneKind::Files);
         let header = row()
-            .h(px(44.))
+            .map(|el| {
+                if in_pane {
+                    el.flex_wrap().min_h(px(44.)).py_1()
+                } else {
+                    el.h(px(44.))
+                }
+            })
             .px_4()
             .gap_2()
             .flex_shrink_0()
@@ -606,7 +642,8 @@ impl Plait {
             .border_color(rgb(colors().border))
             .child(
                 div()
-                    .flex_shrink_0()
+                    .min_w_0()
+                    .truncate()
                     .font_weight(FontWeight::MEDIUM)
                     .child(name),
             )
@@ -692,14 +729,14 @@ impl Plait {
         if self.settings_open {
             return None;
         }
-        if let Some(layout) = self.work_layout() {
-            return layout.panes.iter().find(|p| p.focused).map(|p| {
-                if p.kind.is_thread() {
-                    FindIn::Conversation
-                } else {
-                    FindIn::Changes
-                }
-            });
+        if let Some(kind) = self.focused_work_kind() {
+            use plait_client::panes::PaneKind;
+            return match kind {
+                PaneKind::Thread => Some(FindIn::Conversation),
+                PaneKind::Changes => Some(FindIn::Changes),
+                PaneKind::Files => Some(FindIn::File),
+                PaneKind::History => None,
+            };
         }
         match self.workspace.tab {
             Workspace::Files => Some(FindIn::File),

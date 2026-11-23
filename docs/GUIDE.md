@@ -91,7 +91,9 @@ The 40-point top bar holds the window buttons, sidebar toggle, open tabs (thread
 
 On a thread tab, select **Work**, press **Cmd-Backslash**, or choose **Open in Work view** in the This turn panel. The conversation and message box sit beside Changes. **This turn** shows the selected turn’s recorded diff. **Uncommitted** shows the checkout’s current changes and commit controls.
 
-Drag the divider to resize the panes or double-click it to give them equal space. Toggle Sidebar can show the sidebar while you work. Select **Chat** to restore the previous sidebar setting. History and Files also return to Chat. A tab remembers its pane sizes until it closes. Work view needs a window at least 800 points wide and enough room for both panes.
+Drag the divider to resize the panes or double-click it to give them equal space. Toggle Sidebar can show the sidebar while you work. Select **Chat** to restore the previous sidebar setting. Choose a pane’s name to switch it to an unopened kind. **Split right** and **Split down** add the next available kind, up to four panes. Hover over a disabled split to see its reason. **Close pane** returns to Chat when only the thread would remain.
+
+Conversation, Changes, History, and Files focus their pane. If that kind is missing, it replaces the last focused side pane. **Cmd-Option-Right** and **Cmd-Option-Left** focus the next and previous panes. Find searches the focused conversation, diff, or file. Each open tab remembers its layout, selections, scroll positions, and searches. Restored tabs start in Chat after relaunch. Work view needs a window at least 800 points wide and enough room for its panes.
 
 ### Drafts, messaging, and search
 

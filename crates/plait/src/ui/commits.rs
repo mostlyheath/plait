@@ -173,21 +173,33 @@ impl Plait {
         }
     }
 
-    pub(super) fn history_view(&self, wide: bool, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn history_view(&self, width: f32, cx: &mut Context<Self>) -> impl IntoElement {
         let branch = self
             .state
             .repository
             .snapshot()
             .ready()
             .map(|snapshot| snapshot.branch.clone());
+        let stacked = width < 540.;
         row()
+            .when(stacked, |el| el.flex_col())
             .gap_0()
             .flex_1()
             .min_h_0()
             .items_stretch()
             .child(
                 column()
-                    .w(px(if wide { 320. } else { 264. }))
+                    .map(|el| {
+                        if stacked {
+                            el.w_full().h(relative(0.45)).min_h_0().overflow_hidden()
+                        } else {
+                            el.w(px(if width > super::WIDE_WINDOW {
+                                320.
+                            } else {
+                                264.
+                            }))
+                        }
+                    })
                     .flex_shrink_0()
                     .border_r_1()
                     .border_color(rgb(colors().border))
@@ -214,6 +226,7 @@ impl Plait {
                     .flex_1()
                     .min_w_0()
                     .min_h_0()
+                    .overflow_hidden()
                     .child(self.commit_patch(cx)),
             )
     }

@@ -148,19 +148,21 @@ fn shortcut(action: &dyn Action, window: &Window) -> String {
 
 /// Every action in the table that has a menu item, with the shortcut it is
 /// bound to now. The palette lists itself nowhere: it is already open.
-fn action_items(window: &Window) -> Vec<Item> {
+fn action_items(view: &Plait, window: &Window) -> Vec<Item> {
     ACTIONS
         .iter()
         .filter(|action| action.place != Place::Hidden && action.id != "palette.toggle")
         .map(|action| {
             let run = action.action();
             let hint = shortcut(run.as_ref(), window);
+            let refusal = view.pane_action_refusal(action.id);
             Item::new(
                 format!("action:{}", action.id),
                 action.title,
                 Command::Action(run),
             )
-            .detail(action.category)
+            .enabled(refusal.is_none())
+            .detail(refusal.map_or(action.category, |why| why.reason()))
             .section("Commands")
             .hint(hint)
         })
@@ -282,7 +284,7 @@ impl Plait {
                 .glyph("folder", colors().mint),
             );
         }
-        items.extend(action_items(window));
+        items.extend(action_items(self, window));
         items.extend(self.new_thread_items());
         items.extend(
             self.providers
@@ -445,7 +447,7 @@ impl Plait {
                     self.focus_composer(window, cx);
                 }
             }
-            Command::OpenFile(path) => self.open_file(path.into(), None, cx),
+            Command::OpenFile(path) => self.open_file_in_view(path.into(), window, cx),
             Command::SwitchBranch(name) => {
                 self.branch_write(plait_client::git::WriteOp::SwitchBranch(name), window, cx)
             }

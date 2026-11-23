@@ -1,4 +1,6 @@
-//! Two-pane presentation of the active thread and its changes.
+//! Presentation of the active tab’s Work view.
+mod header;
+
 use super::{Plait, Workspace, theme::*, thread_controls::TextTooltip};
 use gpui::{prelude::*, *};
 use plait_client::{panes::*, review::recorded::Target};
@@ -7,24 +9,29 @@ use plait_client::{panes::*, review::recorded::Target};
 struct Resize {
     tab: plait_client::tabs::TabId,
     divider: DividerId,
+    direction: SplitDirection,
 }
 
 impl Plait {
     pub(super) fn watch_work_focus(&self, window: &mut Window, cx: &mut Context<Self>) {
-        for (handle, kind) in self
-            .work_focus
-            .iter()
-            .zip([PaneKind::Thread, PaneKind::Changes])
-        {
+        for (handle, kind) in self.work_focus.iter().zip([
+            PaneKind::Thread,
+            PaneKind::Changes,
+            PaneKind::History,
+            PaneKind::Files,
+        ]) {
             cx.on_focus_in(handle, window, move |this, _, cx| {
-                if let Some(tree) = this
-                    .tabs
-                    .model
-                    .work_mut()
-                    .filter(|w| w.open)
-                    .and_then(|w| w.tree.as_mut())
+                if this.draws_work()
+                    && let Some(tree) = this
+                        .tabs
+                        .model
+                        .work_mut()
+                        .filter(|w| w.open)
+                        .and_then(|w| w.tree.as_mut())
                 {
-                    tree.focus_kind(kind);
+                    if let Some(id) = tree.pane_of_kind(kind) {
+                        let _ = tree.focus(id);
+                    }
                     cx.notify();
                 }
             })
@@ -38,7 +45,7 @@ impl Plait {
         self.tabs
             .model
             .work()
-            .map_or(self.sidebar, |w| w.sidebar(self.sidebar))
+            .map_or(self.sidebar, |w| w.sidebar(self.sidebar, self.draws_work()))
     }
     pub(super) fn work_area_probe(&self, cx: &Context<Self>) -> impl IntoElement {
         let view = cx.weak_entity();
@@ -59,18 +66,47 @@ impl Plait {
         .size_full()
     }
     pub(super) fn work_layout(&self) -> Option<PaneLayout> {
+        if !self.draws_work() {
+            return None;
+        }
         let size = self.workspace.work_area.size;
-        self.tabs
-            .model
-            .work()?
-            .layout(self.panels.viewport, size.width.into(), size.height.into())
+        Some(
+            self.tabs
+                .model
+                .work()?
+                .tree
+                .as_ref()?
+                .layout(size.width.into(), size.height.into()),
+        )
     }
+
     pub(super) fn draws_work(&self) -> bool {
-        let size = self.workspace.work_area.size;
-        self.tabs
-            .model
-            .work()
-            .is_some_and(|w| w.fits(self.panels.viewport, size.width.into(), size.height.into()))
+        if self.workspace.tab != Workspace::Conversation {
+            return false;
+        }
+        self.tabs.model.work().is_some_and(|w| {
+            // Evaluate the proposed Work layout even when Chat currently owns the sidebar.
+            let sidebar = if w.sidebar {
+                self.panel_width(super::panels::Panel::Sidebar)
+            } else {
+                0.
+            };
+            w.fits(
+                self.panels.viewport,
+                self.panels.viewport - sidebar,
+                self.workspace.work_area.size.height.into(),
+            )
+        })
+    }
+
+    pub(super) fn work_fallback(&self) -> bool {
+        self.tabs.model.work().is_some_and(|w| w.open) && !self.draws_work()
+    }
+
+    pub(super) fn leave_work_fallback(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.work_fallback() {
+            self.toggle_work(window, cx);
+        }
     }
 
     pub(super) fn toggle_work(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -82,7 +118,9 @@ impl Plait {
         } else {
             None
         };
-        if check_work_view_width(window.viewport_size().width.into()).is_err() {
+        if !self.tabs.model.work().is_some_and(|w| w.open)
+            && check_work_view_width(window.viewport_size().width.into()).is_err()
+        {
             return;
         }
         if self.workspace.tab != Workspace::Conversation
@@ -90,6 +128,13 @@ impl Plait {
         {
             self.show_tab(Workspace::Conversation, window, cx);
         }
+        let previous_views = self.work_readers();
+        let chat = self
+            .tabs
+            .model
+            .work()
+            .filter(|work| !work.open)
+            .map(|_| PaneLocations::capture(&self.capture_tab_bookmark(Some(window), cx)));
         let Some(work) = self.tabs.model.work_mut() else {
             return;
         };
@@ -99,13 +144,56 @@ impl Plait {
         {
             return;
         }
+        if let Some(chat) = chat {
+            let review = &self.workspace.turn_review;
+            work.chat_review = review.target.clone().map(|target| (target, review.current));
+            work.chat_locations = Some(chat);
+            work.pane_locations = None;
+        }
         let open = work.open;
         let recorded = work.recorded;
         if open {
             self.workspace.tab = Workspace::Conversation;
             self.sync_work_scope(recorded, window, cx);
+            if self.draws_work() {
+                self.focus_work_pane(window, cx);
+            }
+        } else {
+            self.restore_work_chat(window, cx);
         }
-        window.focus(&self.focus, cx);
+        self.sync_work_readers(previous_views, cx);
+        cx.notify();
+    }
+    fn restore_work_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use plait_client::tabs::bookmark::FocusTarget;
+        let Some(work) = self.tabs.model.work_mut() else {
+            return;
+        };
+        let Some(chat) = work.chat_locations.take() else {
+            return;
+        };
+        let saved = work.chat_review.take();
+        let review = &self.workspace.turn_review;
+        if saved.as_ref().map(|(t, current)| (t, *current))
+            != review.target.as_ref().map(|t| (t, review.current))
+        {
+            self.clear_turn_review();
+            if let Some((target, current)) = saved {
+                self.workspace.turn_review.target = Some(target);
+                self.workspace.turn_review.current = current;
+                self.workspace.turn_review.window = Some(window.window_handle());
+            }
+            self.refresh_turn_review(cx);
+        }
+        match chat.focus {
+            FocusTarget::Composer => self.focus_composer(window, cx),
+            FocusTarget::ConversationFind
+                if let Some(field) = &self.workspace.conversation_find.field =>
+            {
+                window.focus(&field.focus_handle(cx), cx)
+            }
+            _ => window.focus(&self.focus, cx),
+        }
         cx.notify();
     }
     pub(super) fn choose_work_scope(
@@ -169,29 +257,150 @@ impl Plait {
         cx: &mut Context<Self>,
     ) -> bool {
         let visible = self.draws_work();
+        let previous_views = self.work_readers();
+        let was_open = self.tabs.model.work().is_some_and(|w| w.open);
         if !self
             .tabs
             .model
             .work_mut()
             .is_some_and(|w| w.route(tab, visible))
         {
+            if was_open && self.tabs.model.work().is_some_and(|w| !w.open) {
+                self.restore_work_chat(window, cx);
+                self.sync_work_readers(previous_views, cx);
+            }
             return false;
         }
-        window.focus(&self.work_focus[usize::from(tab == Workspace::Changes)], cx);
-        cx.notify();
+        self.sync_work_readers(previous_views, cx);
+        self.focus_work_pane(window, cx);
         true
     }
+    pub(super) fn focused_work_kind(&self) -> Option<PaneKind> {
+        let tree = self
+            .tabs
+            .model
+            .work()
+            .filter(|_| self.draws_work())?
+            .tree
+            .as_ref()?;
+        tree.pane_kind(tree.focused())
+    }
+
+    pub(super) fn shows_kind(&self, kind: PaneKind) -> bool {
+        self.draws_work() && self.remembers_kind(kind)
+    }
+
+    pub(super) fn remembers_kind(&self, kind: PaneKind) -> bool {
+        self.tabs
+            .model
+            .work()
+            .filter(|w| w.open)
+            .and_then(|w| w.tree.as_ref())
+            .is_some_and(|t| t.pane_of_kind(kind).is_some())
+    }
+
+    fn work_readers(&self) -> (bool, bool) {
+        (
+            self.remembers_kind(PaneKind::History),
+            self.remembers_kind(PaneKind::Files),
+        )
+    }
+
+    // Loading follows pane visibility, including panes that did not take focus.
+    fn sync_work_readers(&mut self, previous: (bool, bool), cx: &mut Context<Self>) {
+        let (history, files) = self.work_readers();
+        if history && !previous.0 {
+            self.state.repository.request_history();
+            self.pump(cx);
+        } else if !history && previous.0 {
+            self.state.repository.leave_history();
+        }
+        if files && !previous.1 {
+            self.check_file(cx);
+        }
+    }
+
+    fn focus_work_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(kind) = self
+            .tabs
+            .model
+            .work()
+            .filter(|w| w.open)
+            .and_then(|w| w.tree.as_ref())
+            .and_then(|t| t.pane_kind(t.focused()))
+        {
+            window.focus(&self.work_focus[kind as usize], cx);
+        } else {
+            window.focus(&self.focus, cx);
+        }
+        cx.notify();
+    }
+
+    pub(super) fn pane_action_refusal(&self, id: &str) -> Option<PaneRefusal> {
+        if !id.starts_with("pane.") {
+            return None;
+        }
+        if self.settings_open || !self.draws_work() {
+            return Some(PaneRefusal::WorkViewRequired);
+        }
+        let tree = self.tabs.model.work()?.tree.as_ref()?;
+        let direction = match id {
+            "pane.split_right" => SplitDirection::SideBySide,
+            "pane.split_down" => SplitDirection::Stacked,
+            "pane.close" if tree.focused() == tree.thread_pane() => {
+                return Some(PaneRefusal::CannotCloseThread);
+            }
+            _ => return None,
+        };
+        let size = self.workspace.work_area.size;
+        tree.can_split(
+            tree.focused(),
+            direction,
+            size.width.into(),
+            size.height.into(),
+        )
+        .err()
+    }
+
+    pub(super) fn pane_command(
+        &mut self,
+        command: PaneCommand,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let size = self.workspace.work_area.size;
+        let previous_views = self.work_readers();
+        if self.draws_work()
+            && let Some(work) = self.tabs.model.work_mut()
+        {
+            if let Err(reason) = work.apply(command, size.width.into(), size.height.into()) {
+                self.notice = Some(reason.reason().into());
+            }
+            self.sync_work_readers(previous_views, cx);
+            if self.draws_work() {
+                self.focus_work_pane(window, cx);
+            } else {
+                self.restore_work_chat(window, cx);
+            }
+        } else {
+            self.notice = Some("Pane actions are available in Work view.".into());
+            cx.notify();
+        }
+    }
+
     pub(super) fn work_recorded(&self) -> bool {
         self.draws_work() && self.tabs.model.work().is_some_and(|w| w.recorded)
     }
     pub(super) fn work_switch(&self, cx: &mut Context<Self>) -> Div {
         let work = self.draws_work();
-        let refusal = check_work_view_width(self.panels.viewport).err();
+        let width_refusal = check_work_view_width(self.panels.viewport).err();
         let mut bar = segmented();
         for (id, label, selected) in [("work-chat", "Chat", !work), ("work-work", "Work", work)] {
             let active = self.tabs.model.work().is_some_and(|w| w.open);
+            let refusal = width_refusal.filter(|_| !active || label == "Work");
             bar = bar.child(
                 segment(id, label, selected)
+                    .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
                     .disabled(refusal.is_some())
                     .aria_keyshortcuts(self.shortcut_aria("view.toggle_work"))
                     .when_some(refusal, |el, why| {
@@ -230,7 +439,11 @@ impl Plait {
                 && tree
                     .resize_divider(
                         event.drag(cx).divider,
-                        (event.event.position.x - area.origin.x).into(),
+                        match event.drag(cx).direction {
+                            SplitDirection::SideBySide => event.event.position.x - area.origin.x,
+                            SplitDirection::Stacked => event.event.position.y - area.origin.y,
+                        }
+                        .into(),
                         area.size.width.into(),
                         area.size.height.into(),
                     )
@@ -241,90 +454,21 @@ impl Plait {
         }))
         .into_any_element()
     }
-    fn work_header(&self, pane: PaneRect) -> Div {
-        let thread = pane.kind == PaneKind::Thread;
-        let recorded = self.tabs.model.work().is_some_and(|w| w.recorded);
-        let count = self.work_file_count(recorded);
-        let detail = if thread {
-            self.host
-                .thread
-                .selected
-                .as_deref()
-                .map(|id| self.thread_title(id))
-                .unwrap_or_default()
-        } else {
-            let scope = if recorded { "This turn" } else { "Uncommitted" };
-            let noun = if count == 1 { "file" } else { "files" };
-            format!("{scope} · {count} {noun}")
-        };
-        let state = if thread {
-            self.host
-                .thread
-                .snapshot
-                .as_ref()
-                .map_or(if self.draft.open { "Draft" } else { "Loading" }, |s| {
-                    s.status.label()
-                })
-                .to_owned()
-        } else if recorded {
-            let review = &self.workspace.turn_review;
-            if let Some((state, _)) = &review.error {
-                (*state).into()
-            } else if review.loading {
-                "Loading".into()
-            } else {
-                review
-                    .record
-                    .as_ref()
-                    .map_or_else(String::new, |r| r.counts.clone())
-            }
-        } else if let Some(s) = self.state.repository.snapshot().ready() {
-            if s.plain {
-                "No Git".into()
-            } else if s.changes.is_empty() {
-                "Clean".into()
-            } else {
-                format!("{} staged", self.state.repository.staged())
-            }
-        } else {
-            "Unavailable".into()
-        };
-        // Step 9 adds the kind menu and split/close controls to this header.
-        row()
-            .px_3()
-            .gap_2()
-            .h(px(PANE_HEADER_HEIGHT))
-            .flex_shrink_0()
-            .bg(rgb(if pane.focused {
-                colors().selected
-            } else {
-                colors().rail
-            }))
-            .text_size(px(12.))
-            .child(pane.kind.label())
-            .child(
-                div()
-                    .flex_1()
-                    .truncate()
-                    .text_color(rgb(colors().muted))
-                    .child(detail),
-            )
-            .child(state)
-    }
     fn work_pane(
         &self,
         pane: PaneRect,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let thread = pane.kind.is_thread();
         let recorded = self.tabs.model.work().is_some_and(|w| w.recorded);
         let panel = column()
             .id(("work-pane", pane.id.get() as usize))
             .role(Role::Group)
             .aria_label(pane.kind.label())
             .audited()
-            .track_focus(&self.work_focus[usize::from(!thread)])
+            .tab_group()
+            .tab_stop(false)
+            .track_focus(&self.work_focus[pane.kind as usize])
             .absolute()
             .left(px(pane.rect.x))
             .top(px(pane.rect.y))
@@ -339,27 +483,52 @@ impl Plait {
                     cx.notify();
                 }
             }))
-            .child(self.work_header(pane));
-        if thread {
-            panel.child(if self.draft.open {
-                self.draft_view(false, window, cx).into_any_element()
-            } else {
-                self.live_conversation(false, window, cx).into_any_element()
-            })
-        } else {
-            panel.child(self.work_changes(recorded, pane.rect.width, cx))
-        }
+            .child(self.work_header(pane, cx));
+        let content = match pane.kind {
+            PaneKind::Thread => {
+                if self.draft.open {
+                    self.draft_view(false, window, cx).into_any_element()
+                } else {
+                    self.live_conversation(false, window, cx).into_any_element()
+                }
+            }
+            PaneKind::Changes => {
+                let changes = self.work_changes(recorded, pane.rect.width, cx);
+                if !recorded && pane.rect.height < 400. {
+                    column()
+                        .id(("scroll-changes-pane", pane.id.get() as usize))
+                        .flex_1()
+                        .min_h_0()
+                        .overflow_y_scroll()
+                        .child(changes.min_h(px(400.)))
+                        .into_any_element()
+                } else {
+                    changes.into_any_element()
+                }
+            }
+            PaneKind::History if self.plain_folder_open() => {
+                empty("Not a Git repository", super::PLAIN_FOLDER).into_any_element()
+            }
+            PaneKind::History => self.history_view(pane.rect.width, cx).into_any_element(),
+            PaneKind::Files => self.file_view(cx),
+        };
+        panel.child(content).children(self.kind_menu(pane, cx))
     }
+
     fn work_divider(
         &self,
         tab: plait_client::tabs::TabId,
         seam: DividerRect,
         cx: &Context<Self>,
     ) -> impl IntoElement {
-        let description =
-            "Use Left and Right to resize. Press Enter to give each pane equal space.";
+        let stacked = seam.direction == SplitDirection::Stacked;
+        let description = if stacked {
+            "Use Up and Down to resize. Press Enter to give each pane equal space."
+        } else {
+            "Use Left and Right to resize. Press Enter to give each pane equal space."
+        };
         div()
-            .id("work-divider")
+            .id(("work-divider", seam.id.get() as usize))
             .role(Role::Splitter)
             .aria_label("Resize panes")
             .aria_description(description)
@@ -381,11 +550,16 @@ impl Plait {
                     .h(px(seam.hairline.height))
                     .bg(rgb(colors().border)),
             )
-            .cursor(CursorStyle::ResizeLeftRight)
+            .cursor(if stacked {
+                CursorStyle::ResizeUpDown
+            } else {
+                CursorStyle::ResizeLeftRight
+            })
             .on_drag(
                 Resize {
                     tab,
                     divider: seam.id,
+                    direction: seam.direction,
                 },
                 |_, _, _, cx| cx.new(|_| Empty),
             )
@@ -395,15 +569,23 @@ impl Plait {
                     return;
                 };
                 let result = match event.keystroke.key.as_str() {
-                    "left" => tree.resize_divider(
+                    key if key == (if stacked { "up" } else { "left" }) => tree.resize_divider(
                         seam.id,
-                        seam.hairline.x - 16.,
+                        (if stacked {
+                            seam.hairline.y
+                        } else {
+                            seam.hairline.x
+                        }) - 16.,
                         size.width.into(),
                         size.height.into(),
                     ),
-                    "right" => tree.resize_divider(
+                    key if key == (if stacked { "down" } else { "right" }) => tree.resize_divider(
                         seam.id,
-                        seam.hairline.x + 16.,
+                        (if stacked {
+                            seam.hairline.y
+                        } else {
+                            seam.hairline.x
+                        }) + 16.,
                         size.width.into(),
                         size.height.into(),
                     ),

@@ -532,8 +532,8 @@ impl Plait {
                 el.child(
                     button("diff-open-file", "Open")
                         .aria_label(format!("Open {} in Files", change.display_path()))
-                        .on_activate(cx, move |this, _, cx| {
-                            this.open_file(path.clone(), None, cx)
+                        .on_activate(cx, move |this, window, cx| {
+                            this.open_file_in_view(path.clone(), window, cx)
                         }),
                 )
             })
@@ -836,8 +836,9 @@ impl Plait {
                             rows,
                             cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
                                 let find = &this.workspace.diff_find;
-                                let hit =
-                                    find.open.then(|| find.matches.get(find.current)).flatten();
+                                let hit = (find.open && id != "commit-lines" && this.draws_work())
+                                    .then(|| find.matches.get(find.current))
+                                    .flatten();
                                 range
                                     .map(|drawn| {
                                         // Clicks, hunks, and ids use the patch line.
@@ -1060,13 +1061,16 @@ impl Plait {
                 .map_or(0, |s| s.changes.len())
         }
     }
-    fn work_select_file(
+    pub(super) fn work_select_file(
         &mut self,
         index: usize,
         recorded: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.draws_work() {
+            return;
+        }
         if recorded {
             self.select_recorded_file(index, window, cx);
         } else if let Some(change) = self
@@ -1087,6 +1091,7 @@ impl Plait {
                 cx,
             );
         }
+        self.route_work_tab(super::Workspace::Changes, window, cx);
     }
     pub(super) fn work_changes(&self, recorded: bool, width: f32, cx: &mut Context<Self>) -> Div {
         let count = self.work_file_count(recorded);

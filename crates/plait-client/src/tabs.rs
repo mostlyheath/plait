@@ -364,6 +364,13 @@ impl WindowTabs {
         let index = self.index(self.active?).ok()?;
         Some(&mut self.tabs[index].work)
     }
+    pub fn leave_work(&mut self, id: TabId) {
+        if let Ok(index) = self.index(id) {
+            let work = &mut self.tabs[index].work;
+            work.open = false;
+            work.kind_menu = None;
+        }
+    }
     pub fn closed_len(&self) -> usize {
         self.closed.len()
     }
