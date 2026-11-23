@@ -62,6 +62,7 @@ impl Reveals {
     }
 }
 use plait_client::{
+    folding::{self, DisplayRow},
     history::{self, Key},
     host::{
         Approval, ApprovalMode, HistoryField, Message, MessageRole, Snapshot, ThreadStatus,
@@ -69,7 +70,7 @@ use plait_client::{
     },
     markdown::Block,
     reveal::Reveal,
-    transcript::{self, Row},
+    transcript::{self, Row, Slot},
 };
 
 /// Full-width line above the conversation for host and submission state.
@@ -705,16 +706,171 @@ impl Plait {
             .into_any_element()
     }
 
+    /// One folded earlier turn on the line: its ring with the first line of the
+    /// request and age at the right, then its node with the closing line unchanged.
+    /// Does not build any folded-away reply, reasoning, or tool content.
+    fn folded_turn_row(
+        &self,
+        index: usize,
+        snapshot: &Snapshot,
+        turn_id: &str,
+        request_message: usize,
+        closing_slot: Option<Slot>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        const TOP: f32 = 16.;
+        const BOTTOM: f32 = 8.;
+        let Some(request) = snapshot.messages.get(request_message) else {
+            return div().into_any_element();
+        };
+        let closing_row = closing_slot.and_then(|slot| transcript::resolve(snapshot, slot));
+        let recorded = closing_row
+            .and_then(history::records::closing_key)
+            .and_then(|key| self.workspace.turn_records.lines.rows.get(&key))
+            .filter(|_| self.host.protocol() >= 5);
+        let legacy = closing_row.and_then(|row| match row {
+            Row::Message(message) => history::row_record(
+                &self.workspace.formatted.turn_summaries,
+                snapshot,
+                &message.id,
+            )
+            .filter(|_| {
+                self.host.protocol() < 5
+                    || !self
+                        .workspace
+                        .turn_records
+                        .lines
+                        .covered
+                        .contains(&Key::Message(message.id.clone()))
+            })
+            .map(|summary| (message.id.as_str(), summary)),
+            _ => None,
+        });
+        let preview = folding::first_request_line(&request.text, request.images.len());
+        let age = recorded
+            .filter(|line| line.created_at > 0)
+            .map(|line| {
+                let now = if self.workspace.history.now > 0 {
+                    self.workspace.history.now
+                } else {
+                    super::commits::now().max(0) as u64 * 1000
+                };
+                plait_client::navigation::age(Some(line.created_at), now)
+            })
+            .filter(|age| !age.is_empty());
+        let accessible_name = match (&preview[..], &age) {
+            ("", Some(age)) => format!("Turn hidden, {age}. Show turn"),
+            ("", None) => "Turn hidden. Show turn".into(),
+            (text, Some(age)) => format!("Turn hidden: {text}, {age}. Show turn"),
+            (text, None) => format!("Turn hidden: {text}. Show turn"),
+        };
+        let open_id = turn_id.to_owned();
+        let disclosure = div()
+            .relative()
+            .w_full()
+            .min_w_0()
+            .child(strand_mark(ROW_HEIGHT / 2., RING, colors().muted, true))
+            .child(
+                button(
+                    (
+                        ElementId::from("folded-turn"),
+                        SharedString::from(turn_id.to_owned()),
+                    ),
+                    "",
+                )
+                .w_full()
+                .min_w_0()
+                .h(px(ROW_HEIGHT))
+                .px_2()
+                .ml(px(-8.))
+                .justify_between()
+                .gap_2()
+                .aria_label(accessible_name)
+                .aria_expanded(false)
+                .child(
+                    row()
+                        .min_w_0()
+                        .flex_1()
+                        .gap(px(6.))
+                        .child(icon("right"))
+                        .child(div().min_w_0().truncate().text_size(px(13.)).child(preview)),
+                )
+                .when_some(age, |el, age| {
+                    el.child(
+                        div()
+                            .flex_shrink_0()
+                            .text_size(px(12.))
+                            .text_color(rgb(colors().subtle))
+                            .child(age),
+                    )
+                })
+                .on_activate(cx, move |this, _, cx| this.open_folded_turn(&open_id, cx)),
+            );
+        let from = if index == 0 {
+            TOP + ROW_HEIGHT / 2.
+        } else {
+            0.
+        };
+        div()
+            .group(row_group(index))
+            .w_full()
+            .px_6()
+            .child(
+                div()
+                    .relative()
+                    .w_full()
+                    .max_w(px(CONTENT_WIDTH))
+                    .mx_auto()
+                    .pt(px(TOP))
+                    .pb(px(BOTTOM))
+                    .child(strand_line(from))
+                    .child(disclosure)
+                    .when_some(recorded, |el, line| {
+                        el.child(
+                            div()
+                                .relative()
+                                .pt_1()
+                                .child(strand_mark(
+                                    4. + RECORD_LINE / 2.,
+                                    NODE,
+                                    colors().subtle,
+                                    false,
+                                ))
+                                .child(self.record_line(line, false, row_group(index), cx)),
+                        )
+                    })
+                    .when(recorded.is_none(), |el| {
+                        el.when_some(legacy, |el, (id, summary)| {
+                            el.child(self.turn_record(id, summary, cx))
+                        })
+                    }),
+            )
+            .into_any_element()
+    }
+
     fn live_event(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
         let Some(snapshot) = self.conversation_snapshot() else {
             return div().into_any_element();
         };
-        let Some(row) = self
-            .workspace
-            .live_layout
-            .get(index)
-            .and_then(|slot| transcript::resolve(snapshot, *slot))
-        else {
+        let slot = match self.workspace.live_layout.rows.get(index) {
+            Some(DisplayRow::Slot(slot)) => *slot,
+            Some(DisplayRow::FoldedTurn {
+                id,
+                request_message,
+                closing_slot,
+            }) => {
+                return self.folded_turn_row(
+                    index,
+                    snapshot,
+                    id,
+                    *request_message,
+                    *closing_slot,
+                    cx,
+                );
+            }
+            None => return div().into_any_element(),
+        };
+        let Some(row) = transcript::resolve(snapshot, slot) else {
             return div().into_any_element();
         };
         // Requests stand clear of the previous turn. Replies and streaming

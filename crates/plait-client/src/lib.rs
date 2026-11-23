@@ -9,6 +9,7 @@ pub mod connections;
 pub mod conversation_find;
 pub mod diff;
 pub mod file_view;
+pub mod folding;
 pub mod fuzzy;
 pub use plait_protocol::git;
 pub mod handoff;

@@ -12,6 +12,7 @@ pub mod storage;
 use crate::thread_view::{SelectedThreadState, ThreadRepositoryView, ThreadView};
 use bookmark::BookmarkRecord;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 /// Bound untrusted restore input; interactive opening has no count ceiling.
@@ -191,6 +192,8 @@ pub struct TabSession {
     bookmark: BookmarkRecord,
     residency: Residency,
     connection: Option<u64>,
+    /// Earlier turns the person opened while this tab is open; never saved.
+    opened_turns: HashSet<String>,
 }
 impl TabSession {
     pub fn target(&self) -> &TabTarget {
@@ -204,6 +207,9 @@ impl TabSession {
     }
     pub fn connected(&self) -> bool {
         self.connection.is_some()
+    }
+    pub fn opened_turns(&self) -> &HashSet<String> {
+        &self.opened_turns
     }
 }
 
@@ -536,6 +542,7 @@ impl WindowTabs {
                     residency: Residency::Cold {
                         reason: ColdReason::Opened,
                     },
+                    opened_turns: HashSet::new(),
                 })),
             },
         );
@@ -573,6 +580,19 @@ impl WindowTabs {
             reason: ColdReason::Parked,
         };
         Ok(())
+    }
+
+    /// Record that the person opened an earlier turn in `id`. Kept only while
+    /// the tab stays open and never serialized.
+    pub fn open_turn(&mut self, id: TabId, turn_id: String) -> bool {
+        let Ok(index) = self.index(id) else {
+            return false;
+        };
+        self.tabs[index]
+            .content
+            .session_mut()
+            .opened_turns
+            .insert(turn_id)
     }
 
     /// A view change invalidates its old read demand, including A -> B -> A.

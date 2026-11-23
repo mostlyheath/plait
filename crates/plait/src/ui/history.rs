@@ -203,15 +203,21 @@ impl Plait {
         let record_generation = self.workspace.turn_records.data_generation;
         let cancelled = self.workspace.cancelled.clone();
         let view_cancelled = self.workspace.history.cancelled.clone();
-        let anchor = self
-            .conversation_snapshot()
-            .and_then(|s| {
-                self.workspace
-                    .live_layout
-                    .get(self.workspace.live_scroll.logical_scroll_top().item_ix)
-                    .and_then(|slot| transcript::resolve(s, *slot))
-            })
-            .and_then(Key::row);
+        let anchor = self.conversation_snapshot().and_then(|s| {
+            match self
+                .workspace
+                .live_layout
+                .rows
+                .get(self.workspace.live_scroll.logical_scroll_top().item_ix)?
+            {
+                plait_client::folding::DisplayRow::Slot(slot) => {
+                    transcript::resolve(s, *slot).and_then(Key::row)
+                }
+                plait_client::folding::DisplayRow::FoldedTurn { id, .. } => {
+                    Some(Key::Message(id.clone()))
+                }
+            }
+        });
         let task = cx.background_executor().spawn(async move {
             let mut cache = (*cache).clone();
             loop {
@@ -607,12 +613,20 @@ impl Plait {
             self.workspace.history.expanded.insert(id.to_owned());
         }
         if let Some(snapshot) = self.conversation_snapshot()
-            && let Some(index) = self.workspace.live_layout.iter().position(|slot| {
-                match transcript::resolve(snapshot, *slot) {
-                    Some(transcript::Row::Reasoning(m)) => m.id == id,
-                    _ => false,
-                }
-            })
+            && let Some(index) = self
+                .workspace
+                .live_layout
+                .rows
+                .iter()
+                .position(|row| match row {
+                    plait_client::folding::DisplayRow::Slot(slot) => {
+                        matches!(
+                            transcript::resolve(snapshot, *slot),
+                            Some(transcript::Row::Reasoning(m)) if m.id == id
+                        )
+                    }
+                    plait_client::folding::DisplayRow::FoldedTurn { .. } => false,
+                })
         {
             self.workspace.live_scroll.remeasure_items(index..index + 1);
         }

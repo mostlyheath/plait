@@ -30,7 +30,9 @@ pub(super) struct ThreadWorkspace {
     pub(super) host_watch: Option<host::WatchLease>,
     pub(super) live_scroll: ListState,
     pub(super) live_count: usize,
-    pub(super) live_layout: Vec<plait_client::transcript::Slot>,
+    pub(super) live_layout: plait_client::folding::Layout,
+    /// Earlier turns opened in the active tab (mirror of `TabSession::opened_turns`).
+    pub(super) opened_turns: HashSet<String>,
     pub(super) formatted: Arc<plait_client::markdown::Transcript>,
     pub(super) history: history::HistoryView,
     pub(super) images: images::ImageCache,
@@ -72,7 +74,8 @@ impl ThreadWorkspace {
             host_watch: None,
             live_scroll: ListState::new(0, ListAlignment::Bottom, px(300.)),
             live_count: 0,
-            live_layout: Vec::new(),
+            live_layout: Default::default(),
+            opened_turns: HashSet::new(),
             formatted: Default::default(),
             history: Default::default(),
             images: Default::default(),
@@ -126,6 +129,7 @@ impl ThreadWorkspace {
         self.images = Default::default();
         self.clear_turn_review();
         self.history = Default::default();
+        self.opened_turns.clear();
         self.tab = Workspace::Conversation;
         self.formatted = Default::default();
     }

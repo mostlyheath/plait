@@ -120,6 +120,8 @@ impl Plait {
         find.reveal = None;
         // Whatever search is running now answers nothing.
         find.generation += 1;
+        // A turn opened only because it held the current match folds back.
+        self.reconcile_live_folding();
         let focus = self
             .conversation_find_focus
             .take()
@@ -223,6 +225,7 @@ impl Plait {
                 })
                 .unwrap_or(0);
             find.reveal = None;
+            self.reconcile_live_folding();
             cx.notify();
             return;
         }
@@ -231,11 +234,12 @@ impl Plait {
             // A new query starts at the first match from the top of the view,
             // or at the newest when the list rests on its end.
             let top = self.workspace.live_scroll.logical_scroll_top().item_ix;
+            let raw_top = self.workspace.live_layout.raw_index(top);
             let find = &mut self.workspace.conversation_find;
             find.current = if top >= self.workspace.live_count {
                 count.saturating_sub(1)
             } else {
-                find.matches.first_from(top)
+                find.matches.first_from(raw_top)
             };
             self.reveal_match();
         } else {
@@ -243,6 +247,7 @@ impl Plait {
             find.current = previous
                 .and_then(|hit| find.matches.position(&hit))
                 .unwrap_or(find.current.min(count.saturating_sub(1)));
+            self.reconcile_live_folding();
         }
         cx.notify();
     }
@@ -261,6 +266,7 @@ impl Plait {
     /// Scroll the current match into view, using where it was last drawn.
     /// A row not drawn yet is scrolled to first and placed after it is.
     fn reveal_match(&mut self) {
+        self.reconcile_live_folding();
         let Some(hit) = self.current_hit() else {
             return;
         };
@@ -268,14 +274,21 @@ impl Plait {
             self.workspace.conversation_find.reveal = None;
             return;
         }
+        let item_ix = self
+            .workspace
+            .live_layout
+            .row_of_message
+            .get(&hit.message)
+            .copied()
+            .unwrap_or(hit.row);
         self.workspace.live_scroll.scroll_to(ListOffset {
-            item_ix: hit.row,
+            item_ix,
             offset_in_item: px(0.),
         });
         self.workspace.conversation_find.reveal = Some(Reveal::AfterDraw);
     }
 
-    fn current_hit(&self) -> Option<conversation_find::Hit> {
+    pub(super) fn current_hit(&self) -> Option<conversation_find::Hit> {
         let find = &self.workspace.conversation_find;
         find.matches.hits.get(find.current).cloned()
     }

@@ -502,8 +502,14 @@ impl Plait {
         let row = self
             .workspace
             .live_layout
+            .rows
             .iter()
-            .filter_map(|slot| transcript::resolve(snapshot, *slot))
+            .filter_map(|row| match row {
+                plait_client::folding::DisplayRow::Slot(slot) => {
+                    transcript::resolve(snapshot, *slot)
+                }
+                plait_client::folding::DisplayRow::FoldedTurn { .. } => None,
+            })
             .find(|row| anchor.owner.is(*row))?;
         self.row_blocks(row).get(anchor.block).copied()
     }
@@ -521,8 +527,12 @@ impl Plait {
             return;
         }
         let position = |anchor: &Anchor| {
-            let row = self.workspace.live_layout.iter().position(|slot| {
-                transcript::resolve(snapshot, *slot).is_some_and(|row| anchor.owner.is(row))
+            let row = self.workspace.live_layout.rows.iter().position(|row| {
+                matches!(
+                    row,
+                    plait_client::folding::DisplayRow::Slot(slot)
+                        if transcript::resolve(snapshot, *slot).is_some_and(|row| anchor.owner.is(row))
+                )
             })?;
             Some(Position {
                 row,
@@ -658,11 +668,17 @@ impl Plait {
         let rows = self
             .workspace
             .live_layout
+            .rows
             .iter()
             .enumerate()
             .skip(span.start.row)
             .take(span.end.row - span.start.row + 1)
-            .filter_map(|(index, slot)| Some((index, transcript::resolve(snapshot, *slot)?)));
+            .filter_map(|(index, row)| match row {
+                plait_client::folding::DisplayRow::Slot(slot) => {
+                    Some((index, transcript::resolve(snapshot, *slot)?))
+                }
+                plait_client::folding::DisplayRow::FoldedTurn { .. } => None,
+            });
         let blocks = rows.flat_map(|(index, row)| {
             self.row_blocks(row)
                 .into_iter()

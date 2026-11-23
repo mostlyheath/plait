@@ -442,6 +442,7 @@ impl Plait {
         let owner = self.host.read_stamp();
         let target = tab.session().target().clone();
         let record = tab.session().bookmark().clone();
+        self.workspace.opened_turns = tab.session().opened_turns().clone();
         let editor = self
             .tabs
             .lifecycle

@@ -15,7 +15,7 @@ use plait_client::{
     host::{Tool, ToolStatus},
     markdown::Kind,
     tool_view::{Part, Run, Section, ToolView},
-    transcript::{self, Slot},
+    transcript,
 };
 use std::{collections::HashMap, sync::Arc};
 
@@ -82,18 +82,7 @@ impl Plait {
     }
 
     pub(super) fn toggle_live_tool(&mut self, id: &str, cx: &mut Context<Self>) {
-        let Some(snapshot) = self.conversation_snapshot() else {
-            return;
-        };
-        let Some(offset) = snapshot.tools.iter().position(|tool| tool.id == id) else {
-            return;
-        };
-        let Some(index) = self
-            .workspace
-            .live_layout
-            .iter()
-            .position(|slot| *slot == Slot::Tool(offset))
-        else {
+        let Some(&index) = self.workspace.live_layout.row_of_tool.get(id) else {
             return;
         };
         if !self.workspace.expanded_live_tools.remove(id) {
@@ -144,8 +133,10 @@ impl Plait {
                     position < run.grouped && !open,
                     position == 0 && run.grouped > 0,
                 );
-                let row = run.first_row + position;
-                if previous.get(id).is_some_and(|drawn| *drawn != state) && row < rows {
+                if let Some(&row) = self.workspace.live_layout.row_of_tool.get(id)
+                    && previous.get(id).is_some_and(|drawn| *drawn != state)
+                    && row < rows
+                {
                     self.workspace.live_scroll.remeasure_items(row..row + 1);
                 }
                 folds.insert(id.clone(), state);

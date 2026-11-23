@@ -53,13 +53,16 @@ impl Plait {
             ConversationScroll::Latest
         } else {
             self.conversation_snapshot()
-                .and_then(|s| {
-                    w.live_layout
-                        .get(top.item_ix)
-                        .and_then(|slot| transcript::resolve(s, *slot))
+                .and_then(|s| match w.live_layout.rows.get(top.item_ix)? {
+                    plait_client::folding::DisplayRow::Slot(slot) => {
+                        transcript::resolve(s, *slot).map(row_key)
+                    }
+                    plait_client::folding::DisplayRow::FoldedTurn { id, .. } => {
+                        Some(format!("message:{id}"))
+                    }
                 })
                 .map(|row| ConversationScroll::Anchored {
-                    row: row_key(row),
+                    row,
                     offset_millipoints: milli(top.offset_in_item),
                 })
                 .unwrap_or_default()
@@ -77,12 +80,15 @@ impl Plait {
                 scroll,
                 before: w.history.cache.restore_cursor(
                     self.conversation_snapshot()
-                        .and_then(|s| {
-                            w.live_layout
-                                .get(top.item_ix)
-                                .and_then(|slot| transcript::resolve(s, *slot))
+                        .and_then(|s| match w.live_layout.rows.get(top.item_ix)? {
+                            plait_client::folding::DisplayRow::Slot(slot) => {
+                                transcript::resolve(s, *slot)
+                                    .and_then(plait_client::history::Key::row)
+                            }
+                            plait_client::folding::DisplayRow::FoldedTurn { id, .. } => {
+                                Some(plait_client::history::Key::Message(id.clone()))
+                            }
                         })
-                        .and_then(plait_client::history::Key::row)
                         .as_ref(),
                 ),
                 pages: 1,
@@ -485,9 +491,21 @@ impl Plait {
                     row,
                     offset_millipoints,
                 } => {
-                    if let Some(item_ix) = self.workspace.live_layout.iter().position(|slot| {
-                        transcript::resolve(snapshot, *slot).is_some_and(|r| row_key(r) == *row)
-                    }) {
+                    if let Some(item_ix) =
+                        self.workspace
+                            .live_layout
+                            .rows
+                            .iter()
+                            .position(|entry| match entry {
+                                plait_client::folding::DisplayRow::Slot(slot) => {
+                                    transcript::resolve(snapshot, *slot)
+                                        .is_some_and(|r| row_key(r) == *row)
+                                }
+                                plait_client::folding::DisplayRow::FoldedTurn { id, .. } => {
+                                    format!("message:{id}") == *row
+                                }
+                            })
+                    {
                         self.workspace.live_scroll.scroll_to(ListOffset {
                             item_ix,
                             offset_in_item: pixels(*offset_millipoints),
