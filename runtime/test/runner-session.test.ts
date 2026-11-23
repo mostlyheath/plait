@@ -26,7 +26,7 @@ function makeSnapshot(id: string, checkout: string): Snapshot {
 }
 
 test('finished event persists terminal snapshot and last_seq in one transaction; recovery keeps it finished', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'plait-runner-session-'));
+  const dir = await mkdtemp(join(tmpdir(), 'pr-'));
   try {
     const store = new Store(dir);
     const snapshot = makeSnapshot('thread-1', dir);
@@ -66,7 +66,7 @@ test('finished event persists terminal snapshot and last_seq in one transaction;
 });
 
 test('failing onClosed reconciliation does not cause an unhandled rejection', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'plait-runner-reconcile-'));
+  const dir = await mkdtemp(join(tmpdir(), 'pr-'));
   const unhandled: unknown[] = [];
   const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
   process.on('unhandledRejection', onUnhandled);
@@ -116,7 +116,7 @@ test('failing onClosed reconciliation does not cause an unhandled rejection', as
 });
 
 test('attach below runner pruned floor stops runner, interrupts with lost-progress message, and reconciles receipt', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'plait-runner-gap-'));
+  const dir = await mkdtemp(join(tmpdir(), 'pr-'));
   const registry = new RunnerRegistry(dir);
   const runId = 'run-gap';
   let lock: Awaited<ReturnType<RunnerRegistry['acquire']>> | undefined;
@@ -187,7 +187,7 @@ test('attach below runner pruned floor stops runner, interrupts with lost-progre
 });
 
 test('gap persisted across host restart still reconciles receipt postimages and stays interrupted', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'plait-runner-gap-restart-'));
+  const dir = await mkdtemp(join(tmpdir(), 'pr-'));
   const registry = new RunnerRegistry(dir);
   const runId = 'run-gap-restart';
   let lock: Awaited<ReturnType<RunnerRegistry['acquire']>> | undefined;
@@ -249,7 +249,7 @@ test('gap persisted across host restart still reconciles receipt postimages and 
 });
 
 test('accepted run whose host crashed before start is marked interrupted after orphan exit and recover', async () => {
-  const base = await realpath(await mkdtemp(join(tmpdir(), 'plait-runner-orphan-accept-')));
+  const base = await realpath(await mkdtemp(join(tmpdir(), 'pr-')));
   const repo = join(base, 'repo');
   const storeDir = join(base, 'store');
   let runtime: Runtime | undefined;
@@ -306,7 +306,7 @@ test('accepted run whose host crashed before start is marked interrupted after o
 });
 
 test('accept and createRun commit in one transaction; failure rolls back both and stops runner before start', async () => {
-  const base = await realpath(await mkdtemp(join(tmpdir(), 'plait-runner-atomic-')));
+  const base = await realpath(await mkdtemp(join(tmpdir(), 'pr-')));
   const repo = join(base, 'repo');
   const storeDir = join(base, 'store');
   const prevDetached = process.env.PLAIT_DETACHED_RUNNERS;

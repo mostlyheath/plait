@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { releaseAfterHandoff, type CheckoutLease } from '../safety.ts';
@@ -44,11 +45,11 @@ export class RunnerSupervisor {
     let handedOff = false;
     try {
       await this.registry.writeManifest({ run_id: runId, thread_id: args.threadId, request_id: args.requestId, checkout: args.lease.root, harness: String(args.payload.kind ?? 'unknown'), build_id: 'runner-skeleton', ...(args.cleanupToken ? { cleanup_token: args.cleanupToken } : {}), lease: { root: args.lease.root, identity: args.lease.identity } });
-      const pid = await spawnRunner(this.options.entry ?? fileURLToPath(new URL('./main.ts', import.meta.url)), args.lease, { PLAIT_RUNNER_STORE: this.options.store, PLAIT_RUNNER_ID: runId });
+      const pid = await spawnRunner(this.options.entry ?? fileURLToPath(new URL('./main.ts', import.meta.url)), args.lease, { PLAIT_RUNNER_STORE: this.options.store, PLAIT_RUNNER_ID: runId }, this.registry.path(runId, '.log'));
       const deadline = Date.now() + 5000;
       for (;;) {
         try { await this.attach(runId, 0, Math.max(1, deadline - Date.now())); break; }
-        catch (error) { if (Date.now() >= deadline) throw error; await new Promise(resolve => setTimeout(resolve, 25)); }
+        catch (error) { if (Date.now() >= deadline) throw await this.startFailure(runId, error); await new Promise(resolve => setTimeout(resolve, 25)); }
       }
       await releaseAfterHandoff(args.lease); handedOff = true;
       try {
@@ -201,6 +202,12 @@ export class RunnerSupervisor {
   stop(): void { this.send({ type: 'stop' }); }
   approve(approvalId: string, allow: boolean): void { this.send({ type: 'approve', approval_id: approvalId, allow }); }
   steer(requestId: string, text: string, images: unknown[]): void { this.send({ type: 'steer', request_id: requestId, text, images }); }
+  /** A runner that never listened explains itself through the last lines of its log. */
+  private async startFailure(runId: string, error: unknown): Promise<Error> {
+    const log = await readFile(this.registry.path(runId, '.log'), 'utf8').catch(() => '');
+    const tail = log.trim().split('\n').slice(-5).join('\n').slice(-2000);
+    return new Error(`Runner did not start: ${error instanceof Error ? error.message : String(error)}${tail ? `\n${tail}` : ''}`);
+  }
   detach(): void {
     this.detached = true;
     clearInterval(this.heartbeat); this.heartbeat = undefined;

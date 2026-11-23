@@ -63,6 +63,7 @@ export class RunnerRegistry {
     await unlink(this.path(runId, '.done.json')).catch(gone);
     await unlink(this.socketPath(runId)).catch(gone);
     await unlink(this.path(runId, '.lock')).catch(gone);
+    await unlink(this.path(runId, '.log')).catch(gone);
   }
   async scan(): Promise<RunnerEntry[]> {
     await this.prepare(); const entries: RunnerEntry[] = [];

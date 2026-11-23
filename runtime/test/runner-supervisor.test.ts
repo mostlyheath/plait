@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { access, writeFile } from 'node:fs/promises';
+import { access, mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { acquireCheckout } from '../src/safety.ts';
@@ -203,7 +203,7 @@ test('registry scan error is unknown (never dead) and supervisor retries until r
 test('newly attached socket closing immediately still schedules retry and reconnects', async t => {
   const { root, base } = await setup(t);
   const registry = new RunnerRegistry(base);
-  const runId = 'immediate-close-reconnect';
+  const runId = 'close-retry';
   await registry.writeManifest({ run_id: runId, thread_id: 'thread', request_id: 'request', checkout: root, harness: 'test', build_id: 'test' });
   const lock = await registry.acquire(runId);
   let attaches = 0;
@@ -288,4 +288,14 @@ test('failed acceptance leaves registry files intact when runner stays live past
     if (stubbornPid) { try { process.kill(stubbornPid, 'SIGKILL'); } catch {} }
     await lease.close();
   }
+});
+
+test('a runner that cannot listen explains why the launch failed', async t => {
+  const { root, base } = await setup(t); const lease = await acquireCheckout(root);
+  // A store this deep puts the runner socket past the Unix socket path limit.
+  const store = join(base, 'x'.repeat(100)); await mkdir(store, { mode: 0o700 });
+  const supervisor = new RunnerSupervisor({ store, onEvent: () => {} });
+  try {
+    await assert.rejects(supervisor.launch({ threadId: 'thread', requestId: 'request', lease, payload: { kind: 'test' } }), /Runner did not start[\s\S]*too long/);
+  } finally { supervisor.detach(); await lease.close(); }
 });

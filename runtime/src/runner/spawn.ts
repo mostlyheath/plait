@@ -1,11 +1,14 @@
 import { spawn } from 'node:child_process';
+import { closeSync, constants, openSync } from 'node:fs';
 import { handoffDescriptors, type CheckoutLease } from '../safety.ts';
 
-export function spawnRunner(entry: string, lease: CheckoutLease, environment: NodeJS.ProcessEnv = {}): Promise<number> {
+/** `log` receives the runner's stderr, so a runner that dies at startup leaves its reason behind. */
+export function spawnRunner(entry: string, lease: CheckoutLease, environment: NodeJS.ProcessEnv = {}, log?: string): Promise<number> {
   const env = { ...process.env, ...environment };
   delete env.PLAIT_LOCK_FD;
   delete env.PLAIT_NOTIFY_FD;
-  const stdio: ('ignore' | number)[] = ['ignore', 'ignore', 'ignore', ...handoffDescriptors(lease)];
+  const logFd = log === undefined ? undefined : openSync(log, constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND | constants.O_NOFOLLOW, 0o600);
+  const stdio: ('ignore' | number)[] = ['ignore', 'ignore', logFd ?? 'ignore', ...handoffDescriptors(lease)];
   // Overwrite any non-CLOEXEC host lock/notify descriptor above fd 5 so the runner never holds host.lock.
   for (const key of ['PLAIT_LOCK_FD', 'PLAIT_NOTIFY_FD'] as const) {
     const fd = Number(process.env[key]);
@@ -13,9 +16,9 @@ export function spawnRunner(entry: string, lease: CheckoutLease, environment: No
       while (stdio.length <= fd) stdio.push('ignore');
     }
   }
-  const child = spawn(process.execPath, [entry], {
-    env, detached: true, stdio,
-  });
+  let child;
+  try { child = spawn(process.execPath, [entry], { env, detached: true, stdio }); }
+  finally { if (logFd !== undefined) closeSync(logFd); }
   return new Promise((resolve, reject) => {
     child.once('error', reject);
     child.once('spawn', () => {
