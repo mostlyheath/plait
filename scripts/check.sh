@@ -69,13 +69,14 @@ if grep -Eq '^gpui([-_ ]|$)' <<< "$dependencies"; then
     echo 'Headless crates must not depend on GPUI.' >&2
     exit 1
 fi
+# The interop tests start a real host on the runtime's test fixture, so its packages come first.
+# Optional packages are only the Agent SDK's platform builds of Claude Code, which no test runs.
+(cd runtime && npm ci --ignore-scripts --omit=optional)
 cargo clippy --locked "${packages[@]}" --all-targets -- -D warnings
 cargo test --locked "${packages[@]}"
 cargo build --locked -p plait-host
 (
     cd runtime
-    # Optional packages are only the Agent SDK's platform builds of Claude Code, which no test runs.
-    npm ci --ignore-scripts --omit=optional
     npm run check
     if "$require_sandbox"; then
         npm run test:sandbox

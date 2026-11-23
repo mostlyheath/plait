@@ -38,7 +38,8 @@ fn client_reads_file_and_observes_changed_stamp_through_host() {
             .arg("--runtime")
             .arg(runtime)
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            // Inherited so a host that fails to start explains itself in the test output.
+            .stderr(Stdio::inherit())
             .spawn()
             .unwrap(),
     );
