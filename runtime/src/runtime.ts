@@ -147,8 +147,8 @@ export class Runtime {
     this.gitReads = new GitReads(undefined, undefined, directory, this.store);
     // Each device writes only its own state and nothing subscribes to it, so it announces nothing.
     this.devices = new Devices(this.store, () => {});
-    this.workspace = new Workspace(this.store, () => this.changed(WORKSPACE_TOPIC));
-    this.checkoutWatcher = new CheckoutWatcher(() => this.changed(WORKSPACE_TOPIC));
+    this.workspace = new Workspace(this.store, () => this.changed(WORKSPACE_TOPIC), (path, roots) => this.gitReads.checkoutSummary(path, roots));
+    this.checkoutWatcher = new CheckoutWatcher((folder, refsChanged) => { if (folder && refsChanged) this.workspace.refreshSummary(folder); this.changed(WORKSPACE_TOPIC); });
     this.workspace.setWatcher(this.checkoutWatcher);
     this.linear = new LinearService(this.store, directory);
     this.codex = new CodexHarness(this.store, { directory: join(directory, 'tools') });
@@ -333,7 +333,7 @@ export class Runtime {
             build_id = typeof metadata.build_id === 'string' ? metadata.build_id : null;
           }
         } catch { /* Development hosts have no packaged metadata. */ }
-        return { schema: 1, release, build_id, protocol_min: PROTOCOL_VERSIONS[0], protocol_max: PROTOCOL_VERSIONS[PROTOCOL_VERSIONS.length - 1], capabilities: ['drain_v1', 'checkout_identity_v1'], storage_schema: 1 };
+        return { schema: 1, release, build_id, protocol_min: PROTOCOL_VERSIONS[0], protocol_max: PROTOCOL_VERSIONS[PROTOCOL_VERSIONS.length - 1], capabilities: ['drain_v1', 'checkout_identity_v1', 'project_fingerprint_v1'], storage_schema: 1 };
       }
       if (op === 'drain_for_update') {
         this.draining = true;

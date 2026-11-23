@@ -73,3 +73,22 @@ test('a busy folder is announced at most once a second, and its last change alwa
   assert.ok(notifications <= Math.ceil(elapsed / 1000) + 1, `too many announcements: ${notifications} in ${elapsed} ms`);
   assert.equal(watcher.status()[root], notifications);
 });
+
+test('working files and Git ref changes are classified separately', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'plait-watch-refs-'));
+  await mkdir(join(root, '.git'));
+  const events: boolean[] = [];
+  const watcher = new CheckoutWatcher((_folder, refs) => { events.push(refs === true); });
+  t.after(async () => { watcher.close(); await rm(root, { recursive: true, force: true }); });
+  watcher.sync([root]);
+  await delay(600);
+  await writeFile(join(root, 'file'), 'x');
+  await delay(600);
+  assert.deepEqual(events, [false]);
+  await writeFile(join(root, '.git', 'packed-refs'), 'x');
+  await delay(1200);
+  assert.deepEqual(events, [false, true]);
+  await writeFile(join(root, '.git', 'config'), 'x');
+  await delay(1200);
+  assert.deepEqual(events, [false, true, true]);
+});

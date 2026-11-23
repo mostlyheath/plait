@@ -225,6 +225,7 @@ fn machines_snapshots() {
                     .map(|path| plait_client::host::workspace::Project {
                         path: path.into(),
                         hidden: false,
+                        ..Default::default()
                     })
                     .collect(),
                 worktrees: Vec::new(),
@@ -429,6 +430,7 @@ fn a_remote_window_shows_only_its_hosts_workspace() {
             projects: vec![Project {
                 path: "/srv/api".into(),
                 hidden: false,
+                ..Default::default()
             }],
             worktrees: Vec::new(),
             seen: Vec::new(),
@@ -476,6 +478,7 @@ fn a_watched_change_rereads_the_open_checkout() {
             projects: vec![Project {
                 path: open.clone(),
                 hidden: false,
+                ..Default::default()
             }],
             worktrees: Vec::new(),
             seen: Vec::new(),

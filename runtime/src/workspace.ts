@@ -4,6 +4,8 @@
 import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
 import { isAbsolute } from 'node:path';
+import { stat } from 'node:fs/promises';
+import type { CheckoutSummary } from './git-read.ts';
 import { fail } from './protocol.ts';
 import { once } from './operations.ts';
 import { projectKind } from './safety.ts';
@@ -81,18 +83,41 @@ export class Workspace {
   private store: Store;
   private changed: () => void;
   private watcher?: CheckoutWatcher;
+  private summaries = new Map<string, CheckoutSummary>();
+  private pending = new Map<string, boolean>();
+  private running = new Set<string>();
+  private readSummary?: (path: string, roots: boolean) => Promise<CheckoutSummary>;
+  private active = 0;
   setWatcher(watcher: CheckoutWatcher) { this.watcher = watcher; this.syncWatcher(); }
   private syncWatcher() {
-    const view = this.view();
-    this.watcher?.sync([...view.projects.filter(project => !project.hidden).map(project => project.path), ...view.worktrees.map(tree => tree.folder)]);
+    if (!this.watcher) return;
+    const projects = this.store.db.prepare('SELECT path FROM workspace_projects WHERE hidden=0 ORDER BY added_at,path').all();
+    const worktrees = this.store.db.prepare('SELECT folder FROM workspace_worktrees ORDER BY folder').all();
+    this.watcher.sync([...projects.map(row => String(row.path)), ...worktrees.map(row => String(row.folder))]);
   }
-  constructor(store: Store, changed: () => void) {
-    this.store = store; this.changed = changed;
+  constructor(store: Store, changed: () => void, readSummary?: (path: string, roots: boolean) => Promise<CheckoutSummary>) {
+    this.store = store; this.changed = changed; this.readSummary = readSummary;
     store.db.exec(`
       CREATE TABLE IF NOT EXISTS workspace_projects(path TEXT PRIMARY KEY, hidden INTEGER NOT NULL DEFAULT 0, added_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS workspace_worktrees(folder TEXT PRIMARY KEY, main TEXT NOT NULL, branch TEXT NOT NULL, creation_id TEXT, identity TEXT);
       CREATE TABLE IF NOT EXISTS workspace_seen(thread_id TEXT PRIMARY KEY, updated_at INTEGER NOT NULL, state TEXT NOT NULL, unread INTEGER NOT NULL);`);
     if (!store.db.prepare('PRAGMA table_info(workspace_projects)').all().some(row => row.name === 'vcs')) store.db.exec("ALTER TABLE workspace_projects ADD COLUMN vcs TEXT NOT NULL DEFAULT 'git'");
+    if (!store.db.prepare('PRAGMA table_info(workspace_projects)').all().some(row => row.name === 'fingerprint')) store.db.exec('ALTER TABLE workspace_projects ADD COLUMN fingerprint TEXT');
+    for (const row of store.db.prepare('SELECT path,vcs,fingerprint,hidden FROM workspace_projects').all()) {
+      let fingerprint: CheckoutSummary['fingerprint'];
+      try {
+        const value: unknown = row.fingerprint == null ? undefined : JSON.parse(String(row.fingerprint));
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
+          const candidate = value as Record<string, unknown>;
+          if (Array.isArray(candidate.roots) && candidate.roots.every(root => typeof root === 'string')
+              && (candidate.remote === null || typeof candidate.remote === 'string')) {
+            fingerprint = { roots: candidate.roots, remote: candidate.remote };
+          }
+        }
+      } catch { /* Ignore a damaged cache. */ }
+      this.summaries.set(String(row.path), { vcs: String(row.vcs), fingerprint });
+      if (!Number(row.hidden) || !fingerprint) this.refreshSummary(String(row.path), !fingerprint?.roots?.length, true);
+    }
   }
   handles(input: unknown) { return !!input && typeof input === 'object' && Object.hasOwn(operations, String((input as { op?: unknown }).op)); }
 
@@ -106,7 +131,10 @@ export class Workspace {
   view() {
     const db = this.store.db;
     const projects = db.prepare('SELECT path,hidden,vcs FROM workspace_projects ORDER BY added_at,path').all()
-      .map(row => ({ path: String(row.path), hidden: Number(row.hidden) === 1, vcs: String(row.vcs) }));
+      .map(row => {
+        const summary = this.summaries.get(String(row.path));
+        return { path: String(row.path), hidden: Number(row.hidden) === 1, vcs: summary?.vcs ?? String(row.vcs), ...(summary?.fingerprint ? { fingerprint: summary.fingerprint } : {}), ...(summary?.branch ? { branch: summary.branch } : {}), ...(summary?.main_checkout ? { main_checkout: Buffer.from(summary.main_checkout, 'base64').toString() } : {}) };
+      });
     const worktrees = db.prepare('SELECT * FROM workspace_worktrees ORDER BY folder').all().map(row => ({
       folder: String(row.folder), main: String(row.main), branch: String(row.branch),
       creation_id: row.creation_id == null ? null : String(row.creation_id),
@@ -131,13 +159,18 @@ export class Workspace {
       case 'workspace_open_project': {
         // Resolve and validate the project before saving it.
         const { root, vcs } = await projectKind(path(request.path));
-        this.write(() => this.store.db.prepare('INSERT INTO workspace_projects(path,hidden,added_at,vcs) VALUES (?,0,?,?) ON CONFLICT(path) DO UPDATE SET hidden=0,vcs=excluded.vcs').run(root, Date.now(), vcs));
+        this.write(() => {
+          this.store.db.prepare('INSERT INTO workspace_projects(path,hidden,added_at,vcs) VALUES (?,0,?,?) ON CONFLICT(path) DO UPDATE SET hidden=0,vcs=excluded.vcs').run(root, Date.now(), vcs);
+          this.summaries.set(root, { ...this.summaries.get(root), vcs });
+        });
+        this.refreshSummary(root, true);
         return { path: root, revision: this.revision() };
       }
       case 'workspace_hide_project': {
         if (typeof request.hidden !== 'boolean') fail('invalid_request', 'Invalid hidden.');
         const target = path(request.path);
         this.write(() => this.store.db.prepare('INSERT INTO workspace_projects(path,hidden,added_at) VALUES (?,?,?) ON CONFLICT(path) DO UPDATE SET hidden=excluded.hidden').run(target, request.hidden ? 1 : 0, Date.now()));
+        if (!request.hidden) this.refreshSummary(target, true);
         return { revision: this.revision() };
       }
       case 'workspace_set_worktree': {
@@ -185,6 +218,7 @@ export class Workspace {
       this.pruneSeen();
       this.store.setSetting(key, String(now));
     });
+    for (const project of projects) this.refreshSummary(project, true);
     return { imported: true, revision: this.revision() };
   }
 
@@ -207,16 +241,61 @@ export class Workspace {
   removedWorktree(folder: string) {
     this.write(() => this.store.db.prepare('DELETE FROM workspace_worktrees WHERE folder=?').run(folder));
   }
+  /** Coalesce repeated changes while keeping at most two helper reads in flight. */
+  refreshSummary(folder: string, roots = !this.summaries.get(folder)?.fingerprint?.roots?.length, includeHidden = false) {
+    if (!this.readSummary || !this.store.db.prepare(`SELECT 1 FROM workspace_projects WHERE path=? ${includeHidden ? '' : 'AND hidden=0'}`).get(folder)) return;
+    this.pending.set(folder, roots || this.pending.get(folder) === true);
+    this.drainSummaries();
+  }
+  private drainSummaries() {
+    while (this.active < 2) {
+      const folder = [...this.pending.keys()].find(path => !this.running.has(path));
+      if (!folder) return;
+      const roots = this.pending.get(folder)!;
+      this.pending.delete(folder); this.running.add(folder); this.active++;
+      void this.updateSummary(folder, roots).catch(() => {}).finally(() => {
+        this.running.delete(folder); this.active--; this.drainSummaries();
+      });
+    }
+  }
+  private async updateSummary(folder: string, roots: boolean) {
+    let summary: CheckoutSummary;
+    try { summary = await this.readSummary!(folder, roots); } catch {
+      if (roots && this.pending.has(folder)) this.pending.set(folder, true);
+      try { await stat(folder); return; } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return;
+      }
+      const previous = this.summaries.get(folder);
+      if (!previous?.branch) return;
+      summary = { ...previous, branch: null };
+    }
+    // A newer watcher notification supersedes this result.
+    if (this.pending.has(folder)) {
+      if (roots) this.pending.set(folder, true);
+      return;
+    }
+    const row = this.store.db.prepare('SELECT vcs,fingerprint FROM workspace_projects WHERE path=?').get(folder);
+    if (!row) return;
+    const previous = this.summaries.get(folder) ?? { vcs: String(row.vcs) };
+    if (summary.vcs !== 'git') summary = { ...summary, fingerprint: null };
+    else if (!roots) summary = { ...summary, fingerprint: previous.fingerprint };
+    const normalized = (value: CheckoutSummary) => JSON.stringify({ vcs: value.vcs, fingerprint: value.fingerprint ?? null, branch: value.branch ?? null, main_checkout: value.main_checkout ?? null });
+    if (normalized(previous) === normalized(summary)) return;
+    this.write(() => {
+      this.store.db.prepare('UPDATE workspace_projects SET vcs=?,fingerprint=? WHERE path=?').run(summary.vcs, summary.fingerprint == null ? null : JSON.stringify(summary.fingerprint), folder);
+      this.summaries.set(folder, summary);
+    }, false);
+  }
   private revision() { return Number(this.store.setting('workspace_revision') ?? 0); }
   /** Each change commits with a new revision, then tells subscribers. */
-  private write(change: () => void) {
+  private write(change: () => void, syncWatcher = true) {
     this.store.db.exec('BEGIN IMMEDIATE');
     try {
       change();
       this.store.setSetting('workspace_revision', String(this.revision() + 1));
       this.store.db.exec('COMMIT');
     } catch (error) { this.store.db.exec('ROLLBACK'); throw error; }
-    this.syncWatcher();
+    if (syncWatcher) this.syncWatcher();
     this.changed();
   }
 }

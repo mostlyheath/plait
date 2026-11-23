@@ -26,12 +26,18 @@ test('a workspace subscriber gets a snapshot, then each change in order', { time
   await until(async () => frames.length, n => n >= 2);
   assert.deepEqual([frames[1].event, frames[1].seq, frames[1].workspace.revision], ['workspace', 1, 1]);
   assert.deepEqual(frames[1].workspace.projects, [{ path: f.repo, hidden: false, vcs: 'git' }]);
+  // The host then reads the project's summary and publishes it once.
+  await until(async () => frames.length, n => n >= 3);
+  const summarized = frames[2].workspace.projects[0];
+  assert.equal(frames[2].seq, 2);
+  assert.equal(summarized.fingerprint.roots.length, 1);
+  assert.equal(summarized.branch.named, true);
 
   await request(f.store, { op: 'workspace_hide_project', path: f.repo, hidden: true });
-  await until(async () => frames.length, n => n >= 3);
-  assert.deepEqual([frames[2].seq, frames[2].workspace.projects[0].hidden], [2, true]);
+  await until(async () => frames.length, n => n >= 4);
+  assert.deepEqual([frames[3].seq, frames[3].workspace.projects[0].hidden], [3, true]);
   // A thread change is not a workspace change.
   await f.create();
   await new Promise(resolve => setTimeout(resolve, 300));
-  assert.equal(frames.length, 3);
+  assert.equal(frames.length, 4);
 });

@@ -14,6 +14,9 @@ use std::path::PathBuf;
 #[serde(tag = "read", rename_all = "snake_case")]
 pub enum Read {
     Status,
+    CheckoutSummary {
+        roots: bool,
+    },
     MainCheckout,
     Identity,
     Diff {
@@ -57,6 +60,41 @@ pub enum Read {
         others: Vec<WireIdentity>,
         build_directories: Vec<String>,
     },
+}
+
+/// Lightweight identity and branch information for a checkout.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckoutSummary {
+    pub vcs: Vcs,
+    #[serde(default)]
+    pub fingerprint: Option<Fingerprint>,
+    #[serde(default)]
+    pub branch: Option<BranchSummary>,
+    #[serde(default, with = "crate::wire::opt_path")]
+    pub main_checkout: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Vcs {
+    Git,
+    Folder,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Fingerprint {
+    pub roots: Vec<String>,
+    /// Display hint and weak grouping signal; copies match by roots because remotes change when accounts or repositories are renamed.
+    #[serde(default)]
+    pub remote: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BranchSummary {
+    pub branch: String,
+    pub named: bool,
+    #[serde(default)]
+    pub tracking: Option<crate::model::Tracking>,
 }
 
 /// `Change` without the fields a diff does not use, comparable in tests.
@@ -183,4 +221,42 @@ pub struct WriteInput {
     pub checkout: PathBuf,
     pub identity: WireIdentity,
     pub write: WriteOp,
+}
+
+#[cfg(test)]
+mod summary_tests {
+    use super::*;
+    #[test]
+    fn summary_round_trip_and_unknown_fields() {
+        let summary = CheckoutSummary {
+            vcs: Vcs::Git,
+            fingerprint: Some(Fingerprint {
+                roots: vec!["abc".into()],
+                remote: None,
+            }),
+            branch: Some(BranchSummary {
+                branch: "main".into(),
+                named: true,
+                tracking: None,
+            }),
+            main_checkout: Some(PathBuf::from("/tmp/main")),
+        };
+        let mut value = serde_json::to_value(&summary).unwrap();
+        value["future"] = serde_json::json!(true);
+        value["fingerprint"]["future"] = serde_json::json!(1);
+        assert_eq!(
+            serde_json::from_value::<CheckoutSummary>(value).unwrap(),
+            summary
+        );
+        assert_eq!(
+            serde_json::from_str::<Read>(
+                &serde_json::to_string(&Read::CheckoutSummary { roots: true }).unwrap()
+            )
+            .unwrap(),
+            Read::CheckoutSummary { roots: true }
+        );
+        let minimal = serde_json::json!({"vcs":"folder"});
+        let decoded: CheckoutSummary = serde_json::from_value(minimal).unwrap();
+        assert_eq!(decoded.fingerprint, None);
+    }
 }
