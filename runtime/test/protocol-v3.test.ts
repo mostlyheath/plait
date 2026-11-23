@@ -31,7 +31,7 @@ test('version 3 operations and fields validate only with version 3', () => {
     { op: 'submit', ...t, request_id: 'r', text: 'hi', when_busy: 'steer', approval: 'auto' },
   ]) assert.doesNotThrow(() => validate(input), JSON.stringify(input));
   for (const input of [
-    { op: 'status', protocol_version: 7 },
+    { op: 'status', protocol_version: 8 },
     { op: 'history', thread_id: 't' }, { op: 'history', thread_id: 't', protocol_version: 2 },
     { op: 'list_threads' }, { op: 'list_threads', protocol_version: 2, limit: 5 },
     { op: 'list_threads', protocol_version: 3, limit: 0 }, { op: 'list_threads', protocol_version: 3, limit: 201 },

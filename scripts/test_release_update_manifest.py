@@ -55,7 +55,7 @@ class UpdateManifestTest(unittest.TestCase):
             host = build_host(root, "v0.1.0-preview.3")
             common = {"schema_version": 2, "version": "0.1.0-preview.3",
                       "tag": "v0.1.0-preview.3", "revision": "1eb61f1259dd",
-                      "protocol": {"min": 1, "max": 6}}
+                      "protocol": {"min": 1, "max": 7}}
             legacy = build(root, "v0.1.0-preview.3")
             self.assertEqual(client, {**common, "component": "client", "artifacts": {
                 "macos-arm64": legacy["artifacts"]["client-macos-arm64"]}})

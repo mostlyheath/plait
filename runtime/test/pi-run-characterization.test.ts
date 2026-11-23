@@ -74,7 +74,7 @@ async function fixture(t: Parameters<typeof setup>[0], responses: Responses) {
   const statuses: string[] = []; const notices: string[] = [];
   runtime.subscribe(key => { notices.push(key); if (key === id) statuses.push(runtime.snapshot(id).status); });
   const submit = (request_id: string, text: string, extra = {}) => call({ op: 'submit', thread_id: id, request_id, text, approval: 'auto', ...extra });
-  const records = async () => (await call({ op: 'turn_records', thread_id: id })).records as any[];
+  const records = async () => (await call({ op: 'turn_records', protocol_version: 7, thread_id: id })).records as any[];
   const until = async (predicate: () => boolean) => {
     const end = Date.now() + 20000;
     while (!predicate()) { assert.ok(Date.now() < end, JSON.stringify(runtime.snapshot(id))); await new Promise(resolve => setTimeout(resolve, 10)); }
@@ -91,6 +91,7 @@ test('plain streamed turn records its transcript and lifecycle', async t => {
   assert.equal(end.status, 'idle'); assert.equal(end.error, null);
   assert.deepEqual(end.messages.map(m => [m.role, m.text]), [['user', 'Hello'], ['assistant', 'Hello from Pi.']]);
   const records = await h.records(); assert.equal(records.length, 1); assert.equal(records[0].state, 'ready');
+  assert.equal(records[0].outcome, 'finished');
   assert.deepEqual(records[0].request_ids, ['one']); assert.deepEqual(records[0].paths, []);
   assert.ok(h.statuses.includes('running')); assert.equal(h.statuses.at(-1), 'idle'); assert.ok(h.notices.includes('#'));
 });
@@ -144,6 +145,7 @@ test('provider failure reports a fixed error and captures an unchanged after rec
   assert.equal(end.status, 'error'); assert.deepEqual(end.error, { code: 'runtime_error', message: 'Agent ended without an answer (model_error). Inspect the transcript before retrying.' });
   assert.ok(!JSON.stringify(end).includes('SECRET_PROVIDER_DETAIL'));
   const records = await h.records(); assert.equal(records.length, 1); assert.equal(records[0].state, 'ready'); assert.deepEqual(records[0].paths, []);
+  assert.equal(records[0].outcome, 'failed');
   assert.ok(h.statuses.includes('running')); assert.equal(h.statuses.at(-1), 'error'); assert.ok(h.notices.includes('#'));
 });
 
@@ -154,6 +156,7 @@ test('stop during approval settles the run and releases the checkout', async t =
   assert.equal(end.status, 'stopped'); assert.equal(end.pending_approval, null);
   await assert.rejects(readFile(join(h.root, 'stopped.txt')), { code: 'ENOENT' });
   const records = await h.records(); assert.equal(records.length, 1); assert.equal(records[0].state, 'ready'); assert.deepEqual(records[0].paths, []);
+  assert.equal(records[0].outcome, 'stopped');
   const lease = await acquireCheckout(h.root); await lease.close();
   assert.ok(h.statuses.includes('awaiting_approval')); assert.equal(h.statuses.at(-1), 'stopped'); assert.ok(h.notices.includes('#'));
 });

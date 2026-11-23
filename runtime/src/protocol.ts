@@ -72,12 +72,12 @@ export type Summary = {
   /** Version 4 only. */
   harness?: HarnessId;
 };
-export const PROTOCOL_VERSIONS = [1, 2, 3, 4, 5, 6] as const;
+export const PROTOCOL_VERSIONS = [1, 2, 3, 4, 5, 6, 7] as const;
 export type Protocol = typeof PROTOCOL_VERSIONS[number];
 export type Request = Record<string, string | boolean | number | string[]> & { op: string };
 export function version(request: Request): Protocol {
   const asked = request.protocol_version;
-  return asked === 6 ? 6 : asked === 5 ? 5 : asked === 4 ? 4 : asked === 3 ? 3 : asked === 2 ? 2 : 1;
+  return PROTOCOL_VERSIONS.find(value => value === asked) ?? 1;
 }
 const TURN_LIMIT = 'Agent ended without an answer (turn_limit). Inspect the transcript before retrying.';
 /**

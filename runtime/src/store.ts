@@ -28,6 +28,7 @@ const columns = [
   ['threads', 'harness', 'TEXT'],
   ['threads', 'records_revision', 'INTEGER NOT NULL DEFAULT 0'],
   ['records', 'undoes', 'TEXT'],
+  ['runs', 'outcome', 'TEXT'],
 ];
 const summary = (row: Row): Summary => ({
   id: String(row.id), checkout: String(row.checkout), model: JSON.parse(String(row.model)), status: String(row.status),
@@ -106,8 +107,29 @@ export class Store {
     }
   }
   recoverable(): Snapshot[] {
-    return this.db.prepare("SELECT snapshot FROM threads WHERE json_extract(snapshot,'$.status') IN ('running','awaiting_approval')").all()
+    return this.db.prepare(`SELECT snapshot FROM threads t WHERE status IN ('running','awaiting_approval')
+      OR EXISTS (SELECT 1 FROM runs WHERE thread_id=t.id AND finished_at IS NULL)`).all()
       .map(row => JSON.parse(String(row.snapshot)) as Snapshot);
+  }
+  /** Match the unfinished row to the latest accepted input, excluding queued and cancelled requests. */
+  closeRecoveredRuns(snapshot: Snapshot) {
+    const user = snapshot.messages.findLast(message => message.role === 'user');
+    // The transcript can be clipped. Use the durable input position and use the
+    // visible request to break ties between admissions at the same position.
+    const inputs = this.db.prepare(`SELECT id,COALESCE(entry,anchor,0) AS position,entry IS NULL AS pending
+      FROM requests WHERE scope=? AND state IS NULL AND input IS NOT NULL
+      ORDER BY position DESC,pending DESC,('request-' || id=?) DESC LIMIT 2`).all(snapshot.id, user?.id ?? '');
+    const [latest, prior] = inputs;
+    const tied = prior && latest.position === prior.position && latest.pending === prior.pending;
+    const matches = latest && (user ? user.id === `request-${latest.id}` : !tied);
+    const current = matches && this.db.prepare(`SELECT run_id FROM runs WHERE thread_id=?
+      AND request_id=? AND finished_at IS NULL`).get(snapshot.id, latest.id);
+    if (current) this.saveRunEvent(String(current.run_id), 0, snapshot, { state: 'dead', finished: true });
+    else this.save(snapshot);
+    // A rollback may have left other admissions open. Their snapshots are gone.
+    const closed = this.db.prepare("UPDATE runs SET state='dead',finished_at=? WHERE thread_id=? AND finished_at IS NULL")
+      .run(Date.now(), snapshot.id);
+    if (closed.changes) this.db.prepare('UPDATE threads SET records_revision=records_revision+1 WHERE id=?').run(snapshot.id);
   }
   createRun(runId: string, threadId: string, requestId: string, harness: string): void {
     this.db.prepare('INSERT OR IGNORE INTO runs (run_id,thread_id,request_id,harness,state,last_seq,created_at) VALUES (?,?,?,?,?,0,?)')
@@ -122,23 +144,29 @@ export class Store {
       finished_at: row.finished_at === null ? null : Number(row.finished_at),
     };
   }
+  private rememberOutcome(runId: string, status: Snapshot['status']) {
+    const outcome = { idle: 'finished', error: 'failed', stopped: 'stopped', interrupted: 'interrupted',
+      running: null, awaiting_approval: null }[status];
+    if (!outcome) throw new Error('A terminal run needs a terminal snapshot.');
+    this.db.prepare('UPDATE runs SET outcome=? WHERE run_id=? AND finished_at IS NULL AND outcome IS NULL').run(outcome, runId);
+  }
   /** Persist snapshot, optional side effects, and run sequence in one transaction. */
   saveRunEvent(runId: string, seq: number, snapshot: Snapshot, options: { head?: number; state?: string; finished?: boolean; extra?: () => void } = {}): boolean {
     return this.transaction(() => {
       options.extra?.();
       const changed = this.save(snapshot, options.head ?? 0);
-      this.db.prepare('UPDATE runs SET last_seq=MAX(last_seq,?), state=COALESCE(?,state), finished_at=CASE WHEN ? THEN COALESCE(finished_at,?) ELSE finished_at END WHERE run_id=?')
-        .run(seq, options.state ?? null, options.finished ? 1 : 0, Date.now(), runId);
+      if (snapshot.status === 'stopped' || snapshot.status === 'interrupted' || options.finished) this.rememberOutcome(runId, snapshot.status);
+      if (options.finished) {
+        const ended = this.db.prepare('UPDATE runs SET finished_at=? WHERE run_id=? AND finished_at IS NULL').run(Date.now(), runId);
+        if (ended.changes) this.db.prepare('UPDATE threads SET records_revision=records_revision+1 WHERE id=?').run(snapshot.id);
+      }
+      this.db.prepare('UPDATE runs SET last_seq=MAX(last_seq,?), state=COALESCE(?,state) WHERE run_id=?')
+        .run(seq, options.state ?? null, runId);
       return changed;
     });
   }
-  advanceRunSeq(runId: string, seq: number, state?: string, finished = false): void {
-    this.db.prepare('UPDATE runs SET last_seq=MAX(last_seq,?), state=COALESCE(?,state), finished_at=CASE WHEN ? THEN COALESCE(finished_at,?) ELSE finished_at END WHERE run_id=?')
-      .run(seq, state ?? null, finished ? 1 : 0, Date.now(), runId);
-  }
-  markRunState(runId: string, state: string, finished = false): void {
-    this.db.prepare('UPDATE runs SET state=?, finished_at=CASE WHEN ? THEN COALESCE(finished_at,?) ELSE finished_at END WHERE run_id=?')
-      .run(state, finished ? 1 : 0, Date.now(), runId);
+  advanceRunSeq(runId: string, seq: number): void {
+    this.db.prepare('UPDATE runs SET last_seq=MAX(last_seq,?) WHERE run_id=?').run(seq, runId);
   }
   list(checkout: string) {
     return this.db.prepare('SELECT id,checkout,model,status FROM threads WHERE checkout=? ORDER BY rowid DESC LIMIT 100').all(checkout)

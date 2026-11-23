@@ -16,7 +16,7 @@ test('version 2 fields are opt-in and approval needs version 2', () => {
   validate({ op: 'submit', thread_id: 't', request_id: 'r', text: 'hi', protocol_version: 2, approval: 'auto' });
   validate({ op: 'watch', thread_id: 't', protocol_version: 1 });
   for (const input of [
-    { op: 'status', protocol_version: 7 },
+    { op: 'status', protocol_version: 8 },
     { op: 'status', protocol_version: '2' },
     { op: 'submit', thread_id: 't', request_id: 'r', text: 'hi', approval: 'auto' },
     { op: 'submit', thread_id: 't', request_id: 'r', text: 'hi', protocol_version: 2, approval: 'always' },

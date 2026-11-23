@@ -25,7 +25,7 @@ function change(path: Row) {
   };
 }
 
-export function recordsPage(store: Store, thread: string, cursor?: string, limit = 20) {
+export function recordsPage(store: Store, thread: string, cursor?: string, limit = 20, protocol = 5) {
   let [rowid, pathOffset, coverageOffset, requestOffset] = cursor?.split(':').map(Number) ?? [Number.MAX_SAFE_INTEGER, 0, 0, 0];
   const records: Record<string, unknown>[] = [];
   let bytes = 0;
@@ -33,8 +33,10 @@ export function recordsPage(store: Store, thread: string, cursor?: string, limit
   for (let count = 0; count < limit; count++) {
     const row = store.db.prepare(`SELECT b.rowid AS position,b.id AS first_id,b.head AS before_head,b.head_ref AS before_ref,
       COALESCE(a.id,b.id) AS id,b.thread,b.run_request,COALESCE(a.kind,'after') AS kind,COALESCE(a.state,b.state) AS state,
-      COALESCE(a.created_at,b.created_at) AS created_at,a.head,a.head_ref,a.undoes,a.after_restart,COALESCE(a.not_covered,b.not_covered) AS not_covered
-      FROM records b LEFT JOIN records a ON a.before=b.id WHERE b.thread=? AND b.kind='before' AND b.rowid<=?
+      COALESCE(a.created_at,b.created_at) AS created_at,a.head,a.head_ref,a.undoes,a.after_restart,COALESCE(a.not_covered,b.not_covered) AS not_covered,r.outcome
+      FROM records b LEFT JOIN records a ON a.before=b.id
+      LEFT JOIN runs r ON r.thread_id=b.thread AND r.request_id=b.run_request AND r.finished_at IS NOT NULL
+      WHERE b.thread=? AND b.kind='before' AND b.rowid<=?
       ORDER BY b.rowid DESC LIMIT 1`).get(thread, rowid);
     if (!row) break;
     const paths = store.db.prepare('SELECT * FROM record_paths WHERE record=? ORDER BY path').all(String(row.id));
@@ -46,6 +48,7 @@ export function recordsPage(store: Store, thread: string, cursor?: string, limit
       kind: row.kind === 'undo' ? 'undo' : 'turn', undoes: row.undoes ?? null,
       state: row.id === row.first_id && row.state === 'ready' ? 'recording' : String(row.state),
       head_moved: ['ready', 'undone'].includes(String(row.state)) && row.id !== row.first_id && (row.before_head !== row.head || row.before_ref !== row.head_ref),
+      ...(protocol >= 7 && row.kind !== 'undo' && row.outcome != null ? { outcome: row.outcome } : {}),
       after_restart: row.after_restart === 1,
       paths: [] as ReturnType<typeof change>[], paths_offset: pathOffset, paths_total: paths.length,
       not_covered: [] as unknown[], not_covered_offset: coverageOffset, not_covered_total: coverage.length,

@@ -740,7 +740,7 @@ mod tests {
     }
 
     #[test]
-    fn negotiated_protocol_accepts_versions_one_through_six_only() {
+    fn negotiated_protocol_accepts_versions_one_through_seven_only() {
         let mut state = HostState::new("/repo".into());
         assert_eq!(state.protocol(), 1);
         for (version, accepted) in [
@@ -750,7 +750,8 @@ mod tests {
             (4, true),
             (5, true),
             (6, true),
-            (7, false),
+            (7, true),
+            (8, false),
             (0, false),
         ] {
             state.reconnect();

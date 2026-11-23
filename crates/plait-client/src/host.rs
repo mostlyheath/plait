@@ -604,7 +604,7 @@ mod tests {
 
     #[test]
     fn version_five_record_requests_and_replies() {
-        let request = Request::turn_records("t".into(), Some("4:500:0:0".into()), Some(2));
+        let request = Request::turn_records("t".into(), Some("4:500:0:0".into()), Some(2), 5);
         assert_eq!(
             serde_json::to_value(request).unwrap(),
             serde_json::json!({"op":"turn_records","protocol_version":5,"thread_id":"t","before":"4:500:0:0","limit":2})
@@ -683,7 +683,7 @@ mod tests {
     const UNKNOWN_FIELD: &str = r#"{"ok":false,"error":{"code":"invalid_request","message":"Unknown operation or field."}}"#;
 
     #[test]
-    fn negotiation_steps_down_from_six_to_one() {
+    fn negotiation_steps_down_from_seven_to_one() {
         let newest = Request::Status {
             protocol_version: Some(PROTOCOL_VERSION),
         };
@@ -697,6 +697,7 @@ mod tests {
             "negotiate-5",
             vec![
                 UNKNOWN_VERSION,
+                UNKNOWN_VERSION,
                 r#"{"ok":true,"result":{"protocol_version":5,"default_model":null,"models":[]}}"#,
             ],
         );
@@ -704,14 +705,19 @@ mod tests {
         assert_eq!(status.protocol_version, 5);
         assert_eq!(
             asked(server.join().unwrap()),
-            [serde_json::json!(6), serde_json::json!(5)]
+            [
+                serde_json::json!(7),
+                serde_json::json!(6),
+                serde_json::json!(5)
+            ]
         );
         std::fs::remove_dir_all(directory).unwrap();
 
-        // A version 4 host answers after rejecting versions 6 and 5.
+        // A version 4 host answers after rejecting versions 7 through 5.
         let (client, server, directory) = scripted(
             "negotiate-4",
             vec![
+                UNKNOWN_VERSION,
                 UNKNOWN_VERSION,
                 UNKNOWN_VERSION,
                 r#"{"ok":true,"result":{"protocol_version":4,"default_model":null,"models":[]}}"#,
@@ -722,6 +728,7 @@ mod tests {
         assert_eq!(
             asked(server.join().unwrap()),
             [
+                serde_json::json!(7),
                 serde_json::json!(6),
                 serde_json::json!(5),
                 serde_json::json!(4)
@@ -733,6 +740,7 @@ mod tests {
         let (client, server, directory) = scripted(
             "negotiate-3",
             vec![
+                UNKNOWN_VERSION,
                 UNKNOWN_VERSION,
                 UNKNOWN_VERSION,
                 UNKNOWN_VERSION,
@@ -749,6 +757,7 @@ mod tests {
         assert_eq!(
             asked(server.join().unwrap()),
             [
+                serde_json::json!(7),
                 serde_json::json!(6),
                 serde_json::json!(5),
                 serde_json::json!(4),
@@ -765,6 +774,7 @@ mod tests {
                 UNKNOWN_VERSION,
                 UNKNOWN_VERSION,
                 UNKNOWN_VERSION,
+                UNKNOWN_VERSION,
                 r#"{"ok":true,"result":{"protocol_version":2,"default_model":null,"models":[]}}"#,
             ],
         );
@@ -773,6 +783,7 @@ mod tests {
         assert_eq!(
             asked(server.join().unwrap()),
             [
+                serde_json::json!(7),
                 serde_json::json!(6),
                 serde_json::json!(5),
                 serde_json::json!(4),
@@ -788,6 +799,7 @@ mod tests {
             vec![
                 UNKNOWN_VERSION,
                 UNKNOWN_VERSION,
+                UNKNOWN_VERSION,
                 UNKNOWN_FIELD,
                 UNKNOWN_FIELD,
                 UNKNOWN_FIELD,
@@ -800,6 +812,7 @@ mod tests {
         assert_eq!(
             asked(server.join().unwrap()),
             [
+                serde_json::json!(7),
                 serde_json::json!(6),
                 serde_json::json!(5),
                 serde_json::json!(4),

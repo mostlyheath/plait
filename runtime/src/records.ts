@@ -259,7 +259,7 @@ export class Records {
     });
     this.bump(thread);
   }
-  page(thread: string, before?: string, limit?: number) { return recordsPage(this.store, thread, before, limit); }
+  page(thread: string, before?: string, limit?: number, protocol = 5) { return recordsPage(this.store, thread, before, limit, protocol); }
   changedPaths(thread: string) {
     return this.store.db.prepare(`SELECT path FROM postimages WHERE thread_id=? UNION SELECT p.path FROM record_paths p JOIN records r ON r.id=p.record
       WHERE r.thread=? ORDER BY path LIMIT 500`).all(thread, thread).map(row => String(row.path));

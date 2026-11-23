@@ -3,8 +3,8 @@
 This is the version 1 contract plus the opt-in additions described in
 [Protocol version 2](#protocol-version-2) and
 [Protocol version 3](#protocol-version-3), [Protocol version 4](#protocol-version-4),
-[Protocol version 5](#protocol-version-5), and
-[Protocol version 6](#protocol-version-6). Changes require compatibility review.
+[Protocol version 5](#protocol-version-5),
+[Protocol version 6](#protocol-version-6), and [Protocol version 7](#protocol-version-7). Changes require compatibility review.
 All values below are JSON. The desktop has no dependency on the host crate and
 does not own its process.
 
@@ -66,7 +66,7 @@ commands and effects are not replayed.
 ## Transport
 
 Owner-only Unix stream socket, UTF-8 newline-delimited JSON, protocol version 1
-by default; versions 2–6 are opt-in per request.
+by default; versions 2–7 are opt-in per request.
 Clients and the daemon verify connected-peer user identity with `getpeereid` on
 macOS or `SO_PEERCRED` on Linux. Clients also check socket and parent ownership
 and private modes before connecting. Linux supports trusted commands and trusted MCP servers, but not sandboxed execution.
@@ -181,7 +181,7 @@ arguments are never clipped. `truncated` flags clipping.
 ## Protocol version 2
 
 Version 2 is negotiated per request, so desktops and hosts can update separately.
-Every operation accepts an optional `"protocol_version":1`, `2`, `3`, `4`, `5`, or `6`; omitting it
+Every operation accepts an optional `"protocol_version":1`, `2`, `3`, `4`, `5`, `6`, or `7`; omitting it
 means version 1, and version 1 replies are byte-for-byte unchanged.
 
 - **Negotiation.** A client sends `{"op":"status","protocol_version":2}`. A
@@ -2101,6 +2101,19 @@ Agent SDK's streaming `SDKUserMessage` input. Image-only inputs contain no empty
 text block in any of the three adapters. [Verification](VERIFICATION.md#known-gaps)
 records scripted coverage and the absence of live-model acceptance evidence.
 
+## Protocol version 7
+
+Clients request status at version 7 and step down on `invalid_request`. At
+version 7, each fragment of a `turn_records` turn record includes the same
+optional `outcome`: `finished`, `failed`, `stopped`, or `interrupted`. It
+describes how the run ended. The existing `state` describes checkout capture
+and undo. The host advances `records_revision` when the outcome becomes visible.
+
+Versions 5 and 6 omit the field. Version 7 also omits it for active runs,
+undo records, and runs whose outcome is unknown, including runs completed
+before this change. Only Git projects have checkout records, and the host
+prunes them after 30 days. A turn without a retained record has no reported outcome.
+
 ## Recorded turn review
 
 These additive, read-only operations omit `protocol_version`. Versions 1–6
@@ -2907,7 +2920,7 @@ never authorize deletion. External programs do not participate in these leases.
 ## Busy-project admission
 
 These additive operations omit `protocol_version`. They do not change existing
-request, snapshot or summary shapes, so the protocol remains version 6. Probe
+request, snapshot or summary shapes, so this operation requires no protocol bump. Probe
 `admission_info` before offering placement or linked continuation; an older host's
 `invalid_request` means unavailable, never permission to imitate the operation.
 An older desktop continues to receive the existing `busy` refusal.
@@ -3112,7 +3125,7 @@ and a partial frame has a 15-second deadline. SSH uses the bridge.
 
 These additive operations are versionless and do not change protocol versions 1–6. Requests accept only the `op` field; unknown fields return `invalid_request`.
 
-- `{"op":"host_info"}` returns `{"schema":1,"release":null,"build_id":null,"protocol_min":1,"protocol_max":6,"capabilities":["drain_v1","checkout_identity_v1","project_fingerprint_v1"],"storage_schema":1}`. Release and build ID are strings when packaged metadata is available.
+- `{"op":"host_info"}` returns `{"schema":1,"release":null,"build_id":null,"protocol_min":1,"protocol_max":7,"capabilities":["drain_v1","checkout_identity_v1","project_fingerprint_v1"],"storage_schema":1}`. Release and build ID are strings when packaged metadata is available.
 - `{"op":"drain_for_update"}` returns `{"draining":true,"active_runs":N}`. Running and approval-waiting threads count as active. New work returns `busy` while accepted work, Stop, approvals, reads and watches continue. Repeating the request is safe.
 - `{"op":"cancel_drain"}` returns `{"draining":false}` and wakes the checkout queue. Drain state is in memory and does not survive a host restart.
 - While draining, a retried request that would admit work also returns `busy`, even if an earlier attempt was already accepted; after the update the same request ID returns its saved result as usual, so a client retries after `busy` rather than treating it as a refusal of the original.

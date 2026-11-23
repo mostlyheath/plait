@@ -120,7 +120,7 @@ the in-app update replaces both.
 
 ### How a client judges a server
 
-- Status negotiation from protocol 6 down to 1 is unchanged. A new
+- The client negotiates status from protocol 7 down to 1. A new
   versionless, read-only `host_info` reply gives the host's release, build,
   protocol range, capabilities, and storage schema. An older host refuses it,
   and the client falls back to the negotiated protocol and the existing

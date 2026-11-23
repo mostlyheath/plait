@@ -55,6 +55,7 @@ test('finished event persists terminal snapshot and last_seq in one transaction;
     assert.equal(run?.last_seq, 3);
     assert.equal(run?.state, 'finished');
     assert.ok(run?.finished_at !== null);
+    assert.equal(store.db.prepare('SELECT outcome FROM runs WHERE run_id=?').get('run-1')?.outcome, 'finished');
     store.close();
 
     // Even if the runner manifest is left behind with no receipt (e.g. crash before receipt/ack), recovery never marks it interrupted.
@@ -244,6 +245,7 @@ test('gap persisted across host restart still reconciles receipt postimages and 
     // Host 2 restarts: thread MUST stay interrupted with LOST_PROGRESS_MESSAGE, and receipt postimage is recorded.
     runtime2 = new Runtime(dir, createModels(), new Set());
     await runtime2.recover();
+    assert.equal(runtime2.store.db.prepare('SELECT outcome FROM runs WHERE run_id=?').get(runId)?.outcome, 'interrupted');
     assert.equal(runtime2.snapshot('thread-gap-r').status, 'interrupted');
     assert.equal(runtime2.snapshot('thread-gap-r').error?.message, LOST_PROGRESS_MESSAGE);
     assert.deepEqual(runtime2.store.changedPaths('thread-gap-r'), ['receipt-effect.txt']);
@@ -299,6 +301,7 @@ test('accepted run whose host crashed before start is marked interrupted after o
 
       runtime = new Runtime(storeDir, createModels(), new Set());
       await runtime.recover();
+      assert.equal(runtime.store.db.prepare('SELECT outcome FROM runs WHERE run_id=?').get(runId)?.outcome, 'interrupted');
       assert.equal(runtime.snapshot('thread-orphan').status, 'interrupted');
       assert.equal(runtime.snapshot('thread-orphan').error?.code, 'interrupted');
       assert.deepEqual(await registry.scan(), []);

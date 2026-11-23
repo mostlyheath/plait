@@ -59,6 +59,8 @@ import { ClaudeRun } from './claude/run.ts';
 import { sdkDirectory } from './claude/sdk.ts';
 
 type Session = ToolState & {
+  runId: string;
+  finish(): void;
   snapshot: Snapshot;
   harness?: Harness; root?: Conversation; watch?: ConversationWatch; finished?: Promise<void>;
   inputs: InputRecord[]; requestId: string; approvals: InteractiveApproval; save(): void;
@@ -224,7 +226,7 @@ export class Runtime {
         if (runState !== 'finished' && runState !== 'gap') {
           this.interruptDeadRunner(manifest.run_id, snapshot);
         } else if (runState === 'gap') {
-          this.store.markRunState(manifest.run_id, 'gap', true);
+          this.store.saveRunEvent(manifest.run_id, lastSeq, snapshot, { state: 'gap', finished: true });
           this.store.waiters.hold(snapshot.id);
         }
         await this.runnerRegistry.remove(manifest.run_id).catch(() => {});
@@ -232,10 +234,8 @@ export class Runtime {
     }
     for (const snapshot of this.store.recoverable()) {
       if (handledThreads.has(snapshot.id)) continue;
-      if (snapshot.status === 'running' || snapshot.status === 'awaiting_approval') {
-        new TurnSnapshotApplier(snapshot).interrupt();
-        this.store.save(snapshot);
-      }
+      if (snapshot.status === 'running' || snapshot.status === 'awaiting_approval') new TurnSnapshotApplier(snapshot).interrupt();
+      this.store.transaction(() => this.store.closeRecoveredRuns(snapshot));
     }
     this.records.start(liveCheckouts);
   }
@@ -601,7 +601,10 @@ export class Runtime {
         session?.authorization.revoke();
         // Stop also discards everything waiting behind the run.
         if (this.store.cancel(id)) snapshot.queued = [];
-        this.save(snapshot); this.changed('#'); this.drainCheckout(snapshot.checkout);
+        const runId = session?.runId ?? runnerSession?.runId;
+        if (runId) this.notify(id, this.store.saveRunEvent(runId, 0, snapshot));
+        else this.save(snapshot);
+        this.changed('#'); this.drainCheckout(snapshot.checkout);
         if (runnerSession) runnerSession.stop();
         if (session) void session.root?.abort(context).catch(() => {});
         return { thread: snapshot };
@@ -644,7 +647,7 @@ export class Runtime {
       }
       case 'turn_records': {
         const id = String(request.thread_id); this.snapshot(id);
-        return this.records.page(id, request.before as string | undefined, request.limit as number | undefined);
+        return this.records.page(id, request.before as string | undefined, request.limit as number | undefined, protocol);
       }
       case 'undo_turn': {
         const snapshot = this.snapshot(String(request.thread_id));
@@ -1007,12 +1010,14 @@ export class Runtime {
       const executor = this.external.resolveHarness(snapshot).kind === 'pi' ? new TurnExecutor() : undefined;
       // The mode belongs to this admission only; the next submission chooses again.
       authorization = new RunAuthorization(mode === 'auto' ? automaticApproval : (executor ?? approvals));
+      const runId = randomUUID();
+      const finish = () => this.notify(id, this.store.saveRunEvent(runId, 0, snapshot, { state: 'finished', finished: true }));
       const session: Session = {
-        snapshot, vcs: threadKind(this.store, id), baseline: [], protected: [], rootIdentity: this.store.rootIdentity(id), buildCache: { store: this.directory, thread: id }, owned: new Map(), inputs: [], requestId,
+        runId, finish, snapshot, vcs: threadKind(this.store, id), baseline: [], protected: [], rootIdentity: this.store.rootIdentity(id), buildCache: { store: this.directory, thread: id }, owned: new Map(), inputs: [], requestId,
         authorization, approvals, mcpApproval: executor ?? approvals, lease, save, outputs: this.store.outputs, record: image => this.store.record(id, image), steered: new Map(),
       };
       if (executor) {
-        sink = this.createTurnSink(snapshot, () => this.capacity.phases.set(snapshot.id, 'running'), () => session.save());
+        sink = this.createTurnSink(snapshot, () => this.capacity.phases.set(snapshot.id, 'running'), finish);
         session.sink = sink; session.executor = executor; executor.connect(sink);
       }
       admitted = session;
@@ -1025,7 +1030,11 @@ export class Runtime {
       snapshot.status = 'running'; snapshot.error = null; snapshot.live_text = ''; snapshot.pending_approval = null;
       snapshot.live_reasoning = ''; snapshot.retry = null;
       snapshot.approval_mode = mode;
-      this.notify(id, accept());
+      this.notify(id, this.store.transaction(() => {
+        const changed = accept();
+        this.store.createRun(session.runId, id, requestId, selected.kind === 'external' ? selected.id : selected.kind);
+        return changed;
+      }));
       session.inputs = this.store.inputs(id); session.requestId = requestId;
       accepted = true;
       session.finished = this.run(session, requestId, text);
@@ -1298,7 +1307,8 @@ export class Runtime {
       this.capacity.phases.delete(snapshot.id);
       // Idle means a following submit can acquire the checkout immediately.
       if (snapshot.status !== 'stopped' && snapshot.status !== 'interrupted') snapshot.status = snapshot.error ? 'error' : 'idle';
-      if (session.sink) session.sink.emit({ type: 'finished' }); else session.save();
+      if (session.sink) session.sink.emit({ type: 'finished' });
+      else session.finish();
       this.sessions.delete(snapshot.id);
       if (snapshot.status === 'error' || snapshot.status === 'interrupted') this.store.waiters.hold(snapshot.id);
       this.changed('#');
@@ -1390,7 +1400,8 @@ export class Runtime {
       if (this.active.has(session.snapshot.checkout)) {
         session.sink?.flush();
         session.snapshot.status = 'interrupted'; session.snapshot.pending_approval = null;
-        session.snapshot.error = { code: 'interrupted', message: 'Host stopped. Inspect effects before a new submission.' }; session.save();
+        session.snapshot.error = { code: 'interrupted', message: 'Host stopped. Inspect effects before a new submission.' };
+        this.notify(session.snapshot.id, this.store.saveRunEvent(session.runId, 0, session.snapshot));
       }
       session.authorization.revoke();
     }

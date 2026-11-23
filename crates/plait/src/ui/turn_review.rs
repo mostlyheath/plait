@@ -118,6 +118,7 @@ impl Plait {
                 .work()
                 .is_some_and(|work| work.open && work.recorded);
         let client = self.host_client();
+        let protocol = self.host.protocol();
         let task = cx.background_executor().spawn(async move {
             let info = review::info(&client, &task_stamp.thread)?;
             let mut result = Loaded {
@@ -141,7 +142,7 @@ impl Plait {
             let data = if complete {
                 records
             } else {
-                Arc::new(records::read(&client, &task_stamp.thread)?)
+                Arc::new(records::read(&client, &task_stamp.thread, protocol)?)
             };
             let mut record = match Record::prepare(&data, target) {
                 Ok(record) => record,

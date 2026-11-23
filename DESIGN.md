@@ -151,9 +151,11 @@ writes.
 
 **Planned — earlier turns fold.** A turn before the latest draws as two rows
 on the line: its ring with the first line of the request and the age at the
-right, then its node with the closing line unchanged.
+right, then its node with the closing line unchanged. An earlier turn uses the
+host’s recorded outcome, falls back to what the tab observed, and otherwise
+folds when eligible.
 
-- Never fold the latest turn; a turn that is running, failed, stopped, or
+- Never fold the latest turn; a turn that is running, failed, stopped, interrupted, or
   waiting for approval; a turn holding the current Find match; or a turn the
   person opened, for as long as the tab is open.
 - The folded request is a disclosure: click, Enter, or Space opens it, and its
