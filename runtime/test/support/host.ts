@@ -50,7 +50,7 @@ export function raw(store: string, input: string): Promise<Reply> {
     socket.once('end', () => reject(new Error('Connection closed before reply')));
   });
 }
-export async function setup(t: { after: (fn: () => Promise<void>) => void }, scenario = 'answer', storeAlias = false, sandboxed = true) {
+export async function setup(t: { after: (fn: () => Promise<void>) => void }, scenario = 'answer', storeAlias = false, sandboxed = true, extraEnv: NodeJS.ProcessEnv = {}) {
   const base = await realpath(await mkdtemp(join(storeAlias ? '/tmp' : tmpdir(), 'plait-host-test-')));
   const repo = join(base, 'repo'); const store = join(storeAlias ? base.replace('/private/tmp/', '/tmp/') : base, 'store');
   await exec('/bin/mkdir', ['-p', repo, store]);
@@ -63,7 +63,7 @@ export async function setup(t: { after: (fn: () => Promise<void>) => void }, sce
   const start = async (mode = scenario) => {
     const deadline = Date.now() + 15000;
     for (;;) {
-      const child = spawn(binary, ['run', '--store', store, '--runtime', fixture], { stdio: ['ignore', 'ignore', 'pipe'], env: { ...process.env, PLAIT_TEST_SCENARIO: mode } });
+      const child = spawn(binary, ['run', '--store', store, '--runtime', fixture], { stdio: ['ignore', 'ignore', 'pipe'], env: { ...process.env, ...extraEnv, PLAIT_TEST_SCENARIO: mode } });
       children.push(child);
       let stderr = ''; child.stderr!.on('data', chunk => { stderr = (stderr + chunk.toString()).slice(-8192); });
       const gone = () => child.exitCode !== null || child.signalCode !== null;

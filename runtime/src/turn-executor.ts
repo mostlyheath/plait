@@ -225,6 +225,59 @@ export interface TurnSink {
   emit(event: Exclude<TurnEvent, { type: 'record_before' | 'record_after' }>): void;
 }
 
+/** Snapshot transitions shared by in-process and detached turn sinks. */
+export class TurnSnapshotApplier {
+  private snapshot: Snapshot;
+  constructor(snapshot: Snapshot) { this.snapshot = snapshot; }
+  live(projection: Extract<TurnEvent, { type: 'live' }>['projection'], inputs: InputRecord[], contextWindow: number | null): void {
+    update(this.snapshot, projection, inputs, contextWindow);
+  }
+  livePayload(payload: Record<string, unknown>): void {
+    if (typeof payload.text === 'string') this.snapshot.live_text = payload.text;
+    if (typeof payload.reasoning === 'string') this.snapshot.live_reasoning = payload.reasoning;
+  }
+  approvalNeeded(approval: Approval): void {
+    this.snapshot.pending_approval = approval;
+    this.snapshot.status = 'awaiting_approval';
+  }
+  approvalSettled(id: string): void {
+    if (this.snapshot.pending_approval?.id !== id) return;
+    this.snapshot.pending_approval = null;
+    if (this.snapshot.status === 'awaiting_approval') this.snapshot.status = 'running';
+  }
+  finish(result?: Record<string, unknown>): void {
+    this.snapshot.pending_approval = null;
+    this.snapshot.live_text = '';
+    this.snapshot.live_reasoning = '';
+    this.snapshot.retry = null;
+    const status = typeof result?.status === 'string' ? result.status : undefined;
+    if (status === 'stopped' || this.snapshot.status === 'stopped') {
+      this.snapshot.status = 'stopped';
+      return;
+    }
+    if (status === 'error') {
+      const error = result?.error;
+      this.snapshot.error = error && typeof error === 'object' && typeof (error as { code?: unknown }).code === 'string' && typeof (error as { message?: unknown }).message === 'string'
+        ? error as { code: string; message: string }
+        : { code: 'internal', message: typeof error === 'string' && error ? error : 'Run failed.' };
+      this.snapshot.status = 'error';
+      return;
+    }
+    if (this.snapshot.status !== 'interrupted') {
+      this.snapshot.status = this.snapshot.error ? 'error' : 'idle';
+    }
+  }
+  interrupt(message = 'Host stopped. Effects may have completed; inspect the checkout before a new submission.'): void {
+    this.snapshot.status = 'interrupted';
+    this.snapshot.pending_approval = null;
+    this.snapshot.live_text = '';
+    this.snapshot.live_reasoning = '';
+    this.snapshot.retry = null;
+    this.snapshot.error = { code: 'interrupted', message };
+    for (const tool of this.snapshot.tools) if (tool.status === 'running') tool.status = 'interrupted';
+  }
+}
+
 export class InProcessSink implements TurnSink {
   private snapshot: Snapshot;
   private store: Store;
@@ -236,9 +289,11 @@ export class InProcessSink implements TurnSink {
   private boundary = '';
   private savedBoundary = '';
   private finished = false;
+  private applier: TurnSnapshotApplier;
 
   constructor(snapshot: Snapshot, store: Store, save: (head?: number) => void, phase: () => void, finish: () => void) {
     this.snapshot = snapshot; this.store = store; this.save = save; this.phase = phase; this.finish = finish;
+    this.applier = new TurnSnapshotApplier(snapshot);
   }
 
   flush(): void {
@@ -263,19 +318,16 @@ export class InProcessSink implements TurnSink {
       case 'phase': this.flush(); this.phase(); this.save(); break;
       case 'live':
         if (this.finished) break;
-        update(this.snapshot, event.projection, event.inputs, event.contextWindow);
+        this.applier.live(event.projection, event.inputs, event.contextWindow);
         // A new entry or a tool changing state is a boundary; growing text is not.
         this.boundary = `${event.projection.entries.length}:${event.projection.entries.at(-1)?.id ?? ''}:${this.snapshot.tools.map(tool => `${tool.id}=${tool.status}`).join(',')}`;
         for (const tool of this.snapshot.tools) if (tool.name.startsWith('mcp__')) tool.name = this.store.setting(nameKey(this.snapshot.id, tool.name)) ?? tool.name;
         break;
       case 'commit': this.commit(event.head); break;
-      case 'approval_needed': this.flush(); this.snapshot.pending_approval = event.approval; this.snapshot.status = 'awaiting_approval'; this.save(); break;
+      case 'approval_needed': this.flush(); this.applier.approvalNeeded(event.approval); this.save(); break;
       case 'approval_settled':
         this.flush();
-        if (this.snapshot.pending_approval?.id === event.id) {
-          this.snapshot.pending_approval = null;
-          if (this.snapshot.status === 'awaiting_approval') this.snapshot.status = 'running';
-        }
+        this.applier.approvalSettled(event.id);
         this.save(); break;
       case 'record_before': return event.capacity.prepare(event.dev, this.snapshot.id, event.signal,
         () => event.records.before(this.snapshot.id, event.requestId, this.snapshot.checkout, event.lease));

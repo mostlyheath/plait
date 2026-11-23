@@ -46,6 +46,7 @@ export class Store {
   images: Images;
   linear: LinearCache;
   waiters: CheckoutQueue;
+  private txDepth = 0;
   constructor(directory: string) {
     this.db = new DatabaseSync(join(directory, 'host.sqlite'));
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
@@ -64,7 +65,10 @@ export class Store {
       CREATE TABLE IF NOT EXISTS undo_operations(thread TEXT NOT NULL, request_id TEXT NOT NULL, target TEXT NOT NULL, leave_changed INTEGER NOT NULL,
         before_id TEXT NOT NULL, record_id TEXT NOT NULL, result TEXT, PRIMARY KEY(thread,request_id));
       CREATE TABLE IF NOT EXISTS record_paths(record TEXT NOT NULL, path TEXT NOT NULL, before_mode TEXT, before_oid TEXT, after_mode TEXT, after_oid TEXT,
-        added INTEGER, removed INTEGER, PRIMARY KEY(record,path));`);
+        added INTEGER, removed INTEGER, PRIMARY KEY(record,path));
+      CREATE TABLE IF NOT EXISTS runs(run_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, request_id TEXT NOT NULL, harness TEXT NOT NULL,
+        state TEXT NOT NULL, last_seq INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, finished_at INTEGER);
+      CREATE INDEX IF NOT EXISTS runs_thread ON runs(thread_id, created_at DESC);`);
     for (const [table, column, type] of columns) {
       if (!this.db.prepare(`PRAGMA table_info(${table})`).all().some(row => row.name === column)) this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
     }
@@ -104,6 +108,37 @@ export class Store {
   recoverable(): Snapshot[] {
     return this.db.prepare("SELECT snapshot FROM threads WHERE json_extract(snapshot,'$.status') IN ('running','awaiting_approval')").all()
       .map(row => JSON.parse(String(row.snapshot)) as Snapshot);
+  }
+  createRun(runId: string, threadId: string, requestId: string, harness: string): void {
+    this.db.prepare('INSERT OR IGNORE INTO runs (run_id,thread_id,request_id,harness,state,last_seq,created_at) VALUES (?,?,?,?,?,0,?)')
+      .run(runId, threadId, requestId, harness, 'preparing', Date.now());
+  }
+  run(runId: string): { run_id: string; thread_id: string; request_id: string; harness: string; state: string; last_seq: number; created_at: number; finished_at: number | null } | undefined {
+    const row = this.db.prepare('SELECT run_id,thread_id,request_id,harness,state,last_seq,created_at,finished_at FROM runs WHERE run_id=?').get(runId);
+    if (!row) return undefined;
+    return {
+      run_id: String(row.run_id), thread_id: String(row.thread_id), request_id: String(row.request_id), harness: String(row.harness),
+      state: String(row.state), last_seq: Number(row.last_seq ?? 0), created_at: Number(row.created_at ?? 0),
+      finished_at: row.finished_at === null ? null : Number(row.finished_at),
+    };
+  }
+  /** Persist snapshot, optional side effects, and run sequence in one transaction. */
+  saveRunEvent(runId: string, seq: number, snapshot: Snapshot, options: { head?: number; state?: string; finished?: boolean; extra?: () => void } = {}): boolean {
+    return this.transaction(() => {
+      options.extra?.();
+      const changed = this.save(snapshot, options.head ?? 0);
+      this.db.prepare('UPDATE runs SET last_seq=MAX(last_seq,?), state=COALESCE(?,state), finished_at=CASE WHEN ? THEN COALESCE(finished_at,?) ELSE finished_at END WHERE run_id=?')
+        .run(seq, options.state ?? null, options.finished ? 1 : 0, Date.now(), runId);
+      return changed;
+    });
+  }
+  advanceRunSeq(runId: string, seq: number, state?: string, finished = false): void {
+    this.db.prepare('UPDATE runs SET last_seq=MAX(last_seq,?), state=COALESCE(?,state), finished_at=CASE WHEN ? THEN COALESCE(finished_at,?) ELSE finished_at END WHERE run_id=?')
+      .run(seq, state ?? null, finished ? 1 : 0, Date.now(), runId);
+  }
+  markRunState(runId: string, state: string, finished = false): void {
+    this.db.prepare('UPDATE runs SET state=?, finished_at=CASE WHEN ? THEN COALESCE(finished_at,?) ELSE finished_at END WHERE run_id=?')
+      .run(state, finished ? 1 : 0, Date.now(), runId);
   }
   list(checkout: string) {
     return this.db.prepare('SELECT id,checkout,model,status FROM threads WHERE checkout=? ORDER BY rowid DESC LIMIT 100').all(checkout)
@@ -171,10 +206,34 @@ export class Store {
     return this.input(id,row);
   }
   private head(id: string) { return Number(this.db.prepare('SELECT head FROM threads WHERE id=?').get(id)?.head ?? 0); }
-  private transaction<T>(work: () => T): T {
+  transaction<T>(work: () => T): T {
+    if (this.txDepth > 0) {
+      const sp = `sp_${this.txDepth}`;
+      this.db.exec(`SAVEPOINT ${sp}`);
+      this.txDepth++;
+      try {
+        const result = work();
+        this.txDepth--;
+        this.db.exec(`RELEASE SAVEPOINT ${sp}`);
+        return result;
+      } catch (error) {
+        this.txDepth--;
+        this.db.exec(`ROLLBACK TO SAVEPOINT ${sp}; RELEASE SAVEPOINT ${sp}`);
+        throw error;
+      }
+    }
     this.db.exec('BEGIN IMMEDIATE');
-    try { const result = work(); this.db.exec('COMMIT'); return result; }
-    catch (error) { this.db.exec('ROLLBACK'); throw error; }
+    this.txDepth = 1;
+    try {
+      const result = work();
+      this.txDepth = 0;
+      this.db.exec('COMMIT');
+      return result;
+    } catch (error) {
+      this.txDepth = 0;
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
   }
   private refreshQueue(snapshot: Snapshot) { snapshot.queued = this.queue(snapshot.id).map(queuedView); }
   /** Accepts an input behind the active run. It joins the conversation only when it starts. */

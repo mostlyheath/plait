@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { COMMAND_LIMIT, EVENT_LIMIT, encodeFrame, EventBuffer, EventSequence, FrameDecoder, parseCommand, parseRunnerMessage } from '../src/runner/protocol.ts';
+import { COMMAND_LIMIT, EVENT_LIMIT, encodeFrame, EventBuffer, EventSequence, FrameDecoder, parseCommand, parseRunnerMessage, receiptEvents, type Event } from '../src/runner/protocol.ts';
 
 test('frames split UTF-8 and validate command types and limits', () => {
   const decoder = new FrameDecoder(COMMAND_LIMIT, parseCommand);
@@ -84,4 +84,20 @@ test('recovery protocol additions validate and obey framing and sequence limits'
     assert.throws(() => parseRunnerMessage({ ...event, [field]: null }));
     assert.throws(() => encodeFrame({ ...event, [field]: 'x'.repeat(EVENT_LIMIT) }, EVENT_LIMIT));
   }
+});
+
+test('receiptEvents keeps only latest live and preserves boundary events when over bound', () => {
+  const events: Event[] = [
+    { type: 'phase', seq: 1, state: 'running' },
+    { type: 'live', seq: 2, payload: { text: 'first' } },
+    { type: 'pong', seq: 3, nonce: 'n' },
+    { type: 'commit', seq: 4, item: { note: 'x'.repeat(200) }, head: '1', placed: [], changed_paths: [], usage: null },
+    { type: 'live', seq: 5, payload: { text: 'latest' } },
+    { type: 'postimage', seq: 6, postimage: { path: 'a.txt' } },
+    { type: 'approval_settled', seq: 7, id: 'a1' },
+  ];
+  // Within bound: keeps non-live, non-pong events and only the latest live.
+  assert.deepEqual(receiptEvents(events, 4096).map(e => e.seq), [1, 4, 5, 6, 7]);
+  // Over bound: drops non-boundary commit/phase, never drops boundary events or latest live.
+  assert.deepEqual(receiptEvents(events, 100).map(e => e.seq), [5, 6, 7]);
 });
