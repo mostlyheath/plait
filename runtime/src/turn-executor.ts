@@ -219,6 +219,7 @@ export type TurnEvent =
   | { type: 'finished' };
 
 export interface TurnSink {
+  flush(): void;
   emit(event: Extract<TurnEvent, { type: 'record_before' }>): Promise<string>;
   emit(event: Extract<TurnEvent, { type: 'record_after' }>): Promise<void>;
   emit(event: Exclude<TurnEvent, { type: 'record_before' | 'record_after' }>): void;
@@ -230,9 +231,28 @@ export class InProcessSink implements TurnSink {
   private save: (head?: number) => void;
   private phase: () => void;
   private finish: () => void;
+  private timer?: ReturnType<typeof setTimeout>;
+  private pendingHead?: number;
+  private boundary = '';
+  private savedBoundary = '';
+  private finished = false;
 
   constructor(snapshot: Snapshot, store: Store, save: (head?: number) => void, phase: () => void, finish: () => void) {
     this.snapshot = snapshot; this.store = store; this.save = save; this.phase = phase; this.finish = finish;
+  }
+
+  flush(): void {
+    clearTimeout(this.timer); this.timer = undefined;
+    if (this.pendingHead === undefined) return;
+    const head = this.pendingHead; this.pendingHead = undefined;
+    this.save(head); this.savedBoundary = this.boundary;
+  }
+
+  private commit(head: number): void {
+    if (this.finished) return;
+    this.pendingHead = Math.max(this.pendingHead ?? 0, head);
+    if (this.boundary !== this.savedBoundary) { this.flush(); return; }
+    if (!this.timer) this.timer = setTimeout(() => this.flush(), 50);
   }
 
   emit(event: Extract<TurnEvent, { type: 'record_before' }>): Promise<string>;
@@ -240,14 +260,18 @@ export class InProcessSink implements TurnSink {
   emit(event: Exclude<TurnEvent, { type: 'record_before' | 'record_after' }>): void;
   emit(event: TurnEvent): void | Promise<string> | Promise<void> {
     switch (event.type) {
-      case 'phase': this.phase(); break;
+      case 'phase': this.flush(); this.phase(); this.save(); break;
       case 'live':
+        if (this.finished) break;
         update(this.snapshot, event.projection, event.inputs, event.contextWindow);
+        // A new entry or a tool changing state is a boundary; growing text is not.
+        this.boundary = `${event.projection.entries.length}:${event.projection.entries.at(-1)?.id ?? ''}:${this.snapshot.tools.map(tool => `${tool.id}=${tool.status}`).join(',')}`;
         for (const tool of this.snapshot.tools) if (tool.name.startsWith('mcp__')) tool.name = this.store.setting(nameKey(this.snapshot.id, tool.name)) ?? tool.name;
         break;
-      case 'commit': this.save(event.head); break;
-      case 'approval_needed': this.snapshot.pending_approval = event.approval; this.snapshot.status = 'awaiting_approval'; this.save(); break;
+      case 'commit': this.commit(event.head); break;
+      case 'approval_needed': this.flush(); this.snapshot.pending_approval = event.approval; this.snapshot.status = 'awaiting_approval'; this.save(); break;
       case 'approval_settled':
+        this.flush();
         if (this.snapshot.pending_approval?.id === event.id) {
           this.snapshot.pending_approval = null;
           if (this.snapshot.status === 'awaiting_approval') this.snapshot.status = 'running';
@@ -256,9 +280,9 @@ export class InProcessSink implements TurnSink {
       case 'record_before': return event.capacity.prepare(event.dev, this.snapshot.id, event.signal,
         () => event.records.before(this.snapshot.id, event.requestId, this.snapshot.checkout, event.lease));
       case 'record_after': return event.records.after(event.record, event.lease);
-      case 'postimage': this.store.record(this.snapshot.id, event.image); break;
-      case 'forget': this.store.forget(this.snapshot.id, event.path); break;
-      case 'finished': this.finish(); break;
+      case 'postimage': this.flush(); this.store.record(this.snapshot.id, event.image); this.save(); break;
+      case 'forget': this.flush(); this.store.forget(this.snapshot.id, event.path); this.save(); break;
+      case 'finished': this.flush(); this.finished = true; this.finish(); break;
     }
   }
 }
