@@ -29,7 +29,7 @@
 - Do not run `scripts/acceptance-macos.sh` while a person is using this Mac: it
   takes over the pointer and keyboard. It runs on CI for each release build.
 - Work on a branch. `main` changes only through a pull request whose checks
-  passed; merging one that changes the app publishes the next preview. See
-  docs/RELEASING.md.
+  passed. A merge is tested again on `main` and publishes nothing; a preview
+  is published only when a person starts a release. See docs/RELEASING.md.
 - Read CONTRIBUTING.md for the work split. Agree before changing shared contracts;
   docs/ROADMAP.md records what is agreed for the current milestone.

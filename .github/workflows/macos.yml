@@ -5,21 +5,30 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      release:
+        description: Build main and publish the next preview
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
-# A build on main always finishes: a newer push waits behind the running build
+# A run on main always finishes: a newer push waits behind the running one
 # rather than cancelling it, and GitHub keeps only the newest waiting one, which
-# holds every change before it. Pull requests cancel superseded runs.
+# holds every change before it. A release has a group of its own, so a merge
+# that arrives while it waits cannot take its place. Pull requests cancel
+# superseded runs.
 concurrency:
-  group: macos-${{ github.ref }}
+  group: macos-${{ github.ref }}${{ inputs.release && '-release' || '' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # A change is tested once, on its pull request, and built once, when it
-  # reaches main. This job decides which of the two this run is, and for main
-  # whether it holds unreleased code that ships and which preview that makes.
+  # A change is tested on its pull request and again when it reaches main,
+  # since a request need not be up to date with main to merge. Nothing is
+  # released by a merge: a person starts a release by hand, on main. This job
+  # decides which of these this run is, and for a release whether main holds
+  # unreleased code that ships and which preview that makes.
   plan:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -36,15 +45,29 @@ jobs:
       - id: decide
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+          RELEASE: ${{ inputs.release }}
         run: |
+          if [[ $GITHUB_EVENT_NAME == workflow_dispatch && $RELEASE == true && $GITHUB_REF != refs/heads/main ]]; then
+            echo '::error::A release is made from main.'
+            exit 1
+          fi
           case "$GITHUB_EVENT_NAME" in
             pull_request) python3 scripts/release_plan.py pull-request "$BASE" ;;
-            push) python3 scripts/release_plan.py main ;;
-            # A run started by hand tests the branch it was started on.
-            *) printf 'test=true\nrelease=false\n' ;;
+            push) python3 scripts/release_plan.py merged "$BEFORE" ;;
+            # A run started by hand releases main when asked to, and otherwise
+            # tests the branch it was started on.
+            *)
+              if [[ $RELEASE == true ]]; then
+                python3 scripts/release_plan.py main
+              else
+                printf 'test=true\nrelease=false\n'
+              fi
+              ;;
           esac | tee -a "$GITHUB_OUTPUT"
 
-  # The tests that gate a merge. They run on the pull request, not again on main.
+  # The tests that gate a merge. They run on the pull request, and again on
+  # main after the merge, where they see every merged change together.
   check:
     needs: plan
     if: needs.plan.outputs.test == 'true'
@@ -82,13 +105,13 @@ jobs:
       - name: Check installer planning
         run: python3 -m unittest discover -s scripts -p 'test_release_*.py'
 
-  # A pull request can read a build cache only if main saved it, and the tests
-  # no longer run on main. When the lockfile or toolchain changes, main builds
-  # the test binaries once and saves them for the pull requests that follow.
+  # A pull request can read a build cache only if main saved it. When the
+  # lockfile or toolchain changes, main builds the test binaries once and
+  # saves them for the pull requests that follow.
   test-cache:
     needs: plan
-    # A lockfile or toolchain change always ships, so it always makes a release.
-    if: needs.plan.outputs.release == 'true'
+    # After a merge that is tested, and with a release.
+    if: (github.event_name == 'push' && needs.plan.outputs.test == 'true') || needs.plan.outputs.release == 'true'
     runs-on: macos-26
     timeout-minutes: 45
     env:

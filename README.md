@@ -102,7 +102,7 @@ manifests. To run a host on Linux, see [Remote hosts](docs/REMOTE.md).
 ## Status
 
 Plait is an early preview, built in the open and used daily to build itself.
-Every merge that changes the app publishes the next preview.
+Previews are published from `main` when a release is started; see [Releasing](docs/RELEASING.md).
 
 - A window works with one machine at a time; several in one sidebar is next.
 - Plait is not an IDE: no editor, embedded terminal, merge, or rebase. Files are
