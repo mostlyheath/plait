@@ -331,7 +331,9 @@ fn this_turn_uses_selected_record_and_reports_only_loaded_counts() {
         assert!(view.files[0].counts.is_empty());
         assert!(view.action.unwrap().enabled);
     }
+    assert_eq!(selection.review_line(&lines).unwrap().run, "last");
     selection.earlier("first");
+    assert_eq!(selection.review_line(&lines).unwrap().run, "first");
     let view = panel(&lines, &selection, ThreadStatus::Idle, undo).unwrap();
     assert_eq!(
         (view.heading, view.state.as_str()),

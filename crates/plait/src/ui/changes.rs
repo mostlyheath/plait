@@ -834,7 +834,10 @@ impl Plait {
                         uniform_list(
                             id,
                             rows,
-                            cx.processor(move |_, range: std::ops::Range<usize>, _, cx| {
+                            cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
+                                let find = &this.workspace.diff_find;
+                                let hit =
+                                    find.open.then(|| find.matches.get(find.current)).flatten();
                                 range
                                     .map(|drawn| {
                                         // Clicks, hunks, and ids use the patch line.
@@ -914,6 +917,15 @@ impl Plait {
                                             .font_family(mono())
                                             .text_size(px(size))
                                             .line_height(px(line_height))
+                                            .when(
+                                                hit.is_some_and(|r| r.contains(&drawn))
+                                                    && this.draws_work(),
+                                                |el| {
+                                                    el.border_l_2()
+                                                        .border_color(rgb(c.blue))
+                                                        .bg(rgb(c.selected))
+                                                },
+                                            )
                                             .child(numbers)
                                             .child(
                                                 div()
@@ -975,6 +987,201 @@ impl Plait {
                     )
                     .into_any_element()
             }
+        }
+    }
+
+    pub(super) fn count_work_files(&mut self, cx: &mut Context<Self>) {
+        self.workspace.work_counts.clear();
+        if !self
+            .tabs
+            .model
+            .work()
+            .is_some_and(|w| w.open && !w.recorded)
+        {
+            return;
+        }
+        let Some(snapshot) = self
+            .state
+            .repository
+            .snapshot()
+            .ready()
+            .cloned()
+            .filter(|s| !s.changes.is_empty())
+        else {
+            return;
+        };
+        let source = snapshot.clone();
+        let backend = self.repository_backend();
+        let tab = self.tabs.model.active();
+        let task = cx.background_executor().spawn(async move {
+            let mut labels = std::collections::HashMap::new();
+            // The host's bounded line-count read accepts 500 paths at a time.
+            for changes in source.changes.chunks(500) {
+                let paths = changes.iter().map(|c| c.path.clone()).collect::<Vec<_>>();
+                for count in backend.line_counts(&source.root, &paths)? {
+                    if let (Some(added), Some(removed)) = (count.added, count.removed) {
+                        labels.insert(count.path, format!("+{added} −{removed}"));
+                    }
+                }
+            }
+            Ok::<_, String>(labels)
+        });
+        cx.spawn(async move |this, cx| {
+            let counts = task.await;
+            let _ = this.update(cx, |this, cx| {
+                if this.tabs.model.active() == tab
+                    && this
+                        .state
+                        .repository
+                        .snapshot()
+                        .ready()
+                        .is_some_and(|s| std::sync::Arc::ptr_eq(s, &snapshot))
+                    && let Ok(counts) = counts
+                {
+                    this.workspace.work_counts = counts;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+    pub(super) fn work_file_count(&self, recorded: bool) -> usize {
+        if recorded {
+            self.workspace
+                .turn_review
+                .record
+                .as_ref()
+                .map_or(0, |r| r.files.len())
+        } else {
+            self.state
+                .repository
+                .snapshot()
+                .ready()
+                .map_or(0, |s| s.changes.len())
+        }
+    }
+    fn work_select_file(
+        &mut self,
+        index: usize,
+        recorded: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if recorded {
+            self.select_recorded_file(index, window, cx);
+        } else if let Some(change) = self
+            .state
+            .repository
+            .snapshot()
+            .ready()
+            .and_then(|s| s.changes.get(index))
+        {
+            self.select_file(
+                index,
+                if change.unstaged() {
+                    DiffMode::Unstaged
+                } else {
+                    DiffMode::Staged
+                },
+                window,
+                cx,
+            );
+        }
+    }
+    pub(super) fn work_changes(&self, recorded: bool, width: f32, cx: &mut Context<Self>) -> Div {
+        let count = self.work_file_count(recorded);
+        let selected = if recorded {
+            self.workspace.turn_review.selected
+        } else {
+            self.state.repository.selected_diff().map(|d| d.file)
+        };
+        // Page the chips around the selection; a large checkout only draws visible files.
+        let page = ((width - 240.) / 120.).floor().max(1.) as usize;
+        let start = selected.unwrap_or(0) / page * page;
+        let end = (start + page).min(count);
+        let mut chips = row().flex_1().min_w_0().overflow_hidden();
+        if start > 0 {
+            chips = chips.child(
+                button("work-prev-files", "‹")
+                    .aria_label("Previous files")
+                    .on_activate(cx, move |this, w, cx| {
+                        this.work_select_file(start - 1, recorded, w, cx)
+                    }),
+            );
+        }
+        for index in start..end {
+            let (name, path) = if recorded {
+                let file = &self.workspace.turn_review.record.as_ref().unwrap().files[index];
+                (
+                    format!("{} {}", file.name, file.counts),
+                    file.detail.clone(),
+                )
+            } else {
+                let file = &self.state.repository.snapshot().ready().unwrap().changes[index];
+                let path = file.display_path();
+                {
+                    let name = path.rsplit('/').next().unwrap_or(&path);
+                    let counts = self
+                        .workspace
+                        .work_counts
+                        .get(&file.path)
+                        .map_or("", String::as_str);
+                    (format!("{name} {counts}"), format!("{path} {counts}"))
+                }
+            };
+            chips = chips.child(
+                nav_row(("work-file", index), path, selected == Some(index))
+                    .aria_selected(selected == Some(index))
+                    .min_w_0()
+                    .child(div().truncate().child(name))
+                    .on_activate(cx, move |this, w, cx| {
+                        this.work_select_file(index, recorded, w, cx)
+                    }),
+            );
+        }
+        if end < count {
+            chips = chips.child(
+                button("work-next-files", "›")
+                    .aria_label("Next files")
+                    .on_activate(cx, move |this, w, cx| {
+                        this.work_select_file(end, recorded, w, cx)
+                    }),
+            );
+        }
+        let mut switch = segmented();
+        for (id, label, value) in [
+            ("work-recorded", "This turn", true),
+            ("work-uncommitted", "Uncommitted", false),
+        ] {
+            switch = switch.child(
+                segment(id, label, value == recorded)
+                    .on_activate(cx, move |this, w, cx| this.choose_work_scope(value, w, cx)),
+            );
+        }
+        let body = column()
+            .flex_1()
+            .min_h_0()
+            .child(row().child(chips).child(switch))
+            .when(self.workspace.diff_find.open, |el| {
+                el.child(self.find_bar(super::file_view::FindIn::Changes, cx))
+            });
+        if recorded && self.workspace.turn_review.target.is_none() {
+            body.child(empty(
+                "No recorded turn",
+                "This thread has no recorded diff to show.",
+            ))
+        } else if recorded {
+            body.child(self.recorded_diff(cx))
+        } else if let Load::Error(error) = self.state.repository.snapshot() {
+            body.child(empty("Cannot read repository", error.clone()))
+        } else if self.plain_folder_open() {
+            body.child(empty("Not a Git repository", super::PLAIN_FOLDER))
+        } else {
+            body.children(self.diff_header(cx))
+                .child(self.diff_view(cx))
+                .when(self.state.repository.snapshot().ready().is_some(), |el| {
+                    el.child(self.commit_box(cx))
+                })
         }
     }
 

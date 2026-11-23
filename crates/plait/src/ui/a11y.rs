@@ -30,6 +30,7 @@ mod collector {
     #[derive(Clone, Debug, PartialEq, Eq)]
     pub(crate) struct A11yNode {
         pub node_id: u64,
+        pub bounds: Bounds<Pixels>,
         pub path: String,
         pub role: Role,
         pub label: Option<String>,
@@ -156,7 +157,11 @@ mod collector {
         hasher.finish()
     }
 
-    fn record_element<E: Element>(global_id: &GlobalElementId, element: &E) {
+    fn record_element<E: Element>(
+        global_id: &GlobalElementId,
+        bounds: Bounds<Pixels>,
+        element: &E,
+    ) {
         ACTIVE.with(|cell| {
             let mut slot = cell.borrow_mut();
             let Some(frame) = slot.as_mut() else {
@@ -169,6 +174,7 @@ mod collector {
             element.write_a11y_info(&mut node);
             frame.push(A11yNode {
                 node_id: accesskit_node_id(global_id),
+                bounds,
                 path: global_id.to_string(),
                 role,
                 label: node.label().map(str::to_owned),
@@ -249,7 +255,7 @@ mod collector {
             cx: &mut App,
         ) -> Self::PrepaintState {
             if let Some(global_id) = id {
-                record_element(global_id, &self.0);
+                record_element(global_id, bounds, &self.0);
             }
             self.0
                 .prepaint(id, inspector_id, bounds, request_layout, window, cx)

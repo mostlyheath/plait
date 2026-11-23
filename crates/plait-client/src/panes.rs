@@ -154,6 +154,106 @@ pub fn check_work_view_width(window_width: f32) -> Result<(), PaneRefusal> {
     }
 }
 
+/// Transient presentation choices of an open thread tab.
+#[derive(Default)]
+pub struct WorkView {
+    pub tree: Option<PaneTree>,
+    pub open: bool,
+    pub sidebar: bool,
+    pub recorded: bool,
+    awaiting_records: bool,
+}
+
+impl WorkView {
+    pub fn toggle(&mut self, width: f32, has_record: Option<bool>) -> Result<(), PaneRefusal> {
+        check_work_view_width(width)?;
+        if !self.open {
+            if self.tree.is_none() {
+                self.tree = Some(PaneTree::new(PaneKind::Changes)?);
+                self.recorded = has_record.unwrap_or(false);
+                self.awaiting_records = has_record.is_none();
+            }
+            self.sidebar = false;
+        }
+        self.open = !self.open;
+        Ok(())
+    }
+
+    /// The first record read may finish after the user opens the panes.
+    pub fn records_ready(&mut self, has_record: bool) {
+        if self.awaiting_records {
+            self.select_scope(has_record);
+        }
+    }
+    pub fn select_scope(&mut self, recorded: bool) {
+        self.awaiting_records = false;
+        self.recorded = recorded;
+    }
+
+    pub fn fits(&self, window: f32, width: f32, height: f32) -> bool {
+        self.open
+            && check_work_view_width(window).is_ok()
+            && self
+                .tree
+                .as_ref()
+                .is_some_and(|tree| tree.fits(width, height))
+    }
+
+    pub fn layout(&self, window: f32, width: f32, height: f32) -> Option<PaneLayout> {
+        self.tree
+            .as_ref()
+            .filter(|_| self.fits(window, width, height))
+            .map(|tree| tree.layout(width, height))
+    }
+
+    /// Return true when a pane handled the view action. History and Files
+    /// keep their existing single-view navigation until those panes are built.
+    pub fn route(&mut self, view: crate::thread_view::ThreadView, visible: bool) -> bool {
+        use crate::thread_view::ThreadView;
+        if !self.open {
+            return false;
+        }
+        let kind = match view {
+            ThreadView::History | ThreadView::Files => {
+                self.open = false;
+                return false;
+            }
+            ThreadView::Conversation => PaneKind::Thread,
+            ThreadView::Changes => PaneKind::Changes,
+        };
+        if visible && let Some(tree) = self.tree.as_mut() {
+            tree.focus_kind(kind);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn sidebar(&self, chat: bool) -> bool {
+        if self.open { self.sidebar } else { chat }
+    }
+    pub fn toggle_sidebar(&mut self, chat: &mut bool) {
+        let sidebar = if self.open { &mut self.sidebar } else { chat };
+        *sidebar = !*sidebar;
+    }
+}
+
+/// Matching displayed patch rows, in scroll order. Each match navigates to its row.
+pub fn matching_diff_rows(diff: &crate::model::Diff, query: &str) -> Vec<std::ops::Range<usize>> {
+    if query.is_empty() {
+        return Vec::new();
+    }
+    diff.rows
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| {
+            !crate::conversation_find::find(&diff.lines[row.line()].text, query, 1).is_empty()
+        })
+        .map(|(index, _)| index..index + 1)
+        .take(crate::file_view::FIND_LIMIT)
+        .collect()
+}
+
 /// Result of closing a pane.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[must_use]
@@ -1618,6 +1718,67 @@ mod tests {
         }
         for expected in [under_changes, changes, under_thread, thread] {
             assert_eq!(panes.focus_previous(), expected);
+        }
+    }
+}
+
+#[cfg(test)]
+mod work_view_tests {
+    use super::*;
+    #[test]
+    fn finds_only_displayed_patch_rows() {
+        let mut patch = crate::model::Diff::message("line to find", Default::default());
+        assert_eq!(matching_diff_rows(&patch, "FIND"), vec![0..1]);
+        patch.rows.clear();
+        assert!(matching_diff_rows(&patch, "find").is_empty());
+    }
+
+    #[test]
+    fn late_records_respect_an_explicit_scope_choice() {
+        let mut work = WorkView::default();
+        work.toggle(900., None).unwrap();
+        work.records_ready(true);
+        assert!(work.recorded);
+        let mut work = WorkView::default();
+        work.toggle(900., None).unwrap();
+        work.select_scope(false);
+        work.records_ready(true);
+        assert!(!work.recorded);
+    }
+
+    #[test]
+    fn routing_and_sidebar_are_transient() {
+        use crate::thread_view::ThreadView;
+        let mut work = WorkView::default();
+        let mut chat = true;
+        work.toggle(900., Some(false)).unwrap();
+        work.toggle_sidebar(&mut chat);
+        assert!(work.sidebar(chat));
+        assert!(work.route(ThreadView::Changes, true));
+        let tree = work.tree.as_ref().unwrap();
+        assert_eq!(tree.pane_kind(tree.focused()), Some(PaneKind::Changes));
+        assert!(!work.route(ThreadView::History, true));
+        assert!(work.sidebar(chat));
+    }
+
+    #[test]
+    fn entry_memory_and_fallback() {
+        for recorded in [true, false] {
+            let mut work = WorkView::default();
+            assert!(work.toggle(799., Some(recorded)).is_err());
+            work.toggle(800., Some(recorded)).unwrap();
+            assert_eq!(work.recorded, recorded);
+            assert!(work.layout(799., 799., 500.).is_none());
+            assert!(work.layout(800., 639., 500.).is_none());
+            assert!(work.layout(800., 800., 159.).is_none());
+            assert_eq!(
+                work.layout(900., 900., 500.).unwrap().panes[0].rect.width,
+                420.
+            );
+            work.toggle(800., Some(!recorded)).unwrap();
+            assert!(work.layout(900., 900., 500.).is_none());
+            work.toggle(800., Some(!recorded)).unwrap();
+            assert_eq!(work.recorded, recorded);
         }
     }
 }

@@ -747,7 +747,7 @@ impl Plait {
         div()
             .group(row_group(index))
             .w_full()
-            .px_6()
+            .px(px(self.conversation_padding()))
             .child(
                 div()
                     .relative()
@@ -818,7 +818,7 @@ impl Plait {
                         .bottom(px(10.))
                         .left_0()
                         .right_0()
-                        .px_6()
+                        .px(px(self.conversation_padding()))
                         .child(
                             div()
                                 .flex()
@@ -999,105 +999,109 @@ impl Plait {
                     .map_or_else(|| id.label().into(), |row| row.name.clone())
             ),
         };
-        div().flex_shrink_0().px_6().pt_2().child(
-            column()
-                .w_full()
-                .max_w(px(CONTENT_WIDTH))
-                .mx_auto()
-                .p_3()
-                .gap_2()
-                .rounded_xl()
-                .border_1()
-                .border_color(rgb(colors().warn_edge))
-                .bg(rgb(colors().rail))
-                .text_size(px(12.))
-                .child(
-                    row().child(dot(colors().amber)).child(
-                        div()
-                            .text_size(px(13.))
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(format!("Approval required: {}", approval.summary)),
-                    ),
-                )
-                .when(!approval.details.is_empty(), |el| {
-                    el.child(
-                        div()
-                            .id("approval-details")
-                            .role(Role::Group)
-                            .aria_label(format!(
-                                "Exact tool arguments: {}. Risk: {}. {}",
-                                approval.details, approval.risk, dirty_note
-                            ))
-                            .audited()
-                            .max_h(px(140.))
-                            .overflow_y_scroll()
-                            .px_3()
-                            .py_2()
-                            .rounded_md()
-                            .bg(rgb(colors().bg))
-                            .border_1()
-                            .border_color(rgb(colors().border))
-                            .font_family(mono())
-                            .text_size(px(code_size()))
-                            .line_height(px(code_line_height()))
-                            .child(approval.details.clone()),
+        div()
+            .flex_shrink_0()
+            .px(px(self.conversation_padding()))
+            .pt_2()
+            .child(
+                column()
+                    .w_full()
+                    .max_w(px(CONTENT_WIDTH))
+                    .mx_auto()
+                    .p_3()
+                    .gap_2()
+                    .rounded_xl()
+                    .border_1()
+                    .border_color(rgb(colors().warn_edge))
+                    .bg(rgb(colors().rail))
+                    .text_size(px(12.))
+                    .child(
+                        row().child(dot(colors().amber)).child(
+                            div()
+                                .text_size(px(13.))
+                                .font_weight(FontWeight::MEDIUM)
+                                .child(format!("Approval required: {}", approval.summary)),
+                        ),
                     )
-                })
-                // The dot, title, and edge already ask for attention; the
-                // risk is read, so it is set as secondary text.
-                .child(
-                    div()
-                        .text_color(rgb(colors().muted))
-                        .child(approval.risk.clone()),
-                )
-                .when(!approval.dirty_paths.is_empty(), |el| {
-                    el.child(
+                    .when(!approval.details.is_empty(), |el| {
+                        el.child(
+                            div()
+                                .id("approval-details")
+                                .role(Role::Group)
+                                .aria_label(format!(
+                                    "Exact tool arguments: {}. Risk: {}. {}",
+                                    approval.details, approval.risk, dirty_note
+                                ))
+                                .audited()
+                                .max_h(px(140.))
+                                .overflow_y_scroll()
+                                .px_3()
+                                .py_2()
+                                .rounded_md()
+                                .bg(rgb(colors().bg))
+                                .border_1()
+                                .border_color(rgb(colors().border))
+                                .font_family(mono())
+                                .text_size(px(code_size()))
+                                .line_height(px(code_line_height()))
+                                .child(approval.details.clone()),
+                        )
+                    })
+                    // The dot, title, and edge already ask for attention; the
+                    // risk is read, so it is set as secondary text.
+                    .child(
                         div()
                             .text_color(rgb(colors().muted))
-                            .child(dirty_note.clone()),
+                            .child(approval.risk.clone()),
                     )
-                })
-                .when(!exact, |el| {
-                    el.child(div().text_color(rgb(colors().red)).child(
-                        "Exact arguments are unavailable. Approval is disabled; Stop this run.",
-                    ))
-                })
-                .child(
-                    row()
-                        .justify_end()
-                        .child(
-                            toned_button("deny-tool", "Deny once", Tone::Filled)
-                                .aria_keyshortcuts(self.shortcut_aria("approval.deny_once"))
-                                .children(self.shortcut_hint("approval.deny_once"))
-                                .disabled(!enabled)
-                                .when(enabled, |el| {
-                                    el.on_activate(cx, move |this, window, cx| {
-                                        this.control_thread(
-                                            Some((deny_id.clone(), false)),
-                                            window,
-                                            cx,
-                                        )
-                                    })
-                                }),
+                    .when(!approval.dirty_paths.is_empty(), |el| {
+                        el.child(
+                            div()
+                                .text_color(rgb(colors().muted))
+                                .child(dirty_note.clone()),
                         )
-                        .child(
-                            toned_button("allow-tool", "Allow once", Tone::Filled)
-                                .text_color(rgb(colors().amber))
-                                .aria_keyshortcuts(self.shortcut_aria("approval.allow_once"))
-                                .children(self.shortcut_hint("approval.allow_once"))
-                                .disabled(!enabled)
-                                .when(enabled, |el| {
-                                    el.on_activate(cx, move |this, window, cx| {
-                                        this.control_thread(
-                                            Some((allow_id.clone(), true)),
-                                            window,
-                                            cx,
-                                        )
-                                    })
-                                }),
-                        ),
-                ),
-        )
+                    })
+                    .when(!exact, |el| {
+                        el.child(div().text_color(rgb(colors().red)).child(
+                            "Exact arguments are unavailable. Approval is disabled; Stop this run.",
+                        ))
+                    })
+                    .child(
+                        row()
+                            .justify_end()
+                            .child(
+                                toned_button("deny-tool", "Deny once", Tone::Filled)
+                                    .aria_keyshortcuts(self.shortcut_aria("approval.deny_once"))
+                                    .children(self.shortcut_hint("approval.deny_once"))
+                                    .disabled(!enabled)
+                                    .when(enabled, |el| {
+                                        el.on_activate(cx, move |this, window, cx| {
+                                            this.control_thread(
+                                                Some((deny_id.clone(), false)),
+                                                window,
+                                                cx,
+                                            )
+                                        })
+                                    }),
+                            )
+                            .child(
+                                toned_button("allow-tool", "Allow once", Tone::Filled)
+                                    .text_color(rgb(colors().amber))
+                                    .aria_keyshortcuts(self.shortcut_aria("approval.allow_once"))
+                                    .children(self.shortcut_hint("approval.allow_once"))
+                                    .disabled(!enabled)
+                                    .when(enabled, |el| {
+                                        el.on_activate(cx, move |this, window, cx| {
+                                            this.control_thread(
+                                                Some((allow_id.clone(), true)),
+                                                window,
+                                                cx,
+                                            )
+                                        })
+                                    }),
+                            ),
+                    ),
+            )
     }
 
     fn live_banners(&self, pending: bool, cx: &mut Context<Self>) -> Vec<Div> {
@@ -1209,7 +1213,7 @@ Tone::Filled,
                 && !self.reading_back();
             if snapshot.truncated && !self.workspace.history.enabled {
                 main = main.child(
-                    div().px_6().child(
+                    div().px(px(self.conversation_padding())).child(
                         div()
                             .relative()
                             .w_full()
@@ -1234,7 +1238,7 @@ Tone::Filled,
                 .filter(|_| self.host.protocol() >= 5 && !snapshot.status.busy())
             {
                 main = main.child(
-                    div().px_6().child(
+                    div().px(px(self.conversation_padding())).child(
                         div()
                             .relative()
                             .w_full()
@@ -1272,7 +1276,7 @@ Tone::Filled,
                 });
                 let (name, parts) = record.unwrap_or_else(|| (state.clone(), Vec::new()));
                 main = main.child(
-                    div().px_6().child(
+                    div().px(px(self.conversation_padding())).child(
                         row()
                             .id("turn-state")
                             .role(Role::Group)
@@ -1329,7 +1333,7 @@ Tone::Filled,
                 && self.host.thread.live_preview_clipped
             {
                 main = main.child(
-                    div().px_6().child(
+                    div().px(px(self.conversation_padding())).child(
                         div()
                             .w_full()
                             .max_w(px(CONTENT_WIDTH))
@@ -1355,7 +1359,7 @@ Tone::Filled,
         main = main.child(
             column()
                 .flex_shrink_0()
-                .px_6()
+                .px(px(self.conversation_padding()))
                 .pt_2()
                 .pb_3()
                 .gap_2()

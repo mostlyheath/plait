@@ -72,6 +72,7 @@ mod turn_review;
 mod update;
 mod ways_out;
 mod window_bar;
+mod work_view;
 mod worktree;
 mod worktrees_view;
 
@@ -129,6 +130,7 @@ actions!(
         SwitchThreadModel,
         CommandPalette,
         ToggleInspector,
+        ToggleWorkView,
         ToggleChangedFiles,
         RenameThread,
         ArchiveThread,
@@ -210,6 +212,7 @@ pub struct Plait {
     panels: panels::Panels,
     focus: FocusHandle,
     /// The conversation field that gets focus back after changing views.
+    work_focus: [FocusHandle; 2],
     conversation_focus: Option<FocusHandle>,
     /// The window control that had focus before conversation find opened.
     conversation_find_focus: Option<FocusHandle>,
@@ -362,6 +365,7 @@ impl Plait {
             remote_listing: None,
             panels: Default::default(),
             focus,
+            work_focus: [cx.focus_handle(), cx.focus_handle()],
             conversation_focus: None,
             conversation_find_focus: None,
             sidebar: true,
@@ -431,6 +435,7 @@ impl Plait {
             )
         })
         .detach();
+        this.watch_work_focus(window, cx);
         this.keep_focus_in_settings(window, cx);
         this.watch_approval_keys(window, cx);
         this.reconnect_host(window, cx);
@@ -470,9 +475,11 @@ impl Plait {
                 }
                 this.sync_recorded_current(cx);
                 if status {
+                    this.count_work_files(cx);
                     this.thread_files_status(cx);
                     this.check_file(cx);
                 }
+                this.search_work_diff(cx);
                 this.normalize_checkout(cx);
                 this.bind_selected_checkout();
                 this.deliver_files(cx);
@@ -581,7 +588,10 @@ impl Plait {
         cx: &mut Context<Self>,
     ) {
         self.workspace.restore_pending[1] = false;
-        self.pause_conversation(Some(window), cx);
+        let work = self.draws_work();
+        if !work {
+            self.pause_conversation(Some(window), cx);
+        }
         window.focus(&self.focus, cx);
         self.interaction = Some(Instant::now());
         match step {
@@ -589,7 +599,9 @@ impl Plait {
             None => self.state.repository.select(file, mode),
         }
         self.workspace.diff_scroll = UniformListScrollHandle::new();
-        self.workspace.tab = Workspace::Changes;
+        if !work {
+            self.workspace.tab = Workspace::Changes;
+        }
         self.refresh_turn_review(cx);
         self.pump(cx);
         cx.notify();
@@ -788,6 +800,9 @@ impl Plait {
     /// Show or hide This turn and remember the choice. A narrow window
     /// has no room for it, so the toggle says where Git is instead.
     fn toggle_inspector(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.draws_work() {
+            return;
+        }
         if !Self::wide(window) {
             self.workspace.inspector_note = !self.workspace.inspector_note;
             cx.notify();
@@ -838,11 +853,22 @@ impl Plait {
     fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // Keep the shortcut context alive when its focused child is removed.
         window.focus(&self.focus, cx);
-        self.sidebar = !self.sidebar;
+        if let Some(work) = self.tabs.model.work_mut() {
+            work.toggle_sidebar(&mut self.sidebar);
+        } else {
+            self.sidebar = !self.sidebar;
+        }
         cx.notify();
     }
 
     fn show_tab(&mut self, tab: Workspace, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.route_work_tab(tab, window, cx) {
+            self.present_workspace(tab, window, cx);
+        }
+    }
+
+    // Restoring a tab presents its content without moving its remembered pane focus.
+    fn present_workspace(&mut self, tab: Workspace, window: &mut Window, cx: &mut Context<Self>) {
         if self.worktrees_visible() {
             return;
         }
@@ -872,8 +898,15 @@ impl Plait {
             self.watch_thread(id, window, cx);
         }
         self.queue_tab_save(cx);
-        if tab == Workspace::Changes {
-            if self.workspace.restore_pending[1]
+        let work = self
+            .tabs
+            .model
+            .work()
+            .filter(|w| w.open)
+            .map(|w| w.recorded);
+        if tab == Workspace::Changes || work.is_some() {
+            if work != Some(true)
+                && self.workspace.restore_pending[1]
                 && let Some(saved) = self.workspace.restore.as_ref()
                 && let Some(path) = saved.changes.path.as_ref()
             {
@@ -1016,21 +1049,26 @@ impl Plait {
                     }),
             )
             .children(self.cleanup_control(cx))
-            .child(self.workspace_switch(cx))
-            .child(
-                icon_button(
-                    "toggle-inspector",
-                    "panel-right",
-                    if wide {
-                        "Toggle This Turn"
-                    } else {
-                        "This turn (needs a wider window)"
-                    },
+            .when(!self.draws_work(), |el| el.child(self.workspace_switch(cx)))
+            .when(self.tabs.model.work().is_some(), |el| {
+                el.child(self.work_switch(cx))
+            })
+            .when(!self.draws_work(), |el| {
+                el.child(
+                    icon_button(
+                        "toggle-inspector",
+                        "panel-right",
+                        if wide {
+                            "Toggle This Turn"
+                        } else {
+                            "This turn (needs a wider window)"
+                        },
+                    )
+                    .map(|el| self.covered_tab_control(el))
+                    .aria_keyshortcuts(self.shortcut_aria("view.toggle_inspector"))
+                    .on_activate(cx, |this, window, cx| this.toggle_inspector(window, cx)),
                 )
-                .map(|el| self.covered_tab_control(el))
-                .aria_keyshortcuts(self.shortcut_aria("view.toggle_inspector"))
-                .on_activate(cx, |this, window, cx| this.toggle_inspector(window, cx)),
-            )
+            })
             .into_any_element()
     }
 
@@ -1263,6 +1301,9 @@ impl Render for Plait {
             .on_action(
                 cx.listener(|this, _: &ToggleSidebar, window, cx| this.toggle_sidebar(window, cx)),
             )
+            .on_action(
+                cx.listener(|this, _: &ToggleWorkView, window, cx| this.toggle_work(window, cx)),
+            )
             .on_action(cx.listener(|this, _: &ToggleInspector, window, cx| {
                 this.toggle_inspector(window, cx)
             }))
@@ -1366,10 +1407,16 @@ impl Render for Plait {
             }))
             // Show Changes, where the result and any error appear.
             .on_action(cx.listener(|this, _: &StageAll, window, cx| {
+                if this.work_recorded() {
+                    return;
+                }
                 this.show_tab(Workspace::Changes, window, cx);
                 this.git_write(plait_client::git::WriteOp::StageAll, cx)
             }))
             .on_action(cx.listener(|this, _: &UnstageAll, window, cx| {
+                if this.work_recorded() {
+                    return;
+                }
                 this.show_tab(Workspace::Changes, window, cx);
                 this.git_write(plait_client::git::WriteOp::UnstageAll, cx)
             }))
@@ -1377,14 +1424,23 @@ impl Render for Plait {
                 cx.listener(|this, _: &CommitStaged, window, cx| this.focus_commit(window, cx)),
             )
             .on_action(cx.listener(|this, _: &Push, window, cx| {
+                if this.work_recorded() {
+                    return;
+                }
                 this.show_tab(Workspace::Changes, window, cx);
                 this.push(cx)
             }))
             .on_action(cx.listener(|this, _: &Pull, window, cx| {
+                if this.work_recorded() {
+                    return;
+                }
                 this.show_tab(Workspace::Changes, window, cx);
                 this.pull(cx)
             }))
             .on_action(cx.listener(|this, _: &Fetch, window, cx| {
+                if this.work_recorded() {
+                    return;
+                }
                 this.show_tab(Workspace::Changes, window, cx);
                 this.git_write(plait_client::git::WriteOp::Fetch, cx)
             }))
@@ -1450,7 +1506,7 @@ impl Render for Plait {
                     .flex_1()
                     .min_h_0()
                     .items_stretch()
-                    .when(self.sidebar, |el| el.child(self.navigation(cx)))
+                    .when(self.visible_sidebar(), |el| el.child(self.navigation(cx)))
                     .child(
                         column()
                             .flex_1()
@@ -1497,38 +1553,51 @@ impl Render for Plait {
                             })
                             .when_some(self.build_progress_bar(cx), |el, bar| el.child(bar))
                             .when_some(self.creation_bar(cx), |el, bar| el.child(bar))
-                            .when(self.workspace.inspector_note && !wide, |el| {
-                                el.child(self.inspector_note(cx))
-                            })
-                            .child(if self.worktrees_visible() {
-                                self.worktrees_view(wide, cx)
-                            } else if self.issues_visible() {
-                                self.issues_tab(wide, cx)
-                            } else if self.plain_folder_open()
-                                && matches!(
-                                    self.workspace.tab,
-                                    Workspace::Changes | Workspace::History
-                                )
-                            {
-                                theme::column()
+                            .when(
+                                self.workspace.inspector_note && !wide && !self.draws_work(),
+                                |el| el.child(self.inspector_note(cx)),
+                            )
+                            .child(
+                                column()
+                                    .relative()
                                     .flex_1()
-                                    .justify_center()
-                                    .items_center()
-                                    .child(theme::empty("Not a Git repository", PLAIN_FOLDER))
-                                    .into_any_element()
-                            } else if self.workspace.tab == Workspace::History {
-                                self.history_view(wide, cx).into_any_element()
-                            } else if self.workspace.tab == Workspace::Files {
-                                self.file_view(cx)
-                            } else if self.workspace.tab == Workspace::Changes {
-                                self.changes(wide, cx).into_any_element()
-                            } else if real {
-                                self.live_conversation(wide, window, cx).into_any_element()
-                            } else if drafting {
-                                self.draft_view(wide, window, cx).into_any_element()
-                            } else {
-                                self.idle(wide, cx).into_any_element()
-                            }),
+                                    .min_h_0()
+                                    .child(self.work_area_probe(cx))
+                                    .child(if let Some(layout) = self.work_layout() {
+                                        self.work_view(layout, window, cx)
+                                    } else if self.worktrees_visible() {
+                                        self.worktrees_view(wide, cx)
+                                    } else if self.issues_visible() {
+                                        self.issues_tab(wide, cx)
+                                    } else if self.plain_folder_open()
+                                        && matches!(
+                                            self.workspace.tab,
+                                            Workspace::Changes | Workspace::History
+                                        )
+                                    {
+                                        theme::column()
+                                            .flex_1()
+                                            .justify_center()
+                                            .items_center()
+                                            .child(theme::empty(
+                                                "Not a Git repository",
+                                                PLAIN_FOLDER,
+                                            ))
+                                            .into_any_element()
+                                    } else if self.workspace.tab == Workspace::History {
+                                        self.history_view(wide, cx).into_any_element()
+                                    } else if self.workspace.tab == Workspace::Files {
+                                        self.file_view(cx)
+                                    } else if self.workspace.tab == Workspace::Changes {
+                                        self.changes(wide, cx).into_any_element()
+                                    } else if real {
+                                        self.live_conversation(wide, window, cx).into_any_element()
+                                    } else if drafting {
+                                        self.draft_view(wide, window, cx).into_any_element()
+                                    } else {
+                                        self.idle(wide, cx).into_any_element()
+                                    }),
+                            ),
                     ),
             )
             // Timings stay available without spending a permanent chrome row on them.

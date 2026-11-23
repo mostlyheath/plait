@@ -81,11 +81,17 @@ Use **Show or Hide Archived Threads** in the menu or palette. Rename or archive 
 
 ### Tabs
 
-The 40-point top bar holds the window buttons, sidebar toggle, open tabs (threads, drafts, Worktrees, and Linear Issues), and **+**. When the sidebar is open, tabs align with its right edge; drag empty bar space to move the window. The 36-point second row shows the active checkout context, view switcher (**Conversation**, **Changes**, **History**, **Files**), and This turn toggle.
+The 40-point top bar holds the window buttons, sidebar toggle, open tabs (threads, drafts, Worktrees, and Linear Issues), and **+**. When the sidebar is open, tabs align with its right edge; drag empty bar space to move the window. The 36-point second row shows the active checkout context, view switcher (**Conversation**, **Changes**, **History**, **Files**), the **Chat │ Work** switch on thread tabs, and the This turn toggle.
 
 - Switch tabs with `Cmd-1`–`Cmd-8` (`Cmd-9` selects the last), `Cmd-Shift-[` / `Cmd-Shift-]`, or the overflow menu (`Cmd-Shift-Backslash`). Reorder tabs by dragging or with `Control-Shift-Left` / `Control-Shift-Right`.
 - Close a tab with `Cmd-W` or middle-click; closing never stops a running thread. Reopen closed tabs (and older nonempty drafts) with `Cmd-Shift-T`. Closing the last tab leaves an empty workspace; pressing `Cmd-W` again (or `Cmd-Shift-W`) closes the window.
 - Tab order and per-view bookmarks are stored in `~/Library/Application Support/Plait/tabs.json` (moving per-device tabs to the host is planned under [Host-first Plait](HOST-FIRST.md)).
+
+### Work view
+
+On a thread tab, select **Work**, press **Cmd-Backslash**, or choose **Open in Work view** in the This turn panel. The conversation and message box sit beside Changes. **This turn** shows the selected turn’s recorded diff. **Uncommitted** shows the checkout’s current changes and commit controls.
+
+Drag the divider to resize the panes or double-click it to give them equal space. Toggle Sidebar can show the sidebar while you work. Select **Chat** to restore the previous sidebar setting. History and Files also return to Chat. A tab remembers its pane sizes until it closes. Work view needs a window at least 800 points wide and enough room for both panes.
 
 ### Drafts, messaging, and search
 

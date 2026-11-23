@@ -918,3 +918,29 @@ fn reopen_checkout_updates_all_matching_tabs() {
     assert_eq!(w.get(a).unwrap().session().target().checkout(), &resolved);
     assert_eq!(w.get(b).unwrap().session().target().checkout(), &resolved);
 }
+
+#[test]
+fn work_view_belongs_to_the_thread_tab() {
+    let mut tabs = window();
+    let a = open(&mut tabs, "a");
+    tabs.work_mut().unwrap().toggle(900., Some(true)).unwrap();
+    let b = open(&mut tabs, "b");
+    assert!(!tabs.work().unwrap().open);
+    tabs.work_mut().unwrap().toggle(900., Some(false)).unwrap();
+    let tree = tabs.work_mut().unwrap().tree.as_mut().unwrap();
+    let divider = tree.layout(900., 500.).dividers[0].id;
+    tree.resize_divider(divider, 500., 900., 500.).unwrap();
+    for (id, width) in [(a, 420.), (b, 500.)] {
+        tabs.activate(id).unwrap();
+        let layout = tabs.work().unwrap().layout(900., 900., 500.).unwrap();
+        assert!((layout.panes[0].rect.width - width).abs() < 0.001);
+    }
+    tabs.open(
+        TabTarget::Worktrees {
+            checkout: checkout("/repo"),
+        },
+        Some(1),
+    )
+    .unwrap();
+    assert!(tabs.work_mut().is_none());
+}

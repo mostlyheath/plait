@@ -72,6 +72,7 @@ fn same_file_owner(
 /// What a find bar searches. Both share one bar, its keys, and its counts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum FindIn {
+    Changes,
     File,
     Conversation,
 }
@@ -107,6 +108,7 @@ impl Plait {
         cx: &mut Context<Self>,
     ) {
         let name = match target {
+            FindIn::Changes => "Find in changes",
             FindIn::File => "Find in file",
             FindIn::Conversation => "Find in conversation",
         };
@@ -118,11 +120,18 @@ impl Plait {
         let events = cx.subscribe(
             &field,
             move |this, _, _: &TextFieldEvent, cx| match target {
+                FindIn::Changes => this.search_work_diff(cx),
                 FindIn::File => this.update_find(cx),
                 FindIn::Conversation => this.search_conversation(cx),
             },
         );
         match target {
+            FindIn::Changes => {
+                let find = &mut self.workspace.diff_find;
+                find.field = Some(field);
+                find.open = true;
+                find._events = Some(events);
+            }
             FindIn::File => {
                 let find = &mut self.workspace.file_viewer.find;
                 find.open = bookmark.open;
@@ -135,6 +144,72 @@ impl Plait {
                 self.workspace.conversation_find.restore_match = bookmark.current.clone();
             }
         }
+    }
+    fn work_patch(&self) -> Option<&Arc<plait_client::model::Diff>> {
+        if self.tabs.model.work()?.recorded {
+            self.workspace.turn_review.diff.as_ref()
+        } else {
+            self.state.repository.diff().ready()
+        }
+    }
+    pub(super) fn search_work_diff(&mut self, cx: &mut Context<Self>) {
+        if !self.workspace.diff_find.open || !self.tabs.model.work().is_some_and(|w| w.open) {
+            return;
+        }
+        let patch = self.work_patch().cloned();
+        let find = &mut self.workspace.diff_find;
+        let query = find
+            .field
+            .as_ref()
+            .map(|f| f.read(cx).text().to_owned())
+            .unwrap_or_default();
+        let source = patch.as_ref().map(Arc::downgrade).unwrap_or_default();
+        if self
+            .workspace
+            .diff_search
+            .as_ref()
+            .is_some_and(|(last, text)| last.ptr_eq(&source) && text == &query)
+        {
+            return;
+        }
+        self.workspace.diff_search = Some((source, query.clone()));
+        find.generation += 1;
+        let generation = find.generation;
+        find.matches = Arc::default();
+        find.current = 0;
+        let Some(patch) = patch.filter(|_| !query.is_empty()) else {
+            cx.notify();
+            return;
+        };
+        let source = patch.clone();
+        let task = cx
+            .background_executor()
+            .spawn(async move { plait_client::panes::matching_diff_rows(&patch, &query) });
+        let tab = self.tabs.model.active();
+        cx.spawn(async move |this, cx| {
+            let rows = task.await;
+            let _ = this.update(cx, |this, cx| {
+                if this.tabs.model.active() == tab
+                    && this.workspace.diff_find.generation == generation
+                    && this
+                        .work_patch()
+                        .is_some_and(|now| Arc::ptr_eq(now, &source))
+                {
+                    this.workspace.diff_find.matches = Arc::new(rows);
+                    this.show_diff_match(cx);
+                }
+            });
+        })
+        .detach();
+    }
+    fn show_diff_match(&self, cx: &mut Context<Self>) {
+        let find = &self.workspace.diff_find;
+        if let Some(hit) = find.matches.get(find.current) {
+            self.workspace
+                .diff_scroll
+                .scroll_to_item(hit.start, ScrollStrategy::Center);
+        }
+        cx.notify();
     }
     /// The root quick-open paths are relative to: the repository's top level.
     pub(super) fn file_root(&self) -> PathBuf {
@@ -157,6 +232,9 @@ impl Plait {
         let viewer = &mut self.workspace.file_viewer;
         let same = viewer.path.as_ref() == Some(&path) && viewer.root == root;
         viewer.reveal = line;
+        if let Some(work) = self.tabs.model.work_mut() {
+            work.open = false;
+        }
         self.workspace.tab = Workspace::Files;
         self.queue_tab_save(cx);
         self.settings_open = false;
@@ -614,6 +692,15 @@ impl Plait {
         if self.settings_open {
             return None;
         }
+        if let Some(layout) = self.work_layout() {
+            return layout.panes.iter().find(|p| p.focused).map(|p| {
+                if p.kind.is_thread() {
+                    FindIn::Conversation
+                } else {
+                    FindIn::Changes
+                }
+            });
+        }
         match self.workspace.tab {
             Workspace::Files => Some(FindIn::File),
             Workspace::Conversation if self.host.thread.selected.is_some() => {
@@ -630,6 +717,24 @@ impl Plait {
         cx: &mut Context<Self>,
     ) {
         match target {
+            FindIn::Changes => {
+                if self.workspace.diff_find.field.is_none() {
+                    self.restore_find_bookmark(target, &Default::default(), cx);
+                }
+                self.workspace.diff_find.open = true;
+                self.search_work_diff(cx);
+                window.focus(
+                    &self
+                        .workspace
+                        .diff_find
+                        .field
+                        .as_ref()
+                        .unwrap()
+                        .focus_handle(cx),
+                    cx,
+                );
+                cx.notify();
+            }
             FindIn::File => self.open_find(window, cx),
             FindIn::Conversation => self.open_conversation_find(window, cx),
         }
@@ -637,6 +742,15 @@ impl Plait {
 
     pub(super) fn step_find_in(&mut self, target: FindIn, forward: bool, cx: &mut Context<Self>) {
         match target {
+            FindIn::Changes => {
+                let find = &mut self.workspace.diff_find;
+                find.current = plait_client::conversation_find::step(
+                    find.current,
+                    find.matches.len(),
+                    forward,
+                );
+                self.show_diff_match(cx);
+            }
             FindIn::File => self.step_find(forward, cx),
             FindIn::Conversation => self.step_conversation_find(forward, cx),
         }
@@ -644,6 +758,11 @@ impl Plait {
 
     fn close_find_in(&mut self, target: FindIn, window: &mut Window, cx: &mut Context<Self>) {
         match target {
+            FindIn::Changes => {
+                self.workspace.diff_find.open = false;
+                window.focus(&self.focus, cx);
+                cx.notify();
+            }
             FindIn::File => self.close_find(window, cx),
             FindIn::Conversation => self.close_conversation_find(window, cx),
         }
@@ -653,6 +772,16 @@ impl Plait {
     /// conversation's also says, briefly, when not all of it is loaded.
     pub(super) fn find_bar(&self, target: FindIn, cx: &mut Context<Self>) -> AnyElement {
         let (prefix, field, current, count, unsearched) = match target {
+            FindIn::Changes => {
+                let find = &self.workspace.diff_find;
+                (
+                    "diff-find",
+                    &find.field,
+                    find.current,
+                    find.matches.len(),
+                    None,
+                )
+            }
             FindIn::File => {
                 let find = &self.workspace.file_viewer.find;
                 (

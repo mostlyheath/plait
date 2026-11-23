@@ -17,6 +17,10 @@ impl Plait {
         cx: &mut Context<Self>,
     ) {
         self.workspace.turn_records.selection.earlier(run);
+        if self.draws_work() {
+            self.choose_work_scope(true, window, cx);
+            return;
+        }
         if !Self::wide(window) {
             self.workspace.inspector_note = true;
         } else if self.preferences.value.hide_inspector {
@@ -67,7 +71,22 @@ impl Plait {
                     .child(self.record_undo_button(line, action, None, cx))
                     .children(self.undo_panel(line, cx));
             }
-            // Open in Work view belongs here once the Work view exists.
+            body = body.child(
+                button("open-in-work", "Open in Work view")
+                    .child(self.shortcut_label("view.toggle_work"))
+                    .aria_keyshortcuts(self.shortcut_aria("view.toggle_work"))
+                    .on_activate(cx, |this, window, cx| {
+                        this.toggle_work(window, cx);
+                        if this
+                            .tabs
+                            .model
+                            .work()
+                            .is_some_and(|w| w.open && !w.recorded)
+                        {
+                            this.choose_work_scope(true, window, cx);
+                        }
+                    }),
+            );
         }
         Some(
             column()

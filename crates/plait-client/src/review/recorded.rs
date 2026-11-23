@@ -38,6 +38,7 @@ pub struct Record {
     pub label: String,
     pub detail: String,
     pub restored: bool,
+    pub counts: String,
     pub files: Vec<File>,
     pub indices: HashMap<PathBuf, usize>,
 }
@@ -116,12 +117,16 @@ impl Record {
             .enumerate()
             .map(|(i, f)| (f.path.clone(), i))
             .collect();
+        let totals = source.paths.iter().try_fold((0u64, 0u64), |(a, r), file| {
+            Some((a.checked_add(file.added?)?, r.checked_add(file.removed?)?))
+        });
         let mut record = Self {
             id: source.id.clone(),
             original: target.original.clone(),
             label: String::new(),
             detail: String::new(),
             restored,
+            counts: totals.map_or_else(String::new, |(a, r)| format!("+{a} −{r}")),
             files,
             indices,
         };

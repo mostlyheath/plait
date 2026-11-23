@@ -303,6 +303,9 @@ impl Plait {
             && let Some(thread) = self.host.thread.selected.clone()
         {
             self.clear_turn_review();
+            if self.tabs.model.work().is_some_and(|w| w.open && w.recorded) {
+                self.workspace.turn_records.selection.earlier(original);
+            }
             self.workspace.turn_review.window = Some(window.window_handle());
             self.workspace.turn_review.target = Some(plait_client::review::recorded::Target {
                 thread,
@@ -317,7 +320,15 @@ impl Plait {
         let view = bookmark.view;
         self.workspace.restore_pending = [true; 4];
         self.workspace.restore = Some(bookmark);
-        self.show_tab(view, window, cx);
+        self.present_workspace(view, window, cx);
+        if self
+            .tabs
+            .model
+            .work()
+            .is_some_and(|w| w.open && !w.recorded)
+        {
+            self.count_work_files(cx);
+        }
         match focus {
             FocusTarget::Composer => self.focus_composer(window, cx),
             FocusTarget::ConversationFind => {

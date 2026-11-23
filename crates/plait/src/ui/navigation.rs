@@ -810,7 +810,9 @@ impl Plait {
         if self.host.protocol() < 3 || !self.host.connection.connected {
             return;
         }
-        self.sidebar = true;
+        if !self.visible_sidebar() {
+            self.toggle_sidebar(window, cx);
+        }
         self.navigation.attention = false;
         if let Some(thread) = self
             .host

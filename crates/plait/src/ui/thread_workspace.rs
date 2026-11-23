@@ -18,6 +18,10 @@ use std::{
 
 /// Presentation container for the currently selected thread workspace.
 pub(super) struct ThreadWorkspace {
+    pub(super) diff_search: Option<(std::sync::Weak<plait_client::model::Diff>, String)>,
+    pub(super) diff_find: file_view::Find,
+    pub(super) work_counts: HashMap<std::path::PathBuf, String>,
+    pub(super) work_area: Bounds<Pixels>,
     pub(super) restore: Option<plait_client::tabs::bookmark::ThreadBookmark>,
     pub(super) restore_pending: [bool; 4],
     pub(super) cancelled: Arc<std::sync::atomic::AtomicBool>,
@@ -57,6 +61,10 @@ pub(super) struct ThreadWorkspace {
 impl ThreadWorkspace {
     pub(super) fn new(commit_message: Entity<text_field::TextField>) -> Self {
         Self {
+            diff_search: None,
+            diff_find: Default::default(),
+            work_counts: Default::default(),
+            work_area: Default::default(),
             restore: None,
             restore_pending: [false; 4],
             cancelled: Arc::default(),
