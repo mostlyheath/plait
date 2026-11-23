@@ -85,6 +85,8 @@ export class RunnerSupervisor {
     this.runId = runId; this.lastSeq = lastSeq; this.detached = false;
     let resolveAttached!: () => void; let rejectAttached!: (error: Error) => void;
     const attached = new Promise<void>((resolve, reject) => { resolveAttached = resolve; rejectAttached = reject; });
+    // connect() can fail before `attached` is awaited; a later timeout or close must not surface as an unhandled rejection.
+    attached.catch(() => {});
     const timer = setTimeout(() => rejectAttached(new Error('Runner attach timed out')), timeoutMs);
     let client: RunnerClient | undefined;
     try {
