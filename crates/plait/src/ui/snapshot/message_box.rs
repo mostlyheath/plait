@@ -132,8 +132,8 @@ pub(super) fn walk(harness: &mut Harness, repository: &Path, suffix: &str) {
 }
 
 #[core::prelude::v1::test]
-fn message_box_states_and_accessibility_at_both_sizes() {
-    if !isolated("message_box::message_box_states_and_accessibility_at_both_sizes") {
+fn message_box_states_name_their_controls_and_notices_at_both_sizes() {
+    if !isolated("message_box::message_box_states_name_their_controls_and_notices_at_both_sizes") {
         return;
     }
     let scratch = std::env::temp_dir().join(format!("plait-message-box-{}", std::process::id()));
@@ -167,6 +167,48 @@ fn message_box_states_and_accessibility_at_both_sizes() {
         }
         #[cfg(not(debug_assertions))]
         harness.draw();
+
+        // An older host cannot change a thread's settings: the box names
+        // what the thread runs with instead of offering the controls.
+        let mut protocol = 0;
+        harness.update(|plait, _, _| {
+            let status = plait.host.connection.status.as_mut().unwrap();
+            protocol = std::mem::replace(&mut status.protocol_version, 2);
+        });
+        #[cfg(debug_assertions)]
+        {
+            let frame = harness.draw_a11y();
+            frame.assert_no_duplicates(&format!("message-box older host ({suffix})"));
+            let named = |wanted: &[&str]| {
+                frame.has_node(Role::Label, |n| {
+                    n.value
+                        .as_deref()
+                        .or(n.label.as_deref())
+                        .is_some_and(|l| wanted.iter().any(|part| l.contains(part)))
+                })
+            };
+            assert!(named(&[" / "]), "{suffix}: the saved model is named");
+            // Whichever mode the next message uses, it is said in words.
+            assert!(
+                named(&["Approve each action", "Automatic approval"]),
+                "{suffix}: how actions are approved is named"
+            );
+            assert!(!frame.has_node(Role::Button, |n| {
+                n.label
+                    .as_deref()
+                    .is_some_and(|l| l.starts_with("Change thread model"))
+            }));
+            assert!(frame.has_node(Role::Button, |n| n.label.as_deref() == Some("Send")));
+        }
+        harness.update(|plait, _, _| {
+            plait
+                .host
+                .connection
+                .status
+                .as_mut()
+                .unwrap()
+                .protocol_version = protocol;
+        });
 
         // 2. Context use shown + toggling expanded detail.
         harness.update(|plait, _, cx| {

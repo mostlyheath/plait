@@ -194,9 +194,16 @@ impl Plait {
         let mut notices = Vec::new();
         // A harness that lists no modes has no Permissions chip to carry
         // what protects the checkout, so it is said inside the box.
-        if let Some(row) = self
-            .harness_row(harness)
-            .filter(|row| harness != HarnessId::Pi && row.modes.is_empty())
+        // Setup, creation, a failure, or the isolation choice comes first,
+        // as it did when this was one status line under the box.
+        let quiet = self.server_setup_line(cx).is_none()
+            && !self.draft_pending()
+            && self.draft.error.is_none()
+            && !self.draft_isolation_choice();
+        if quiet
+            && let Some(row) = self
+                .harness_row(harness)
+                .filter(|row| harness != HarnessId::Pi && row.modes.is_empty())
             && !row.protection.is_empty()
         {
             notices.push(
