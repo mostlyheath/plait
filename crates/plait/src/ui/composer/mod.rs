@@ -19,7 +19,7 @@ mod trigger;
 pub use commands::{AgentCommand, CommandId};
 pub use completion::{Completion, CompletionEvent, CompletionItem};
 
-use super::theme::{self, AuditA11y, ButtonAction, DisabledControl, colors};
+use super::theme::{self, AuditA11y, colors};
 use commands::COMMANDS;
 use draft::Draft;
 use gpui::{prelude::*, *};
@@ -993,10 +993,10 @@ impl Composer {
     const IDLE_KEYS: &str = "Enter sends. Shift-Enter starts a new line. \
         @ names a file, and / runs a command.";
 
-    /// One line under the draft, when there is something to say: what the
+    /// One line inside the message box, when there is something to say: what the
     /// keys do during a run, a choice among suggestions, or why sending is
     /// off. Empty while idle.
-    fn hint(&self) -> String {
+    pub fn hint(&self) -> String {
         if let Some(error) = &self.paint_error {
             return error.clone();
         }
@@ -1028,6 +1028,55 @@ impl Composer {
             } else {
                 "Working · Draft your next message · Esc twice stops".into()
             }
+        }
+    }
+    pub fn is_focused(&self, window: &Window) -> bool {
+        self.focus.is_focused(window)
+    }
+
+    pub fn can_send(&self) -> bool {
+        self.send_blocked.is_none()
+            && !self.image_send_blocked()
+            && (self
+                .draft
+                .can_submit(self.enabled, self.busy && !self.queue_enabled)
+                || (self.enabled
+                    && !(self.busy && !self.queue_enabled)
+                    && self.draft.marked.is_none()
+                    && !self.images.references.is_empty()))
+    }
+
+    pub fn busy(&self) -> bool {
+        self.busy
+    }
+
+    pub fn queue_enabled(&self) -> bool {
+        self.queue_enabled
+    }
+
+    pub fn can_stop(&self) -> bool {
+        self.stop_enabled && self.busy
+    }
+
+    /// The box-chrome state rendered by the parent message box. Comparing this
+    /// lets the parent redraw only when send/stop availability or the hint changes.
+    pub fn box_state(&self) -> (bool, bool, bool, bool, String) {
+        (
+            self.can_send(),
+            self.busy,
+            self.queue_enabled,
+            self.can_stop(),
+            self.hint(),
+        )
+    }
+
+    pub fn submit_from_button(&mut self, cx: &mut Context<Self>) {
+        self.submit(false, cx);
+    }
+
+    pub fn stop_from_button(&mut self, cx: &mut Context<Self>) {
+        if self.stop_enabled {
+            cx.emit(ComposerEvent::Stop);
         }
     }
 }
@@ -1265,40 +1314,21 @@ impl Render for Composer {
         };
         let input = cx.entity().downgrade();
         let enabled = self.enabled;
-        let can_send = self.send_blocked.is_none()
-            && !self.image_send_blocked()
-            && (self
-                .draft
-                .can_submit(enabled, self.busy && !self.queue_enabled)
-                || (enabled
-                    && !(self.busy && !self.queue_enabled)
-                    && self.draft.marked.is_none()
-                    && !self.images.references.is_empty()));
-        let can_stop = self.stop_enabled && self.busy;
         let focused = self.focus.is_focused(window);
         // Suggestions belong to typing; they do not outlive keyboard focus.
         let suggestions = focused.then(|| self.suggestion_list(cx)).flatten();
-        // One raised box holds the draft and its controls; the box shows focus.
+        // The parent message box draws the raised outline and settings row;
+        // this entity owns attachments, editable text, and floating suggestions.
         theme::column()
+            .relative()
             .w_full()
             .min_w_0()
-            .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
-                this.drop_images(paths.paths().to_vec(), cx)
-            }))
             .when(
                 !self.images.references.is_empty()
                     || self.images.loading
                     || self.images.error.is_some(),
                 |el| el.child(div().px_3().pt_2().child(self.image_strip(cx))),
             )
-            .rounded_xl()
-            .border_1()
-            .border_color(rgb(if focused {
-                colors().focus_edge
-            } else {
-                colors().edge
-            }))
-            .bg(rgb(colors().rail))
             .child(
                 div()
                     .id("composer-input")
@@ -1501,65 +1531,6 @@ impl Render for Composer {
                         cx.notify();
                     }))
                     .child(InputElement(cx.entity())),
-            )
-            .child(
-                theme::row()
-                    .justify_between()
-                    .gap_3()
-                    .pl_3()
-                    .pr_2()
-                    .pb_2()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_size(px(11.))
-                            .text_color(rgb(colors().subtle))
-                            .child(hint),
-                    )
-                    .when(self.busy, |el| {
-                        el.child(
-                            theme::toned_icon_button(
-                                "composer-stop",
-                                "stop",
-                                "Stop",
-                                theme::Tone::Filled,
-                            )
-                            .disabled(!can_stop)
-                            .on_activate(cx, |this, _, cx| {
-                                if this.stop_enabled {
-                                    cx.emit(ComposerEvent::Stop);
-                                }
-                            }),
-                        )
-                    })
-                    .when(!self.busy || self.queue_enabled, |el| {
-                        el.child(
-                            // Send is the one affirmative control; Stop stays neutral.
-                            theme::toned_icon_button(
-                                "composer-send",
-                                "send",
-                                if self.busy { "Queue message" } else { "Send" },
-                                if can_send {
-                                    theme::Tone::Primary
-                                } else {
-                                    theme::Tone::Filled
-                                },
-                            )
-                            .rounded_lg()
-                            .tab_stop(can_send)
-                            .a11y_synthetic_children(move |builder| {
-                                if !can_send {
-                                    builder.parent_node().set_disabled();
-                                }
-                            })
-                            .when(!can_send, |button| button.opacity(0.5).cursor_default())
-                            .on_activate(cx, |this, _, cx| {
-                                this.submit(false, cx);
-                            }),
-                        )
-                    }),
             )
             .children(suggestions)
     }

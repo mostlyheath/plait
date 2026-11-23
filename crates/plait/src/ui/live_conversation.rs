@@ -201,19 +201,6 @@ impl Plait {
     /// The mode the next submission requests: the open thread's own choice,
     /// else the default. Version 1 hosts always ask. A harness thread asks for
     /// none: the harness's own mode governs it.
-    pub(super) fn next_approval_mode(&self) -> Option<ApprovalMode> {
-        if self.thread_harness() != HarnessId::Pi {
-            return None;
-        }
-        let chosen = self
-            .host
-            .thread
-            .selected
-            .as_deref()
-            .and_then(|id| self.thread_approval(id));
-        (self.host.protocol() >= 2).then(|| chosen.unwrap_or_else(|| self.default_approval()))
-    }
-
     /// A running thread reports its own mode; otherwise show what the next message uses.
     fn approval_note(&self, snapshot: Option<&Snapshot>) -> &'static str {
         let mode = match snapshot {
@@ -225,6 +212,48 @@ impl Plait {
         } else {
             "Approve each action"
         }
+    }
+
+    /// An older host cannot change a thread's settings, so the box says what
+    /// the thread runs with instead of offering controls: its project,
+    /// machine and branch, its saved model, and how actions are approved.
+    fn older_host_message_box_parts(&self) -> super::thread_controls::MessageBoxParts {
+        let snapshot = self.host.thread.snapshot.as_ref();
+        let model = snapshot.map(|snapshot| &snapshot.model).or_else(|| {
+            self.host
+                .connection
+                .threads()
+                .iter()
+                .find(|thread| Some(&thread.id) == self.host.thread.selected.as_ref())
+                .map(|thread| &thread.model)
+        });
+        let model_label = model.map_or_else(
+            || "Loading saved model…".into(),
+            |model| format!("{} / {}", model.provider, model.model_id),
+        );
+        super::thread_controls::MessageBoxParts {
+            left: vec![
+                self.environment(
+                    Some(model_label),
+                    Some((self.approval_note(snapshot.map(|s| &**s)), colors().muted)),
+                )
+                .into_any_element(),
+            ],
+            ..Default::default()
+        }
+    }
+
+    pub(super) fn next_approval_mode(&self) -> Option<ApprovalMode> {
+        if self.thread_harness() != HarnessId::Pi {
+            return None;
+        }
+        let chosen = self
+            .host
+            .thread
+            .selected
+            .as_deref()
+            .and_then(|id| self.thread_approval(id));
+        (self.host.protocol() >= 2).then(|| chosen.unwrap_or_else(|| self.default_approval()))
     }
 
     fn live_message(&self, message: &Message, index: usize, cx: &mut Context<Self>) -> AnyElement {
@@ -1129,23 +1158,13 @@ Tone::Filled,
         banners
     }
 
-    pub(super) fn live_conversation(&self, wide: bool, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn live_conversation(
+        &self,
+        wide: bool,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let snapshot = self.host.thread.snapshot.clone();
-        let model = snapshot
-            .as_ref()
-            .map(|snapshot| &snapshot.model)
-            .or_else(|| {
-                self.host
-                    .connection
-                    .threads()
-                    .iter()
-                    .find(|thread| Some(&thread.id) == self.host.thread.selected.as_ref())
-                    .map(|thread| &thread.model)
-            });
-        let model_label = model.map_or_else(
-            || "Loading saved model…".into(),
-            |model| format!("{} / {}", model.provider, model.model_id),
-        );
         let pending = self
             .host
             .thread
@@ -1344,13 +1363,12 @@ Tone::Filled,
                 .children(self.queued_inputs(cx))
                 .children(self.thread_files_card(cx))
                 .when_some(composer.cloned(), |el, composer| {
-                    el.child(
-                        div()
-                            .w_full()
-                            .max_w(px(CONTENT_WIDTH))
-                            .mx_auto()
-                            .child(composer),
-                    )
+                    let parts = if self.host.protocol() >= 3 {
+                        self.thread_message_box_parts(cx)
+                    } else {
+                        self.older_host_message_box_parts()
+                    };
+                    el.child(self.message_box(composer, parts, window, cx))
                 })
                 // The source issue shows whatever the host's protocol.
                 .children(self.issue_link_line(cx).map(|line| {
@@ -1359,16 +1377,7 @@ Tone::Filled,
                         .max_w(px(CONTENT_WIDTH))
                         .mx_auto()
                         .child(line)
-                }))
-                .child(if self.host.protocol() >= 3 {
-                    self.thread_environment(cx)
-                } else {
-                    self.environment(
-                        Some(model_label),
-                        Some((self.approval_note(snapshot.as_deref()), colors().muted)),
-                    )
-                    .into_any_element()
-                }),
+                })),
         );
         row()
             .gap_0()

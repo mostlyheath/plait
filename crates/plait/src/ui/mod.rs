@@ -1518,9 +1518,9 @@ impl Render for Plait {
                             } else if self.workspace.tab == Workspace::Changes {
                                 self.changes(wide, cx).into_any_element()
                             } else if real {
-                                self.live_conversation(wide, cx).into_any_element()
+                                self.live_conversation(wide, window, cx).into_any_element()
                             } else if drafting {
-                                self.draft_view(wide, cx).into_any_element()
+                                self.draft_view(wide, window, cx).into_any_element()
                             } else {
                                 self.idle(wide, cx).into_any_element()
                             }),

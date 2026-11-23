@@ -87,14 +87,14 @@ The 40-point top bar holds the window buttons, sidebar toggle, open tabs (thread
 
 ### Drafts, messaging, and search
 
-`Cmd-N`, `Cmd-T`, and **+** each open a new independent draft tab without creating anything on the host until you send. A draft takes its title from its first nonblank line (up to 120 characters; empty or image-only drafts read **New thread**). Choose its project, harness, model, thinking level, and permissions directly around the message box. **Discard** deletes the draft and closes its tab; `Escape` only closes an empty draft tab.
+`Cmd-N`, `Cmd-T`, and **+** each open a new independent draft tab without creating anything on the host until you send. A draft takes its title from its first nonblank line (up to 120 characters; empty or image-only drafts read **New thread**). Choose its project and harness in the row above the message box, and its model, effort, and permissions inside the message box. **Discard** deletes the draft and closes its tab; `Escape` only closes an empty draft tab.
 
 During a run:
 
 - Press `Enter` (or `Cmd-Enter`) to queue a **Follow-up** for after the run finishes, or `Option-Enter` to **Steer** the running agent at its next step. Queued items appear above the message box with **Cancel** and **Edit**.
 - Press **Stop** (or `Escape` twice within 1.5 seconds) to stop the run and cancel that thread's queued inputs.
 - Type `@` at a word start to insert a checkout file path, `/` at the start of an empty draft for local commands and Pi skills/templates, and `Up`/`Down` on the first line to recall earlier prompts.
-- Context usage appears below the composer when known (marking 75% as high and 90% as nearly full; hover for token counts).
+- Context usage appears at the right of the message box's settings row when known (marking 75% as high and 90% as nearly full; hover for token counts).
 - Press `Cmd-F` to search loaded conversation messages (`Enter`/`Cmd-G` next, `Shift-Enter`/`Cmd-Shift-G` previous, up to 1,000 matches, case-insensitive). Earlier pages load as you scroll to the top or press `Home`/`Cmd-Up`; Find searches loaded messages only.
 - Press `Cmd-K` for the command palette (threads, commands with shortcuts, and "New thread with" signed-in models).
 
@@ -128,7 +128,7 @@ The host owns all provider credentials; the desktop never reads or saves them. O
 - **API key:** Paste once; the key is masked, sent directly to the host, and cleared from the form.
 - **Custom server:** Add an OpenAI-compatible base URL, optional key, and model IDs (**Check connection** lists reported models without saving the entered key).
 
-Credentials are stored on the host in `~/.pi/agent/auth.json` (mode `0600`) and custom servers in `~/.pi/agent/models.json`. You can also authenticate via the bundled Pi CLI (`/login`) and reload providers without restarting. Set the default harness, default model, and default thinking level in **Settings → New threads**; change an open thread's model (`Cmd-Shift-M`) or thinking level beneath the composer between runs.
+Credentials are stored on the host in `~/.pi/agent/auth.json` (mode `0600`) and custom servers in `~/.pi/agent/models.json`. You can also authenticate via the bundled Pi CLI (`/login`) and reload providers without restarting. Set the default harness, default model, and default thinking level in **Settings → New threads**; change an open thread's model (`Cmd-Shift-M`) or effort in the message box between runs.
 
 ### Agents (Pi, Codex, Claude Code)
 
@@ -138,12 +138,12 @@ Credentials are stored on the host in `~/.pi/agent/auth.json` (mode `0600`) and 
 
 ### Approvals and command safety
 
-- **Pi threads:** Choose **Ask each time** or **Automatic** in **Settings → New threads**, or override per thread beneath the composer. In **Ask** mode, every file edit and command waits for your decision (**Allow once** `Cmd-Option-Y`, **Deny once** `Cmd-Option-period`, acting only when the card is visible and focused in conversation). In both modes, Pi's file tools refuse to modify pre-existing dirty files.
+- **Pi threads:** Choose **Ask each time** or **Automatic** in **Settings → New threads**, or override per thread in the message box. In **Ask** mode, every file edit and command waits for your decision (**Allow once** `Cmd-Option-Y`, **Deny once** `Cmd-Option-period`, acting only when the card is visible and focused in conversation). In both modes, Pi's file tools refuse to modify pre-existing dirty files.
   - **Commands policy** (**Project settings → Commands**): **Trusted** (default) runs commands as your user with network and full checkout access. On macOS, **Sandboxed** runs commands offline with read-only checkout access and a private per-thread cache (sandboxed projects always ask approval before MCP tool calls, though an enabled local MCP server still runs as a local process). Linux hosts support trusted commands only; Linux command sandboxing is planned ([LINUX-SANDBOX.md](LINUX-SANDBOX.md)).
 - **Codex and Claude Code threads:** Use the harness's own permission modes (defaults in **Settings → Agents**, per-thread under **Permissions**):
   - **Codex:** `Read only`, `Ask`, `Approve for me`, `Full access` (default). Mode changes apply on the next turn.
   - **Claude Code:** `Ask`, `Accept edits`, `Plan`, `Auto` (default), `Bypass`. Mode changes apply immediately.
-  - Harness permission requests appear as one-shot Plait approval cards. Plait's pre-existing dirty-file guard does not block Codex or Claude Code edits (approval cards list dirty paths as a warning). If the harness's own configuration overrides the chosen mode, an amber notice beneath the composer says so.
+  - Harness permission requests appear as one-shot Plait approval cards. Plait's pre-existing dirty-file guard does not block Codex or Claude Code edits (approval cards list dirty paths as a warning). If the harness's own configuration overrides the chosen mode, an amber notice inside the message box says so.
 
 ## Changes, History, Files, and Worktrees
 
