@@ -38,7 +38,7 @@ impl Plait {
         let thread = self
             .host
             .connection
-            .threads
+            .threads()
             .iter()
             .find(|thread| &thread.id == id)?;
         let queue = thread.checkout_queue.as_ref()?;
@@ -121,7 +121,7 @@ impl Plait {
         let Some(checkout) = self
             .host
             .connection
-            .threads
+            .threads()
             .iter()
             .find(|thread| thread.id == id)
             .map(|thread| thread.checkout.clone())
@@ -235,7 +235,7 @@ impl Plait {
                     && self
                         .host
                         .connection
-                        .threads
+                        .threads()
                         .iter()
                         .any(|thread| thread.id == *id && thread.checkout_queue.is_none())
             })
@@ -249,7 +249,7 @@ impl Plait {
         let Some(checkout) = self
             .host
             .connection
-            .threads
+            .threads()
             .iter()
             .find(|thread| thread.id == id)
             .map(|thread| thread.checkout.clone())

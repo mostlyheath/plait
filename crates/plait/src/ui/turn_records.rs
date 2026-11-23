@@ -243,7 +243,7 @@ impl Plait {
             || self.host.thread.snapshot.as_ref().is_some_and(|s| {
                 self.host
                     .connection
-                    .threads
+                    .threads()
                     .iter()
                     .any(|t| t.checkout == s.checkout && t.status.busy())
             })

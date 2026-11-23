@@ -12,11 +12,11 @@ fn install_projects(harness: &mut Harness, count: usize, projects: bool) {
         let template = plait
             .host
             .connection
-            .threads
+            .threads()
             .first()
             .cloned()
             .unwrap_or_default();
-        plait.host.connection.threads.clear();
+        plait.host.connection.threads_mut().clear();
         for index in 0..count {
             let mut thread = template.clone();
             thread.id = if index == 0 {
@@ -75,7 +75,7 @@ fn install_projects(harness: &mut Harness, count: usize, projects: bool) {
                 .model
                 .open(target, Some(plait.host.connection.epoch))
                 .unwrap();
-            plait.host.connection.threads.push(thread);
+            plait.host.connection.threads_mut().push(thread);
         }
         if let Some(first) = plait.tabs.model.tabs().first() {
             let id = first.id();
@@ -531,7 +531,7 @@ pub(super) fn restore_preferences() {
     let checkouts = vec![checkout];
     let summaries = h
         .window
-        .update(&mut h.cx, |p, _, _| p.host.connection.threads.clone())
+        .update(&mut h.cx, |p, _, _| p.host.connection.threads().to_vec())
         .unwrap();
     let context = persistence::RestoreContext {
         host: &host,
@@ -570,7 +570,7 @@ pub(super) fn journal_limit() {
         let data = p.session.data.as_mut().unwrap();
         let mut thread = data.threads[THREAD].clone();
         thread.draft.text = "x".repeat(256 * 1024);
-        for summary in p.host.connection.threads.iter().skip(1) {
+        for summary in p.host.connection.threads().iter().skip(1) {
             data.threads.insert(summary.id.clone(), thread.clone());
         }
         journal.queue(data.clone());
@@ -692,10 +692,10 @@ pub(super) fn created_in_front() {
         p.host.connection.connected = false;
         p.open_draft(w, cx);
         assert!(p.draft.open);
-        let mut created = p.host.connection.threads[0].clone();
+        let mut created = p.host.connection.threads()[0].clone();
         created.id = "created-thread".into();
         created.checkout = p.host.creation.checkout.clone();
-        p.host.connection.threads.push(created);
+        p.host.connection.threads_mut().push(created);
         p.draft.sending = Some(super::super::new_thread::Sending {
             generation: p.draft.generation,
             request_id: "create-1".into(),
@@ -767,7 +767,7 @@ pub(super) fn journal_limit_saves_tabs() {
         let data = p.session.data.as_mut().unwrap();
         let mut thread = data.threads[THREAD].clone();
         thread.draft.text = "x".repeat(256 * 1024);
-        for summary in p.host.connection.threads.iter().skip(1) {
+        for summary in p.host.connection.threads().iter().skip(1) {
             data.threads.insert(summary.id.clone(), thread.clone());
         }
         journal.queue(data.clone());

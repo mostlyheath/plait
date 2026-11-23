@@ -136,7 +136,7 @@ fn assert_workspace_reachable(
     let mut expected_messages = Vec::new();
     let mut expected_streaming = None;
     harness.update(|plait, _, _| {
-        for thread in &plait.host.connection.threads {
+        for thread in plait.host.connection.threads() {
             expected_threads.push((thread.id.clone(), plait.thread_title(&thread.id)));
         }
         for meta in &plait.tabs.rows {
@@ -499,7 +499,7 @@ fn a11y_tree_has_no_duplicates_and_exposes_required_nodes() {
 fn thread_row_ids(harness: &mut Harness, frame: &A11yFrame) -> Vec<(String, u64, Option<u64>)> {
     let mut threads = Vec::new();
     harness.update(|plait, _, _| {
-        for thread in &plait.host.connection.threads {
+        for thread in plait.host.connection.threads() {
             threads.push((thread.id.clone(), plait.thread_name(&thread.id)));
         }
     });
@@ -555,7 +555,7 @@ fn sidebar_rows_keep_their_ids_when_threads_reorder() {
     );
 
     harness.update(|plait, _, cx| {
-        plait.host.connection.threads.reverse();
+        plait.host.connection.threads_mut().reverse();
         cx.notify();
     });
     let after = steady_frame(&mut harness, "threads-reversed");
@@ -830,7 +830,7 @@ fn assert_admission_controls(harness: &mut Harness) {
         let other = plait
             .host
             .connection
-            .threads
+            .threads_mut()
             .iter_mut()
             .find(|thread| thread.id != snapshot.id)
             .unwrap();
@@ -1015,7 +1015,7 @@ fn checkout_queue_states_remain_accessible_wide_and_narrow() {
                 .as_mut()
                 .unwrap()
                 .protocol_version = 6;
-            for thread in &mut plait.host.connection.threads {
+            for thread in plait.host.connection.threads_mut() {
                 thread.status = plait_client::host::ThreadStatus::Idle;
             }
         });

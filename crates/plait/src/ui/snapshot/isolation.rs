@@ -27,8 +27,8 @@ pub(super) fn walk(
             .unwrap()
             .root
             .clone();
-        plait.host.connection.threads[0].checkout = root;
-        plait.host.connection.threads[0].status = ThreadStatus::Running;
+        plait.host.connection.threads_mut()[0].checkout = root;
+        plait.host.connection.threads_mut()[0].status = ThreadStatus::Running;
         plait.show_tab(Workspace::Changes, window, cx);
         plait.select_file(1, DiffMode::Unstaged, window, cx);
         plait.state.repository.write_mut().note = Some((CHECKOUT_BUSY.into(), true));
@@ -72,14 +72,15 @@ pub(super) fn walk(
             repository.into(),
             "plait/123456781234".into(),
         );
+        let model = plait.host.connection.threads()[0].model.clone();
         plait
             .host
             .connection
-            .threads
+            .threads_mut()
             .push(plait_client::host::ThreadSummary {
                 id: "isolated-background".into(),
                 checkout: path,
-                model: plait.host.connection.threads[0].model.clone(),
+                model,
                 title: Some("New worktree thread".into()),
                 harness: Some(plait_client::host::harness::HarnessId::Codex),
                 ..Default::default()
@@ -123,7 +124,8 @@ pub(super) fn walk(
             .protocol_version = 6;
         plait.tabs.model = plait_client::tabs::WindowTabs::new(crate::ui::tabs::fresh_window_id());
         let mut first = None;
-        for (i, thread) in plait.host.connection.threads.iter_mut().enumerate() {
+        let epoch = plait.host.connection.epoch;
+        for (i, thread) in plait.host.connection.threads_mut().iter_mut().enumerate() {
             if i > 0 {
                 thread.checkout = repository
                     .with_extension("worktrees")
@@ -150,7 +152,7 @@ pub(super) fn walk(
                             directory: None,
                         },
                     },
-                    Some(plait.host.connection.epoch),
+                    Some(epoch),
                 )
                 .unwrap();
             first.get_or_insert(tab);
@@ -213,7 +215,7 @@ pub(super) fn install_queue(
         let thread = plait
             .host
             .connection
-            .threads
+            .threads_mut()
             .iter_mut()
             .find(|t| t.id == super::THREAD)
             .unwrap();

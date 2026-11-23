@@ -29,7 +29,7 @@ fn reading_at_top(harness: &mut Harness, repository: &Path) {
     harness.connect(repository, false);
     harness.change_snapshot(reading);
     harness.update(|plait, _, cx| {
-        plait.host.connection.threads[0].status = ThreadStatus::Idle;
+        plait.host.connection.threads_mut()[0].status = ThreadStatus::Idle;
         plait.sync_composer(cx);
         plait.workspace.live_scroll.scroll_to(ListOffset::default());
     });

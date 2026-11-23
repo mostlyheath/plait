@@ -46,13 +46,13 @@ pub(super) fn install(h: &mut Harness, count: usize) {
         let view = p.tabs.model.open(TabTarget::Worktrees {checkout:p.tab_checkout(root.clone())},Some(p.host.connection.epoch)).unwrap();
         p.tabs.model.open(TabTarget::Draft { id:"scene-draft".into(), checkout:p.tab_checkout(root.clone()) },Some(p.host.connection.epoch)).unwrap();
         p.tabs.model.activate(view).unwrap();
-        p.host.connection.threads.retain(|t| !t.id.starts_with("worktree-scene-"));
+        p.host.connection.threads_mut().retain(|t| !t.id.starts_with("worktree-scene-"));
         let mut rows=Vec::new();let mut commits=Vec::new();
         for i in 0..count {
             let path=if i==0 {root.clone()}else{root.with_extension("worktrees").join(format!("sample-{i}"))};
             let title=match i {0=>"Main checkout".into(),1=>"Retry requests after rate limits".into(),2=>"Read the local project settings".into(),3=>"Keep attachments across restarts".into(),_=>format!("Worktree {i}")};
             let id=format!("worktree-scene-{i}");
-            if i > 0 { p.host.connection.threads.push(ThreadSummary{id:id.clone(),checkout:path.clone(),title:Some(title),status:if i==1{ThreadStatus::Running}else if i==2{ThreadStatus::AwaitingApproval}else{ThreadStatus::Idle},..Default::default()}); }
+            if i > 0 { p.host.connection.threads_mut().push(ThreadSummary{id:id.clone(),checkout:path.clone(),title:Some(title),status:if i==1{ThreadStatus::Running}else if i==2{ThreadStatus::AwaitingApproval}else{ThreadStatus::Idle},..Default::default()}); }
             rows.push(Checkout { build_directories: Vec::new(), build_output: None,path,main:i==0,branch:Some(if i==0{"main".into()}else{format!("plait/topic-{i}")}),head:Some(oid(if i==0{10}else{100+i})),base:(i>0).then(||oid(9-i.min(6))),thread_id:(i>0).then_some(id),identity:Some(plait_client::git::worktree::Identity{dev:"1".into(),ino:(i+1).to_string()}),missing:false,removed:false,preservation:Preservation { build_output: None,changed:Some(if i==2{3}else{0}),unpushed:Some(if i==1{2}else{0}),exclusive:Some(0),can_keep_local:i>0 && i!=2,refusal:if i==1{Some("This worktree has unpushed commits. Push them or explicitly confirm preserving only the local branch.".into())}else if i==2{Some("This worktree has uncommitted or ignored files. Preserve or remove them before removing the worktree.".into())}else if i==0{Some("The main checkout cannot be removed here.".into())}else{None}},creation_id:(i>0).then(||format!("creation-{i}")),last_used:Some(super::super::commits::now() as u64*1000-i as u64*300000)});
             if i>0 {commits.push(commit(100+i,9-i.min(6),(if i==1{"Retry transient failures"}else if i==2{"Validate project overrides"}else{"Preserve draft attachments"}).to_string()));}
         }
@@ -227,7 +227,7 @@ fn graph_accessibility_is_unique_stable_and_has_no_thread_view_bar() {
         let owner = p.worktrees.rows[1].thread_id.clone().unwrap();
         p.host
             .connection
-            .threads
+            .threads_mut()
             .iter_mut()
             .find(|t| t.id == owner)
             .unwrap()
@@ -235,7 +235,7 @@ fn graph_accessibility_is_unique_stable_and_has_no_thread_view_bar() {
         p.worktree_labels();
         assert_eq!(p.worktrees.titles[1], "Untitled thread");
         assert!(p.worktrees.openable[1]);
-        p.host.connection.threads.retain(|t| t.id != owner);
+        p.host.connection.threads_mut().retain(|t| t.id != owner);
         p.worktree_labels();
         assert_eq!(p.worktrees.titles[1], "Thread unavailable");
         assert!(!p.worktrees.openable[1]);
@@ -271,12 +271,12 @@ fn remove_asks_for_the_worktree_that_was_drawn() {
     install(&mut h, 4);
     h.update(|p, window, cx| {
         // No run is working here: Remove waits for one.
-        for t in &mut p.host.connection.threads {
+        for t in p.host.connection.threads_mut() {
             t.status = ThreadStatus::Idle;
         }
         p.host
             .connection
-            .threads
+            .threads_mut()
             .iter_mut()
             .filter(|t| t.id == "worktree-scene-1")
             .for_each(|t| t.status = ThreadStatus::Idle);
@@ -371,7 +371,7 @@ fn a_summary_reads_nothing_and_a_run_end_reads_one_row() {
         let summary = |p: &Plait, i: usize| {
             p.host
                 .connection
-                .threads
+                .threads()
                 .iter()
                 .find(|t| t.id == format!("worktree-scene-{i}"))
                 .unwrap()
@@ -382,7 +382,7 @@ fn a_summary_reads_nothing_and_a_run_end_reads_one_row() {
         let one = sample(1);
         let apply = |p: &mut Plait, live: Vec<ThreadSummary>, cx: &mut Context<Plait>| {
             let (relabel, ended) = p.worktree_summaries(&live);
-            plait_client::navigation::merge_threads(&mut p.host.connection.threads, live).unwrap();
+            plait_client::navigation::merge_threads(p.host.connection.threads_mut(), live).unwrap();
             p.worktrees_after_summaries(relabel, ended, cx);
         };
         // Mid-run: a new title and still working.
@@ -463,7 +463,7 @@ fn remove_waits_for_a_run_in_that_worktree() {
         for status in [ThreadStatus::Running, ThreadStatus::AwaitingApproval] {
             p.host
                 .connection
-                .threads
+                .threads_mut()
                 .iter_mut()
                 .find(|t| t.id == "worktree-scene-1")
                 .unwrap()
@@ -478,12 +478,12 @@ fn remove_waits_for_a_run_in_that_worktree() {
         // Another thread working in the same folder counts too.
         p.host
             .connection
-            .threads
+            .threads_mut()
             .iter_mut()
             .find(|t| t.id == "worktree-scene-1")
             .unwrap()
             .status = ThreadStatus::Idle;
-        p.host.connection.threads.push(ThreadSummary {
+        p.host.connection.threads_mut().push(ThreadSummary {
             id: "worktree-scene-guest".into(),
             checkout: path.clone(),
             status: ThreadStatus::Running,
@@ -492,7 +492,7 @@ fn remove_waits_for_a_run_in_that_worktree() {
         assert!(p.run_in_worktree(&p.worktrees.rows[at]));
         p.host
             .connection
-            .threads
+            .threads_mut()
             .retain(|t| t.id != "worktree-scene-guest");
         assert!(!p.run_in_worktree(&p.worktrees.rows[at]));
         p.ask_remove_view_worktree(&path, id.as_ref(), window, cx);
@@ -818,7 +818,7 @@ fn removal_prompt_freezes_choices_and_identity_across_resort_and_refresh() {
             p.worktree_busy = false;
             p.host
                 .connection
-                .threads
+                .threads_mut()
                 .iter_mut()
                 .filter(|t| t.id == "worktree-scene-1")
                 .for_each(|t| t.status = ThreadStatus::Idle);

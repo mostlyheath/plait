@@ -334,7 +334,7 @@ impl Plait {
                     TabTarget::Existing { id, checkout } => self
                         .host
                         .connection
-                        .threads
+                        .threads()
                         .iter()
                         .any(|t| &t.id == id && t.checkout == checkout.root)
                         .then_some(connection),

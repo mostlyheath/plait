@@ -457,7 +457,7 @@ fn open_tabs(plait: &mut crate::ui::Plait) {
     let mut open: Vec<_> = plait
         .host
         .connection
-        .threads
+        .threads()
         .iter()
         .filter(|thread| {
             thread.id == THREAD
@@ -503,7 +503,7 @@ fn stage(harness: &mut Harness, checkout: &Path, snapshot: Snapshot) {
         plait.host.connection.status = Some(status());
         plait.host.connection.settings_model = Some(choice());
         plait.host.creation.new_model = Some(choice());
-        plait.host.connection.threads = threads(&checkout, snapshot.status);
+        *plait.host.connection.threads_mut() = threads(&checkout, snapshot.status);
         plait.host.thread.selected = Some(THREAD.into());
         open_tabs(plait);
         plait.workspace.history = Default::default();
@@ -528,7 +528,7 @@ fn stage(harness: &mut Harness, checkout: &Path, snapshot: Snapshot) {
             .preferences
             .value
             .navigation
-            .observe(&plait.host.connection.threads, None, true);
+            .observe(plait.host.connection.threads(), None, true);
         plait.rebuild_projects(cx);
         for project in &plait.state.projects {
             plait
@@ -798,7 +798,7 @@ fn stage_worktrees(harness: &mut Harness, repository: &Path) {
     }
     harness.update(move |plait, _, cx| {
         plait.park_workspace(cx);
-        plait.host.connection.threads.extend(owners.clone());
+        plait.host.connection.threads_mut().extend(owners.clone());
         for tree in &rows[1..] {
             plait.preferences.value.navigation.worktrees.insert(
                 tree.path.clone(),

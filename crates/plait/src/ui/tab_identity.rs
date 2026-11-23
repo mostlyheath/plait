@@ -280,11 +280,11 @@ impl Plait {
         self.tabs.identity.generation += 1;
         let generation = self.tabs.identity.generation;
         let epoch = self.host.connection.epoch;
-        let thread = self.host.connection.threads.first().map(|t| t.id.clone());
+        let thread = self.host.connection.threads().first().map(|t| t.id.clone());
         let mut roots: Vec<_> = self
             .host
             .connection
-            .threads
+            .threads()
             .iter()
             .map(|t| t.checkout.clone())
             .collect();

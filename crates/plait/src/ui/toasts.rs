@@ -53,7 +53,7 @@ impl Plait {
 
     /// Drops toasts for threads that are gone or archived, which never alert.
     pub(super) fn retain_toasts(&mut self, cx: &mut Context<Self>) {
-        let threads = &self.host.connection.threads;
+        let threads = self.host.connection.threads();
         let before = self.toasts.items().len();
         self.toasts.retain_threads(|id| {
             threads
@@ -77,7 +77,7 @@ impl Plait {
         if !self
             .host
             .connection
-            .threads
+            .threads()
             .iter()
             .any(|thread| thread.id == id)
         {
@@ -99,7 +99,7 @@ impl Plait {
                 .iter()
                 .filter_map(|toast| {
                     // Render only live threads; `retain_toasts` removes the rest.
-                    let thread = self.host.connection.threads.iter().find(|thread| {
+                    let thread = self.host.connection.threads().iter().find(|thread| {
                         thread.id == toast.thread && thread.archived != Some(true)
                     })?;
                     Some((toast, host_status_color(thread.status)))

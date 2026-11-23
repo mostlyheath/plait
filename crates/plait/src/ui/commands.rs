@@ -177,7 +177,7 @@ impl Plait {
             if let Some(jump) = plait_client::navigation::jump(
                 self.lists(),
                 &self.state.projects,
-                &self.host.connection.threads,
+                self.host.connection.threads(),
                 &indices,
                 target,
                 number,
@@ -188,7 +188,7 @@ impl Plait {
         let threads = self
             .host
             .connection
-            .threads
+            .threads()
             .iter()
             .enumerate()
             .filter(|(_, thread)| self.navigation.archived || thread.archived != Some(true));
@@ -262,7 +262,7 @@ impl Plait {
         let mut preferences = self.lists().clone();
         preferences.hidden.clear();
         for project in plait_client::navigation::projects(
-            &self.host.connection.threads,
+            self.host.connection.threads(),
             &preferences,
             &self.host.creation.checkout,
             &self.active_project().machines[0],
@@ -433,7 +433,7 @@ impl Plait {
                 if self
                     .host
                     .connection
-                    .threads
+                    .threads()
                     .iter()
                     .any(|thread| thread.id == id)
                 {
@@ -476,7 +476,7 @@ impl Plait {
                 if self
                     .host
                     .connection
-                    .threads
+                    .threads()
                     .iter()
                     .any(|thread| thread.id == thread_id)
                 {

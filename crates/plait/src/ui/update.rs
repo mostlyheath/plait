@@ -83,7 +83,7 @@ impl Plait {
         let busy = self
             .host
             .connection
-            .threads
+            .threads()
             .iter()
             .filter(|thread| thread.status.busy())
             .count();

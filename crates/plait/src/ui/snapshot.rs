@@ -766,7 +766,7 @@ impl Harness {
             if let Some(thread) = plait
                 .host
                 .connection
-                .threads
+                .threads_mut()
                 .iter_mut()
                 .find(|thread| thread.id == snapshot.id)
             {
@@ -868,7 +868,7 @@ impl Harness {
             plait.host.connection.status = Some(status());
             plait.host.connection.settings_model = Some(choice());
             plait.host.creation.new_model = Some(choice());
-            plait.host.connection.threads = vec![
+            *plait.host.connection.threads_mut() = vec![
                 ThreadSummary {
                     checkout_queue: None,
                     id: THREAD.into(),
@@ -1244,9 +1244,9 @@ fn desktop_recovery_does_not_rebind_saved_work_or_clear_a_newer_revision() {
         });
         plait.capture_session(cx);
         let saved = plait.session.data.as_ref().unwrap().threads[THREAD].clone();
-        plait.host.connection.threads[0].checkout = "/a-different-checkout".into();
+        plait.host.connection.threads_mut()[0].checkout = "/a-different-checkout".into();
         let snapshot = Arc::make_mut(plait.host.thread.snapshot.as_mut().unwrap());
-        snapshot.checkout = plait.host.connection.threads[0].checkout.clone();
+        snapshot.checkout = plait.host.connection.threads()[0].checkout.clone();
         snapshot.messages.push(Message {
             id: format!("request-{}", pending.request_id),
             role: MessageRole::User,
@@ -1266,7 +1266,7 @@ fn desktop_recovery_does_not_rebind_saved_work_or_clear_a_newer_revision() {
         assert!(!plait.session_accepts_thread(THREAD));
         assert!(plait.host.submissions.pending(THREAD).is_some());
         // Only the matching identity can reconcile the accepted request, not a reused thread ID.
-        plait.host.connection.threads[0].checkout = saved.checkout.clone();
+        plait.host.connection.threads_mut()[0].checkout = saved.checkout.clone();
         Arc::make_mut(plait.host.thread.snapshot.as_mut().unwrap()).checkout =
             saved.checkout.clone();
         plait.restore_composer(THREAD, &composer, cx);
@@ -1717,7 +1717,7 @@ fn a_creation_reply_lands_only_on_the_draft_that_sent_it() {
             plait
                 .host
                 .connection
-                .threads
+                .threads()
                 .iter()
                 .all(|t| t.id != "thr_discarded")
         );
@@ -1734,7 +1734,7 @@ fn a_creation_reply_lands_only_on_the_draft_that_sent_it() {
             !plait
                 .host
                 .connection
-                .threads
+                .threads()
                 .iter()
                 .any(|t| t.id == "thr_earlier")
         );
@@ -2532,7 +2532,7 @@ fn tool_states_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
     harness.change_snapshot(tool_states);
     harness.update(|plait, _, cx| {
         // The sidebar and composer follow the thread's status, as a host update would set it.
-        plait.host.connection.threads[0].status = ThreadStatus::Error;
+        plait.host.connection.threads_mut()[0].status = ThreadStatus::Error;
         plait.sync_composer(cx);
         plait.toggle_live_tool("t2", cx);
         plait.toggle_live_tool("t3", cx);
@@ -2553,7 +2553,7 @@ fn reading_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
         offset_in_item: px(0.),
     };
     harness.update(|plait, _, cx| {
-        plait.host.connection.threads[0].status = ThreadStatus::Idle;
+        plait.host.connection.threads_mut()[0].status = ThreadStatus::Idle;
         plait.sync_composer(cx);
         plait.workspace.live_scroll.scroll_to(at(0));
     });
@@ -2771,7 +2771,7 @@ fn tool_cards_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
     harness.connect(repository, false);
     harness.change_snapshot(tool_cards);
     harness.update(|plait, _, cx| {
-        plait.host.connection.threads[0].status = ThreadStatus::Idle;
+        plait.host.connection.threads_mut()[0].status = ThreadStatus::Idle;
         plait.sync_composer(cx);
         for id in ["c1", "c2", "c3"] {
             plait.toggle_live_tool(id, cx);
@@ -2829,7 +2829,7 @@ fn draft_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
     harness.connect(repository, false);
     harness.change_snapshot(finished_turn);
     harness.update(|plait, _, cx| {
-        plait.host.connection.threads[0].status = ThreadStatus::Idle;
+        plait.host.connection.threads_mut()[0].status = ThreadStatus::Idle;
         plait.workspace.composers[THREAD].update(cx, |composer, cx| {
             composer.restore_draft(DRAFT.into(), 1, None, cx);
         });
@@ -2870,7 +2870,7 @@ impl Harness {
         self.connect(repository, false);
         self.change_snapshot(finished_turn);
         self.update(|plait, _, cx| {
-            plait.host.connection.threads[0].status = ThreadStatus::Idle;
+            plait.host.connection.threads_mut()[0].status = ThreadStatus::Idle;
             plait.sync_composer(cx);
             plait.workspace.live_scroll.scroll_to_end();
         });
@@ -3426,8 +3426,8 @@ fn harnesses_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
         });
     });
     harness.update(|plait, _, cx| {
-        plait.host.connection.threads[0].model = codex_choice();
-        plait.host.connection.threads[0].harness = Some(HarnessId::Codex);
+        plait.host.connection.threads_mut()[0].model = codex_choice();
+        plait.host.connection.threads_mut()[0].harness = Some(HarnessId::Codex);
         plait.sync_composer(cx);
     });
     harness.capture(&format!("composer-codex-thread-{suffix}"));
@@ -3715,8 +3715,8 @@ fn claude_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
         approval.risk = "Sample: Claude Code runs this command on your machine with your permissions, outside Plait's sandbox. Only this request is approved.".into();
     });
     harness.update(|plait, _, cx| {
-        plait.host.connection.threads[0].model = claude_choice();
-        plait.host.connection.threads[0].harness = Some(HarnessId::Claude);
+        plait.host.connection.threads_mut()[0].model = claude_choice();
+        plait.host.connection.threads_mut()[0].harness = Some(HarnessId::Claude);
         plait.sync_composer(cx);
         // Plait's approvals are Pi's: a Claude Code message asks for none.
         assert_eq!(plait.next_approval_mode(), None);
@@ -5187,7 +5187,7 @@ fn navigation_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_millis() as u64;
-        plait.host.connection.threads = (0..28)
+        *plait.host.connection.threads_mut() = (0..28)
             .map(|index| {
                 let checkout = match index % 3 {
                     0 => root.clone(),
@@ -5232,7 +5232,7 @@ fn navigation_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
             .preferences
             .value
             .navigation
-            .observe(&plait.host.connection.threads, None, true);
+            .observe(plait.host.connection.threads(), None, true);
         plait
             .preferences
             .value
@@ -5349,7 +5349,7 @@ fn project_switching_keeps_each_draft_and_rejects_the_old_watch() {
             .as_mut()
             .unwrap()
             .protocol_version = 3;
-        plait.host.connection.threads.push(ThreadSummary {
+        plait.host.connection.threads_mut().push(ThreadSummary {
             id: "other-thread".into(),
             checkout: other.clone(),
             model: choice(),
@@ -5398,7 +5398,7 @@ fn project_switching_keeps_each_draft_and_rejects_the_old_watch() {
                 .text,
             "Separate draft"
         );
-        assert_eq!(plait.host.connection.threads.len(), 3);
+        assert_eq!(plait.host.connection.threads().len(), 3);
     });
     drop(harness);
     std::fs::remove_dir_all(scratch).unwrap();
@@ -5555,7 +5555,7 @@ fn thread_management_preserves_newer_edits_and_activity() {
         let summary = plait
             .host
             .connection
-            .threads
+            .threads_mut()
             .iter_mut()
             .find(|thread| thread.id == THREAD)
             .unwrap();
@@ -5586,7 +5586,7 @@ fn thread_management_preserves_newer_edits_and_activity() {
         let summary = plait
             .host
             .connection
-            .threads
+            .threads()
             .iter()
             .find(|thread| thread.id == THREAD)
             .unwrap();
@@ -6652,7 +6652,7 @@ fn accepted_wait(
     let mut checkout = PathBuf::new();
     harness.update(|plait, _, cx| {
         plait.admission.queue = true;
-        checkout = plait.host.connection.threads[0].checkout.clone();
+        checkout = plait.host.connection.threads()[0].checkout.clone();
         plait.host.submissions.restore_accepted(
             THREAD.into(),
             plait_client::host_state::PendingSubmit {
@@ -6702,7 +6702,7 @@ fn cancelled_wait_returns_its_text_and_images_to_the_draft() {
         vec![reference.clone()],
     );
     harness.update(|plait, _, _| {
-        plait.host.connection.threads[0].checkout_queue =
+        plait.host.connection.threads_mut()[0].checkout_queue =
             Some(plait_client::host::checkout_queue::Summary::new(
                 "wait-1".into(),
                 plait_client::host::checkout_queue::State::Waiting,
@@ -6853,11 +6853,11 @@ fn thread_workspace_preserves_selection_and_reconnect_resets() {
     let second_id = "second-thread".to_owned();
     harness.update(|plait, window, cx| {
         plait.host.connection.connected = false;
-        let mut second = plait.host.connection.threads[0].clone();
+        let mut second = plait.host.connection.threads()[0].clone();
         second.id = second_id.clone();
         second.status = ThreadStatus::Idle;
         second.title = Some("Second".into());
-        plait.host.connection.threads.push(second);
+        plait.host.connection.threads_mut().push(second);
         plait.workspace.tab = super::Workspace::Files;
         plait.workspace.history.error = Some("old error".into());
         plait
@@ -7330,4 +7330,122 @@ fn restored_tabs_stay_beneath_open_settings() {
         return;
     }
     tabs::restore_beneath_settings();
+}
+
+#[core::prelude::v1::test]
+fn navigation_rows_are_cached_and_invalidated() {
+    if !isolated("navigation_rows_are_cached_and_invalidated") {
+        return;
+    }
+    let scratch =
+        std::env::temp_dir().join(format!("plait-navigation-cache-{}", std::process::id()));
+    let repository = fixture_repository(&scratch);
+    let mut harness = Harness::new(&repository, None, 900., 600.);
+    harness.update(|p, _, cx| {
+        p.sidebar = true;
+        *p.host.connection.threads_mut() = vec![ThreadSummary {
+            id: "cache-thread".into(),
+            checkout: repository.clone(),
+            title: Some("Cache needle".into()),
+            model: choice(),
+            ..Default::default()
+        }];
+        p.rebuild_projects(cx);
+    });
+    harness.draw();
+    let count = harness
+        .window
+        .update(&mut harness.cx, |p, _, _| p.navigation.row_recomputations())
+        .unwrap();
+    harness.draw();
+    harness
+        .window
+        .update(&mut harness.cx, |p, _, cx| {
+            assert_eq!(p.navigation.row_recomputations(), count);
+            p.navigation
+                .filter
+                .update(cx, |field, cx| field.set_text("needle", cx));
+            assert_eq!(p.filtered_threads(cx).len(), 1);
+            assert_eq!(p.navigation.row_recomputations(), count + 1);
+            p.host.connection.threads_mut().push(ThreadSummary {
+                id: "new".into(),
+                checkout: repository.clone(),
+                title: Some("Another needle".into()),
+                model: choice(),
+                archived: Some(true),
+                ..Default::default()
+            });
+            assert_eq!(p.filtered_threads(cx).len(), 1);
+            assert_eq!(p.navigation.row_recomputations(), count + 2);
+            p.navigation.archived = true;
+            assert_eq!(p.filtered_threads(cx).len(), 2);
+            assert_eq!(p.navigation.row_recomputations(), count + 3);
+            p.navigation
+                .filter
+                .update(cx, |field, cx| field.set_text("", cx));
+            assert_eq!(p.filtered_threads(cx).len(), 2);
+            assert_eq!(p.navigation.row_recomputations(), count + 4);
+            p.navigation.collapsed.insert(repository.clone());
+            p.navigation.invalidate_rows();
+            let rows = p.navigation_rows(cx);
+            assert!(
+                !rows
+                    .iter()
+                    .any(|row| matches!(row, super::navigation::Row::Thread(_)))
+            );
+            assert_eq!(p.navigation.row_recomputations(), count + 5);
+        })
+        .unwrap();
+    drop(harness);
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
+#[core::prelude::v1::test]
+fn cached_thread_row_tracks_selected_machine_lists() {
+    if !isolated("cached_thread_row_tracks_selected_machine_lists") {
+        return;
+    }
+    let scratch = std::env::temp_dir().join(format!("plait-row-lists-{}", std::process::id()));
+    let repository = fixture_repository(&scratch);
+    let mut harness = Harness::new(&repository, None, 900., 600.);
+    harness.update(|p, _, cx| {
+        p.sidebar = true;
+        p.host_workspace.source =
+            super::host_workspace::Source::Host(plait_client::host::workspace::HostIdentity {
+                id: "remote".into(),
+                name: "Remote".into(),
+                platform: "test".into(),
+            });
+        p.host.connection.set_threads(vec![ThreadSummary {
+            id: "row".into(),
+            checkout: repository.clone(),
+            model: choice(),
+            ..Default::default()
+        }]);
+        p.rebuild_projects(cx);
+    });
+    harness.draw();
+    harness.update(|p, _, cx| {
+        assert_eq!(p.navigation.cached_row_flags("row"), Some((false, false)));
+        p.update_lists(
+            |lists| {
+                // Unread needs an observed entry, and a worktree a different main
+                // checkout, or the lists normalise them away.
+                lists.observed.insert(
+                    "row".into(),
+                    plait_client::navigation::Activity {
+                        updated_at: 0,
+                        state: "idle".into(),
+                    },
+                );
+                lists.unread.insert("row".into());
+                lists.remember_worktree(repository.clone(), scratch.join("main"), "branch".into());
+            },
+            cx,
+        );
+    });
+    harness.draw();
+    harness.update(|p, _, _| assert_eq!(p.navigation.cached_row_flags("row"), Some((true, true))));
+    drop(harness);
+    std::fs::remove_dir_all(scratch).unwrap();
 }

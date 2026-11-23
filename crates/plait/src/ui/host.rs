@@ -308,7 +308,7 @@ impl Plait {
             cx,
             |this, result, window, cx| match result {
                 Ok(reply) => {
-                    this.host.connection.threads = reply.threads;
+                    this.host.connection.set_threads(reply.threads);
                     this.rebuild_projects(cx);
                     this.restore_thread_selection(window, cx);
                 }
@@ -363,7 +363,7 @@ impl Plait {
         let Some(checkout) = self
             .host
             .connection
-            .threads
+            .threads()
             .iter()
             .find(|t| t.id == id)
             .map(|t| t.checkout.clone())
@@ -389,7 +389,7 @@ impl Plait {
         let Some(checkout) = self
             .host
             .connection
-            .threads
+            .threads()
             .iter()
             .find(|thread| thread.id == id)
             .map(|thread| thread.checkout.clone())
@@ -781,9 +781,9 @@ impl Plait {
             {
                 self.host.creation.pending_create = None;
                 let id = reply.thread.id.clone();
-                if !self.host.connection.threads.iter().any(|thread| thread.id == id) {
+                if !self.host.connection.threads().iter().any(|thread| thread.id == id) {
                     self.host
-                        .connection.threads
+                        .connection.threads_mut()
                         .insert(0, host::ThreadSummary::from(&reply.thread));
                     self.rebuild_projects(cx);
                 }
@@ -940,7 +940,7 @@ impl Plait {
                             if matches!(&error, host::Error::Rejected(reason) if reason.code == "busy") { this.admission.refused_busy = Some(id.clone()); }
                             this.host.submissions.finish(&id, &pending.request_id);
                             let message = if is_checkout_identity_changed(&error) {
-                                let path = this.host.connection.threads.iter().find(|thread| thread.id == id)
+                                let path = this.host.connection.threads().iter().find(|thread| thread.id == id)
                                     .map(|thread| thread.checkout.clone())
                                     .unwrap_or_else(|| this.host.creation.checkout.clone());
                                 this.tabs.identity.recovery = Some((path.clone(), false));

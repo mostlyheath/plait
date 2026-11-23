@@ -211,7 +211,7 @@ impl Plait {
                         this.remember_worktree_operation(&operation, cx);
                         if let Some(summary) = summary {
                             let id = summary.id.clone();
-                            let _ = plait_client::navigation::merge_threads(&mut this.host.connection.threads, vec![summary]);
+                            let _ = plait_client::navigation::merge_threads(this.host.connection.threads_mut(), vec![summary]);
                             this.rebuild_projects(cx);
                             if completion_visible(pending.selection, this.host.thread.watch_epoch, pending.tab, this.tabs.model.active()) {
                                 this.notice = None; this.open_created_thread(id, window, cx);

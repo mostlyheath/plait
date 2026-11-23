@@ -367,7 +367,7 @@ impl Plait {
         };
         self.host
             .connection
-            .threads
+            .threads()
             .iter()
             .any(|thread| thread.status.busy() && &thread.checkout == root)
     }

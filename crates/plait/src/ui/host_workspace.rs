@@ -219,6 +219,9 @@ impl Plait {
         if after == before {
             return;
         }
+        self.navigation.invalidate_search();
+        // A draw can reuse the parent view without visiting the visible list.
+        self.navigation.update_cached_list_flags(&after, cx);
         match self.host_workspace.source {
             Source::Host(_) => {
                 let changes = changes(&before, &after);
@@ -336,6 +339,10 @@ impl Plait {
         self.host_workspace.watch = None;
         if workspace::needs_host_update(error) {
             self.host_workspace.source = Source::Legacy;
+            if self.host_is_local() {
+                self.navigation
+                    .update_cached_list_flags(&self.preferences.value.navigation, cx);
+            }
         } else {
             self.host_workspace.failed = true;
         }
@@ -361,8 +368,10 @@ impl Plait {
         }
         let mute = self.preferences.value.navigation.mute_notifications;
         let changed = changed_checkouts(&self.host_workspace.status, &view.status);
+        let lists = lists_from(&view, mute);
+        self.navigation.update_cached_list_flags(&lists, cx);
         let workspace = &mut self.host_workspace;
-        workspace.lists = lists_from(&view, mute);
+        workspace.lists = lists;
         workspace.revision = view.revision;
         workspace.status = view.status.clone();
         workspace.source = Source::Host(view.host);

@@ -8,14 +8,17 @@ use plait_client::{
     navigation as nav,
 };
 use std::{
+    cell::RefCell,
     collections::{HashMap, HashSet},
     path::PathBuf,
+    rc::Rc,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 pub(super) struct Navigation {
     pub filter: Entity<TextField>,
     cached_rows: HashMap<String, (ThreadRowKey, Entity<ThreadRow>)>,
+    row_cache: RefCell<RowCache>,
     pub scroll: UniformListScrollHandle,
     pub collapsed: HashSet<PathBuf>,
     pub available: HashMap<PathBuf, bool>,
@@ -35,6 +38,7 @@ impl Navigation {
     pub fn new(cx: &mut Context<Plait>) -> Self {
         Self {
             cached_rows: HashMap::new(),
+            row_cache: RefCell::new(RowCache::default()),
             scroll: UniformListScrollHandle::new(),
             filter: cx.new(|cx| {
                 TextField::new("Filter projects and threads", "Find a thread…", cx).search()
@@ -51,6 +55,70 @@ impl Navigation {
             loading: false,
             generation: 0,
             watch: None,
+        }
+    }
+}
+
+#[derive(Default)]
+struct RowCache {
+    key: Option<RowCacheKey>,
+    haystacks: Option<Vec<Option<String>>>,
+    indices: HashMap<String, usize>,
+    indices_revision: Option<u64>,
+    projects: Option<HashMap<PathBuf, usize>>,
+    rows: Rc<Vec<Row>>,
+    filtered: Vec<usize>,
+    #[cfg(test)]
+    recomputations: usize,
+}
+
+#[derive(PartialEq, Eq)]
+struct RowCacheKey {
+    query: String,
+    threads_revision: u64,
+    archived: bool,
+    attention: bool,
+    draft: bool,
+    checkout: PathBuf,
+}
+
+impl Navigation {
+    #[cfg(test)]
+    pub(super) fn cached_row_flags(&self, id: &str) -> Option<(bool, bool)> {
+        self.cached_rows
+            .get(id)
+            .map(|(key, _)| (key.unread, key.worktree))
+    }
+
+    #[cfg(test)]
+    pub(super) fn row_recomputations(&self) -> usize {
+        self.row_cache.borrow().recomputations
+    }
+
+    pub(super) fn invalidate_rows(&self) {
+        self.row_cache.borrow_mut().key = None;
+    }
+
+    pub(super) fn invalidate_search(&self) {
+        let mut cache = self.row_cache.borrow_mut();
+        cache.key = None;
+        cache.haystacks = None;
+        cache.projects = None;
+    }
+
+    pub(super) fn update_cached_list_flags(
+        &mut self,
+        lists: &nav::Preferences,
+        cx: &mut Context<Plait>,
+    ) {
+        for (id, (key, view)) in &mut self.cached_rows {
+            let unread = lists.unread.contains(id);
+            let worktree = lists.worktree(&key.summary.checkout).is_some();
+            if key.unread != unread || key.worktree != worktree {
+                key.unread = unread;
+                key.worktree = worktree;
+                view.update(cx, |_, cx| cx.notify());
+            }
         }
     }
 }
@@ -88,7 +156,7 @@ pub(super) struct ThreadManagement {
 }
 
 #[derive(Clone, Copy)]
-enum Row {
+pub(super) enum Row {
     /// A project, whether it follows another group, and its thread count when collapsed.
     Project {
         index: usize,
@@ -110,10 +178,18 @@ fn title(text: impl Into<SharedString>) -> Div {
 
 impl Plait {
     pub(super) fn active_project(&self) -> &plait_client::model::Project {
-        self.state
-            .projects
-            .iter()
-            .find(|project| project.checkout == self.project_of(self.visible_project_checkout()))
+        let mut cache = self.navigation.row_cache.borrow_mut();
+        let projects = cache.projects.get_or_insert_with(|| {
+            self.state
+                .projects
+                .iter()
+                .enumerate()
+                .map(|(index, project)| (project.checkout.clone(), index))
+                .collect()
+        });
+        projects
+            .get(self.project_of(self.visible_project_checkout()))
+            .and_then(|index| self.state.projects.get(*index))
             .or(self.state.projects.first())
             .unwrap_or(&self.no_project)
     }
@@ -123,60 +199,130 @@ impl Plait {
         self.lists().project_of(checkout)
     }
 
+    pub(super) fn thread_index(&self, id: &str) -> Option<usize> {
+        let revision = self.host.connection.threads_revision();
+        let mut cache = self.navigation.row_cache.borrow_mut();
+        if cache.indices_revision != Some(revision) {
+            cache.indices = self
+                .host
+                .connection
+                .threads()
+                .iter()
+                .enumerate()
+                .map(|(index, thread)| (thread.id.clone(), index))
+                .collect();
+            cache.indices_revision = Some(revision);
+        }
+        cache.indices.get(id).copied()
+    }
+
     pub(super) fn filtered_threads(&self, cx: &App) -> Vec<usize> {
-        let query = self.navigation.filter.read(cx).text();
+        self.ensure_navigation_rows(cx);
+        self.navigation.row_cache.borrow().filtered.clone()
+    }
+
+    pub(super) fn navigation_rows(&self, cx: &App) -> Rc<Vec<Row>> {
+        self.ensure_navigation_rows(cx);
+        self.navigation.row_cache.borrow().rows.clone()
+    }
+
+    fn ensure_navigation_rows(&self, cx: &App) {
+        let key = RowCacheKey {
+            query: self.navigation.filter.read(cx).text().to_lowercase(),
+            threads_revision: self.host.connection.threads_revision(),
+            archived: self.navigation.archived,
+            attention: self.navigation.attention,
+            draft: self.draft.open,
+            checkout: self.host.creation.checkout.clone(),
+        };
+        let mut cache = self.navigation.row_cache.borrow_mut();
+        if cache.key.as_ref() == Some(&key) {
+            return;
+        }
+        if cache
+            .key
+            .as_ref()
+            .is_none_or(|old| old.threads_revision != key.threads_revision)
+        {
+            cache.haystacks = None;
+        }
+        // Keep list-sized work out of unchanged frames and reuse search text while typing.
+        let haystacks = cache.haystacks.get_or_insert_with(|| {
+            let projects = self
+                .state
+                .projects
+                .iter()
+                .map(|p| (p.checkout.as_path(), p))
+                .collect::<HashMap<_, _>>();
+            self.host
+                .connection
+                .threads()
+                .iter()
+                .map(|thread| {
+                    let project = projects.get(self.project_of(&thread.checkout))?;
+                    Some(
+                        format!(
+                            "{} {} {}",
+                            project.name,
+                            project.checkout.display(),
+                            self.summary_title(thread)
+                        )
+                        .to_lowercase(),
+                    )
+                })
+                .collect()
+        });
         let projects = self
             .state
             .projects
             .iter()
             .enumerate()
-            .map(|(index, project)| (&project.checkout, (index, project)))
+            .map(|(i, p)| (p.checkout.as_path(), i))
             .collect::<HashMap<_, _>>();
         let mut matches = self
             .host
             .connection
-            .threads
+            .threads()
             .iter()
             .enumerate()
             .filter_map(|(index, thread)| {
-                let checkout = self.project_of(&thread.checkout).to_path_buf();
-                let (project_index, project) = projects.get(&checkout)?;
-                nav::matches(
-                    thread,
-                    &self.summary_title(thread),
-                    project,
-                    query,
-                    self.navigation.archived,
-                    self.navigation.attention,
-                    &self.lists().unread,
-                )
-                .then_some((*project_index, index))
+                if (!key.archived && thread.archived == Some(true))
+                    || (key.attention && !nav::needs_attention(thread, &self.lists().unread))
+                {
+                    return None;
+                }
+                let haystack = haystacks[index].as_ref()?;
+                if !key
+                    .query
+                    .split_whitespace()
+                    .all(|word| haystack.contains(word))
+                {
+                    return None;
+                }
+                let project = projects.get(self.project_of(&thread.checkout))?;
+                Some((*project, index))
             })
             .collect::<Vec<_>>();
         matches.sort_by_key(|(project, _)| *project);
-        matches.into_iter().map(|(_, thread)| thread).collect()
-    }
-
-    fn navigation_rows(&self, cx: &App) -> Vec<Row> {
+        let filtered = matches
+            .into_iter()
+            .map(|(_, index)| index)
+            .collect::<Vec<_>>();
         let mut grouped = HashMap::<&std::path::Path, Vec<usize>>::new();
-        for index in self.filtered_threads(cx) {
+        for &index in &filtered {
             grouped
-                .entry(self.project_of(&self.host.connection.threads[index].checkout))
+                .entry(self.project_of(&self.host.connection.threads()[index].checkout))
                 .or_default()
                 .push(index);
         }
-        let query = self.navigation.filter.read(cx).text().trim().to_lowercase();
-        // Where the draft will land stays in view, whatever the filter.
-        let drafted = self
-            .draft
-            .open
-            .then(|| self.project_of(&self.host.creation.checkout));
+        let query = key.query.trim();
+        let drafted = key.draft.then(|| self.project_of(&key.checkout));
         let mut rows = Vec::new();
         for (pi, project) in self.state.projects.iter().enumerate() {
             let matching = grouped.get(project.checkout.as_path());
-            let project_matches = query.is_empty() || project.name.to_lowercase().contains(&query);
+            let project_matches = query.is_empty() || project.name.to_lowercase().contains(query);
             let draft = drafted == Some(project.checkout.as_path());
-            if matching.is_none() && !draft && (!project_matches || self.navigation.attention) {
+            if matching.is_none() && !draft && (!project_matches || key.attention) {
                 continue;
             }
             let open = !self.navigation.collapsed.contains(&project.checkout) || !query.is_empty();
@@ -194,7 +340,13 @@ impl Plait {
                 rows.extend(indices.iter().copied().map(Row::Thread));
             }
         }
-        rows
+        cache.filtered = filtered;
+        cache.rows = Rc::new(rows);
+        cache.key = Some(key);
+        #[cfg(test)]
+        {
+            cache.recomputations += 1;
+        }
     }
 
     fn project_row(
@@ -265,6 +417,7 @@ impl Plait {
                     if !this.navigation.collapsed.remove(&checkout) {
                         this.navigation.collapsed.insert(checkout.clone());
                     }
+                    this.navigation.invalidate_rows();
                     cx.notify();
                 }),
             )
@@ -298,7 +451,7 @@ impl Plait {
     }
 
     fn cached_thread_row(&mut self, index: usize, cx: &mut Context<Self>) -> AnyElement {
-        let thread = &self.host.connection.threads[index];
+        let thread = &self.host.connection.threads()[index];
         if self
             .navigation
             .rename
@@ -313,20 +466,10 @@ impl Plait {
             .as_millis() as u64;
         let key = ThreadRowKey {
             summary: thread.clone(),
-            title: self.thread_title(&thread.id),
+            title: self.summary_title(thread),
             selected: self.host.thread.selected.as_ref() == Some(&thread.id),
-            unread: self
-                .preferences
-                .value
-                .navigation
-                .unread
-                .contains(&thread.id),
-            worktree: self
-                .preferences
-                .value
-                .navigation
-                .worktree(&thread.checkout)
-                .is_some(),
+            unread: self.lists().unread.contains(&thread.id),
+            worktree: self.lists().worktree(&thread.checkout).is_some(),
             protocol: self.host.protocol(),
             theme: colors().bg,
             age: nav::age(thread.updated_at, now),
@@ -363,7 +506,7 @@ impl Plait {
     }
 
     fn host_thread_row(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
-        let thread = &self.host.connection.threads[index];
+        let thread = &self.host.connection.threads()[index];
         let id = thread.id.clone();
         let selected = self.host.thread.selected.as_ref() == Some(&id);
         if let Some((editing, field)) = &self.navigation.rename
@@ -424,7 +567,7 @@ impl Plait {
             .unwrap_or_default()
             .as_millis() as u64;
         let age = nav::age(thread.updated_at, now);
-        let label = self.thread_title(&id);
+        let label = self.summary_title(thread);
         let worktree = self.lists().worktree(&thread.checkout).is_some();
         row()
             .w_full()
@@ -670,7 +813,7 @@ impl Plait {
                     colors().subtle,
                 ))
             })
-            .when(self.host.connection.threads.len() > 200, |el| {
+            .when(self.host.connection.threads().len() > 200, |el| {
                 el.child(tag(
                     "navigation-limit",
                     "Newest 200 live · Refresh older threads",
@@ -729,7 +872,7 @@ impl Plait {
         } else if let Some(thread) = self
             .host
             .connection
-            .threads
+            .threads()
             .iter()
             .find(|thread| thread.id == *id)
         {
@@ -809,7 +952,7 @@ impl Plait {
         if let Some(thread) = self
             .host
             .connection
-            .threads
+            .threads()
             .iter()
             .find(|thread| thread.id == id)
         {
@@ -819,10 +962,11 @@ impl Plait {
                 self.navigation.archived = true;
             }
         }
+        self.navigation.invalidate_rows();
         if let Some(index) = self
             .navigation_rows(cx)
             .iter()
-            .position(|row| matches!(row, Row::Thread(index) if self.host.connection.threads[*index].id == id))
+            .position(|row| matches!(row, Row::Thread(index) if self.host.connection.threads_mut()[*index].id == id))
         {
             self.navigation
                 .scroll

@@ -369,7 +369,7 @@ impl Plait {
         let checkouts = self.verified_tab_checkouts();
         let context = RestoreContext {
             host: &self.tabs.host,
-            threads: &self.host.connection.threads,
+            threads: self.host.connection.threads(),
             checkouts: &checkouts,
             drafts: &drafts,
             connection: self
@@ -537,7 +537,7 @@ impl Plait {
         let checkouts = self.verified_tab_checkouts();
         let context = RestoreContext {
             host: &self.tabs.host,
-            threads: &self.host.connection.threads,
+            threads: self.host.connection.threads(),
             checkouts: &checkouts,
             drafts: &drafts,
             connection: self

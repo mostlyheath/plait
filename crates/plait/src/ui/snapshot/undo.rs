@@ -247,9 +247,9 @@ fn undo_control_and_shortcut_share_the_gate() {
         plait.toggle_command_palette(window, cx);
         assert!(plait.shortcut_undo().is_none());
         plait.overlay = None;
-        plait.host.connection.threads[1].status = ThreadStatus::Running;
+        plait.host.connection.threads_mut()[1].status = ThreadStatus::Running;
         assert_eq!(plait.undo_refusal(&line).unwrap().0, "Wait");
-        plait.host.connection.threads[1].status = ThreadStatus::Idle;
+        plait.host.connection.threads_mut()[1].status = ThreadStatus::Idle;
         for (state, label) in [("recording", "Recording"), ("failed", "Unavailable")] {
             inject(plait, vec![record("last", &["last"], state)]);
             assert_eq!(
@@ -627,7 +627,7 @@ fn redo_shortcut_keeps_the_control_refusals() {
                     Arc::make_mut(p.host.thread.snapshot.as_mut().unwrap()).status =
                         ThreadStatus::Running
                 }
-                2 => p.host.connection.threads[1].status = ThreadStatus::Running,
+                2 => p.host.connection.threads_mut()[1].status = ThreadStatus::Running,
                 _ => assert!(
                     p.state
                         .repository
@@ -651,7 +651,7 @@ fn redo_shortcut_keeps_the_control_refusals() {
             assert!(p.workspace.turn_records.pending.is_none());
             p.host.thread.controlling = false;
             Arc::make_mut(p.host.thread.snapshot.as_mut().unwrap()).status = ThreadStatus::Idle;
-            p.host.connection.threads[1].status = ThreadStatus::Idle;
+            p.host.connection.threads_mut()[1].status = ThreadStatus::Idle;
             *p.state.repository.write_mut() = Default::default();
         });
     }

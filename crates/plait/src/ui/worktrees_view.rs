@@ -492,7 +492,7 @@ impl Plait {
                     && self
                         .host
                         .connection
-                        .threads
+                        .threads()
                         .iter()
                         .any(|old| old.id == t.id && old.status.busy())
             })
@@ -504,7 +504,7 @@ impl Plait {
     /// Whether a run is working in `row`. Its facts were read before the run
     /// started, so Remove waits; the host refuses it then too.
     pub(super) fn run_in_worktree(&self, row: &Checkout) -> bool {
-        self.host.connection.threads.iter().any(|t| {
+        self.host.connection.threads().iter().any(|t| {
             t.status.busy() && (t.checkout == row.path || row.thread_id.as_ref() == Some(&t.id))
         })
     }
@@ -642,7 +642,7 @@ impl Plait {
             let thread = row
                 .thread_id
                 .as_ref()
-                .and_then(|id| self.host.connection.threads.iter().find(|t| &t.id == id));
+                .and_then(|id| self.host.connection.threads().iter().find(|t| &t.id == id));
             self.worktrees.openable.push(thread.is_some());
             self.worktrees.titles.push(if row.main {
                 "Main checkout".into()
