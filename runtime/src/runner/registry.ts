@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
-export type Manifest = { run_id: string; thread_id: string; request_id: string; checkout: string; harness: string; build_id: string };
+export type Manifest = { run_id: string; thread_id: string; request_id: string; checkout: string; harness: string; build_id: string; lease?: { root: string; identity: { dev: string; ino: string } } };
 export type RunnerEntry = { manifest: Manifest; status: 'live' | 'finished' | 'dead'; receipt?: unknown };
 function id(value: string): string {
   if (!/^[A-Za-z0-9_-]+$/.test(value)) throw new Error('invalid runner id');

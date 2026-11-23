@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process';
 import { handoffDescriptors, type CheckoutLease } from '../safety.ts';
 
-export function spawnRunner(entry: string, lease: CheckoutLease): Promise<number> {
-  const env = { ...process.env };
+export function spawnRunner(entry: string, lease: CheckoutLease, environment: NodeJS.ProcessEnv = {}): Promise<number> {
+  const env = { ...process.env, ...environment };
   delete env.PLAIT_LOCK_FD;
   delete env.PLAIT_NOTIFY_FD;
   const child = spawn(process.execPath, [entry], {
