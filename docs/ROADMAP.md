@@ -13,17 +13,28 @@ for evidence and limits.
   Complete their verification and compatibility work.
 - Explore the prompt tree with mockups before agreeing its model and view.
   See [Host-first Plait](HOST-FIRST.md#the-prompt-tree).
-- Rebuild the desktop layout to the [design](../DESIGN.md), one step per pull
-  request in its [build order](../DESIGN.md#build-order). Chat view: sidebar
-  rows and thread marks, a status line, the message box, This turn beside the
-  conversation, folded earlier turns, and a code size setting. Work view: the
-  thread beside Changes, History, and Files panes. The agreed protocol 7 change stores each run’s terminal
-  outcome and reports it on retained turn records for folding. The remaining
-  layout work is presentation only.
+- Inspect the rebuilt desktop layout in the native app and fix what it shows.
+  The layout in the [design](../DESIGN.md) is built: sidebar rows and thread
+  marks, a status line, the message box, This turn beside the conversation,
+  folded earlier turns, a code size setting, and Work view with the thread
+  beside Changes, History, and Files panes. It was checked by tests and by
+  scenes rendered on Linux, not in the native app. See
+  [#130](https://github.com/mostlyheath/plait/issues/130).
+- Make the test suites reliable and faster. Several tests depend on timing and
+  fail now and then on changes that do not touch them, and the macOS check
+  takes about 20 minutes. See
+  [#128](https://github.com/mostlyheath/plait/issues/128) and
+  [#129](https://github.com/mostlyheath/plait/issues/129).
+- Write an end-to-end walkthrough of how the system works. See
+  [#134](https://github.com/mostlyheath/plait/issues/134).
 
 ### Next
 
-- Show several independent machines in one sidebar.
+- Show several independent machines in one sidebar. Hosts report a
+  fingerprint per project and the client can group copies across machines;
+  no view uses it yet. Client state still keyed by a path without its machine
+  comes first. See [#133](https://github.com/mostlyheath/plait/issues/133)
+  and [#132](https://github.com/mostlyheath/plait/issues/132).
 - Update Linux hosts in place, from the machine and from the Mac. Prebuilt
   Linux hosts are published with each release and install from the Mac.
 - Complete independent client and host releases and update flows.
@@ -71,6 +82,13 @@ recovery. The native Mac client presents host state; closing or updating it
 must not stop accepted work. Hosts remain independent, with authenticated
 remote transport and no public unauthenticated socket. A window uses one
 machine at a time. See [Remote hosts](REMOTE.md).
+
+Protocol version 7 is an agreed change to the protocol and to stored state:
+the host stores how each run ended and reports it on retained turn records,
+so the desktop does not fold an earlier turn that failed or was stopped.
+Older clients and hosts keep the previous reply shape. It is built; its
+limits are in [Host](HOST.md), and one open recovery case is
+[#131](https://github.com/mostlyheath/plait/issues/131).
 
 Client and host releases must be independently selectable and publishable.
 Compatibility is negotiated through protocol versions and capabilities, not
