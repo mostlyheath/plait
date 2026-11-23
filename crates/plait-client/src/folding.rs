@@ -26,6 +26,25 @@ pub enum TurnState {
     WaitingForApproval,
 }
 
+/// Terminal outcomes seen while the live snapshot still identified the request.
+#[derive(Default)]
+pub struct ObservedOutcomes(HashMap<String, TurnState>);
+
+impl ObservedOutcomes {
+    pub fn observe(&mut self, live: &Snapshot) {
+        let outcome = latest_turn_state(live);
+        if matches!(outcome, TurnState::Failed | TurnState::Stopped)
+            && let Some(request) = live
+                .messages
+                .iter()
+                .rev()
+                .find(|m| m.role == MessageRole::User)
+        {
+            self.0.insert(request.id.clone(), outcome);
+        }
+    }
+}
+
 /// Inputs for one turn when deciding whether it draws folded.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TurnInput<'a> {
@@ -111,12 +130,21 @@ pub fn segment_turns(
     slots: &[Slot],
     live_end: bool,
     records: &[TurnRecord],
+    outcomes: &ObservedOutcomes,
 ) -> Vec<Turn> {
-    let mut run_of_request: HashMap<String, &str> = HashMap::new();
+    let mut run_of_request = HashMap::new();
     for record in records {
         if record.kind == RecordKind::Turn {
+            let outcome = record
+                .request_ids
+                .iter()
+                .find_map(|id| outcomes.0.get(&format!("request-{id}")))
+                .copied();
             for request_id in &record.request_ids {
-                run_of_request.insert(format!("request-{request_id}"), record.id.as_str());
+                run_of_request.insert(
+                    format!("request-{request_id}"),
+                    (record.id.as_str(), outcome),
+                );
             }
         }
     }
@@ -127,6 +155,7 @@ pub fn segment_turns(
         start: usize,
         closing_slot: Option<Slot>,
         run: Option<&'a str>,
+        outcome: Option<TurnState>,
         has_running_tool: bool,
         has_interrupted_tool: bool,
     }
@@ -137,7 +166,8 @@ pub fn segment_turns(
             && let Some(message) = snapshot.messages.get(msg_ix)
             && message.role == MessageRole::User
         {
-            let run = run_of_request.get(&message.id).copied();
+            let record = run_of_request.get(&message.id);
+            let run = record.map(|(id, _)| *id);
             let same_steered_run = run.is_some()
                 && drafts
                     .last()
@@ -150,6 +180,9 @@ pub fn segment_turns(
                     start: slot_ix,
                     closing_slot: None,
                     run,
+                    outcome: record
+                        .and_then(|(_, outcome)| *outcome)
+                        .or_else(|| outcomes.0.get(&message.id).copied()),
                     has_running_tool: false,
                     has_interrupted_tool: false,
                 });
@@ -179,6 +212,8 @@ pub fn segment_turns(
         let is_latest = live_end && index + 1 == count;
         let state = if is_latest {
             latest_turn_state(snapshot)
+        } else if let Some(outcome) = draft.outcome {
+            outcome
         } else if draft.has_running_tool {
             TurnState::Running
         } else if draft.has_interrupted_tool {
@@ -234,6 +269,8 @@ pub enum DisplayRow {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Layout {
     pub rows: Vec<DisplayRow>,
+    pub slots: Vec<Slot>,
+    pub raw_index_by_key: HashMap<String, usize>,
     /// Maps every loaded message ID to the ID of the turn that owns it.
     pub turn_of_message: HashMap<String, String>,
     /// Maps every currently unfolded message ID to its display row index.
@@ -285,10 +322,19 @@ pub fn build_layout(
     opened: &HashSet<String>,
     find_match_message: Option<&str>,
     fold_earlier_turns: bool,
+    outcomes: &ObservedOutcomes,
 ) -> Layout {
     let slots = transcript::layout(snapshot);
-    let turns = segment_turns(snapshot, &slots, live_end, records);
+    let turns = segment_turns(snapshot, &slots, live_end, records, outcomes);
     let mut layout = Layout {
+        slots: Vec::new(),
+        raw_index_by_key: slots
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &slot)| {
+                Some((transcript::row_key(transcript::resolve(snapshot, slot)?), i))
+            })
+            .collect(),
         rows: Vec::with_capacity(slots.len()),
         turn_of_message: HashMap::with_capacity(snapshot.messages.len()),
         row_of_message: HashMap::with_capacity(snapshot.messages.len()),
@@ -342,6 +388,7 @@ pub fn build_layout(
         }
     }
 
+    layout.slots = slots;
     layout
 }
 
@@ -599,6 +646,35 @@ mod tests {
     }
 
     #[test]
+    fn segmentation_keeps_observed_failures_and_stops_open_in_history() {
+        let mut snap = snapshot_with(
+            vec![message("failed", MessageRole::User, "first")],
+            vec![],
+            ThreadStatus::Error,
+        );
+        let mut outcomes = ObservedOutcomes::default();
+        outcomes.observe(&snap);
+        snap.messages
+            .push(message("stopped", MessageRole::User, "second"));
+        snap.status = ThreadStatus::Stopped;
+        outcomes.observe(&snap);
+        snap.messages
+            .push(message("next", MessageRole::User, "third"));
+        snap.status = ThreadStatus::Idle;
+        for live_end in [true, false] {
+            let slots = transcript::layout(&snap);
+            let turns = segment_turns(&snap, &slots, live_end, &[], &outcomes);
+            assert_eq!(turns[0].state, TurnState::Failed);
+            assert_eq!(turns[1].state, TurnState::Stopped);
+            let layout = build_layout(&snap, live_end, &[], &HashSet::new(), None, true, &outcomes);
+            assert_eq!(
+                layout.rows[..2],
+                [DisplayRow::Slot(slots[0]), DisplayRow::Slot(slots[1])]
+            );
+        }
+    }
+
+    #[test]
     fn setting_off_folds_no_turn() {
         let turns = [
             turn("t1", TurnState::Finished, false),
@@ -702,7 +778,15 @@ mod tests {
             ],
             ThreadStatus::Idle,
         );
-        let layout = build_layout(&snap, true, &[], &HashSet::new(), None, true);
+        let layout = build_layout(
+            &snap,
+            true,
+            &[],
+            &HashSet::new(),
+            None,
+            true,
+            &Default::default(),
+        );
         // Turn 1 (u1, t1, a1) folds into 1 row; Turn 2 has an interrupted tool so stays open (3 rows);
         // Turn 3 is latest so stays open (2 rows).
         assert_eq!(layout.len(), 1 + 3 + 2);
@@ -731,7 +815,13 @@ mod tests {
             dirty_paths: Vec::new(),
             risk: String::new(),
         });
-        let turns = segment_turns(&snap, &transcript::layout(&snap), true, &[]);
+        let turns = segment_turns(
+            &snap,
+            &transcript::layout(&snap),
+            true,
+            &[],
+            &Default::default(),
+        );
         assert_eq!(turns.last().unwrap().state, TurnState::WaitingForApproval);
     }
 
@@ -767,7 +857,15 @@ mod tests {
             not_covered_total: 0,
             created_at: 1000,
         };
-        let layout = build_layout(&snap, true, &[record], &HashSet::new(), None, true);
+        let layout = build_layout(
+            &snap,
+            true,
+            &[record],
+            &HashSet::new(),
+            None,
+            true,
+            &Default::default(),
+        );
         // r1 + a1 + r2 + a2 fold into ONE FoldedTurn closing at a2 (index 3); r3 + a3 stay open.
         assert_eq!(layout.len(), 3);
         assert_eq!(
@@ -798,9 +896,25 @@ mod tests {
             vec![tool("t2", "u2", ToolStatus::Done)],
             ThreadStatus::Idle,
         );
-        let closed = build_layout(&snap, true, &[], &HashSet::new(), None, true);
+        let closed = build_layout(
+            &snap,
+            true,
+            &[],
+            &HashSet::new(),
+            None,
+            true,
+            &Default::default(),
+        );
         let opened_set = HashSet::from(["u2".to_owned()]);
-        let opened = build_layout(&snap, true, &[], &opened_set, None, true);
+        let opened = build_layout(
+            &snap,
+            true,
+            &[],
+            &opened_set,
+            None,
+            true,
+            &Default::default(),
+        );
         assert_eq!(
             diff_layout(Some((&snap, &closed.rows)), Some((&snap, &opened.rows))),
             Update::Patch {

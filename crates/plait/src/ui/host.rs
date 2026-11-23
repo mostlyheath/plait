@@ -552,6 +552,9 @@ impl Plait {
                                     cx.notify();
                                     return false;
                                 }
+                                if let Some(live) = this.host.thread.snapshot.as_deref() {
+                                    this.tabs.model.observe_active_snapshot(live);
+                                }
                                 let review_changed = previous.as_ref().is_none_or(|old| {
                                     this.host.thread.snapshot.as_ref().is_some_and(|new| {
                                         old.status != new.status
@@ -632,6 +635,13 @@ impl Plait {
             .open
             .then(|| self.current_hit().map(|hit| hit.message))
             .flatten();
+        let unknown = Default::default();
+        let outcomes = self
+            .tabs
+            .model
+            .active()
+            .and_then(|id| self.tabs.model.get(id))
+            .map_or(&unknown, |tab| tab.session().outcomes());
         plait_client::folding::build_layout(
             snapshot,
             live_end,
@@ -639,6 +649,7 @@ impl Plait {
             &self.workspace.opened_turns,
             find_match_message.as_deref(),
             self.preferences.value.fold_earlier_turns(),
+            outcomes,
         )
     }
 
@@ -691,10 +702,19 @@ impl Plait {
         // A bottom-aligned list pinned to its end would push an opened earlier
         // turn upward; pin the current viewport top first so the row stays put.
         if self.workspace.live_scroll.logical_scroll_top().item_ix >= self.workspace.live_count {
-            let top = self.workspace.live_scroll.max_offset_for_scrollbar().y;
-            self.workspace.live_scroll.scroll_to(ListOffset::default());
+            let scroll = &self.workspace.live_scroll;
+            // Resolve the end sentinel against the measured height, including
+            // the blank space above a short, bottom-aligned transcript.
+            scroll.scroll_to_end();
+            let height = -scroll.scroll_px_offset_for_scrollbar().y;
+            let top = height + px(super::live_conversation::LIST_TOP_PADDING)
+                - scroll.viewport_bounds().size.height;
+            scroll.scroll_to(ListOffset {
+                item_ix: 0,
+                offset_in_item: top.min(px(0.)),
+            });
             if top > px(0.) {
-                self.workspace.live_scroll.scroll_by(top);
+                scroll.scroll_by(top);
             }
         }
         let anchor = self.workspace.live_scroll.logical_scroll_top();

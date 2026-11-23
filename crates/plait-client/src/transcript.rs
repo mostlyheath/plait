@@ -35,6 +35,16 @@ impl<'a> Row<'a> {
     }
 }
 
+pub fn row_key(row: Row<'_>) -> String {
+    match row {
+        Row::Message(m) => format!("message:{}", m.id),
+        Row::Reasoning(m) => format!("reasoning:{}", m.id),
+        Row::Tool(t) => format!("tool:{}", t.id),
+        Row::Streaming(_) => "stream".into(),
+        Row::LiveReasoning(_) => "live-reasoning".into(),
+    }
+}
+
 pub fn row_count(snapshot: &Snapshot) -> usize {
     snapshot
         .messages

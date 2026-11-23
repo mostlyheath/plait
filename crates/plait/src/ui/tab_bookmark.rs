@@ -3,7 +3,7 @@ use super::{Plait, Workspace, file_view::FindIn, text_field::TextField};
 use gpui::*;
 use plait_client::{
     tabs::bookmark::*,
-    transcript::{self, Row},
+    transcript::{self, row_key},
 };
 
 fn milli(value: Pixels) -> i32 {
@@ -34,15 +34,6 @@ fn query(field: &Option<Entity<TextField>>, cx: &App) -> String {
         .as_ref()
         .map(|f| f.read(cx).text().to_owned())
         .unwrap_or_default()
-}
-pub(super) fn row_key(row: Row<'_>) -> String {
-    match row {
-        Row::Message(m) => format!("message:{}", m.id),
-        Row::Reasoning(m) => format!("reasoning:{}", m.id),
-        Row::Tool(t) => format!("tool:{}", t.id),
-        Row::Streaming(_) => "stream".into(),
-        Row::LiveReasoning(_) => "live-reasoning".into(),
-    }
 }
 
 impl Plait {
@@ -479,9 +470,7 @@ impl Plait {
                 ));
             self.workspace.restore_pending[3] = false;
         }
-        if self.workspace.restore_pending[0]
-            && let Some(snapshot) = self.conversation_snapshot()
-        {
+        if self.workspace.restore_pending[0] && self.conversation_snapshot().is_some() {
             match &bookmark.conversation.scroll {
                 ConversationScroll::Latest => {
                     self.workspace.live_scroll.scroll_to_end();
@@ -491,24 +480,20 @@ impl Plait {
                     row,
                     offset_millipoints,
                 } => {
-                    if let Some(item_ix) =
-                        self.workspace
-                            .live_layout
-                            .rows
-                            .iter()
-                            .position(|entry| match entry {
-                                plait_client::folding::DisplayRow::Slot(slot) => {
-                                    transcript::resolve(snapshot, *slot)
-                                        .is_some_and(|r| row_key(r) == *row)
-                                }
-                                plait_client::folding::DisplayRow::FoldedTurn { id, .. } => {
-                                    format!("message:{id}") == *row
-                                }
-                            })
-                    {
+                    let layout = &self.workspace.live_layout;
+                    if let Some(&raw) = layout.raw_index_by_key.get(row) {
+                        let item_ix = layout
+                            .raw_index_of_row
+                            .partition_point(|&start| start <= raw)
+                            - 1;
+                        let inside_fold = layout.raw_index(item_ix) != raw;
                         self.workspace.live_scroll.scroll_to(ListOffset {
                             item_ix,
-                            offset_in_item: pixels(*offset_millipoints),
+                            offset_in_item: if inside_fold {
+                                px(0.)
+                            } else {
+                                pixels(*offset_millipoints)
+                            },
                         });
                         self.workspace.restore_pending[0] = false;
                     } else if self.workspace.history.cache.loaded

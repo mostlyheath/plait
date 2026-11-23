@@ -6,6 +6,8 @@ use super::{
 use gpui::{prelude::*, *};
 use std::time::Instant;
 
+pub(super) const LIST_TOP_PADDING: f32 = 8.;
+
 /// Carries guarded keyboard actions to the key event that knows whether they repeat.
 #[derive(Default)]
 pub(super) struct ApprovalKeys {
@@ -963,7 +965,7 @@ impl Plait {
                 )
                 .size_full()
                 // No space below: the turn line runs on into the state line.
-                .pt_2(),
+                .pt(px(LIST_TOP_PADDING)),
             )
             .when(away, |el| {
                 el.child(

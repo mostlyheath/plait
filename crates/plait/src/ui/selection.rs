@@ -47,14 +47,13 @@ pub(super) enum Owner {
 }
 
 impl Owner {
-    fn is(&self, row: Row<'_>) -> bool {
-        match (self, row) {
-            (Self::Message(id), Row::Message(message)) => **id == *message.id,
-            (Self::Stream, Row::Streaming(_)) => true,
-            (Self::Reasoning(id), Row::Reasoning(message)) => **id == *message.id,
-            (Self::LiveReasoning, Row::LiveReasoning(_)) => true,
-            (Self::Tool(id), Row::Tool(tool)) => **id == *tool.id,
-            _ => false,
+    fn key(&self) -> String {
+        match self {
+            Owner::Message(id) => format!("message:{id}"),
+            Owner::Reasoning(id) => format!("reasoning:{id}"),
+            Owner::Tool(id) => format!("tool:{id}"),
+            Owner::Stream => "stream".into(),
+            Owner::LiveReasoning => "live-reasoning".into(),
         }
     }
 }
@@ -131,13 +130,7 @@ impl Reading {
     )> {
         let selection = self.selection.as_ref()?;
         let position = |a: &Anchor| plait_client::tabs::bookmark::TextPosition {
-            source: match &a.owner {
-                Owner::Message(id) => format!("message:{id}"),
-                Owner::Reasoning(id) => format!("reasoning:{id}"),
-                Owner::Tool(id) => format!("tool:{id}"),
-                Owner::Stream => "stream".into(),
-                Owner::LiveReasoning => "live-reasoning".into(),
-            },
+            source: a.owner.key(),
             block: a.block as u32,
             byte: a.offset as u32,
         };
@@ -183,14 +176,15 @@ impl Reading {
     /// The selected part of a block's `range`, relative to that range.
     pub(super) fn selected(
         &self,
-        site: &Site,
+        row: usize,
+        block_index: usize,
         block: &Block,
         range: &Range<usize>,
     ) -> Option<Range<usize>> {
         let all = self
             .span
             .get()?
-            .within(site.row, site.block, block.text.len())?;
+            .within(row, block_index, block.text.len())?;
         let start = selection::clamp(&block.text, all.start.max(range.start));
         let end = selection::clamp(&block.text, all.end.min(range.end));
         (start < end).then(|| start - range.start..end - range.start)
@@ -499,18 +493,9 @@ impl Plait {
 
     fn anchored_block(&self, anchor: &Anchor) -> Option<&Block> {
         let snapshot = self.conversation_snapshot()?;
-        let row = self
-            .workspace
-            .live_layout
-            .rows
-            .iter()
-            .filter_map(|row| match row {
-                plait_client::folding::DisplayRow::Slot(slot) => {
-                    transcript::resolve(snapshot, *slot)
-                }
-                plait_client::folding::DisplayRow::FoldedTurn { .. } => None,
-            })
-            .find(|row| anchor.owner.is(*row))?;
+        let layout = &self.workspace.live_layout;
+        let index = *layout.raw_index_by_key.get(&anchor.owner.key())?;
+        let row = transcript::resolve(snapshot, layout.slots[index])?;
         self.row_blocks(row).get(anchor.block).copied()
     }
 
@@ -527,13 +512,11 @@ impl Plait {
             return;
         }
         let position = |anchor: &Anchor| {
-            let row = self.workspace.live_layout.rows.iter().position(|row| {
-                matches!(
-                    row,
-                    plait_client::folding::DisplayRow::Slot(slot)
-                        if transcript::resolve(snapshot, *slot).is_some_and(|row| anchor.owner.is(row))
-                )
-            })?;
+            let row = *self
+                .workspace
+                .live_layout
+                .raw_index_by_key
+                .get(&anchor.owner.key())?;
             Some(Position {
                 row,
                 block: anchor.block,
@@ -665,19 +648,14 @@ impl Plait {
     pub(super) fn selected_text(&self) -> Option<String> {
         let span = self.workspace.reading.span.get()?;
         let snapshot = self.conversation_snapshot()?;
-        let rows = self
-            .workspace
-            .live_layout
-            .rows
+        let layout = &self.workspace.live_layout;
+        let rows = layout
+            .slots
+            .get(span.start.row..=span.end.row)?
             .iter()
             .enumerate()
-            .skip(span.start.row)
-            .take(span.end.row - span.start.row + 1)
-            .filter_map(|(index, row)| match row {
-                plait_client::folding::DisplayRow::Slot(slot) => {
-                    Some((index, transcript::resolve(snapshot, *slot)?))
-                }
-                plait_client::folding::DisplayRow::FoldedTurn { .. } => None,
+            .filter_map(|(i, slot)| {
+                Some((span.start.row + i, transcript::resolve(snapshot, *slot)?))
             });
         let blocks = rows.flat_map(|(index, row)| {
             self.row_blocks(row)

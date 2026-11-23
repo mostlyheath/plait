@@ -358,7 +358,7 @@ fn opening_a_folded_turn_keeps_the_activated_row_where_it_is_on_screen() {
     }
     let scratch = std::env::temp_dir().join(format!("plait-folded-scroll-{}", std::process::id()));
     let repository = fixture_repository(&scratch);
-    let mut harness = Harness::new(&repository, None, 900., 600.);
+    let mut harness = Harness::with_host(&repository, None, 900., 600., None);
     install_long_thread(&mut harness, &repository);
 
     // Case 1: scrolled up, opening a folded turn below the viewport top.
@@ -414,12 +414,23 @@ fn opening_a_folded_turn_keeps_the_activated_row_where_it_is_on_screen() {
     // Case 2: pinned to the bottom (ListAlignment::Bottom), opening a visible folded turn.
     harness.update(|plait, _, _| plait.workspace.live_scroll.scroll_to_end());
     harness.draw();
+    let mut pinned_top = px(0.);
     harness.update(|plait, _, cx| {
-        // Opening r6 while pinned to the bottom must anchor the viewport top
-        // instead of letting ListAlignment::Bottom jump r6 upward.
-        assert!(
-            plait.workspace.live_scroll.logical_scroll_top().item_ix >= plait.workspace.live_count
-        );
+        let scroll = &plait.workspace.live_scroll;
+        assert!(scroll.logical_scroll_top().item_ix >= plait.workspace.live_count);
+        let ix = plait
+            .workspace
+            .live_layout
+            .folded_row_index("request-r6")
+            .unwrap();
+        scroll.scroll_to(ListOffset::default());
+        let tail = scroll
+            .bounds_for_item(plait.workspace.live_count - 1)
+            .unwrap()
+            .bottom()
+            - scroll.bounds_for_item(ix).unwrap().top();
+        pinned_top = scroll.viewport_bounds().bottom() - tail;
+        scroll.scroll_to_end();
         plait.open_folded_turn("request-r6", cx);
         assert!(
             plait.workspace.live_scroll.logical_scroll_top().item_ix < plait.workspace.live_count,
@@ -434,20 +445,107 @@ fn opening_a_folded_turn_keeps_the_activated_row_where_it_is_on_screen() {
             .row_of_message
             .get("request-r6")
             .expect("r6 unfolded");
-        let view = plait.workspace.live_scroll.viewport_bounds();
         let bounds = plait
             .workspace
             .live_scroll
             .bounds_for_item(ix)
             .expect("r6 stays in viewport");
         assert!(
-            bounds.top() >= view.top() - px(1.) && bounds.top() < view.bottom(),
-            "r6 must remain visible in viewport ({bounds:?} vs {view:?})"
+            (bounds.top() + px(crate::ui::live_conversation::LIST_TOP_PADDING) - pinned_top).abs()
+                < px(1.),
+            "pinned row moved from {pinned_top:?} to {bounds:?}"
         );
+    });
+
+    // Leave two turns in a short bottom-aligned list, then open a reply
+    // taller than the viewport. The initial blank space must survive layout.
+    harness.change_snapshot(|snap| {
+        snap.messages
+            .retain(|m| m.id.ends_with("r1") || m.id.ends_with("r7"));
+        snap.tools.clear();
+        snap.messages[1].text = "Long reply paragraph.\n\n".repeat(100);
+    });
+    harness.update(|plait, _, _| plait.workspace.live_scroll.scroll_to_end());
+    harness.draw();
+    let expected = harness
+        .window
+        .update(&mut harness.cx, |plait, _, _| {
+            let scroll = &plait.workspace.live_scroll;
+            scroll.scroll_to_end();
+            let height = -scroll.scroll_px_offset_for_scrollbar().y;
+            let top = scroll.viewport_bounds().bottom() - height;
+            assert!(top > scroll.viewport_bounds().top() + px(20.));
+            top
+        })
+        .unwrap();
+    harness.update(|plait, _, cx| plait.open_folded_turn("request-r1", cx));
+    harness.draw();
+    harness.update(|plait, _, _| {
+        let scroll = &plait.workspace.live_scroll;
+        let top = scroll.bounds_for_item(0).unwrap().top()
+            + px(crate::ui::live_conversation::LIST_TOP_PADDING);
+        assert!(
+            (top - expected).abs() < px(1.),
+            "short transcript moved from {expected:?} to {top:?}"
+        );
+        assert!(scroll.max_offset_for_scrollbar().y > scroll.viewport_bounds().size.height);
     });
 
     drop(harness);
     let _ = std::fs::remove_dir_all(&scratch);
+}
+
+#[core::prelude::v1::test]
+fn folded_bookmarks_and_copy_use_loaded_transcript_rows() {
+    if !isolated("folded_turns::folded_bookmarks_and_copy_use_loaded_transcript_rows") {
+        return;
+    }
+    use plait_client::tabs::bookmark::{
+        ConversationScroll, TextPosition, ThreadBookmark, ViewDetails,
+    };
+    let scratch = std::env::temp_dir().join(format!("plait-folded-reading-{}", std::process::id()));
+    let repository = fixture_repository(&scratch);
+    let mut harness = Harness::with_host(&repository, None, 900., 600., None);
+    install_long_thread(&mut harness, &repository);
+    harness.update(|plait, _, cx| {
+        for key in ["message:answer-r3", "tool:tool-r3"] {
+            let mut bookmark = ThreadBookmark::default();
+            bookmark.conversation.scroll = ConversationScroll::Anchored {
+                row: key.into(),
+                offset_millipoints: 64000,
+            };
+            plait.workspace.restore = Some(bookmark);
+            plait.workspace.restore_pending[0] = true;
+            plait.restore_ready_bookmarks(cx);
+            let top = plait.workspace.live_scroll.logical_scroll_top();
+            assert_eq!((top.item_ix, top.offset_in_item), (2, px(0.)));
+            assert!(!plait.workspace.restore_pending[0]);
+        }
+        plait.open_folded_turn("request-r1", cx);
+        let pos = |id: &str, byte| TextPosition {
+            source: format!("message:{id}"),
+            block: 0,
+            byte,
+        };
+        let details = ViewDetails {
+            selection: Some((pos("answer-r1", 5), pos("request-r7", 6))),
+            ..Default::default()
+        };
+        plait.workspace.reading.restore_selection(THREAD, &details);
+        plait.workspace.expanded_live_tools.insert("tool-r3".into());
+        let copy = |plait: &Plait| {
+            plait.resolve_selection();
+            plait.selected_text().unwrap()
+        };
+        let folded = copy(plait);
+        for n in 2..=6 {
+            plait.open_folded_turn(&format!("request-r{n}"), cx);
+        }
+        assert_eq!(folded, copy(plait));
+        assert!(folded.contains("bravo-marker"));
+    });
+    drop(harness);
+    let _ = std::fs::remove_dir_all(scratch);
 }
 
 /// Deliver a real key press (KeyDown + KeyUp), as GPUI's button activation
