@@ -4,7 +4,7 @@ import { realpath, lstat, mkdir, open } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 import { dirname, isAbsolute, join } from 'node:path';
 import { homedir } from 'node:os';
-import { constants } from 'node:fs';
+import { constants, close as closeFd, fstat } from 'node:fs';
 import { promisify } from 'node:util';
 import { fail, HostError } from './protocol.ts';
 import type { CleanupProof } from './cleanup.ts';
@@ -162,6 +162,7 @@ export type LeaseHandle = {
 export type CheckoutLease = LeaseHandle & {
   fd: number | undefined;
   lifecycleFd: number;
+  ownerFd?: number;
   class: LeaseClass;
   root: string;
   identity: FileIdentity;
@@ -269,6 +270,7 @@ export async function acquireCheckout(root: string, mode: LeaseClass = 'writer')
     return {
       fd: writer?.fd,
       lifecycleFd: lifecycle.fd,
+      ownerFd: owner?.fd,
       class: mode,
       root: canonical,
       identity: expected,
@@ -283,6 +285,56 @@ export async function acquireCheckout(root: string, mode: LeaseClass = 'writer')
     try { await writer?.close(); } finally { try { await owner?.close(); } finally { await lifecycle.close(); } }
     throw error;
   }
+}
+
+export type LeaseDescriptors = [number, number, number];
+export type LeaseExpectation = { root: string; identity: FileIdentity };
+
+/** The descriptors stay owned by the lease until releaseAfterHandoff. */
+export function handoffDescriptors(lease: CheckoutLease): LeaseDescriptors {
+  if (lease.class === 'reader' || lease.fd === undefined || lease.ownerFd === undefined) {
+    throw new Error('A writer checkout lease is required for handoff.');
+  }
+  return [lease.lifecycleFd, lease.fd, lease.ownerFd];
+}
+
+export async function releaseAfterHandoff(lease: CheckoutLease): Promise<void> {
+  // FileHandle.close closes the descriptor; it does not issue flock(LOCK_UN).
+  await lease.close();
+}
+
+const statFd = promisify(fstat);
+const closeDescriptor = promisify(closeFd);
+
+/** Validate against the current checkout and lock files before accepting ownership. */
+export async function adoptDescriptors(fds: LeaseDescriptors, expected: LeaseExpectation): Promise<CheckoutLease> {
+  if (new Set(fds).size !== 3 || fds.some(fd => !Number.isInteger(fd) || fd < 3)) {
+    throw new Error('Invalid checkout lease descriptors.');
+  }
+  const current = await rootIdentity(expected.root);
+  if (current.dev !== expected.identity.dev || current.ino !== expected.identity.ino) {
+    throw new Error('Checkout identity changed.');
+  }
+  const ownerName = `cleanup-owner-${lockHex(current.dev)}-${lockHex(current.ino)}.lock`;
+  const paths = [join(leaseDirectory(), checkoutLockName(current)), expected.root, join(leaseDirectory(), ownerName)];
+  for (let i = 0; i < fds.length; i++) {
+    const [held, target] = await Promise.all([statFd(fds[i], { bigint: true }), lstat(paths[i], { bigint: true })]);
+    if (held.dev !== target.dev || held.ino !== target.ino || (i === 1 ? !target.isDirectory() : !target.isFile())) {
+      throw new Error('Checkout lease descriptor identity mismatch.');
+    }
+  }
+  let closed = false;
+  return {
+    lifecycleFd: fds[0], fd: fds[1], ownerFd: fds[2], class: 'writer',
+    root: expected.root, identity: expected.identity,
+    async close() {
+      if (closed) return;
+      closed = true;
+      try { await closeDescriptor(fds[1]); } finally {
+        try { await closeDescriptor(fds[2]); } finally { await closeDescriptor(fds[0]); }
+      }
+    },
+  };
 }
 
 export async function acquireCommonMetadata(root: string, timeoutMs = 5000): Promise<CommonMetadataLease> {
