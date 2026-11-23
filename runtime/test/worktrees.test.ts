@@ -58,7 +58,7 @@ test('worktree restart reconciles creation and window closure before acknowledge
   const journalPath = join(h.store, 'worktrees', `${ready.thread_id}.json`);
   const journal = JSON.parse(await readFile(journalPath, 'utf8')); journal.stage = 'creating';
   await writeFile(journalPath, JSON.stringify(journal));
-  await h.close(); const reopened = h.reopen();
+  await h.close(); const reopened = await h.reopen();
   const recovered = await done(reopened.runtime, 'restart'); assert.equal(recovered.state, 'ready', JSON.stringify(recovered));
   assert.equal(recovered.thread_id, ready.thread_id); assert.equal(recovered.worktree!.path, ready.worktree!.path);
   const listed: any = await reopened.runtime.reply({ op: 'list_worktrees' }); assert.equal(listed.result.operations[0].thread_id, ready.thread_id);

@@ -146,7 +146,7 @@ test('lost reply and restart resume the same admission; linked continuation leav
   const sourceBefore=structuredClone(h.runtime.snapshot(source.id));
   // A crash between child completion and the admission receipt update.
   h.runtime.store.db.prepare('UPDATE thread_admissions SET result=? WHERE request_id=?').run(JSON.stringify({...first,state:'preparing',thread_id:null,worktree:null,checkout:h.root}),'linked');
-  await h.close();const next=h.reopen();const recovered=await admitted(next.runtime,'linked');assert.equal(recovered.thread_id,first.thread_id);
+  await h.close();const next=await h.reopen();const recovered=await admitted(next.runtime,'linked');assert.equal(recovered.thread_id,first.thread_id);
   const origin:any=await next.runtime.reply({op:'thread_origin',thread_id:first.thread_id});assert.equal(origin.result.admission.source_thread_id,source.id);
   assert.deepEqual(next.runtime.snapshot(source.id),sourceBefore);
   assert.equal(next.runtime.store.db.prepare('SELECT count(*) AS n FROM worktree_operations').get()!.n,1);
@@ -174,7 +174,7 @@ test('project authorization survives restart but never follows a replaced reposi
   const {rename}=await import('node:fs/promises');const h=await codex(t);await chmod(h.store,0o700);await commit(h.root);
   const info:any=await h.runtime.reply({op:'admission_info',checkout:h.root});
   assert.equal((await h.runtime.reply({op:'set_project_isolation',checkout:h.root,identity:info.result.project_identity,auto_worktree:true})).ok,true);
-  await h.close();const next=h.reopen();assert.equal((await next.runtime.reply({op:'admission_info',checkout:h.root}) as any).result.auto_worktree,true);
+  await h.close();const next=await h.reopen();assert.equal((await next.runtime.reply({op:'admission_info',checkout:h.root}) as any).result.auto_worktree,true);
   await rename(h.root,h.root+'-original');await mkdir(h.root);await exec('/usr/bin/git',['init','-q',h.root]);await commit(h.root);
   const replacement:any=await next.runtime.reply({op:'admission_info',checkout:h.root});assert.equal(replacement.result.auto_worktree,false);
   assert.equal((await next.runtime.reply({op:'set_project_isolation',checkout:h.root,identity:info.result.project_identity,auto_worktree:true})).error?.code,'permission_denied');

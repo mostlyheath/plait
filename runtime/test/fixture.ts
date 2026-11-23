@@ -187,5 +187,5 @@ const runtime = new FixtureRuntime(process.argv[2], models, new Set(['faux']));
 // Short backoff and a small turn limit keep these scenarios fast; the policies are the production ones.
 if (mode?.startsWith('v3-retry')) runtime.retry = { enabled: true, maxRetries: 2, baseDelayMs: mode === 'v3-retry-slow' ? 20000 : 40 };
 if (mode === 'v3-turns') runtime.maxTurns = 2;
-try { await serve(runtime); }
+try { await runtime.recover(); await serve(runtime); }
 finally { await runtime.close(); }

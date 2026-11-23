@@ -89,18 +89,8 @@ export class Store {
     });
     this.backfill();
     this.waiters = new CheckoutQueue(this);
-    for (const snapshot of this.recoverable()) {
-      if (snapshot.status === 'running' || snapshot.status === 'awaiting_approval') {
-        snapshot.status = 'interrupted';
-        snapshot.pending_approval = null;
-        snapshot.live_text = '';
-        snapshot.live_reasoning = ''; snapshot.retry = null;
-        snapshot.error = { code: 'interrupted', message: 'Host stopped. Effects may have completed; inspect the checkout before a new submission.' };
-        for (const tool of snapshot.tools) if (tool.status === 'running') tool.status = 'interrupted';
-        this.save(snapshot);
-      }
-    }
   }
+
   /** Threads saved before version 3 gain summary columns, timestamps, and a derived title once. */
   private backfill() {
     for (const row of this.db.prepare('SELECT snapshot FROM threads WHERE checkout IS NULL').all()) {

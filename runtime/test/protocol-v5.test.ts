@@ -236,7 +236,7 @@ test('interrupted undo recovers only completed writes, warns after restart, and 
   await writeFile(join(h.root, 'unrelated-down'), 'person while down');
   const { Runtime } = await import('../src/runtime.ts');
   const { models } = await import('./support/record-runtime.ts');
-  const recovered = new Runtime(h.store, models(), new Set(['faux'])); t.after(() => recovered.close());
+  const recovered = new Runtime(h.store, models(), new Set(['faux'])); await recovered.recover(); t.after(() => recovered.close());
   await until(async () => recovered.store.db.prepare('SELECT * FROM records WHERE id=?').get(undoId), row => row?.state === 'ready');
   const page = await recovered.handle({ op: 'turn_records', protocol_version: 5, thread_id: thread.id }) as any;
   assert.equal(page.records[0].after_restart, true);
@@ -282,7 +282,7 @@ test('a zero-effect failed undo keeps the original action and survives restart w
   await h.close();
   const { Runtime } = await import('../src/runtime.ts');
   const { models } = await import('./support/record-runtime.ts');
-  const recovered = new Runtime(h.store, models(), new Set(['faux'])); t.after(() => recovered.close());
+  const recovered = new Runtime(h.store, models(), new Set(['faux'])); await recovered.recover(); t.after(() => recovered.close());
   await recovered.records.settled(h.root);
   assert.equal((await recovered.reply({ ...undo, protocol_version: 5 }) as any).error.code, 'undo_no_effect');
   assert.deepEqual(await readFile(path), bytes);
