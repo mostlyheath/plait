@@ -257,19 +257,18 @@ fn host_write_wait_does_not_block_desktop_render() {
             )
         }
     });
-    harness.update(|p, window, cx| {
-        p.show_tab(Workspace::Changes, window, cx);
-        p.git_write(plait_protocol::git::WriteOp::StageAll, cx);
-    });
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        harness.settle();
-        if started_rx.try_recv().is_ok() {
-            break;
-        }
-        assert!(Instant::now() < deadline, "write did not reach host");
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    // GPUI's `TestDispatcher` runs background tasks inline on this thread during
+    // `run_until_parked()`, so queue the write and draw every view before
+    // pumping the background executor; if `git_write`, `show_tab`, or `draw`
+    // waited on the host synchronously, they would block on `release_rx`.
+    harness
+        .window
+        .update(&mut harness.cx, |p, window, cx| {
+            p.show_tab(Workspace::Changes, window, cx);
+            p.git_write(plait_protocol::git::WriteOp::StageAll, cx);
+            assert!(p.state.repository.write().busy(), "write must be in flight");
+        })
+        .unwrap();
     for view in [
         Workspace::Conversation,
         Workspace::Changes,
@@ -277,7 +276,12 @@ fn host_write_wait_does_not_block_desktop_render() {
         Workspace::Files,
     ] {
         let start = Instant::now();
-        harness.update(|p, window, cx| p.show_tab(view, window, cx));
+        harness
+            .window
+            .update(&mut harness.cx, |p, window, cx| {
+                p.show_tab(view, window, cx)
+            })
+            .unwrap();
         harness.draw();
         assert!(
             start.elapsed() < Duration::from_secs(2),
@@ -286,6 +290,7 @@ fn host_write_wait_does_not_block_desktop_render() {
     }
     release_tx.send(()).unwrap();
     super::undo::wait(&mut harness, |p| !p.state.repository.write().busy());
+    assert!(started_rx.try_recv().is_ok(), "write did not reach host");
     harness.update(|p, _, _| {
         let note = p.state.repository.write().note.as_ref().unwrap();
         assert!(note.1 && note.0.contains(CHECKOUT_BUSY), "{note:?}");

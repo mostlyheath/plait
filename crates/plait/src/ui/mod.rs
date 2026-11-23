@@ -283,6 +283,22 @@ impl Plait {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        Self::with_host_client(
+            path,
+            startup,
+            plait_core::host::Client::local_or_unavailable(),
+            window,
+            cx,
+        )
+    }
+
+    fn with_host_client(
+        path: PathBuf,
+        startup: Instant,
+        host_client: plait_core::host::Client,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let host = HostState::new(path.clone());
         let state = AppState::new(path);
         let focus = cx.focus_handle();
@@ -293,7 +309,7 @@ impl Plait {
             tabs: Default::default(),
             state,
             host,
-            host_client: plait_core::host::Client::local_or_unavailable(),
+            host_client,
             host_local: true,
             navigation: navigation::Navigation::new(cx),
             host_workspace: Default::default(),

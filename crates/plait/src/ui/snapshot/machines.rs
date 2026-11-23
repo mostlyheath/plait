@@ -376,9 +376,10 @@ fn remote_machine_reads_git_through_its_host() {
     h.settle();
     h.update(|p, _, cx| {
         assert!(matches!(p.state.repository.snapshot(), Load::Ready(_)));
-        // The test's host has no socket, so a read sent to it fails; this
-        // Mac's Git would have read the fixture and succeeded.
+        // Point the remote machine at an unavailable host socket, so a read
+        // sent to it fails; this Mac's host must not answer for it.
         p.host_local = false;
+        p.host_client = plait_core::host::Client::local_or_unavailable();
         p.state.repository.refresh();
         p.pump(cx);
     });

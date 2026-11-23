@@ -80,6 +80,13 @@ pub struct Client {
 enum Transport {
     Local(PathBuf),
     Link(std::sync::Arc<crate::remote::link::Link>),
+    /// Routes repository reads (and writes when no scripted host socket is
+    /// present) to `git`, while keeping all other host operations on `host`.
+    #[cfg(feature = "test-host")]
+    TestHost {
+        host: Option<PathBuf>,
+        git: PathBuf,
+    },
     /// The local environment named no usable host; each request reports why.
     Unavailable(String),
 }
@@ -120,6 +127,15 @@ impl Client {
         }
     }
 
+    /// A client whose repository reads (and unscripted writes) go to `git`,
+    /// while all other host operations use `host` (if present).
+    #[cfg(feature = "test-host")]
+    pub fn with_test_git_host(host: Option<PathBuf>, git: PathBuf) -> Self {
+        Self {
+            transport: Transport::TestHost { host, git },
+        }
+    }
+
     pub fn over_link(link: std::sync::Arc<crate::remote::link::Link>) -> Self {
         Self {
             transport: Transport::Link(link),
@@ -130,7 +146,44 @@ impl Client {
         match &self.transport {
             Transport::Local(path) => crate::local_socket::connect(path),
             Transport::Link(link) => link.open(),
+            #[cfg(feature = "test-host")]
+            Transport::TestHost {
+                host: Some(path), ..
+            } => crate::local_socket::connect(path),
+            #[cfg(feature = "test-host")]
+            Transport::TestHost { host: None, .. } => Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "No test host socket is configured.",
+            )),
             Transport::Unavailable(reason) => Err(std::io::Error::other(reason.clone())),
+        }
+    }
+
+    #[cfg(not(feature = "test-host"))]
+    fn socket_for_encoded(&self, _bytes: &[u8]) -> std::io::Result<UnixStream> {
+        self.socket()
+    }
+
+    #[cfg(feature = "test-host")]
+    fn socket_for_encoded(&self, bytes: &[u8]) -> std::io::Result<UnixStream> {
+        let Transport::TestHost { host, git } = &self.transport else {
+            return self.socket();
+        };
+        #[derive(Deserialize)]
+        struct Op<'a> {
+            #[serde(borrow)]
+            op: &'a str,
+        }
+        match serde_json::from_slice::<Op<'_>>(bytes).ok().map(|v| v.op) {
+            Some("git_read" | "git_read_page") => crate::local_socket::connect(git),
+            Some("git_write") => {
+                if let Some(path) = host.as_ref().filter(|p| p.exists()) {
+                    crate::local_socket::connect(path)
+                } else {
+                    crate::local_socket::connect(git)
+                }
+            }
+            _ => self.socket(),
         }
     }
 
@@ -337,7 +390,7 @@ impl Client {
                 "Request exceeds the host's 64 KiB limit.".into(),
             ));
         }
-        let mut socket = self.socket()?;
+        let mut socket = self.socket_for_encoded(bytes)?;
         socket.set_write_timeout(Some(Duration::from_secs(5)))?;
         socket.write_all(bytes)?;
         socket.write_all(b"\n")?;

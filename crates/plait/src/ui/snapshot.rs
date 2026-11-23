@@ -59,6 +59,7 @@ mod settings_modal;
 mod showcase;
 mod storage;
 mod tabs;
+mod test_host;
 mod toasts;
 mod turn_review;
 mod undo;
@@ -678,10 +679,13 @@ struct Harness {
     window: WindowHandle<Plait>,
     /// Where to write PNG files. `None` draws every scene without a renderer.
     output: Option<PathBuf>,
+    _host: test_host::TestHost,
 }
 
 impl Harness {
     fn new(repository: &Path, output: Option<&Path>, width: f32, height: f32) -> Self {
+        let host = test_host::TestHost::start();
+        let client = host.client();
         let text_system = text_system();
         let render = output.is_some();
         let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(Assets), move || {
@@ -697,13 +701,14 @@ impl Harness {
         let path = repository.to_owned();
         let window = cx
             .open_window(size(px(width), px(height)), |window, cx| {
-                cx.new(|cx| Plait::new(path, Instant::now(), window, cx))
+                cx.new(|cx| Plait::with_host_client(path, Instant::now(), client, window, cx))
             })
             .expect("headless window");
         let mut harness = Self {
             cx,
             window,
             output: output.map(Path::to_owned),
+            _host: host,
         };
         harness.settle();
         harness
@@ -718,8 +723,11 @@ impl Harness {
                 .window
                 .update(&mut self.cx, |plait, _, _| {
                     let repository = &plait.state.repository;
-                    matches!(repository.snapshot(), Load::Loading)
-                        || matches!(repository.diff(), Load::Loading)
+                    // Reads queue behind an active write, so do not wait on them while a write is in flight.
+                    let reading = !repository.write().busy()
+                        && (matches!(repository.snapshot(), Load::Loading)
+                            || matches!(repository.diff(), Load::Loading));
+                    reading
                         || plait.host.connection.connecting
                         || plait.workspace.file_viewer.loading
                 })
@@ -854,6 +862,7 @@ impl Harness {
         self.update(move |plait, window, cx| {
             plait.host.connection.connecting = false;
             plait.host.connection.connected = true;
+            plait.host.connection.has_checkout_identity = true;
             plait.host.connection.error = None;
             plait.host.connection.status = Some(status());
             plait.host.connection.settings_model = Some(choice());
@@ -881,6 +890,7 @@ impl Harness {
             plait.refresh_tab_rows();
             // Mirror select_host_thread without opening a socket.
             plait.host.thread.selected = Some(THREAD.into());
+            plait.bind_selected_checkout();
             plait.workspace.history = Default::default();
             plait.workspace.restore = None;
             plait.workspace.restore_pending = [false; 4];
