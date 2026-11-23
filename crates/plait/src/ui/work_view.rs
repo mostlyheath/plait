@@ -129,12 +129,6 @@ impl Plait {
             self.show_tab(Workspace::Conversation, window, cx);
         }
         let previous_views = self.work_readers();
-        let chat = self
-            .tabs
-            .model
-            .work()
-            .filter(|work| !work.open)
-            .map(|_| PaneLocations::capture(&self.capture_tab_bookmark(Some(window), cx)));
         let Some(work) = self.tabs.model.work_mut() else {
             return;
         };
@@ -144,35 +138,51 @@ impl Plait {
         {
             return;
         }
-        if let Some(chat) = chat {
-            let review = &self.workspace.turn_review;
-            work.chat_review = review.target.clone().map(|target| (target, review.current));
-            work.chat_locations = Some(chat);
-            work.pane_locations = None;
-        }
-        let open = work.open;
-        let recorded = work.recorded;
-        if open {
+        if work.open {
             self.workspace.tab = Workspace::Conversation;
-            self.sync_work_scope(recorded, window, cx);
-            if self.draws_work() {
-                self.focus_work_pane(window, cx);
-            }
-        } else {
-            self.restore_work_chat(window, cx);
         }
+        self.sync_work_locations(window, cx);
         self.sync_work_readers(previous_views, cx);
         cx.notify();
     }
-    fn restore_work_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        use plait_client::tabs::bookmark::FocusTarget;
-        let Some(work) = self.tabs.model.work_mut() else {
+    // A parked Chat bookmark means the live workspace currently belongs to the panes.
+    pub(super) fn sync_work_locations(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let visible = self.draws_work();
+        let Some(work) = self.tabs.model.work() else {
             return;
         };
-        let Some(chat) = work.chat_locations.take() else {
+        if visible == work.chat_locations.is_some() || self.tabs.lifecycle.hydrating {
             return;
-        };
+        }
+        let mut bookmark = self.capture_tab_bookmark(Some(window), cx);
+        let live = PaneLocations::capture(&bookmark);
+        let work = self.tabs.model.work_mut().unwrap();
+        if visible {
+            let review = &self.workspace.turn_review;
+            work.chat_review = review.target.clone().map(|target| (target, review.current));
+            work.chat_locations = Some(live);
+            let recorded = work.recorded;
+            let panes = work.pane_locations.take();
+            self.sync_work_scope(recorded, window, cx);
+            if let Some(panes) = panes {
+                panes.restore(&mut bookmark);
+                if let Some(target) = self.workspace.turn_review.target.as_mut()
+                    && let plait_client::tabs::bookmark::ChangeScope::Recorded { record, .. } =
+                        &bookmark.changes.scope
+                    && target.record == *record
+                {
+                    target.path = bookmark.changes.path.as_ref().map(Into::into);
+                }
+                self.restore_view_locations(bookmark, cx);
+            }
+            self.focus_work_pane(window, cx);
+            return;
+        }
+        work.pane_locations = Some(live);
+        let chat = work.chat_locations.take().unwrap();
+        chat.restore(&mut bookmark);
         let saved = work.chat_review.take();
+        use plait_client::tabs::bookmark::FocusTarget;
         let review = &self.workspace.turn_review;
         if saved.as_ref().map(|(t, current)| (t, *current))
             != review.target.as_ref().map(|t| (t, review.current))
@@ -185,6 +195,7 @@ impl Plait {
             }
             self.refresh_turn_review(cx);
         }
+        self.restore_view_locations(bookmark, cx);
         match chat.focus {
             FocusTarget::Composer => self.focus_composer(window, cx),
             FocusTarget::ConversationFind
@@ -266,7 +277,7 @@ impl Plait {
             .is_some_and(|w| w.route(tab, visible))
         {
             if was_open && self.tabs.model.work().is_some_and(|w| !w.open) {
-                self.restore_work_chat(window, cx);
+                self.sync_work_locations(window, cx);
                 self.sync_work_readers(previous_views, cx);
             }
             return false;
@@ -380,7 +391,7 @@ impl Plait {
             if self.draws_work() {
                 self.focus_work_pane(window, cx);
             } else {
-                self.restore_work_chat(window, cx);
+                self.sync_work_locations(window, cx);
             }
         } else {
             self.notice = Some("Pane actions are available in Work view.".into());

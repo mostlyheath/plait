@@ -284,7 +284,7 @@ impl Plait {
             .tabs
             .model
             .work()
-            .filter(|w| w.open)
+            .filter(|w| w.open && w.chat_locations.is_some())
             .and_then(|w| w.pane_locations.as_ref())
         {
             locations.restore(&mut bookmark);
@@ -307,7 +307,6 @@ impl Plait {
                 self.workspace.history.expanded.insert(id.into());
             }
         }
-        self.restore_find_bookmark(FindIn::Conversation, &bookmark.conversation.find, cx);
         if let Some(saved) = self
             .tabs
             .model
@@ -317,10 +316,6 @@ impl Plait {
         {
             self.restore_find_bookmark(FindIn::Changes, &saved, cx);
         }
-        self.restore_find_bookmark(FindIn::File, &bookmark.files.find, cx);
-        self.workspace.file_viewer.path = bookmark.files.path.as_ref().map(Into::into);
-        self.workspace.file_viewer.root = self.file_root();
-        self.workspace.file_viewer.reveal = Some(bookmark.files.line as usize);
         if let Some(composer) = self.visible_composer() {
             composer.update(cx, |c, _| c.restore_cursor(&bookmark.draft));
         }
@@ -347,8 +342,7 @@ impl Plait {
         }
         let focus = bookmark.focus;
         let view = bookmark.view;
-        self.workspace.restore_pending = [true; 4];
-        self.workspace.restore = Some(bookmark);
+        self.install_view_locations(bookmark, cx);
         self.present_workspace(view, window, cx);
         if self
             .tabs
@@ -373,6 +367,34 @@ impl Plait {
             _ => window.focus(&self.focus, cx),
         }
         self.pump(cx);
+        self.restore_ready_bookmarks(cx);
+    }
+
+    fn install_view_locations(&mut self, bookmark: ThreadBookmark, cx: &mut Context<Self>) {
+        self.restore_find_bookmark(FindIn::Conversation, &bookmark.conversation.find, cx);
+        self.restore_find_bookmark(FindIn::File, &bookmark.files.find, cx);
+        self.workspace.file_viewer.path = bookmark.files.path.as_ref().map(Into::into);
+        self.workspace.file_viewer.root = self.file_root();
+        self.workspace.file_viewer.reveal = Some(bookmark.files.line as usize);
+        self.workspace.restore_pending = [true; 4];
+        self.workspace.restore = Some(bookmark);
+    }
+
+    pub(super) fn restore_view_locations(
+        &mut self,
+        bookmark: ThreadBookmark,
+        cx: &mut Context<Self>,
+    ) {
+        self.workspace.file_viewer.clear_checkout();
+        self.workspace.line_pick = None;
+        self.state.repository.view.changes = Default::default();
+        self.state.repository.view.history = Default::default();
+        if let Some(commit) = bookmark.history.commit.clone() {
+            self.state.repository.select_commit(commit);
+        }
+        self.install_view_locations(bookmark, cx);
+        self.search_conversation(cx);
+        self.load_workspace_locations(cx);
         self.restore_ready_bookmarks(cx);
     }
 
