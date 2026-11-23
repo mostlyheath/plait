@@ -567,7 +567,7 @@ fn disclosure_has_accessible_name_and_opens_with_enter_and_space() {
     }
     let scratch = std::env::temp_dir().join(format!("plait-folded-a11y-{}", std::process::id()));
     let repository = fixture_repository(&scratch);
-    let mut harness = Harness::new(&repository, None, 1380., 860.);
+    let mut harness = Harness::with_host(&repository, None, 1380., 860., None);
     install_long_thread(&mut harness, &repository);
     harness.update(|plait, _, _| {
         plait.sidebar = false;
@@ -590,150 +590,48 @@ fn disclosure_has_accessible_name_and_opens_with_enter_and_space() {
         );
     }
 
-    // For deterministic Tab traversal without hitting turn-review file links,
-    // install a 3-turn thread (r1, r2 folded; r3 latest) with no turn records
-    // and Shift-Tab backwards from the composer onto r2 (Enter) and r1 (Space).
-    harness.update(|plait, _, cx| {
-        let snap = Snapshot {
-            id: THREAD.into(),
-            checkout: repository.to_path_buf(),
-            status: ThreadStatus::Idle,
-            messages: vec![
-                Message {
-                    id: "request-k1".into(),
-                    role: MessageRole::User,
-                    text: "First keyboard turn".into(),
-                    ..Default::default()
-                },
-                Message {
-                    id: "answer-k1".into(),
-                    role: MessageRole::Assistant,
-                    text: "First keyboard reply".into(),
-                    ..Default::default()
-                },
-                Message {
-                    id: "request-k2".into(),
-                    role: MessageRole::User,
-                    text: "Second keyboard turn".into(),
-                    ..Default::default()
-                },
-                Message {
-                    id: "answer-k2".into(),
-                    role: MessageRole::Assistant,
-                    text: "Second keyboard reply".into(),
-                    ..Default::default()
-                },
-                Message {
-                    id: "request-k3".into(),
-                    role: MessageRole::User,
-                    text: "Latest keyboard turn".into(),
-                    ..Default::default()
-                },
-                Message {
-                    id: "answer-k3".into(),
-                    role: MessageRole::Assistant,
-                    text: "Latest keyboard reply".into(),
-                    ..Default::default()
-                },
-            ],
-            ..Default::default()
-        };
-        plait.workspace.opened_turns.clear();
-        plait.workspace.turn_records = Default::default();
-        plait.host.thread.snapshot = Some(Arc::new(snap));
-        plait.workspace.formatted = Arc::new(plait_client::markdown::Transcript::update(
-            &Default::default(),
-            plait.host.thread.snapshot.as_ref().unwrap(),
-        ));
-        plait.refresh_live_list(None);
-        plait.sync_composer(cx);
-    });
-    harness.draw();
-
-    harness.update(|plait, window, cx| {
-        let composer = plait.workspace.composers[THREAD].clone();
-        window.focus(&composer.focus_handle(cx), cx);
-    });
-    harness.draw();
-    let mut opened_enter = false;
-    let mut opened_space = false;
-    for _ in 0..15 {
-        harness.keystroke("shift-tab");
+    for (key, request, reply) in [
+        ("enter", "request-r2", "answer-r2"),
+        ("space", "request-r1", "answer-r1"),
+    ] {
+        harness.update(|plait, window, cx| {
+            assert!(
+                plait
+                    .workspace
+                    .live_layout
+                    .folded_row_index(request)
+                    .is_some()
+            );
+            window.focus(&plait.workspace.composers[THREAD].focus_handle(cx), cx);
+        });
         harness.draw();
-        if !opened_enter {
-            let k2_folded = harness
+        let reached = (0..64).any(|_| {
+            harness.keystroke("shift-tab");
+            harness.draw();
+            harness
                 .window
-                .update(&mut harness.cx, |plait, _, _| {
-                    plait
-                        .workspace
-                        .live_layout
-                        .folded_row_index("request-k2")
-                        .is_some()
-                })
-                .unwrap();
-            if k2_folded {
-                press_key(&mut harness, "enter");
-                harness.draw();
-                let k2_opened = harness
-                    .window
-                    .update(&mut harness.cx, |plait, _, _| {
-                        plait
-                            .workspace
-                            .live_layout
-                            .folded_row_index("request-k2")
-                            .is_none()
+                .update(&mut harness.cx, |_, window, _| {
+                    window.context_stack().iter().any(|context| {
+                        context.get("folded-turn").map(|id| id.as_ref()) == Some(request)
                     })
-                    .unwrap();
-                if k2_opened {
-                    opened_enter = true;
-                    // The opened disclosure left the tree; refocus the composer
-                    // so Shift-Tab walks cleanly back to k1.
-                    harness.update(|plait, window, cx| {
-                        let composer = plait.workspace.composers[THREAD].clone();
-                        window.focus(&composer.focus_handle(cx), cx);
-                    });
-                    harness.draw();
-                }
-            }
-        } else if !opened_space {
-            let k1_folded = harness
-                .window
-                .update(&mut harness.cx, |plait, _, _| {
-                    plait
-                        .workspace
-                        .live_layout
-                        .folded_row_index("request-k1")
-                        .is_some()
                 })
-                .unwrap();
-            if k1_folded {
-                press_key(&mut harness, "space");
-                harness.draw();
-                let k1_opened = harness
-                    .window
-                    .update(&mut harness.cx, |plait, _, _| {
-                        plait
-                            .workspace
-                            .live_layout
-                            .folded_row_index("request-k1")
-                            .is_none()
-                    })
-                    .unwrap();
-                if k1_opened {
-                    opened_space = true;
-                    break;
-                }
-            }
-        }
+                .unwrap()
+        });
+        assert!(
+            reached,
+            "Shift-Tab must reach {request} before pressing {key}"
+        );
+        press_key(&mut harness, key);
+        harness.draw();
+        harness.update(|plait, _, _| {
+            let layout = &plait.workspace.live_layout;
+            assert!(
+                layout.folded_row_index(request).is_none(),
+                "{key} must open {request}"
+            );
+            assert!(layout.row_of_message.contains_key(reply));
+        });
     }
-    assert!(
-        opened_enter,
-        "Enter must open a focused folded turn disclosure"
-    );
-    assert!(
-        opened_space,
-        "Space must open a focused folded turn disclosure"
-    );
 
     drop(harness);
     let _ = std::fs::remove_dir_all(&scratch);
@@ -778,8 +676,10 @@ fn scenes_render_at_wide_and_narrow_sizes() {
     }
     let scratch = std::env::temp_dir().join(format!("plait-folded-scenes-{}", std::process::id()));
     let repository = fixture_repository(&scratch);
+    // Writes its images when asked to, so these scenes can be looked at alone.
+    let output = std::env::var_os("PLAIT_SNAPSHOT_DIR").map(std::path::PathBuf::from);
     for (suffix, width, height) in [("wide", 1380., 860.), ("narrow", 900., 600.)] {
-        let mut harness = Harness::new(&repository, None, width, height);
+        let mut harness = Harness::new(&repository, output.as_deref(), width, height);
         walk(&mut harness, &repository, suffix);
     }
     let _ = std::fs::remove_dir_all(&scratch);

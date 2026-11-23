@@ -787,6 +787,11 @@ impl Plait {
                 .ml(px(-8.))
                 .justify_between()
                 .gap_2()
+                .when(cfg!(test), |el| {
+                    let mut context = KeyContext::default();
+                    context.set("folded-turn", turn_id.to_owned());
+                    el.key_context(context)
+                })
                 .aria_label(accessible_name)
                 .aria_expanded(false)
                 .child(
