@@ -232,3 +232,72 @@ pub(super) fn install_queue(
         plait.rebuild_projects(cx);
     });
 }
+
+/// A slow host write must not block drawing, and its refusal reaches the view.
+#[core::prelude::v1::test]
+fn host_write_wait_does_not_block_desktop_render() {
+    if !super::isolated("isolation::host_write_wait_does_not_block_desktop_render") {
+        return;
+    }
+    use std::{
+        sync::mpsc,
+        time::{Duration, Instant},
+    };
+    let (scratch, _, mut harness) = super::undo::setup("isolation-host-write");
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let host = super::undo::Host::start(move |request| {
+        if request["op"] == "git_write" {
+            started_tx.send(()).unwrap();
+            release_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+            Some(serde_json::json!({"ok":false,"error":{"code":"busy","message":CHECKOUT_BUSY}}))
+        } else {
+            Some(
+                serde_json::json!({"ok":false,"error":{"code":"unavailable","message":"Unavailable in test"}}),
+            )
+        }
+    });
+    harness.update(|p, window, cx| {
+        p.show_tab(Workspace::Changes, window, cx);
+        p.git_write(plait_protocol::git::WriteOp::StageAll, cx);
+    });
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        harness.settle();
+        if started_rx.try_recv().is_ok() {
+            break;
+        }
+        assert!(Instant::now() < deadline, "write did not reach host");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    for view in [
+        Workspace::Conversation,
+        Workspace::Changes,
+        Workspace::History,
+        Workspace::Files,
+    ] {
+        let start = Instant::now();
+        harness.update(|p, window, cx| p.show_tab(view, window, cx));
+        harness.draw();
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "render blocked on {view:?}"
+        );
+    }
+    release_tx.send(()).unwrap();
+    super::undo::wait(&mut harness, |p| !p.state.repository.write().busy());
+    harness.update(|p, _, _| {
+        let note = p.state.repository.write().note.as_ref().unwrap();
+        assert!(note.1 && note.0.contains(CHECKOUT_BUSY), "{note:?}");
+    });
+    assert!(
+        host.requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|request| request["op"] == "git_write")
+    );
+    drop(harness);
+    drop(host);
+    std::fs::remove_dir_all(scratch).unwrap();
+}
