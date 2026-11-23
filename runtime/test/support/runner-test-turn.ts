@@ -6,8 +6,10 @@ export function createTurn(): RunnerTurn {
   let approve: ((allow: boolean) => void) | undefined;
   let steerFile: string | undefined;
   const acceptedSteers = new Set<string>();
+  let report: Parameters<RunnerTurn['start']>[1] | undefined;
   return {
     async start(payload, emit, signal) {
+      report = emit;
       if (typeof payload.pid_file === 'string') await writeFile(payload.pid_file, String(process.pid));
       if (typeof payload.steer_file === 'string') steerFile = payload.steer_file;
       emit({ type: 'phase', state: 'running' });
@@ -39,6 +41,9 @@ export function createTurn(): RunnerTurn {
         if (acceptedSteers.has(command.request_id)) return;
         acceptedSteers.add(command.request_id);
         void writeFile(steerFile, JSON.stringify(command)).catch(() => {});
+        // Like the Pi runner, report the input as placed so the host stops queuing it.
+        const entry = 1000 + acceptedSteers.size;
+        report?.({ type: 'commit', item: { placed_entries: [{ request_id: command.request_id, entry }] }, head: null, placed: [command.request_id], changed_paths: [], usage: null });
       }
     },
   };

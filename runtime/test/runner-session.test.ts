@@ -419,7 +419,7 @@ test('steer queued while runner socket is disconnected is resent on reconnect an
 
     await writeFile(gate, 'open');
     await until(() => !runtime!.runnerSessions.has(threadId), 10000);
-    assert.equal(runtime.snapshot(threadId).status, 'idle');
+    assert.equal(runtime.snapshot(threadId).status, 'idle', JSON.stringify(runtime.snapshot(threadId).error));
   } finally {
     await runtime?.close();
     if (prevDetached === undefined) delete process.env.PLAIT_DETACHED_RUNNERS; else process.env.PLAIT_DETACHED_RUNNERS = prevDetached;
