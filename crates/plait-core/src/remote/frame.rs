@@ -1,6 +1,6 @@
 //! Stream I/O for bounded remote frames.
-pub use plait_engine::frame::FrameIo;
 pub use plait_protocol::frame::{ERROR_LIMIT, Frame, Kind, REPLY_LIMIT, REQUEST_LIMIT};
+pub use plait_transport::frame::FrameIo;
 
 #[cfg(test)]
 mod tests {

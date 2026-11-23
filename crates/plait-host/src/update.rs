@@ -33,7 +33,7 @@ fn other_update(check_only: bool) -> io::Result<()> {
         .map_or("a source build".to_owned(), |version| {
             format!("Plait {version}")
         });
-    let Some(offer) = update::check(current.as_ref()).map_err(io::Error::other)? else {
+    let Some(offer) = plait_release::check(current.as_ref()).map_err(io::Error::other)? else {
         println!("No newer signed release is published; this host runs {running}.");
         return Ok(());
     };
@@ -54,8 +54,8 @@ fn linux_update(check_only: bool) -> io::Result<()> {
     let home = crate::service::user_home()?;
     let executable = std::env::current_exe()?.canonicalize()?;
     let build = linux::running_build(&home, &executable).map_err(io::Error::other)?;
-    let release =
-        update::host_release(plait_protocol::update::platform()).map_err(io::Error::other)?;
+    let release = plait_release::host_release(plait_protocol::update::platform())
+        .map_err(io::Error::other)?;
     match linux::decide(
         &release,
         &build,

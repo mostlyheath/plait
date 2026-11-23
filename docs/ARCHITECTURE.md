@@ -12,6 +12,8 @@ The agreed split, in progress:
 - `plait-protocol` (built, growing): wire data and serialization with no platform
   I/O, including host requests, snapshots and provider data, update manifests and their signature
   check, and remote frame encoding. Both host and clients use it.
+- `plait-transport`: shared frame and owner-checked local socket I/O for hosts and clients.
+- `plait-release`: shared release fetching and artifact verification I/O for hosts and clients.
 - `plait-engine` (built, growing): Git, leases, records, build output, and
   worktree size measurement. The host uses it directly; `plait-core` still links
   it during the migration.

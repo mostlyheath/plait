@@ -16,9 +16,9 @@ fn invalid(detail: impl Into<String>) -> Error {
     Error::Invalid(detail.into())
 }
 
-pub use plait_engine::update::{HostRelease, check, host_release};
+pub use plait_release::{HostRelease, check, host_release};
 
-pub use plait_engine::update::{download, sha256_file};
+pub use plait_release::{download, sha256_file};
 
 #[cfg(test)]
 mod tests {

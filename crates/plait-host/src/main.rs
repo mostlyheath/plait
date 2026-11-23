@@ -54,7 +54,7 @@ fn run() -> io::Result<()> {
     if operation == "runner-peer-fd" {
         use std::os::fd::FromRawFd;
         let socket = unsafe { std::os::unix::net::UnixStream::from_raw_fd(3) };
-        return plait_engine::local_socket::require_same_user(&socket);
+        return plait_transport::local_socket::require_same_user(&socket);
     }
     if operation == "cleanup" {
         return lease::cleanup_operation(args.collect());

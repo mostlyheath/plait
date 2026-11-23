@@ -1,7 +1,7 @@
 //! Multiplex an authenticated stdio connection onto owner-only local sockets.
-use plait_engine::frame::FrameIo;
-use plait_engine::local_socket;
 use plait_protocol::frame::{Frame, Kind, REPLY_LIMIT};
+use plait_transport::frame::FrameIo;
+use plait_transport::local_socket;
 use std::{
     collections::HashMap,
     io::{self, BufRead, BufReader, Read, Write},

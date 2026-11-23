@@ -3699,6 +3699,8 @@ dependencies = [
  "libc",
  "plait-engine",
  "plait-protocol",
+ "plait-release",
+ "plait-transport",
  "pulldown-cmark",
  "serde",
  "serde_json",
@@ -3714,6 +3716,8 @@ dependencies = [
  "libc",
  "plait-core",
  "plait-protocol",
+ "plait-release",
+ "plait-transport",
  "serde",
  "serde_json",
  "sha2",
@@ -3726,6 +3730,8 @@ dependencies = [
  "libc",
  "plait-engine",
  "plait-protocol",
+ "plait-release",
+ "plait-transport",
  "serde_json",
  "sha2",
 ]
@@ -3738,6 +3744,8 @@ dependencies = [
  "plait-core",
  "plait-engine",
  "plait-protocol",
+ "plait-release",
+ "plait-transport",
  "serde_json",
  "sha2",
 ]
@@ -3752,6 +3760,23 @@ dependencies = [
  "serde_json",
  "sha2",
  "unicode-properties",
+]
+
+[[package]]
+name = "plait-release"
+version = "0.1.0"
+dependencies = [
+ "plait-protocol",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "plait-transport"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "plait-protocol",
 ]
 
 [[package]]

@@ -33,3 +33,31 @@ impl FrameIo for Frame {
         }))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use plait_protocol::frame::Kind;
+
+    #[test]
+    fn stream_round_trip_and_truncated_input() {
+        let frame = Frame {
+            stream: 1,
+            kind: Kind::Frame,
+            payload: b"hello".to_vec(),
+        };
+        let mut bytes = Vec::new();
+        frame.write_to(&mut bytes).unwrap();
+        assert_eq!(
+            Frame::read_from(&mut bytes.as_slice()).unwrap(),
+            Some(frame)
+        );
+        assert_eq!(Frame::read_from(&mut &b""[..]).unwrap(), None);
+        for end in 1..bytes.len() {
+            assert_eq!(
+                Frame::read_from(&mut &bytes[..end]).unwrap_err().kind(),
+                io::ErrorKind::UnexpectedEof
+            );
+        }
+    }
+}

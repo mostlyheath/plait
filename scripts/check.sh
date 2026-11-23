@@ -23,7 +23,7 @@ case "$(uname -s)" in
             echo 'Linux command-sandbox acceptance is blocked. See docs/LINUX-SANDBOX.md.' >&2
             exit 1
         fi
-        packages=(-p plait-core -p plait-engine -p plait-protocol -p plait-host -p plait-interop-tests)
+        packages=(-p plait-core -p plait-engine -p plait-protocol -p plait-transport -p plait-release -p plait-host -p plait-interop-tests)
         echo 'Checking Linux headless development. Native UI and Linux command execution are not validated.'
         ;;
     *)
