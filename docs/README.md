@@ -16,7 +16,7 @@
   between them.
 - [Host contract](HOST.md): the host's protocol, persistence, and safety rules.
 - [Design](../DESIGN.md): layout, interaction, tokens, and the order the design is built in.
-- [Releasing](RELEASING.md): how a merge becomes a signed preview.
+- [Releasing](RELEASING.md): how `main` becomes a signed preview.
 - [Verification](VERIFICATION.md): what the checks cover and what they do not.
 
 ## Plans

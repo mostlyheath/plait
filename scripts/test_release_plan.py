@@ -33,6 +33,33 @@ class PullRequestTests(unittest.TestCase):
         self.assertTrue(plan.needs_tests([]))
 
 
+class Merged(unittest.TestCase):
+    def run_plan(self, *argv):
+        import contextlib
+        import io
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = plan.main(list(argv))
+        return code, dict(line.split("=", 1) for line in out.getvalue().splitlines())
+
+    def test_a_merge_is_tested_and_never_released(self):
+        # HEAD against itself is no change, which is tested like an unknown one.
+        code, result = self.run_plan("merged", "HEAD")
+        self.assertEqual(code, 0)
+        self.assertEqual(result, {"test": "true", "release": "false"})
+
+    def test_an_unknown_previous_commit_is_tested(self):
+        code, result = self.run_plan("merged", "0" * 40)
+        self.assertEqual(code, 0)
+        self.assertEqual(result, {"test": "true", "release": "false"})
+
+    def test_a_missing_argument_is_refused(self):
+        import contextlib
+        import io
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(plan.main(["merged"]), 2)
+
+
 class Ships(unittest.TestCase):
     def test_prose_tests_and_ci_do_not_make_a_release(self):
         self.assertFalse(plan.ships([

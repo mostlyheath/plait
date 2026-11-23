@@ -53,8 +53,8 @@ not replay interrupted effects.
 
 - Discuss substantial scope before starting. Work on a branch and open a small,
   focused pull request when the work is finished. `main` changes only through
-  a pull request with passing checks; app changes merged to `main` publish the
-  next preview. See [Releasing](docs/RELEASING.md).
+  a pull request with passing checks; a merge publishes nothing, and a person
+  starts each release. See [Releasing](docs/RELEASING.md).
 - Describe the change, checks, results, and remaining verification limits;
   include screenshots for UI changes. Keep credentials, private transcripts,
   local settings, and build output out of Git.

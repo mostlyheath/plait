@@ -1,8 +1,9 @@
 # Releasing Plait
 
 Installed per-user apps and headless hosts update from GitHub Releases. A
-release is made by merging to `main`: GitHub builds what was merged, signs the
-update manifest, and publishes the next preview. Nobody tags by hand.
+merge to `main` releases nothing. A release is made when a person starts one:
+GitHub builds `main` as it stands, signs the update manifest, and publishes
+the next preview. Nobody tags by hand.
 
 ## How a change reaches a release
 
@@ -11,22 +12,34 @@ update manifest, and publishes the next preview. Nobody tags by hand.
 2. **Open a pull request.** GitHub runs the tests on it: the macOS check
    (format, lint, tests, and the real command sandbox) and the Linux check. A
    request that changes only prose skips the macOS check. The request can merge
-   when both pass and it is up to date with `main`, so what was tested is what
-   is merged. A change that writes a person's files, or a file an older build
-   reads, is also read by someone who did not write it before it merges.
-3. **Merge.** The push to `main` is not tested again. If `main` now holds code
-   that ships and has not been released, the **macOS build** workflow builds it
-   once: the package job builds the installers and runs the installer smoke
-   test, including migration to the prebuilt per-user install, and the publish
-   job writes `update.json`, signs it, and publishes the release with the app
-   archive, host archive, packages, DMG, and checksums. The
+   when both pass. It need not be up to date with `main`. A change that writes
+   a person's files, or a file an older build reads, is also read by someone
+   who did not write it before it merges.
+3. **Merge.** The push to `main` runs the macOS check again, so changes that
+   passed apart are tested together. A failure there is fixed with another
+   pull request before the next release. A merge that changes only prose
+   skips it. Nothing is built for release and nothing is published.
+4. **Release, when ready.** Run the **macOS build** workflow on `main` with
+   **Build main and publish the next preview** checked, or:
+
+   ```
+   gh workflow run "macOS build" --ref main -f release=true
+   ```
+
+   The workflow refuses a release from any other branch. If `main` holds code
+   that ships and has not been released, it builds it once: the package job
+   builds the installers and runs the installer smoke test, including
+   migration to the prebuilt per-user install, and the publish job writes
+   `update.json`, signs it, and publishes the release with the app archive,
+   host archive, packages, DMG, and checksums. The
    [native acceptance check](VERIFICATION.md#scenes-and-native-checks) drives
    the same package in a job of its own; it is advisory, and publishing does
-   not wait for it.
+   not wait for it. Check that the latest run on `main` passed before
+   starting a release: the release run does not repeat those tests.
 
-A merge that changes only docs, tests or CI publishes nothing;
-`scripts/release_plan.py` holds the list of paths that never reach an
-installed app.
+A release run on a `main` that changed only docs, tests or CI since the last
+preview publishes nothing; `scripts/release_plan.py` holds the list of paths
+that never reach an installed app.
 
 ## Preview numbers
 
