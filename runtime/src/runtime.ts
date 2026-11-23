@@ -453,6 +453,7 @@ export class Runtime {
         const id = String(request.thread_id);
         const snapshot = this.snapshot(id);
         const session = this.sessions.get(id);
+        session?.sink?.flush();
         snapshot.status = 'stopped'; snapshot.pending_approval = null;
         session?.authorization.revoke();
         // Stop also discards everything waiting behind the run.
@@ -1016,6 +1017,7 @@ export class Runtime {
     } finally {
       session.authorization.revoke();
       await session.mcp?.close().catch(() => session.lease?.cleanup?.track(NEVER, 'The MCP connection did not confirm cleanup.'));
+      session.sink?.flush();
       snapshot.pending_approval = null; snapshot.live_text = ''; snapshot.live_reasoning = ''; snapshot.retry = null;
       await this.gate(snapshot.id, () => this.release(session)).catch(() => session.lease?.cleanup?.track(NEVER, 'The harness did not confirm cleanup.'));
       if (snapshot.status === 'interrupted') {
@@ -1115,6 +1117,7 @@ export class Runtime {
     await Promise.allSettled(this.queueDrains.values());
     for (const session of this.sessions.values()) {
       if (this.active.has(session.snapshot.checkout)) {
+        session.sink?.flush();
         session.snapshot.status = 'interrupted'; session.snapshot.pending_approval = null;
         session.snapshot.error = { code: 'interrupted', message: 'Host stopped. Inspect effects before a new submission.' }; session.save();
       }
