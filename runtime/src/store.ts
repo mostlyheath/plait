@@ -123,12 +123,16 @@ export class Store {
     const tied = prior && latest.position === prior.position && latest.pending === prior.pending;
     const matches = latest && (user ? user.id === `request-${latest.id}` : !tied);
     // A placed input belongs to the most recent turn start at or before its entry.
-    // Include rowless turns here so their inputs cannot match an older runs row.
+    // A direct admission starts a turn even if its before record is missing.
     const owner = matches && latest.entry !== null && this.db.prepare(`SELECT r.run_request FROM records r
       JOIN requests q ON q.scope=r.thread AND q.id=r.run_request
       WHERE r.thread=? AND r.kind='before' AND q.entry<=?
         AND NOT EXISTS (SELECT 1 FROM records a WHERE a.before=r.id AND a.kind='undo')
-      ORDER BY q.entry DESC LIMIT 1`).get(snapshot.id, latest.entry);
+        AND NOT EXISTS (SELECT 1 FROM requests n
+          WHERE n.scope=q.scope AND n.state IS NULL AND n.input IS NOT NULL AND n.entry>q.entry AND n.entry<=?
+            AND (NOT EXISTS (SELECT 1 FROM checkout_waiters w WHERE w.thread=n.scope AND w.request=n.id AND w.kind='follow_up')
+              OR EXISTS (SELECT 1 FROM records b WHERE b.thread=n.scope AND b.run_request=n.id AND b.kind='before')))
+      ORDER BY q.entry DESC LIMIT 1`).get(snapshot.id, latest.entry, latest.entry);
     const current = matches && this.db.prepare(`SELECT run_id FROM runs WHERE thread_id=?
       AND request_id=? AND finished_at IS NULL`).get(snapshot.id, owner ? owner.run_request : latest.id);
     if (current) this.saveRunEvent(String(current.run_id), 0, snapshot, { state: 'dead', finished: true });

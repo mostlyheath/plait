@@ -111,6 +111,44 @@ test('recovery after rollback does not assign a rowless run to the earlier admis
   assert.equal(typeof row.finished_at, 'number');
 });
 
+for (const boundary of ['missing', 'undone'] as const) {
+  test(`rollback leaves the earlier outcome unset when the active boundary is ${boundary}`, async t => {
+    const directory = await mkdtemp(join(tmpdir(), 'plait-rollback-'));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const open = () => new Runtime(directory, createModels(), new Set());
+    const first = open();
+    const snapshot: Snapshot = { id: 'thread', checkout: directory, model: { provider: 'faux', model_id: 'model' },
+      status: 'running', messages: [], tools: [], live_text: '', pending_approval: null, error: null, truncated: false };
+    first.store.admit('thread', 'original', 'first', { accepted: true }, snapshot, await rootIdentity(directory));
+    first.store.createRun('run', 'thread', 'original', 'pi');
+    first.store.place('thread', 'original', 1);
+    first.store.db.exec(`INSERT INTO records(id,thread,run_request,kind,checkout,state,created_at)
+      VALUES ('original','thread','original','before','/checkout','failed',0)`);
+    await first.close();
+
+    const previous = open();
+    if (boundary === 'missing') {
+      previous.store.admit('thread', 'active', 'later', { accepted: true }, snapshot);
+    } else {
+      previous.store.enqueue('active', 'later', { accepted: true }, { mode: 'follow_up', approval: 'ask' }, snapshot);
+      previous.store.dequeue(previous.store.waitingInput('thread', 'active'), snapshot);
+    }
+    previous.store.place('thread', 'active', 2);
+    if (boundary === 'undone') {
+      previous.store.db.exec(`INSERT INTO records(id,thread,run_request,kind,before,checkout,state,created_at) VALUES
+        ('active','thread','active','before',NULL,'/checkout','ready',1),
+        ('undo','thread','active','undo','active','/checkout','undone',2)`);
+    }
+    await previous.close();
+
+    const current = open();
+    t.after(() => current.close());
+    await current.recover();
+    assert.equal(current.store.get('thread').status, 'interrupted');
+    assert.equal(current.store.db.prepare("SELECT outcome FROM runs WHERE run_id='run'").get()?.outcome, null);
+  });
+}
+
 test('migration leaves completed runs without a reported outcome', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'plait-migration-'));
   const old = new DatabaseSync(join(directory, 'host.sqlite'));
