@@ -356,6 +356,21 @@ pub fn thread_row_state(thread: &ThreadSummary, unread: &BTreeSet<String>) -> Th
 }
 
 impl ThreadRowState {
+    /// The state in words for an accessible name. It agrees with the row's
+    /// visible word, and names a settled thread's state where the row shows
+    /// only its age.
+    pub fn spoken(self, thread: &ThreadSummary) -> &'static str {
+        match self {
+            Self::Working => "Working",
+            Self::Approval => "Needs approval",
+            Self::Failed => "Failed",
+            Self::Interrupted => "Interrupted",
+            Self::Queued(label) => label,
+            Self::FinishedUnread | Self::Other => state_label(thread),
+        }
+    }
+
+    /// The row's right-hand text.
     pub fn label(self, age: &str) -> &str {
         match self {
             Self::Working => "Working",
@@ -719,6 +734,13 @@ mod tests {
             let state = thread_row_state(&t, &unread);
             assert_eq!(state, expected);
             assert_eq!(state.label("3m"), label);
+            // The spoken state never contradicts the visible word.
+            let spoken = state.spoken(&t);
+            match state {
+                Approval => assert_eq!(spoken, "Needs approval"),
+                FinishedUnread | Other => assert_eq!(spoken, state_label(&t)),
+                _ => assert_eq!(spoken, label),
+            }
             threads.push(t);
         }
         threads[0].archived = Some(true);

@@ -520,11 +520,7 @@ impl Plait {
                     format!(
                         "Thread {} · {} · {} / {}. {}{}{}",
                         id,
-                        if state == nav::ThreadRowState::Failed {
-                            "Failed"
-                        } else {
-                            nav::state_label(thread)
-                        },
+                        state.spoken(thread),
                         thread.model.provider,
                         thread.model.model_id,
                         label,
@@ -653,14 +649,9 @@ impl Plait {
 
     /// Lists every hidden project of the selected machine again.
     pub(super) fn show_hidden_projects(&mut self, cx: &mut Context<Self>) {
-        self.update_lists(
-            |lists| {
-                for path in lists.hidden.clone() {
-                    lists.open(&path);
-                }
-            },
-            cx,
-        );
+        // Only the hidden flags change: opening a project asks the host to
+        // check its folder, and one missing folder would stop the rest.
+        self.update_lists(|lists| lists.hidden.clear(), cx);
         self.rebuild_projects(cx);
     }
 

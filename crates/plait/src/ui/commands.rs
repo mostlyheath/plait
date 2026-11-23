@@ -200,10 +200,13 @@ impl Plait {
                     self.summary_title(thread),
                     Command::OpenThread(thread.id.clone()),
                 )
+                // The folder's path is last: two projects of one name are
+                // told apart, and searched, by where they are.
                 .detail(format!(
-                    "{} · {} · {model}",
+                    "{} · {} · {model} · {}",
                     plait_client::state::project_name(&thread.checkout),
-                    plait_client::navigation::state_label(thread)
+                    plait_client::navigation::state_label(thread),
+                    thread.checkout.display()
                 ))
                 .section("Threads")
                 .glyph("thread", colors().violet)

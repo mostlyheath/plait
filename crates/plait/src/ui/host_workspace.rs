@@ -566,6 +566,20 @@ mod tests {
     }
 
     #[core::prelude::v1::test]
+    fn showing_hidden_projects_only_unhides() {
+        let before = lists_from(&view(), false);
+        let mut after = before.clone();
+        after.hidden.clear();
+        let found = changes(&before, &after);
+        // No folder is opened, so a missing one cannot stop the rest.
+        assert!(found.open.is_empty());
+        assert_eq!(found.hide, vec![(PathBuf::from("/srv/b"), false)]);
+        assert!(found.seen.is_empty());
+        assert_eq!(after.opened, before.opened);
+        assert_eq!(after.worktrees, before.worktrees);
+    }
+
+    #[core::prelude::v1::test]
     fn list_changes_become_host_intents() {
         let before = lists_from(&view(), false);
         let mut after = before.clone();

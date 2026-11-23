@@ -59,8 +59,16 @@ pub(super) fn walk(h: &mut Harness, repository: &Path, suffix: &str) {
     h.update(|p, _, cx| {
         p.host.connection.threads_mut().truncate(1);
         p.navigation.collapsed.clear();
-        p.preferences.value.navigation.unread.clear();
+        // Whichever list the window reads, nothing in it is unread.
+        p.update_lists(|lists| lists.unread.clear(), cx);
         p.rebuild_projects(cx);
+        assert_eq!(
+            plait_client::navigation::needs_me_count(
+                p.host.connection.threads(),
+                &p.lists().unread
+            ),
+            0
+        );
     });
     h.capture(&format!("sidebar-zero-{suffix}"));
 }
