@@ -448,6 +448,57 @@ fn a_remote_window_shows_only_its_hosts_workspace() {
         assert!(!p.state.projects[0].machines[0].local);
         // This Mac's saved lists are untouched.
         assert_eq!(p.preferences.value.navigation.opened, mac);
+
+        // Back on this Mac, the other machine's folder is not one of its projects.
+        let client = p.host_client();
+        p.use_machine_client(client, Default::default(), true, window, cx);
+        assert!(
+            !p.state
+                .projects
+                .iter()
+                .any(|project| project.checkout == std::path::Path::new("/srv/api"))
+        );
+        // A late view from the machine just left is refused.
+        let late = View {
+            schema: 1,
+            host: HostIdentity {
+                id: "host-1".into(),
+                name: "arthur".into(),
+                platform: "linux".into(),
+            },
+            revision: 4,
+            projects: Vec::new(),
+            worktrees: Vec::new(),
+            seen: Vec::new(),
+            status: Default::default(),
+        };
+        assert!(!p.apply_workspace(generation, late, window, cx));
+        let generation = p.host_workspace_generation();
+        let view = View {
+            schema: 1,
+            host: HostIdentity {
+                id: "local-host".into(),
+                name: "mac".into(),
+                platform: "macos".into(),
+            },
+            revision: 3,
+            projects: vec![Project {
+                path: repo.clone(),
+                hidden: false,
+                ..Default::default()
+            }],
+            worktrees: Vec::new(),
+            seen: Vec::new(),
+            status: Default::default(),
+        };
+        assert!(p.apply_workspace(generation, view, window, cx));
+        assert_eq!(p.host.creation.checkout, repo);
+        assert!(
+            !p.state
+                .projects
+                .iter()
+                .any(|project| project.checkout == std::path::Path::new("/srv/api"))
+        );
     });
     drop(h);
     std::fs::remove_dir_all(scratch).unwrap();

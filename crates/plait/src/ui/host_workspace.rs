@@ -26,16 +26,32 @@ pub(super) enum Source {
 #[derive(Default)]
 pub(super) struct HostWorkspace {
     pub(super) source: Source,
+    /// The current folder came from another machine and is not yet adopted.
+    pub(super) checkout_carried: bool,
     /// The host's lists, or, for an older remote host, only what this window opened.
     pub(super) lists: navigation::Preferences,
     pub(super) revision: u64,
     /// The host's change counters for the checkouts it watches.
     status: std::collections::BTreeMap<PathBuf, u64>,
     generation: u64,
+    /// A stream was asked for on this machine.
+    started: bool,
     watch: Option<WatchLease>,
     importing: bool,
     /// The stream failed for a reason other than an older host.
     failed: bool,
+}
+
+impl HostWorkspace {
+    /// Starts empty for another machine. The generation keeps counting, so a
+    /// late reply from the previous machine is never taken for this one's.
+    pub(super) fn for_another_machine(&self) -> Self {
+        Self {
+            generation: self.generation + 1,
+            checkout_carried: true,
+            ..Default::default()
+        }
+    }
 }
 
 /// The host's view as the sidebar's lists. Mute is this device's choice.
@@ -191,7 +207,7 @@ impl Plait {
     }
 
     pub(super) fn host_workspace_started(&self) -> bool {
-        self.host_workspace.generation > 0
+        self.host_workspace.started
     }
 
     pub(super) fn host_workspace_failed(&self) -> bool {
@@ -274,6 +290,7 @@ impl Plait {
     pub(super) fn watch_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let workspace = &mut self.host_workspace;
         workspace.generation += 1;
+        workspace.started = true;
         workspace.watch = None;
         workspace.importing = false;
         let generation = workspace.generation;
@@ -349,6 +366,9 @@ impl Plait {
         // Tabs wait for the workspace; without one, they use this Mac's file.
         self.try_restore_tabs(window, cx);
         self.rebuild_projects(cx);
+        if self.host_is_local() {
+            self.adopt_host_project(window, cx);
+        }
         cx.notify();
     }
 
@@ -410,15 +430,17 @@ impl Plait {
     /// A window that just moved to another machine opens one of that
     /// machine's projects, never a path it only had on the previous one.
     fn adopt_host_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.host_is_local() {
+        if self.host_is_local() && !self.host_workspace.checkout_carried {
             return;
         }
-        let current = self.project_of(&self.host.creation.checkout).to_owned();
-        if self.state.projects.iter().any(|p| p.checkout == current) {
-            return;
-        }
-        if let Some(first) = self.state.projects.first().map(|p| p.checkout.clone()) {
-            self.change_checkout(first, window, cx);
+        match navigation::adopt(
+            &self.host.creation.checkout,
+            self.lists(),
+            &self.state.projects,
+        ) {
+            navigation::Adoption::Keep => self.host_workspace.checkout_carried = false,
+            navigation::Adoption::Open(first) => self.change_checkout(first, window, cx),
+            navigation::Adoption::Unlisted => {}
         }
     }
 

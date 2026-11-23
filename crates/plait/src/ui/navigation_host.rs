@@ -273,6 +273,9 @@ impl Plait {
     /// Git resolves subdirectories and symlinks to the same checkout root as
     /// the host. Only an accepted repository result reaches this method.
     pub(super) fn normalize_checkout(&mut self, cx: &mut Context<Self>) {
+        if self.host_workspace.checkout_carried {
+            return;
+        }
         let Some(root) = self
             .state
             .repository
@@ -306,7 +309,7 @@ impl Plait {
             self.lists(),
             &self.host.creation.checkout,
             &machine,
-            self.host_is_local(),
+            self.host_is_local() && !self.host_workspace.checkout_carried,
         );
         self.no_project = plait_client::model::Project {
             checkout: self.host.creation.checkout.clone(),

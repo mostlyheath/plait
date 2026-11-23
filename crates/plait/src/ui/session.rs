@@ -96,7 +96,7 @@ impl Plait {
             let (journal, mut data) = Journal::open(&directory, host)?;
             data.import_legacy_drafts();
             let path = requested
-                .or_else(|| data.checkout.clone())
+                .or_else(|| data.checkout.clone().filter(|path| path.is_dir()))
                 .unwrap_or_else(|| PathBuf::from("."));
             let path = if path.is_absolute() {
                 path
@@ -148,7 +148,9 @@ impl Plait {
                             this.restore_composer(id, composer, cx);
                         }
                         // A folder chosen while disk state loaded wins over the saved folder.
-                        if this.host.creation.generation == checkout_generation {
+                        if this.host.creation.generation == checkout_generation
+                            && !this.host_workspace.checkout_carried
+                        {
                             this.change_checkout(path, window, cx);
                             this.session.restore_thread = selected;
                         }
@@ -253,6 +255,7 @@ impl Plait {
                 return;
             }
         };
+        self.host_workspace.checkout_carried = false;
         self.workspace.file_viewer.clear_checkout();
         self.workspace.line_pick = None;
         self.workspace.thread_files.reset();
@@ -379,7 +382,10 @@ impl Plait {
                 draft: self.draft.saved.clone(),
             });
         }
-        if self.host.creation.checkout.is_absolute() {
+        if self.host_is_local()
+            && !self.host_workspace.checkout_carried
+            && self.host.creation.checkout.is_absolute()
+        {
             next.checkout = Some(self.host.creation.checkout.clone());
         }
         next.selected = self
