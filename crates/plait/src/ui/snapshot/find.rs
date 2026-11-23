@@ -2,11 +2,7 @@
 //! here is labeled sample text; no host is contacted and no agent runs.
 
 use super::{Harness, THREAD, fixture_repository, isolated, reading};
-use crate::ui::{
-    Plait, Workspace,
-    selection::Owner,
-    theme::{CHROME_HEIGHT, ROW_HEIGHT},
-};
+use crate::ui::{Plait, Workspace, selection::Owner};
 use gpui::{prelude::*, *};
 use plait_client::{
     conversation_find::Matches,
@@ -197,12 +193,18 @@ fn the_keyboard_leaves_a_hidden_composer_and_returns_to_it() {
     );
     harness.keystroke("cmd-shift-3");
     assert_eq!(tab(&mut harness), Workspace::History);
-    // By click: Files, the last tab, just inside its right edge. Right of it
-    // are the segment's inset, a gap, and the inspector toggle.
-    let files_tab = point(
-        px(900. - 12. - ROW_HEIGHT - 12. - 3. - 10.),
-        px(CHROME_HEIGHT + 18.),
-    );
+    // By click: Files, found by its name, since other controls share the bar.
+    #[cfg(debug_assertions)]
+    let files_tab = harness
+        .draw_a11y()
+        .nodes
+        .iter()
+        .find(|node| node.label.as_deref() == Some("Files"))
+        .expect("the Files view control")
+        .bounds
+        .center();
+    #[cfg(not(debug_assertions))]
+    let files_tab = point(px(0.), px(0.));
     click(&mut harness, files_tab);
     assert_eq!(tab(&mut harness), Workspace::Files);
     let find_open = |harness: &mut Harness| {
