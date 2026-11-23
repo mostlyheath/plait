@@ -20,7 +20,7 @@ use std::{
 /// host socket: concurrent requests, and a watch ended by Close.
 #[test]
 fn link_and_bridge_carry_requests_and_end_watches() {
-    use plait_core::remote::link::{Link, Settings};
+    use plait_client::remote::link::{Link, Settings};
     let dir = std::env::temp_dir().join(format!("plait-link-bridge-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir(&dir).unwrap();
@@ -121,7 +121,7 @@ fn loopback_handler_accepts_and_refuses() {
         let (stream, _) = listener.accept().unwrap();
         tailnet::handle(stream, &store, true);
     });
-    assert!(plait_core::remote::tailnet::connect("127.0.0.1", port).is_ok());
+    assert!(plait_client::remote::tailnet::connect("127.0.0.1", port).is_ok());
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let store = root.clone();
@@ -129,7 +129,7 @@ fn loopback_handler_accepts_and_refuses() {
         let (stream, _) = listener.accept().unwrap();
         tailnet::handle(stream, &store, false);
     });
-    let error = match plait_core::remote::tailnet::connect("127.0.0.1", port) {
+    let error = match plait_client::remote::tailnet::connect("127.0.0.1", port) {
         Ok(_) => panic!("unexpected connection"),
         Err(error) => error,
     };

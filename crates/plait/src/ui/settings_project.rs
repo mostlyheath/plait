@@ -9,14 +9,14 @@ pub(super) struct ProjectSettings {
     pub name: String,
     policy: PolicyState,
     agent: AgentState,
-    identity: Option<plait_core::ownership::CheckoutKey>,
+    identity: Option<plait_client::ownership::CheckoutKey>,
 }
 
 impl Plait {
     pub(super) fn settings_checkout_key(
         &self,
         checkout: &Path,
-    ) -> Option<&plait_core::ownership::CheckoutKey> {
+    ) -> Option<&plait_client::ownership::CheckoutKey> {
         if checkout == self.host.creation.checkout {
             return self.state.checkout_key();
         }
@@ -28,14 +28,14 @@ impl Plait {
 
     /// Resolve and verify the checkout on the host that owns it.
     pub(super) fn identify_settings_checkout(
-        client: &plait_core::host::Client,
+        client: &plait_client::host::Client,
         checkout: &Path,
         supported: bool,
         _local: bool,
-        expected: Option<plait_core::ownership::CheckoutKey>,
-    ) -> Result<plait_core::ownership::CheckoutKey, plait_core::host::Error> {
+        expected: Option<plait_client::ownership::CheckoutKey>,
+    ) -> Result<plait_client::ownership::CheckoutKey, plait_client::host::Error> {
         if !supported {
-            return Err(plait_core::host::Error::Protocol(
+            return Err(plait_client::host::Error::Protocol(
                 "Update the host to verify the checkout.".into(),
             ));
         }
@@ -45,8 +45,8 @@ impl Plait {
                 dev: key.device,
                 ino: key.inode,
             });
-        let read = plait_core::host::git::identity(client, checkout, id)?;
-        Ok(plait_core::ownership::CheckoutKey {
+        let read = plait_client::host::git::identity(client, checkout, id)?;
+        Ok(plait_client::ownership::CheckoutKey {
             host: expected.and_then(|key| key.host),
             root: read.result.root,
             device: read.identity.dev,
@@ -57,14 +57,14 @@ impl Plait {
     pub(super) fn remember_settings_checkout_key(
         &mut self,
         key: &(u64, PathBuf),
-        identity: plait_core::ownership::CheckoutKey,
-    ) -> Result<(), plait_core::host::Error> {
+        identity: plait_client::ownership::CheckoutKey,
+    ) -> Result<(), plait_client::host::Error> {
         if self.host.connection.epoch != key.0
             || self
                 .settings_checkout_key(&key.1)
                 .is_some_and(|expected| expected != &identity)
         {
-            return Err(plait_core::host::Error::Protocol(
+            return Err(plait_client::host::Error::Protocol(
                 "Checkout identity changed.".into(),
             ));
         }

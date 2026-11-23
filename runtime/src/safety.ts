@@ -202,7 +202,7 @@ function lockFailure(stderr: string, fallback: string): HostError {
   return new HostError('permission_denied', line ? `Checkout lease could not be acquired: ${line}` : 'Checkout lease could not be acquired safely.');
 }
 
-/** The per-user lease directory, as `plait_core::lease::default_lease_dir` finds it. */
+/** The per-user lease directory, as `plait_engine::lease::default_lease_dir` finds it. */
 function leaseDirectory(): string {
   const configured = process.env.PLAIT_LEASE_DIR;
   if (configured === undefined) return join(homedir(), '.local/share/plait-leases');
@@ -210,7 +210,7 @@ function leaseDirectory(): string {
   return configured;
 }
 const lockHex = (value: string) => BigInt(value).toString(16).padStart(16, '0');
-/** `plait_core::lease::checkout_lock_name`; `lock-fd` refuses a descriptor for any other file. */
+/** `plait_engine::lease::checkout_lock_name`; `lock-fd` refuses a descriptor for any other file. */
 export const checkoutLockName = (identity: FileIdentity) => `checkout-${lockHex(identity.dev)}-${lockHex(identity.ino)}.lock`;
 
 /**

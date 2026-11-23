@@ -16,7 +16,7 @@ fn closing_drafts_selects_worktrees_on_either_side() {
             h.update(|p, w, cx| {
                 p.tabs = Default::default();
                 p.park_workspace(cx);
-                p.session.data = Some(plait_core::session::Session::empty("/host".into()));
+                p.session.data = Some(plait_client::session::Session::empty("/host".into()));
                 p.host.connection.connected = false;
                 if !right {
                     p.open_worktrees(repo.clone(), w, cx);

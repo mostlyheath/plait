@@ -54,7 +54,7 @@ fn open_regular(root: &Path, relative: &Path) -> Result<std::fs::File, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use plait_core::file_view::{self, Contents, Opened};
+    use plait_client::file_view::{self, Contents, Opened};
     use std::path::PathBuf;
     fn read(root: &Path, relative: &Path) -> Result<Opened, String> {
         let (stamp, bytes) = read_bytes(root, relative)?;

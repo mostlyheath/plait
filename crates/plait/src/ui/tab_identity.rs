@@ -1,7 +1,7 @@
 //! Checkout identity is verified by the host off the UI thread.
 use super::{Plait, tab_lifecycle::Intent};
 use gpui::*;
-use plait_core::{
+use plait_client::{
     host::{self},
     tabs::{CheckoutKey, DirectoryIdentity, HostKey, TabTarget},
 };
@@ -39,8 +39,8 @@ pub(super) fn directory(root: &std::path::Path) -> Option<DirectoryIdentity> {
 impl Plait {
     pub(super) fn refresh_checkout_identity(
         &mut self,
-        old: &plait_core::ownership::CheckoutKey,
-        refreshed: &plait_core::ownership::CheckoutKey,
+        old: &plait_client::ownership::CheckoutKey,
+        refreshed: &plait_client::ownership::CheckoutKey,
         cx: &mut Context<Self>,
     ) {
         if old == refreshed {
@@ -169,7 +169,7 @@ impl Plait {
             // The host reports the folder's identity; the desktop never reads it itself.
             let key = if supported {
                 let reply = host::git::identity(&client, &resolved, None)?;
-                Some(plait_core::ownership::CheckoutKey {
+                Some(plait_client::ownership::CheckoutKey {
                     host: owner,
                     root: resolved.clone(),
                     device: reply.identity.dev,
@@ -308,7 +308,7 @@ impl Plait {
         let task = cx.background_executor().spawn(async move {
             let host = host::identity::read(&client).ok().or_else(|| {
                 let info = host::review::info(&client, thread.as_deref()?).ok()?;
-                let (_, store) = plait_core::session::locations().ok()?;
+                let (_, store) = plait_client::session::locations().ok()?;
                 host::identity::from_review(info.checkout.host_id, store).ok()
             })?;
             let checkouts = roots

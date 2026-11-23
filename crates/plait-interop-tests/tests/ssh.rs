@@ -1,5 +1,5 @@
 #![cfg(unix)]
-use plait_core::remote::ssh::{SshDestination, SshOptions, connect};
+use plait_client::remote::ssh::{SshDestination, SshOptions, connect};
 use std::{
     fs,
     io::{BufRead, BufReader, Read, Write},

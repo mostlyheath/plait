@@ -5,12 +5,13 @@
 //! it, so nothing here opens an editor, Finder, a terminal, or Rex.
 
 use super::{Harness, SettingsTab, fixture_repository, isolated};
+use crate::handoff;
 use crate::ui::{
     Plait, Workspace, file_view::LINE_HEIGHT, settings::SettingsPage, settings_editor::Opens,
 };
 use gpui::*;
-use plait_core::{
-    handoff::{self, EditorChoice, Launch, TerminalChoice},
+use plait_client::{
+    handoff::{EditorChoice, Launch, TerminalChoice},
     model::DiffMode,
     state::Load,
 };
@@ -287,8 +288,8 @@ fn settings_save_only_a_usable_command() {
     harness.draw();
 
     // Both reached the file in this test's own home.
-    let path = plait_core::preferences::default_path().expect("a preferences path");
-    let saved = plait_core::preferences::load(&path).expect("saved preferences");
+    let path = plait_client::preferences::default_path().expect("a preferences path");
+    let saved = plait_client::preferences::load(&path).expect("saved preferences");
     assert_eq!(
         saved.open_files_with,
         EditorChoice::Custom("zed {file}:{line}".into())

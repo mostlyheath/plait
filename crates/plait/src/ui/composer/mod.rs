@@ -25,7 +25,7 @@ use draft::Draft;
 use gpui::{prelude::*, *};
 use input::{InputElement, LINE_HEIGHT, Layout, PLACEHOLDER};
 use mentions::Latest;
-use plait_core::{fuzzy::fuzzy_match, git::FileList};
+use plait_client::{fuzzy::fuzzy_match, git::FileList};
 use std::{
     ops::Range,
     sync::Arc,

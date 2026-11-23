@@ -43,7 +43,7 @@ class Ships(unittest.TestCase):
 
     def test_code_and_what_packaging_reads_do(self):
         for path in [
-            "crates/plait/src/ui/tabs.rs", "crates/plait-core/src/session.rs", "runtime/src/runtime.ts",
+            "crates/plait/src/ui/tabs.rs", "crates/plait-client/src/session.rs", "runtime/src/runtime.ts",
             "runtime/package-lock.json", "assets/themes/nord.yaml", "Cargo.lock",
             "scripts/build-macos.sh", "scripts/update_manifest.py", "scripts/install.sh",
         ]:

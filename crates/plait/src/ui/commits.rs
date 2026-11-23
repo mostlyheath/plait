@@ -1,10 +1,10 @@
 //! The History tab: commits reachable from HEAD, newest first, and the
-//! selected commit's message and patch. Git runs in plait-core on the
+//! selected commit's message and patch. Git runs in plait-client on the
 //! background executor; pages load as the list asks for them.
 
 use super::{Plait, theme::*};
 use gpui::{prelude::*, *};
-use plait_core::{git::Commit, state::Load};
+use plait_client::{git::Commit, state::Load};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// How long ago, in the short form the thread list uses.

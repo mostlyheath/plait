@@ -1,9 +1,9 @@
 use gpui::{prelude::*, *};
-use plait_core::host;
+use plait_client::host;
 use std::borrow::Cow;
 
 pub use super::a11y::{AuditA11y, Audited, text as a11y_text};
-pub use plait_core::theme::{Palette, mix};
+pub use plait_client::theme::{Palette, mix};
 
 /// Interactive control element: audited in debug tests, zero-cost `Stateful<Div>` otherwise.
 pub type Control = Audited<Stateful<Div>>;
@@ -12,7 +12,7 @@ thread_local! {
     /// The palette every view draws with. Per thread, so parallel UI tests
     /// with different themes do not see each other's colors.
     static CURRENT: std::cell::Cell<&'static Palette> =
-        const { std::cell::Cell::new(&plait_core::theme::DEFAULT_DARK) };
+        const { std::cell::Cell::new(&plait_client::theme::DEFAULT_DARK) };
 }
 
 /// Under a window modal, assistive actions reach only the modal and what
@@ -427,13 +427,13 @@ pub fn icon(name: &'static str) -> Svg {
 
 /// The logo of the harness that runs a thread, tinted like other icons. A
 /// harness without one in `assets/harnesses` has none, and callers show its name.
-pub fn harness_logo(id: plait_core::host::harness::HarnessId) -> Option<Svg> {
+pub fn harness_logo(id: plait_client::host::harness::HarnessId) -> Option<Svg> {
     harness_glyph(id).map(icon)
 }
 
 /// The asset name of a harness's logo, for lists that take a glyph name.
-pub fn harness_glyph(id: plait_core::host::harness::HarnessId) -> Option<&'static str> {
-    use plait_core::host::harness::HarnessId;
+pub fn harness_glyph(id: plait_client::host::harness::HarnessId) -> Option<&'static str> {
+    use plait_client::host::harness::HarnessId;
     match id {
         HarnessId::Pi => Some("harness-pi"),
         HarnessId::Codex => Some("harness-openai"),

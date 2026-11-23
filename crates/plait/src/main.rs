@@ -1,4 +1,6 @@
+mod handoff;
 mod ui;
+mod update;
 
 use gpui::{prelude::*, *};
 use std::{path::PathBuf, time::Instant};

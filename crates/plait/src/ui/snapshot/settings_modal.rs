@@ -315,7 +315,7 @@ fn project_replies_keep_their_target_after_dismissal() {
         return;
     }
     use crate::ui::settings_agent::AgentView;
-    use plait_core::host::{
+    use plait_client::host::{
         agent::AgentResources,
         policy::{CommandPolicy, PolicyReply},
     };
@@ -374,7 +374,7 @@ fn project_replies_keep_their_target_after_dismissal() {
         assert!(!plait.accept_policy(
             &(key.0 + 1, key.1),
             None,
-            Err(plait_core::host::Error::Protocol("stale".into())),
+            Err(plait_client::host::Error::Protocol("stale".into())),
             cx
         ));
     });
@@ -448,7 +448,7 @@ fn created(repository: &Path, request: &str, selection_epoch: u64) -> crate::ui:
         draft_id: None,
         request_id: request.into(),
         choice: choice(),
-        harness: plait_core::host::harness::HarnessId::Pi,
+        harness: plait_client::host::harness::HarnessId::Pi,
         selection_epoch,
         checkout: Some(repository.to_owned()),
     }
@@ -457,8 +457,8 @@ fn created(repository: &Path, request: &str, selection_epoch: u64) -> crate::ui:
 fn created_reply(
     repository: &Path,
     id: &str,
-) -> Result<plait_core::host::ThreadReply, plait_core::host::Error> {
-    Ok(plait_core::host::ThreadReply {
+) -> Result<plait_client::host::ThreadReply, plait_client::host::Error> {
+    Ok(plait_client::host::ThreadReply {
         thread: Snapshot {
             id: id.into(),
             checkout: repository.to_owned(),
@@ -823,7 +823,7 @@ fn creation_parking_finishes_beneath_the_modal() {
     let mut h = Harness::new(&repository, None, 900., 600.);
     h.connect(&repository, false);
     let (journal, _) =
-        plait_core::session::Journal::open(&scratch.join("session"), "/fixture-host".into())
+        plait_client::session::Journal::open(&scratch.join("session"), "/fixture-host".into())
             .unwrap();
     h.update(|p, window, cx| {
         p.host.connection.connected = false;

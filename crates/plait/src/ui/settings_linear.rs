@@ -2,7 +2,7 @@
 //! the field is cleared as it is sent, and nothing here keeps or shows it.
 use super::{Plait, settings, text_field::TextField, theme::*};
 use gpui::{prelude::*, *};
-use plait_core::{
+use plait_client::{
     host::{self, linear},
     linear_settings::{Account, Auth, Pending, ProjectTeam, TeamPending},
 };

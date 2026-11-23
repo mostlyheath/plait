@@ -2,7 +2,7 @@
 use super::undo::{Host, inject, prepare, record, setup, wait};
 use super::*;
 use crate::ui::{Workspace, turn_review::TurnReview};
-use plait_core::review::recorded::{Record, Target};
+use plait_client::review::recorded::{Record, Target};
 use serde_json::{Value, json};
 
 const PATCH: &str = "diff --git a/src/review.rs b/src/review.rs\n--- a/src/review.rs\n+++ b/src/review.rs\n@@ -1,3 +1,4 @@\n pub fn refresh() {\n-    read_on_frame();\n+    queue_status();\n+    notify_when_ready();\n }\n";
@@ -62,7 +62,7 @@ fn fixture_diff(bytes: &[u8], truncated: bool, elapsed: Duration) -> plait_proto
             hunks.push(lines.len());
         }
         lines.push(DiffLine {
-            text: Arc::from(plait_core::display_text::escape(line)),
+            text: Arc::from(plait_client::display_text::escape(line)),
             kind,
             old_line,
             new_line,
@@ -97,7 +97,7 @@ pub(super) fn scene(
     h: &mut Harness,
     repository: &Path,
     kind: &str,
-    lines: Option<Arc<plait_core::model::Diff>>,
+    lines: Option<Arc<plait_client::model::Diff>>,
 ) {
     prepare(h, repository);
     h.update(|p,_,_| {
@@ -115,7 +115,7 @@ pub(super) fn scene(
         if kind=="loading" {p.workspace.turn_review.loading=true;}
         if kind=="unavailable" {p.workspace.turn_review.error=Some(("Unavailable","The saved content is unavailable.".into()));}
         if kind=="old" {p.workspace.turn_review.older=true;p.workspace.turn_review.error=Some(("Older host","Turn review needs a newer host. Current Git changes are still available.".into()));}
-        if kind=="clean" { p.state.repository.complete(plait_core::state::Job::Status {epoch:p.state.repository.epoch(),path:repository.into()}, plait_core::state::Reply::Status(Ok(Arc::new(plait_core::model::Snapshot {root:repository.into(),branch:"main".into(),named:true,tracking:None,changes:vec![],elapsed:Duration::ZERO,plain:false})))); p.state.repository.view.changes.selected=None; }
+        if kind=="clean" { p.state.repository.complete(plait_client::state::Job::Status {epoch:p.state.repository.epoch(),path:repository.into()}, plait_client::state::Reply::Status(Ok(Arc::new(plait_client::model::Snapshot {root:repository.into(),branch:"main".into(),named:true,tracking:None,changes:vec![],elapsed:Duration::ZERO,plain:false})))); p.state.repository.view.changes.selected=None; }
         p.workspace.diff_scroll=UniformListScrollHandle::new(); p.workspace.file_scroll=UniformListScrollHandle::new();p.workspace.tab=Workspace::Changes;
     });
 }
@@ -537,7 +537,7 @@ fn scope_keys_and_clean_files() {
     h.update(|p, _, cx| {
         assert_eq!(p.recorded_file().unwrap().path, PathBuf::from("README.md"));
         assert_eq!(p.recorded_file().unwrap().label, "Deleted");
-        p.state.repository.data.snapshot = Load::Ready(Arc::new(plait_core::model::Snapshot {
+        p.state.repository.data.snapshot = Load::Ready(Arc::new(plait_client::model::Snapshot {
             root: repository.clone(),
             branch: "main".into(),
             named: true,
@@ -652,9 +652,9 @@ fn current_selects_a_present_layer() {
     let (scratch, repository, mut h) = setup("review-layer");
     scene(&mut h, &repository, "ready", None);
     h.update(|p, _, cx| {
-        use plait_core::{model::DiffMode, state::DiffKey};
+        use plait_client::{model::DiffMode, state::DiffKey};
         p.host.connection.connected = false;
-        let changes = vec![plait_core::model::Change {
+        let changes = vec![plait_client::model::Change {
             path: "src/review.rs".into(),
             original: None,
             index: b'M',
@@ -694,8 +694,8 @@ fn current_selects_a_present_layer() {
     std::fs::remove_dir_all(scratch).unwrap();
 }
 
-fn set_changes(p: &mut Plait, changes: Vec<plait_core::model::Change>) {
-    p.state.repository.data.snapshot = Load::Ready(Arc::new(plait_core::model::Snapshot {
+fn set_changes(p: &mut Plait, changes: Vec<plait_client::model::Change>) {
+    p.state.repository.data.snapshot = Load::Ready(Arc::new(plait_client::model::Snapshot {
         root: p.host.creation.checkout.clone(),
         branch: "main".into(),
         named: true,

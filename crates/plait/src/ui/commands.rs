@@ -13,7 +13,7 @@ use super::{
     theme::*,
 };
 use gpui::{prelude::*, *};
-use plait_core::host::{ModelChoice, harness::HarnessId};
+use plait_client::host::{ModelChoice, harness::HarnessId};
 use std::{collections::HashMap, time::Instant};
 
 pub(super) enum Command {
@@ -21,7 +21,7 @@ pub(super) enum Command {
     Action(Box<dyn Action>),
     OpenThread(String),
     ReviewAll,
-    ReviewRecord(plait_core::review::recorded::Target),
+    ReviewRecord(plait_client::review::recorded::Target),
     SignIn(String),
     OpenProject(std::path::PathBuf),
     OpenRemoteProject(String),
@@ -37,12 +37,12 @@ pub(super) enum Command {
     Thinking {
         thread_id: String,
         epoch: u64,
-        level: plait_core::host::ThinkingLevel,
+        level: plait_client::host::ThinkingLevel,
     },
     /// A thread's own approval mode; `None` follows the default.
     Approval {
         thread_id: String,
-        mode: Option<plait_core::host::ApprovalMode>,
+        mode: Option<plait_client::host::ApprovalMode>,
     },
     /// A harness's own permission mode, chosen from a Permissions menu.
     Permissions {
@@ -52,11 +52,11 @@ pub(super) enum Command {
     /// The new-thread draft's project, harness, and Pi approvals.
     DraftProject(std::path::PathBuf),
     DraftHarness(HarnessId),
-    DraftApproval(Option<plait_core::host::ApprovalMode>),
+    DraftApproval(Option<plait_client::host::ApprovalMode>),
     /// The thinking level the draft's thread starts at.
-    DraftThinking(plait_core::host::ThinkingLevel),
+    DraftThinking(plait_client::host::ThinkingLevel),
     /// The thinking level new threads start at.
-    DefaultThinking(plait_core::host::ThinkingLevel),
+    DefaultThinking(plait_client::host::ThinkingLevel),
     /// A checkout-relative path, from quick open.
     OpenFile(String),
     /// A local branch to switch to, from the branch picker.
@@ -174,7 +174,7 @@ impl Plait {
         let target = self.preferences.value.jump_target;
         let mut numbers = HashMap::new();
         for number in 1..=9 {
-            if let Some(jump) = plait_core::navigation::jump(
+            if let Some(jump) = plait_client::navigation::jump(
                 self.lists(),
                 &self.state.projects,
                 &self.host.connection.threads,
@@ -202,8 +202,8 @@ impl Plait {
                 )
                 .detail(format!(
                     "{} · {} · {model}",
-                    plait_core::state::project_name(&thread.checkout),
-                    plait_core::navigation::state_label(thread)
+                    plait_client::state::project_name(&thread.checkout),
+                    plait_client::navigation::state_label(thread)
                 ))
                 .section("Threads")
                 .glyph("thread", colors().violet)
@@ -261,7 +261,7 @@ impl Plait {
         let mut items = self.thread_items(cx);
         let mut preferences = self.lists().clone();
         preferences.hidden.clear();
-        for project in plait_core::navigation::projects(
+        for project in plait_client::navigation::projects(
             &self.host.connection.threads,
             &preferences,
             &self.host.creation.checkout,
@@ -444,7 +444,7 @@ impl Plait {
             }
             Command::OpenFile(path) => self.open_file(path.into(), None, cx),
             Command::SwitchBranch(name) => {
-                self.branch_write(plait_core::git::WriteOp::SwitchBranch(name), window, cx)
+                self.branch_write(plait_client::git::WriteOp::SwitchBranch(name), window, cx)
             }
             Command::ReviewAll => {
                 self.clear_turn_review();
@@ -453,7 +453,7 @@ impl Plait {
             }
             Command::ReviewRecord(target) => self.open_turn_review(target, window, cx),
             Command::CreateBranch(name) => {
-                self.branch_write(plait_core::git::WriteOp::CreateBranch(name), window, cx)
+                self.branch_write(plait_client::git::WriteOp::CreateBranch(name), window, cx)
             }
             Command::DefaultThinking(level) => {
                 let mut preferences = self.preferences.value.clone();

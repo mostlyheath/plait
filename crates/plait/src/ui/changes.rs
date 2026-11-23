@@ -1,6 +1,6 @@
 use super::{OpenRepository, Plait, Refresh, theme::*, thread_controls::TextTooltip};
 use gpui::{prelude::*, *};
-use plait_core::{
+use plait_client::{
     git::WriteOp,
     model::{Change, DiffKind, DiffLine, DiffMode},
     patch::PatchRow,
@@ -28,7 +28,7 @@ pub(super) fn diff_limit_notice(recorded: bool) -> (&'static str, &'static str) 
 /// while the same file and side are shown; another file ignores it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct LinePick {
-    pub checkout: plait_core::state::CheckoutId,
+    pub checkout: plait_client::state::CheckoutId,
     pub epoch: u64,
     pub path: std::path::PathBuf,
     pub mode: DiffMode,
@@ -78,7 +78,7 @@ fn stage_verb(change: &Change, stage: bool) -> &'static str {
 
 /// Where a diff's hunks stage to, captured once per frame for visible rows.
 pub(super) struct HunkTarget {
-    checkout: plait_core::state::CheckoutId,
+    checkout: plait_client::state::CheckoutId,
     epoch: u64,
     path: std::path::PathBuf,
     mode: DiffMode,
@@ -159,7 +159,7 @@ fn line_text(line: &DiffLine) -> AnyElement {
         color: Some(rgb(colors().subtle).into()),
         ..Default::default()
     };
-    let end = plait_core::patch::hunk_ranges_end(&text);
+    let end = plait_client::patch::hunk_ranges_end(&text);
     StyledText::new(text)
         .with_highlights([(0..end, ranges)])
         .into_any_element()
@@ -705,7 +705,8 @@ impl Plait {
             DiffMode::Staged => "staged",
         };
         let path = pick.path.to_string_lossy();
-        let Some(quote) = plait_core::review::quote(&path, side, &diff.lines[pick.range()]) else {
+        let Some(quote) = plait_client::review::quote(&path, side, &diff.lines[pick.range()])
+        else {
             return;
         };
         if !composer.update(cx, |composer, cx| composer.append_block(&quote, window, cx)) {
@@ -779,7 +780,7 @@ impl Plait {
     pub(super) fn diff_lines(
         &self,
         id: &'static str,
-        diff: std::sync::Arc<plait_core::model::Diff>,
+        diff: std::sync::Arc<plait_client::model::Diff>,
         scroll: &UniformListScrollHandle,
         hint: Option<&'static str>,
         controls: DiffControls,
@@ -1021,7 +1022,7 @@ impl Plait {
 mod tests {
     use super::{change_mark, split_path, stage_verb};
     use crate::ui::theme::colors;
-    use plait_core::model::Change;
+    use plait_client::model::Change;
     use std::path::PathBuf;
 
     fn change(path: &str) -> Change {

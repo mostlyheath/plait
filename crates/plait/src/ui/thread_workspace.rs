@@ -18,7 +18,7 @@ use std::{
 
 /// Presentation container for the currently selected thread workspace.
 pub(super) struct ThreadWorkspace {
-    pub(super) restore: Option<plait_core::tabs::bookmark::ThreadBookmark>,
+    pub(super) restore: Option<plait_client::tabs::bookmark::ThreadBookmark>,
     pub(super) restore_pending: [bool; 4],
     pub(super) cancelled: Arc<std::sync::atomic::AtomicBool>,
     /// Existing per-thread editors; selection keeps their drafts and IME state.
@@ -26,8 +26,8 @@ pub(super) struct ThreadWorkspace {
     pub(super) host_watch: Option<host::WatchLease>,
     pub(super) live_scroll: ListState,
     pub(super) live_count: usize,
-    pub(super) live_layout: Vec<plait_core::transcript::Slot>,
-    pub(super) formatted: Arc<plait_core::markdown::Transcript>,
+    pub(super) live_layout: Vec<plait_client::transcript::Slot>,
+    pub(super) formatted: Arc<plait_client::markdown::Transcript>,
     pub(super) history: history::HistoryView,
     pub(super) images: images::ImageCache,
     /// Diff lines picked in Changes to ask the selected thread about.

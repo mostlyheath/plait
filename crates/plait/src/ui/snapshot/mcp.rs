@@ -1,7 +1,7 @@
 //! MCP settings use injected metadata; these scenes never contact a host or server.
 use super::{Harness, fixture_repository, isolated};
 use crate::ui::settings_agent::AgentView;
-use plait_core::host::agent::{AgentResources, McpConsent, McpServer, McpState, McpTransport};
+use plait_client::host::agent::{AgentResources, McpConsent, McpServer, McpState, McpTransport};
 use std::{path::Path, sync::Arc};
 
 fn resources(checkout: &Path) -> AgentResources {
@@ -86,7 +86,7 @@ pub(super) fn mcp_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
             plait.host.connection.epoch,
             plait.host.creation.checkout.clone(),
         ));
-        plait.policy.value = Some(plait_core::host::policy::CommandPolicy::Sandboxed);
+        plait.policy.value = Some(plait_client::host::policy::CommandPolicy::Sandboxed);
         plait.agent.key = Some((
             plait.host.connection.epoch,
             plait.host.creation.checkout.clone(),
@@ -109,14 +109,14 @@ pub(super) fn mcp_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
     });
     harness.capture(&format!("project-settings-mcp-observed-{suffix}"));
     harness.update(|plait, _, _| {
-        plait.policy.value = Some(plait_core::host::policy::CommandPolicy::Trusted);
+        plait.policy.value = Some(plait_client::host::policy::CommandPolicy::Trusted);
         plait.agent.view = Some(Arc::new(AgentView::new(review_resources(
             &plait.host.creation.checkout,
         ))));
     });
     harness.capture(&format!("project-settings-mcp-review-{suffix}"));
     harness.update(|plait, _, _| {
-        plait.policy.value = Some(plait_core::host::policy::CommandPolicy::Sandboxed);
+        plait.policy.value = Some(plait_client::host::policy::CommandPolicy::Sandboxed);
         let mut reply = resources(&plait.host.creation.checkout);
         reply.mcp_servers.clear();
         plait.agent.view = Some(Arc::new(AgentView::new(reply)));
@@ -147,7 +147,7 @@ pub(super) fn mcp_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
         snapshot.tools[1].input = input.clone();
         snapshot.tools[1].output = "Result: safe\u{202e}delete\u{200b}\u{2028}".into();
         snapshot.pending_approval.as_mut().unwrap().details =
-            plait_core::display_text::escape(&input);
+            plait_client::display_text::escape(&input);
     });
     harness.update(|plait, _, _| {
         let tool = plait.host.thread.snapshot.as_ref().unwrap().tools[1]

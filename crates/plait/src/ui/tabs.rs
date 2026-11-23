@@ -1,7 +1,7 @@
 //! Window tab controls. The core owns every transition and presentation fact.
 use super::{Plait, theme::*, thread_controls::TextTooltip};
 use gpui::{prelude::*, *};
-use plait_core::tabs::{
+use plait_client::tabs::{
     CheckoutKey, HostKey, TabError, TabId, TabTarget, WindowId, WindowTabs,
     row::{self as model, RowContext, RowWidths, TabLayout, TabMetadata, TabState},
 };
@@ -347,7 +347,7 @@ impl Plait {
             return true;
         }
         let target = TabTarget::Draft {
-            id: plait_core::host_state::request_id(),
+            id: plait_client::host_state::request_id(),
             checkout: self.tab_checkout(self.host.creation.checkout.clone()),
         };
         if let TabTarget::Draft { id, .. } = &target {
@@ -387,7 +387,7 @@ impl Plait {
         }
         self.capture_session(cx);
         let bookmark = self.capture_tab_bookmark(None, cx);
-        match plait_core::tabs::bookmark::BookmarkRecord::capture(&bookmark) {
+        match plait_client::tabs::bookmark::BookmarkRecord::capture(&bookmark) {
             Ok(bookmark) => {
                 let result = self.tabs.model.save_bookmark(id, bookmark);
                 self.tab_error(result)

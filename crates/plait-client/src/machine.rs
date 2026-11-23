@@ -4,6 +4,7 @@
 pub const FALLBACK_NAME: &str = "This machine";
 
 /// The host name, without a domain: `Workstation.local` is shown as `Workstation`.
+#[cfg(feature = "local-host")]
 pub fn local_name() -> String {
     let mut buffer = [0u8; 256];
     // SAFETY: the buffer is valid for its length; the result is NUL-terminated
@@ -38,7 +39,9 @@ pub fn display_name(raw: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{FALLBACK_NAME, display_name, local_name};
+    #[cfg(feature = "local-host")]
+    use super::local_name;
+    use super::{FALLBACK_NAME, display_name};
 
     #[test]
     fn domain_and_control_characters_are_removed() {
@@ -52,6 +55,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "local-host")]
     fn this_machine_has_a_name() {
         assert!(!local_name().is_empty());
     }

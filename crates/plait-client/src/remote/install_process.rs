@@ -2,24 +2,14 @@
 //! without `sudo`. This Mac verifies the release's signed manifest; the
 //! machine downloads the archive itself and checks its SHA-256 before
 //! anything is unpacked.
-use super::ssh::{SshDestination, SshOptions, base_arguments};
+use crate::remote::ssh::{SshDestination, SshOptions, base_arguments};
 use crate::{host::Error, update::HostRelease};
 use std::{
     io::Write,
     process::{Command, Stdio},
 };
 
-/// What this Mac learned about the machine before installing.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Probe {
-    /// The platform a host archive is published for, such as `linux-x86_64`.
-    pub platform: Option<String>,
-    /// `uname -sm`, to name an unsupported machine.
-    pub system: String,
-    /// A host already answers `plait-host version` there.
-    pub installed: bool,
-    pub downloader: bool,
-}
+use super::Probe;
 
 const PROBE: &str = r#"printf 'system=%s\n' "$(uname -sm)"
 if command -v plait-host >/dev/null 2>&1 || [ -x "$HOME/.local/bin/plait-host" ]; then echo installed=yes; else echo installed=no; fi

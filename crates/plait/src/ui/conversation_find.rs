@@ -12,7 +12,7 @@ use super::{
     text_field::{TextField, TextFieldEvent},
 };
 use gpui::{prelude::*, *};
-use plait_core::conversation_find::{self, Matches};
+use plait_client::conversation_find::{self, Matches};
 use std::{ops::Range, sync::Arc};
 
 /// How far inside the list's edges a match must sit to count as in view.
@@ -24,7 +24,7 @@ pub(super) struct ConversationFind {
     pub field: Option<Entity<TextField>>,
     pub matches: Arc<Matches>,
     pub current: usize,
-    pub(super) restore_match: Option<plait_core::tabs::bookmark::TextPosition>,
+    pub(super) restore_match: Option<plait_client::tabs::bookmark::TextPosition>,
     /// A loaded message shows only part of its text.
     pub partial: bool,
     /// The query `matches` answer. A different one moves to a match; the
@@ -52,17 +52,17 @@ enum Reveal {
 pub(super) struct Found {
     pub generation: u64,
     pub query: String,
-    pub transcript: Arc<plait_core::markdown::Transcript>,
+    pub transcript: Arc<plait_client::markdown::Transcript>,
     pub matches: Matches,
     pub partial: bool,
 }
 
 impl ConversationFind {
-    pub(super) fn bookmark_match(&self) -> Option<plait_core::tabs::bookmark::TextPosition> {
+    pub(super) fn bookmark_match(&self) -> Option<plait_client::tabs::bookmark::TextPosition> {
         self.matches
             .hits
             .get(self.current)
-            .map(|hit| plait_core::tabs::bookmark::TextPosition {
+            .map(|hit| plait_client::tabs::bookmark::TextPosition {
                 source: hit.message.clone(),
                 block: hit.block as u32,
                 byte: hit.range.start as u32,
@@ -343,7 +343,7 @@ impl Plait {
             let local = hit.range.start.max(range.start) - range.start
                 ..hit.range.end.min(range.end) - range.start;
             let current = first + index == find.current;
-            plait_core::markdown::restyle(runs, local, |style| find_highlight(style, current));
+            plait_client::markdown::restyle(runs, local, |style| find_highlight(style, current));
         }
     }
 

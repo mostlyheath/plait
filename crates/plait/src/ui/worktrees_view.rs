@@ -3,7 +3,7 @@ mod presentation;
 mod render;
 use super::{Plait, theme::*, thread_controls::TextTooltip};
 use gpui::{prelude::*, *};
-use plait_core::{
+use plait_client::{
     host::{
         self,
         worktree::{self, Checkout},
@@ -85,7 +85,7 @@ pub(super) struct View {
     pub scroll: UniformListScrollHandle,
     cache: Cache,
     pub sort_size: bool,
-    pub removal: plait_core::worktree_removal::Removal,
+    pub removal: plait_client::worktree_removal::Removal,
     /// The project whose view asked for `removal`: one window has one removal
     /// state, and another project's Worktrees tab must not show or resend it.
     pub removal_project: Option<PathBuf>,
@@ -177,7 +177,7 @@ impl View {
             .iter()
             .map(|r| {
                 r.last_used.map_or("Unknown".into(), |t| {
-                    plait_core::navigation::age(Some(t), now)
+                    plait_client::navigation::age(Some(t), now)
                 })
             })
             .collect();
@@ -190,7 +190,7 @@ impl View {
                     "{}  {}  · {}",
                     r.commit.commit.short,
                     r.commit.commit.subject,
-                    plait_core::navigation::age(
+                    plait_client::navigation::age(
                         Some(r.commit.commit.time.max(0) as u64 * 1000),
                         now
                     )
@@ -265,7 +265,7 @@ fn hover(text: String, cx: &mut App) -> AnyView {
     cx.new(|_| TextTooltip(text)).into()
 }
 fn safe_text(text: &str) -> String {
-    plait_core::display_text::escape(text)
+    plait_client::display_text::escape(text)
 }
 impl Plait {
     pub(super) fn restore_worktrees_bookmark(&mut self) {
@@ -276,7 +276,7 @@ impl Plait {
             .and_then(|id| self.tabs.model.get(id))
             .map(|t| t.session().bookmark());
         let (selected, size_sort) = match bookmark {
-            Some(plait_core::tabs::bookmark::BookmarkRecord::Worktrees {
+            Some(plait_client::tabs::bookmark::BookmarkRecord::Worktrees {
                 selected,
                 size_sort,
             }) => (selected.clone(), *size_sort),
@@ -299,7 +299,7 @@ impl Plait {
         if let Some(id) = self.tabs.model.active() {
             let result = self.tabs.model.save_bookmark(
                 id,
-                plait_core::tabs::bookmark::BookmarkRecord::Worktrees {
+                plait_client::tabs::bookmark::BookmarkRecord::Worktrees {
                     selected: self.worktrees.selection.clone(),
                     size_sort: self.worktrees.sort_size,
                 },
@@ -476,7 +476,7 @@ impl Plait {
     /// have moved a checkout's facts.
     pub(super) fn worktree_summaries(
         &self,
-        live: &[plait_core::host::ThreadSummary],
+        live: &[plait_client::host::ThreadSummary],
     ) -> (bool, Vec<PathBuf>) {
         if !self.worktrees_visible() {
             return (false, Vec::new());
@@ -662,7 +662,7 @@ impl Plait {
                 "Missing"
             } else {
                 thread.map_or("", |t| {
-                    plait_core::tabs::row::summary_state(t, self.lists().unread.contains(&t.id))
+                    plait_client::tabs::row::summary_state(t, self.lists().unread.contains(&t.id))
                         .word(true)
                 })
             });
@@ -834,7 +834,7 @@ impl Plait {
     pub(super) fn ask_remove_view_worktree(
         &mut self,
         path: &std::path::Path,
-        identity: Option<&plait_core::git::worktree::Identity>,
+        identity: Option<&plait_client::git::worktree::Identity>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -862,7 +862,7 @@ impl Plait {
         if !self.worktrees.removal.ask(
             tree,
             self.tabs.host.clone(),
-            plait_core::host_state::request_id(),
+            plait_client::host_state::request_id(),
         ) {
             return;
         }

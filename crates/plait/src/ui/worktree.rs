@@ -1,7 +1,7 @@
 //! Worktree effects belong to the host; the window only starts and observes them.
 use super::Plait;
 use gpui::*;
-use plait_core::{
+use plait_client::{
     host::{
         self, Client, ThreadSummary,
         worktree::{self, Operation, Request, Stage},
@@ -20,13 +20,13 @@ pub(super) struct Pending {
     /// The checkout the person asked from; a retry elsewhere is a new request.
     checkout: PathBuf,
     selection: u64,
-    tab: Option<plait_core::tabs::TabId>,
+    tab: Option<plait_client::tabs::TabId>,
     connection: u64,
-    host: plait_core::tabs::HostKey,
+    host: plait_client::tabs::HostKey,
 }
 #[cfg(test)]
 impl Pending {
-    pub(super) fn for_test(checkout: PathBuf, host: plait_core::tabs::HostKey) -> Self {
+    pub(super) fn for_test(checkout: PathBuf, host: plait_client::tabs::HostKey) -> Self {
         Self {
             request: Request::ListWorktrees,
             checkout,
@@ -211,7 +211,7 @@ impl Plait {
                         this.remember_worktree_operation(&operation, cx);
                         if let Some(summary) = summary {
                             let id = summary.id.clone();
-                            let _ = plait_core::navigation::merge_threads(&mut this.host.connection.threads, vec![summary]);
+                            let _ = plait_client::navigation::merge_threads(&mut this.host.connection.threads, vec![summary]);
                             this.rebuild_projects(cx);
                             if completion_visible(pending.selection, this.host.thread.watch_epoch, pending.tab, this.tabs.model.active()) {
                                 this.notice = None; this.open_created_thread(id, window, cx);
@@ -375,7 +375,7 @@ impl Plait {
     /// Remove leaves them: the folder is gone, not merely re-listed.
     pub(super) fn settle_worktree_removal(
         &mut self,
-        attempt: &plait_core::worktree_removal::Attempt,
+        attempt: &plait_client::worktree_removal::Attempt,
         result: Result<worktree::Operation, host::Error>,
         cx: &mut Context<Self>,
     ) {

@@ -9,7 +9,7 @@
 
 use super::{Plait, composer::AgentCommand, settings, theme::*, thread_controls::TextTooltip};
 use gpui::{prelude::*, *};
-use plait_core::host::{
+use plait_client::host::{
     agent::{AgentResources, McpServer, McpTransport, Request},
     providers,
 };
@@ -68,7 +68,7 @@ pub(super) struct McpRow {
 
 impl From<McpServer> for McpRow {
     fn from(server: McpServer) -> Self {
-        use plait_core::host::agent::{McpConsent, McpState};
+        use plait_client::host::agent::{McpConsent, McpState};
         let state = if server.consent == Some(McpConsent::Changed) {
             "Changed"
         } else if server.consent == Some(McpConsent::Required) {
@@ -148,7 +148,7 @@ impl From<McpServer> for McpRow {
                 Some(McpTransport::Http) => "HTTP",
                 _ => "Unknown",
             },
-            hover: plait_core::display_text::escape(&hover.join("\n")).into(),
+            hover: plait_client::display_text::escape(&hover.join("\n")).into(),
             enabled: server.enabled,
             can_enable: server.can_enable,
             file: None,
@@ -403,7 +403,7 @@ impl Plait {
                 }
                 None => Request::AgentResources {
                     checkout: canonical.clone(),
-                    identity: supported.then(|| plait_core::host::git::WireIdentity {
+                    identity: supported.then(|| plait_client::host::git::WireIdentity {
                         dev: identity.device.to_string(),
                         ino: identity.inode.to_string(),
                     }),
@@ -412,7 +412,7 @@ impl Plait {
             };
             let reply: AgentResources = client.send(&request)?;
             if reply.checkout != canonical {
-                return Err(plait_core::host::Error::Protocol(
+                return Err(plait_client::host::Error::Protocol(
                     "Host returned another checkout's agent setup.".into(),
                 ));
             }
@@ -452,7 +452,7 @@ impl Plait {
         &mut self,
         key: &(u64, PathBuf),
         revision: u64,
-        result: Result<AgentView, plait_core::host::Error>,
+        result: Result<AgentView, plait_client::host::Error>,
     ) -> bool {
         if self.host.connection.epoch != key.0 {
             return false;

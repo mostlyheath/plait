@@ -3,7 +3,7 @@
 //! person's own SSH keys; Plait never asks for or keeps a password.
 use super::{Plait, jump::PreferenceGroup, settings, text_field::TextField, theme::*};
 use gpui::{prelude::*, *};
-use plait_core::{
+use plait_client::{
     host::Client,
     machines::{MachineId, Transport},
     remote::{
@@ -91,11 +91,11 @@ impl Plait {
     }
 
     /// The connected machine, as projects and tabs name it.
-    pub(super) fn current_machine(&self) -> plait_core::model::Machine {
+    pub(super) fn current_machine(&self) -> plait_client::model::Machine {
         let local = self.host_is_local();
-        plait_core::model::Machine {
+        plait_client::model::Machine {
             name: if local {
-                plait_core::machine::local_name()
+                plait_client::machine::local_name()
             } else {
                 self.machine_label()
             },

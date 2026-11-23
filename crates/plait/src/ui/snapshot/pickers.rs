@@ -38,14 +38,14 @@ fn picker_snapshots() {
         // The test host has no socket: let that read fail first, then show a listing.
         h.settle();
         h.update(|p, _, cx| {
-            let listing = plait_core::host::folders::Listing {
+            let listing = plait_client::host::folders::Listing {
                 path: "/home/me/code".into(),
                 parent: Some("/home/me".into()),
                 home: "/home/me".into(),
                 git: false,
                 entries: ["api", "dotfiles", "notes", "web"]
                     .into_iter()
-                    .map(|name| plait_core::host::folders::Entry {
+                    .map(|name| plait_client::host::folders::Entry {
                         name: name.into(),
                         git: name != "notes",
                     })

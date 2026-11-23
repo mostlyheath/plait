@@ -7,33 +7,41 @@ rules, and operation details. [REMOTE.md](REMOTE.md) covers remote setup.
 
 ## Crate boundaries
 
-The agreed split, in progress:
+The Rust code is split into crates with a checked dependency direction:
 
-- `plait-protocol` (built, growing): wire data and serialization with no platform
-  I/O, including host requests, snapshots and provider data, update manifests and their signature
-  check, and remote frame encoding. Both host and clients use it.
+- `plait-protocol`: wire data and serialization with no platform I/O,
+  including host requests, snapshots and provider data, update manifests and
+  their signature check, and remote frame encoding. Both host and clients use it.
 - `plait-transport`: shared frame and owner-checked local socket I/O for hosts and clients.
 - `plait-release`: release fetching, artifact verification, and host installation for hosts and clients.
-- `plait-engine` (built, growing): Git, leases, records, build output, and
-  worktree size measurement. The host uses it directly.
-- `plait-client` (planned): transports, the host client, the snapshot mirror and
-  event stream, and GPUI-free view models, reusable by other clients such as a
+- `plait-engine`: Git, leases, records, build output, and worktree size
+  measurement. Only the host links it.
+- `plait-client`: transports, the host client, the snapshot mirror and event
+  stream, and GPUI-free view models, reusable by other clients such as a
   future iOS app.
-- `plait` (planned shape): GPUI rendering only, on top of `plait-client`.
+- `plait`: GPUI rendering on top of `plait-client`.
 
-Neither the desktop nor `plait-client` will link `plait-engine`; everything a
-client needs from a machine goes through a host, and CI will enforce the
-direction. `plait-core` holds the remaining client models and re-exports shared types from
-their old paths during the migration. `plait-host` depends on the
-engine and protocol without depending on `plait-core`.
+`plait-client` has two default features: `local-host` (finding and connecting
+to a host on the same machine over its socket) and `ssh` (starting `ssh` to
+reach, install and probe remote hosts). Mac-only work, such as opening editors
+and terminals and installing app updates, lives in `plait`. Without the
+features, `plait-client` still builds for iOS with machine records, state and
+host protocol models; a client without them has no transport yet, since an
+authenticated network transport is not built.
+
+Neither the desktop nor `plait-client` links `plait-engine`; everything a
+client needs from a machine goes through a host. `scripts/check.sh` enforces
+the direction: `plait-host` never depends on `plait-client`, and the desktop's
+scene tests reach a host through the `plait-client` `test-host` feature, which
+only the desktop's dev-dependencies enable.
 
 ## Boundaries
 
 - `crates/plait` owns native presentation, input, focus, and dispatch of
   background work. Views show host and repository state; they do not invent
   runs or sample data.
-- `crates/plait-core` owns GPUI-independent models, state transitions, host
-  clients, recovery, Git and file operations. It checks that asynchronous
+- `crates/plait-client` owns GPUI-independent models, state transitions, host
+  clients and recovery; Git and file operations reach it from a host. It checks that asynchronous
   results still belong to the selected checkout and request. Its split is
   described in [Crate boundaries](#crate-boundaries).
 - `crates/plait-host` owns the host process and transport boundary, peer

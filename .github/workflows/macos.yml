@@ -60,6 +60,8 @@ jobs:
           persist-credentials: false
       - id: tools
         uses: ./.github/actions/macos-tools
+      - name: Install iOS target
+        run: rustup target add aarch64-apple-ios
       - name: Restore native build cache
         id: cargo-cache
         uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5

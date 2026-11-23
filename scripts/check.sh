@@ -23,7 +23,7 @@ case "$(uname -s)" in
             echo 'Linux command-sandbox acceptance is blocked. See docs/LINUX-SANDBOX.md.' >&2
             exit 1
         fi
-        packages=(-p plait-core -p plait-engine -p plait-protocol -p plait-transport -p plait-release -p plait-host -p plait-interop-tests)
+        packages=(-p plait-client -p plait-engine -p plait-protocol -p plait-transport -p plait-release -p plait-host -p plait-interop-tests)
         echo 'Checking Linux headless development. Native UI and Linux command execution are not validated.'
         ;;
     *)
@@ -52,11 +52,11 @@ if unexpected=$(grep -Ev "$protocol_allowed" <<< "$protocol_dependencies"); then
     exit 1
 fi
 host_dependencies=$(cargo tree --locked -p plait-host --edges normal --prefix none)
-if grep -Eq '^plait-core( |$)' <<< "$host_dependencies"; then
-    echo 'The host must not depend on plait-core.' >&2
+if grep -Eq '^plait-client( |$)' <<< "$host_dependencies"; then
+    echo 'The host must not depend on plait-client.' >&2
     exit 1
 fi
-for package in plait-core plait; do
+for package in plait-client plait; do
     dependencies=$(cargo tree --locked -p "$package" -e normal --prefix none)
     if grep -Eq '^plait-engine( |$)' <<< "$dependencies"; then
         echo "$package must not depend on plait-engine." >&2
@@ -64,10 +64,16 @@ for package in plait-core plait; do
     fi
 done
 # The daemon and shared core must stay independent of desktop dependencies.
-dependencies=$(cargo tree --locked -p plait-core -p plait-host --edges normal,build,dev --prefix none)
+dependencies=$(cargo tree --locked -p plait-client -p plait-host --edges normal,build,dev --prefix none)
 if grep -Eq '^gpui([-_ ]|$)' <<< "$dependencies"; then
     echo 'Headless crates must not depend on GPUI.' >&2
     exit 1
+fi
+cargo check --locked -p plait-client --no-default-features
+if rustup target list --installed | grep -qx aarch64-apple-ios; then
+    cargo check --locked -p plait-client --no-default-features --target aarch64-apple-ios
+else
+    echo 'Skipping iOS client check: aarch64-apple-ios target is not installed.'
 fi
 # The interop tests start a real host on the runtime's test fixture, so its packages come first.
 # Optional packages are only the Agent SDK's platform builds of Claude Code, which no test runs.

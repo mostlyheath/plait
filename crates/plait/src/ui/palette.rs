@@ -12,7 +12,7 @@ use super::{
     theme::*,
 };
 use gpui::{prelude::*, *};
-use plait_core::fuzzy::fuzzy_match;
+use plait_client::fuzzy::fuzzy_match;
 use std::{collections::HashSet, ops::Range, rc::Rc, sync::Arc};
 
 /// Rows shown before the list scrolls.

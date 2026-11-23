@@ -6,7 +6,7 @@ use super::{
     thread_controls::TextTooltip,
 };
 use gpui::{prelude::*, *};
-use plait_core::host::{
+use plait_client::host::{
     self, CancelWatch,
     build_output::{self, Info, Kind, Phase, Progress, Request},
 };
@@ -151,7 +151,7 @@ impl Plait {
         if paths.contains(&value) {
             return;
         }
-        if let Err(error) = plait_core::build_output::relative(&value) {
+        if let Err(error) = plait_client::build_output::relative(&value) {
             self.build_output.note = Some(error);
             cx.notify();
             return;

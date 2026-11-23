@@ -1,7 +1,7 @@
 //! Host-owned run records, their guarded reads, and undo at the closing line.
 use super::{Plait, Workspace, theme::*, thread_controls::TextTooltip};
 use gpui::{prelude::*, *};
-use plait_core::{
+use plait_client::{
     git::record::Uncovered,
     history::records::{self, Availability, Line, Lines},
     host::{self, Request, TurnRecord, UndoState, UndoTurnReply},
@@ -18,7 +18,7 @@ pub(super) struct Stamp {
     pub(super) revision: Option<u64>,
     pub(super) generation: u64,
 }
-pub(super) use plait_core::operations::UndoAttempt as Attempt;
+pub(super) use plait_client::operations::UndoAttempt as Attempt;
 pub(super) struct Blocked {
     run: String,
     pub(super) reply: UndoTurnReply,
@@ -383,11 +383,11 @@ impl Plait {
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = task.await.map_err(|error| match error {
-                host::Error::Rejected(error) => plait_core::operations::UndoFailure {
+                host::Error::Rejected(error) => plait_client::operations::UndoFailure {
                     code: Some(error.code),
                     message: error.message,
                 },
-                error => plait_core::operations::UndoFailure {
+                error => plait_client::operations::UndoFailure {
                     code: None,
                     message: error.to_string(),
                 },
@@ -474,18 +474,15 @@ impl Plait {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let run = &line.run;
-        let target =
-            self.host
-                .thread
-                .selected
-                .as_ref()
-                .map(|thread| plait_core::review::recorded::Target {
-                    thread: thread.clone(),
-                    checkout: self.host.creation.checkout.clone(),
-                    record: line.displayed.clone(),
-                    original: line.run.clone(),
-                    path: None,
-                });
+        let target = self.host.thread.selected.as_ref().map(|thread| {
+            plait_client::review::recorded::Target {
+                thread: thread.clone(),
+                checkout: self.host.creation.checkout.clone(),
+                record: line.displayed.clone(),
+                original: line.run.clone(),
+                path: None,
+            }
+        });
         let available = line.availability == Availability::Ready;
         let older = self.workspace.turn_review.older;
 
@@ -559,7 +556,7 @@ impl Plait {
                 _ => None,
             };
             if let Some((label, tint)) = status {
-                let detail = plait_core::history::run_state(snapshot, self.workspace.history.now)
+                let detail = plait_client::history::run_state(snapshot, self.workspace.history.now)
                     .map(|(text, _)| text)
                     .unwrap_or_default();
                 content = content.child(
@@ -788,7 +785,7 @@ mod tests {
         let coverage: Vec<_> = (0..10_000)
             .map(|n| Uncovered {
                 path: format!("excluded-{n:05}/"),
-                reason: plait_core::git::record::Reason::Unreadable,
+                reason: plait_client::git::record::Reason::Unreadable,
             })
             .collect();
         let reply = UndoTurnReply {

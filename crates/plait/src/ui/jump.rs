@@ -3,7 +3,7 @@
 
 use super::{Plait, settings, theme::*};
 use gpui::{prelude::*, *};
-use plait_core::preferences::{self, JumpTarget, Preferences};
+use plait_client::preferences::{self, JumpTarget, Preferences};
 
 // Bound in the action table (actions.rs), like every application shortcut.
 actions!(
@@ -77,7 +77,7 @@ impl Plait {
 
     /// Select the Nth thread, machine, or project in sidebar order.
     pub(super) fn jump_to(&mut self, number: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(jump) = plait_core::navigation::jump(
+        let Some(jump) = plait_client::navigation::jump(
             self.lists(),
             &self.state.projects,
             &self.host.connection.threads,
@@ -287,7 +287,7 @@ impl Plait {
 #[cfg(test)]
 mod favorite_revision_tests {
     use super::PreferenceState;
-    use plait_core::host::ModelChoice;
+    use plait_client::host::ModelChoice;
 
     #[test]
     fn revision_changes_only_when_favorites_change() {
