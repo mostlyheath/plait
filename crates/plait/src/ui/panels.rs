@@ -87,7 +87,7 @@ impl Plait {
     fn room_for(&self, panel: Panel) -> f32 {
         let other = panel.other();
         let shown = match other {
-            Panel::Sidebar => self.sidebar,
+            Panel::Sidebar => self.visible_sidebar(),
             Panel::Inspector => self.shows_inspector(self.panels.viewport > WIDE_WINDOW),
         };
         let taken = if shown {

@@ -446,7 +446,7 @@ impl Plait {
             }
             Some((TabTarget::Existing { id, .. }, view)) => {
                 self.select_host_thread_content(id, window, cx);
-                self.show_tab(view, window, cx);
+                self.present_workspace(view, window, cx);
             }
             Some((TabTarget::Draft { id, checkout }, view)) => {
                 if checkout.root != self.host.creation.checkout {
@@ -454,7 +454,7 @@ impl Plait {
                 }
                 self.restore_draft_tab(id, cx);
                 self.open_draft_content(window, cx);
-                self.show_tab(view, window, cx);
+                self.present_workspace(view, window, cx);
             }
             None => {
                 self.workspace.reset_for_thread_selection();
@@ -509,7 +509,7 @@ impl Plait {
     /// Where the first tab starts in this window, as drawn now.
     fn tab_strip_start(&self, window: &Window) -> f32 {
         let sidebar = self
-            .sidebar
+            .visible_sidebar()
             .then(|| self.panel_width(super::panels::Panel::Sidebar));
         strip_start(window.is_fullscreen(), sidebar)
     }

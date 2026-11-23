@@ -96,6 +96,14 @@ impl Selection {
             self.0 = None;
         }
     }
+    /// Record to review beside the thread, including when a new run is streaming.
+    pub fn review_line<'a>(&self, lines: &'a Lines) -> Option<&'a Line> {
+        self.0
+            .as_ref()
+            .and_then(|id| lines.runs.get(id))
+            .or_else(|| lines.newest.as_ref().and_then(|id| lines.runs.get(id)))
+            .or(lines.latest.as_ref())
+    }
     pub fn is_earlier(&self) -> bool {
         self.0.is_some()
     }

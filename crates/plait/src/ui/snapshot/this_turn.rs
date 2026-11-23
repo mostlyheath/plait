@@ -1,7 +1,7 @@
 //! Recorded-turn scenes use the same host fixtures as the closing line tests.
 use super::*;
 
-fn harness(repo: &Path, output: Option<&Path>, width: f32, height: f32) -> Harness {
+pub(super) fn harness(repo: &Path, output: Option<&Path>, width: f32, height: f32) -> Harness {
     let mut h = Harness::with_host(repo, output, width, height, None);
     let snapshot = plait_client::model::Snapshot {
         root: repo.to_owned(),

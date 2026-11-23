@@ -111,7 +111,12 @@ impl Plait {
         let snapshot = self.state.repository.snapshot().ready().cloned();
         let history = self.host.thread.snapshot.clone();
         let task_stamp = stamp.clone();
-        let read_record = self.workspace.tab == Workspace::Changes;
+        let read_record = self.workspace.tab == Workspace::Changes
+            || self
+                .tabs
+                .model
+                .work()
+                .is_some_and(|work| work.open && work.recorded);
         let client = self.host_client();
         let task = cx.background_executor().spawn(async move {
             let info = review::info(&client, &task_stamp.thread)?;
@@ -256,6 +261,7 @@ impl Plait {
             }
         }
         self.sync_recorded_current(cx);
+        self.search_work_diff(cx);
         self.restore_ready_bookmarks(cx);
         self.pump_turn_review(cx);
         cx.notify();
@@ -277,11 +283,21 @@ impl Plait {
             self.open_thread_file(path.clone(), window, cx);
             return;
         }
+        if self.draws_work() {
+            self.workspace
+                .turn_records
+                .selection
+                .earlier(&target.original);
+        }
         self.clear_turn_review();
         self.workspace.turn_review.window = Some(window.window_handle());
         self.workspace.turn_review.target = Some(target);
         self.workspace.diff_scroll = UniformListScrollHandle::new();
         self.workspace.file_scroll = UniformListScrollHandle::new();
+        if self.draws_work() {
+            self.tabs.model.work_mut().unwrap().select_scope(true);
+            self.refresh_turn_review(cx);
+        }
         self.show_tab(Workspace::Changes, window, cx);
         window.focus(&self.focus, cx);
         if self.workspace.turn_review.older {

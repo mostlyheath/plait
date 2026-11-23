@@ -45,7 +45,7 @@ impl Plait {
             .child(
                 column()
                     .flex_shrink_0()
-                    .px_6()
+                    .px(px(self.conversation_padding()))
                     .pt_2()
                     .pb_3()
                     .gap_2()
