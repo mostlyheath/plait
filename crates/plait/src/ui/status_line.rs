@@ -26,13 +26,21 @@ impl Plait {
         } else {
             ("Offline", colors().amber)
         };
+        let hover = format!("{machine}, {state}. Switch machine…");
         button("machine-switcher", "")
             .h(px(24.))
-            .aria_label(format!("{machine}, {state}. Switch machine…"))
+            // A long name gives way to Next and Settings; its hover text has it whole.
+            .min_w_0()
+            .max_w(px(260.))
+            .flex_shrink_1()
+            .aria_label(hover.clone())
             .aria_expanded(self.navigation.menu.as_deref() == Some("machines"))
+            .tooltip(move |_, cx| cx.new(|_| TextTooltip(hover.clone())).into())
             .child(dot(tint))
-            .child(machine)
-            .when(state != "Connected", |el| el.child(state))
+            .child(div().min_w_0().truncate().child(machine))
+            .when(state != "Connected", |el| {
+                el.child(div().flex_shrink_0().child(state))
+            })
             .on_activate(cx, |this, _, cx| {
                 this.navigation.menu = (this.navigation.menu.as_deref() != Some("machines"))
                     .then(|| "machines".into());
