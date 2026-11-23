@@ -27,6 +27,7 @@ pub mod markdown;
 pub mod model;
 pub mod operations;
 pub mod ownership;
+pub mod panes;
 pub mod patch;
 pub mod preferences;
 pub mod projects;
