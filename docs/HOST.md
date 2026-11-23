@@ -2164,7 +2164,17 @@ another machine.
   - `host` is `{id, name, platform}`. The ID is stable for the store and
     is the same one turn review reports. The name defaults to the machine's
     hostname, and `{"op":"host_set_name","name":N}` changes it.
-  - `projects` lists `{path, hidden}` in the order they were opened.
+  - `projects` lists `{path, hidden}` in the order they were opened. Hosts
+    with `project_fingerprint_v1` add, when known, `vcs` (`git` or
+    `folder`), `fingerprint` `{roots, remote}`, `branch`
+    `{branch, named, tracking}` and `main_checkout` (a path), from the
+    `checkout_summary` read below. Clients match copies of one project on
+    several machines by shared `roots`; `remote` is only a hint, since it
+    changes when an account or repository is renamed. The host reads at
+    most two summaries at a time, walks root commits only when a project
+    is opened or its roots are unknown, refreshes the branch when the
+    checkout's refs change, and persists fingerprints so a restarted host
+    serves them at once. A summary change moves the revision.
   - `worktrees` lists `{folder, main, branch, creation_id, identity}`:
     which project each worktree belongs to.
   - `status` maps watched checkout paths to in-memory change counters, starting
@@ -2180,9 +2190,13 @@ another machine.
   fresh view.
 - Workspace writes accept an optional `op_id`: retries with the same ID and input return the first outcome for up to 24 hours.
 - Writes, each committed with a new revision, then announced to subscribers:
-  - `workspace_open_project {path}` accepts only an accessible Git working
-    tree on this host, and returns its top folder. Opening a hidden project
-    shows it again.
+  - `workspace_open_project {path}` accepts an accessible Git working tree
+    or plain folder on this host, and returns its top folder. Opening a
+    hidden project shows it again. A path that does not exist is refused
+    with `checkout_missing`, so a client can offer to choose the project
+    again; other inaccessible paths are `invalid_request`. Checkout-taking
+    operations that resolve a project, such as `command_policy` and
+    `agent_resources`, refuse a missing path the same way.
   - `workspace_hide_project {path, hidden}`.
   - `workspace_set_worktree {folder, main, branch, creation_id?, identity?}`
     and `workspace_forget_worktree {folder}`. The host also records a
@@ -2238,7 +2252,8 @@ see its Git."
   runs one read. `checkout` is base64 of the absolute path's bytes. `KIND`
   and its fields are `status`, `files`, `branches`, `diff` (`change`,
   `mode`), `log` (`tip`, `skip`, `limit`), `show` (`id`), `line_counts`
-  (`paths`), `graph` (`heads`), `file` (`path`), `file_stamp` (`path`), and
+  (`paths`), `graph` (`heads`), `file` (`path`), `file_stamp` (`path`),
+  `checkout_summary` (`roots`, a boolean), and
   `worktree_size` (`worktree`, `worktree_identity`, `thread`, `removed`,
   `others`, `build_directories`). For `worktree_size` the runtime adds the
   host store, so a thread's retained build output is measured there; a
@@ -2247,6 +2262,12 @@ see its Git."
   for an unborn repository. `identity` returns `{root, identity}` with the
   canonical root as a base64 path and its device/inode identity, using no Git
   process. `main_checkout` currently requires a UTF-8 checkout path.
+  `checkout_summary` returns `{vcs, fingerprint, branch, main_checkout}`
+  from refs alone, never the working tree. `fingerprint` is null when
+  `roots` is false or for a plain folder; its `roots` are the sorted root
+  commits reachable from HEAD (at most 32, empty when unborn) and its
+  `remote` is the origin (or first) remote normalized to `host/path`
+  without credentials, port or `.git`, or null for local remotes.
   Any other field is refused.
 - The reply is `{total, data, token}`: `data` is base64 of the first part of
   the serialized outcome, and `token` is null when `data` is all of it.
@@ -2259,8 +2280,11 @@ see its Git."
   the same message. Paths inside results are base64 of their bytes.
 - Except for `main_checkout` and `identity`, the `plait-host git-read` helper runs the read with the desktop's hardened
   Git builder and limits. It refuses a relative path, a folder that is not
-  the top of its work tree, and a checkout whose device or inode differs from
-  `identity` or changes during the read. Files are opened beneath the
+  the top of its work tree, and a checkout whose inode differs from
+  `identity` or that changes during the read. A different device number with
+  the same inode is accepted only for the canonical path, since macOS can
+  renumber a volume after a restart; the outcome's `identity` is then the
+  current one, and clients store it. Files are opened beneath the
   checkout without following symlinks. A file over 8 MiB returns only its
   stamp.
 - Results over 64 MiB, a helper that fails, and a read over 60 seconds are
@@ -3066,7 +3090,7 @@ and a partial frame has a 15-second deadline. SSH uses the bridge.
 
 These additive operations are versionless and do not change protocol versions 1–6. Requests accept only the `op` field; unknown fields return `invalid_request`.
 
-- `{"op":"host_info"}` returns `{"schema":1,"release":null,"build_id":null,"protocol_min":1,"protocol_max":6,"capabilities":["drain_v1"],"storage_schema":1}`. Release and build ID are strings when packaged metadata is available.
+- `{"op":"host_info"}` returns `{"schema":1,"release":null,"build_id":null,"protocol_min":1,"protocol_max":6,"capabilities":["drain_v1","checkout_identity_v1","project_fingerprint_v1"],"storage_schema":1}`. Release and build ID are strings when packaged metadata is available.
 - `{"op":"drain_for_update"}` returns `{"draining":true,"active_runs":N}`. Running and approval-waiting threads count as active. New work returns `busy` while accepted work, Stop, approvals, reads and watches continue. Repeating the request is safe.
 - `{"op":"cancel_drain"}` returns `{"draining":false}` and wakes the checkout queue. Drain state is in memory and does not survive a host restart.
 - While draining, a retried request that would admit work also returns `busy`, even if an earlier attempt was already accepted; after the update the same request ID returns its saved result as usual, so a client retries after `busy` rather than treating it as a refusal of the original.

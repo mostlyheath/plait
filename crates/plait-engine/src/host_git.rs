@@ -170,6 +170,7 @@ fn value<T: Serialize>(result: Result<T, String>) -> Result<serde_json::Value, S
 fn dispatch(root: &Path, read: &Read) -> Result<serde_json::Value, String> {
     match read {
         Read::Status => value(git::status(root)),
+        Read::CheckoutSummary { roots } => value(git::checkout_summary(root, *roots)),
         Read::Diff { change, mode } => value(git::diff(root, &change.clone().into(), *mode)),
         Read::Files => value(git::files(root)),
         Read::Log { tip, skip, limit } => value(git::log::log(root, tip.as_deref(), *skip, *limit)),

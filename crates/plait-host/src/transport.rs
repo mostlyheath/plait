@@ -522,6 +522,18 @@ mod tests {
     }
 
     #[test]
+    fn workspace_event_includes_changed_summary_on_revision_bump() {
+        let before = json!({"revision": 3, "projects": [{"path":"/repo"}]});
+        let after =
+            json!({"revision": 4, "projects": [{"path":"/repo", "branch":{"branch":"main"}}]});
+        assert_eq!(workspace_event(&after, &after, 2), None);
+        assert_eq!(
+            workspace_event(&before, &after, 2),
+            Some(json!({"event":"workspace", "seq":2, "workspace":after}))
+        );
+    }
+
+    #[test]
     fn workspace_event_reports_status_only_changes() {
         let before = json!({"revision": 3, "status": {"/repo": 0}});
         let after = json!({"revision": 3, "status": {"/repo": 1}});
