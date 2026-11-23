@@ -74,8 +74,8 @@ pub(super) fn scenes(h: &mut Harness, repo: &Path, suffix: &str) {
 }
 
 #[core::prelude::v1::test]
-fn this_turn_refuses_with_closing_line() {
-    if !isolated("this_turn::this_turn_refuses_with_closing_line") {
+fn the_panel_model_refuses_where_the_closing_line_does() {
+    if !isolated("this_turn::the_panel_model_refuses_where_the_closing_line_does") {
         return;
     }
     let scratch = std::env::temp_dir().join(format!("plait-turn-gates-{}", std::process::id()));

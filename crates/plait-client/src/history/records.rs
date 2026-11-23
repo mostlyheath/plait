@@ -201,7 +201,8 @@ fn line(
                 change: match file.change {
                     host::RecordChange::Added => "Added",
                     host::RecordChange::Deleted => "Deleted",
-                    host::RecordChange::Modified | host::RecordChange::Mode => "Modified",
+                    host::RecordChange::Mode => "Mode",
+                    host::RecordChange::Modified => "Modified",
                 },
                 path: file.path.clone(),
                 name: crate::display_text::escape(

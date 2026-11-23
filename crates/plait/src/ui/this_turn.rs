@@ -175,16 +175,18 @@ impl Plait {
 }
 
 fn turn_file(index: usize, file: &File, target: &Target, cx: &mut Context<Plait>) -> Control {
-    let (letter, tint) = match file.change {
-        "Added" => ("A", colors().mint),
-        "Deleted" => ("D", colors().red),
-        _ => ("M", colors().blue),
+    // A mode change is a modification to the eye; its name says which.
+    let (letter, tint, word) = match file.change {
+        "Added" => ("A", colors().mint, "Added"),
+        "Deleted" => ("D", colors().red, "Deleted"),
+        "Mode" => ("M", colors().blue, "Mode changed"),
+        _ => ("M", colors().blue, "Modified"),
     };
     let mut target = target.clone();
     target.path = Some(file.path.clone());
     nav_row(
         ("turn-file", index),
-        format!("{} · {}", file.change, file.review_detail),
+        format!("{word} · {}", file.review_detail),
         false,
     )
     .gap(px(6.))

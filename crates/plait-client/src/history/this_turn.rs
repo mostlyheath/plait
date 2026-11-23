@@ -85,6 +85,20 @@ impl Selection {
     pub fn latest(&mut self) {
         self.0 = None;
     }
+    /// Forgets an earlier turn the records no longer hold, so it cannot
+    /// come back into view by itself when they hold it again.
+    pub fn retain(&mut self, lines: &Lines) {
+        if self
+            .0
+            .as_ref()
+            .is_some_and(|run| !lines.runs.contains_key(run))
+        {
+            self.0 = None;
+        }
+    }
+    pub fn is_earlier(&self) -> bool {
+        self.0.is_some()
+    }
 }
 
 pub struct Panel<'a> {

@@ -191,6 +191,7 @@ impl Plait {
     /// Called with the background conversation projection, never from render.
     pub(super) fn install_record_lines(&mut self, lines: Arc<Lines>, generation: u64) {
         self.workspace.turn_records.projected_generation = generation;
+        self.workspace.turn_records.selection.retain(&lines);
         let old = std::mem::replace(&mut self.workspace.turn_records.lines, lines);
         let Some(snapshot) = self.conversation_snapshot() else {
             return;

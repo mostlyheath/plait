@@ -339,6 +339,11 @@ fn this_turn_uses_selected_record_and_reports_only_loaded_counts() {
     );
     selection.latest();
     assert!(panel(&Lines::default(), &selection, ThreadStatus::Idle, undo).is_none());
+    // An earlier turn the records no longer hold is forgotten, not kept to
+    // come back into view when they hold it again.
+    selection.earlier("gone");
+    selection.retain(&Lines::default());
+    assert!(!selection.is_earlier());
 }
 
 #[test]
