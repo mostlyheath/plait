@@ -2,15 +2,16 @@
 //!
 //! Each picks what is on screen (the file in Files, or the file selected in
 //! Changes, and a line in it), builds the command from Settings → Editor
-//! (plait_client::handoff), and starts it on the background executor. Plait
+//! (crate::handoff), and starts it on the background executor. Plait
 //! does not wait for it: only a command that cannot start, or exits at once
 //! with an error, is reported, in the notice line.
 
 use super::{Plait, Workspace, file_view::LINE_HEIGHT, theme::*, thread_controls::TextTooltip};
+use crate::handoff::{self};
 use gpui::{prelude::*, *};
+use plait_client::handoff::Launch;
 use plait_client::{
     file_view::{self, Contents},
-    handoff::{self, Launch},
     model::Change,
     state::Load,
 };

@@ -248,7 +248,7 @@ fn installed_program(layout: &Layout) -> Option<PathBuf> {
 }
 
 fn answering(layout: &Layout) -> bool {
-    crate::local_socket::connect(&layout.store.join("host.sock")).is_ok()
+    plait_client::local_socket::connect(&layout.store.join("host.sock")).is_ok()
 }
 
 /// Setup writes under these folders; a symlink there could redirect the

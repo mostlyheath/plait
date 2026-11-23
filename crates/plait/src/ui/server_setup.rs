@@ -1,5 +1,5 @@
 use super::*;
-use plait_client::update::setup::{self, Outcome};
+use crate::update::setup::{self, Outcome};
 
 /// First-launch setup of a missing local server. Runs at most once on its own
 /// per launch, after a failed connection; Retry runs it again.

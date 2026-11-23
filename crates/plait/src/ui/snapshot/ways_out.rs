@@ -5,12 +5,13 @@
 //! it, so nothing here opens an editor, Finder, a terminal, or Rex.
 
 use super::{Harness, SettingsTab, fixture_repository, isolated};
+use crate::handoff;
 use crate::ui::{
     Plait, Workspace, file_view::LINE_HEIGHT, settings::SettingsPage, settings_editor::Opens,
 };
 use gpui::*;
 use plait_client::{
-    handoff::{self, EditorChoice, Launch, TerminalChoice},
+    handoff::{EditorChoice, Launch, TerminalChoice},
     model::DiffMode,
     state::Load,
 };
