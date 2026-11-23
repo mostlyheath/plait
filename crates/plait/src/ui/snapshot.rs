@@ -53,6 +53,7 @@ mod linear_settings;
 mod machines;
 mod many_drafts;
 mod mcp;
+mod message_box;
 mod messages;
 mod mixed_tabs;
 mod pickers;
@@ -2416,6 +2417,7 @@ fn walk(output: Option<&Path>) {
         composer_walk(&mut harness, &repository, suffix);
         images::walk(&mut harness, &repository, suffix);
         composer_v3_walk(&mut harness, &repository, suffix);
+        message_box::walk(&mut harness, &repository, suffix);
         settings_modal::walk(&mut harness, &repository, suffix);
         settings_walk(&mut harness, &repository, suffix);
         settings_controls_walk(&mut harness, &repository, suffix);

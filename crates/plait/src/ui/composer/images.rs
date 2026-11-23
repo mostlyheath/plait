@@ -1,4 +1,4 @@
-use super::super::{images::decode, thread_controls::TextTooltip};
+use super::super::{images::decode, theme::ButtonAction, thread_controls::TextTooltip};
 use super::*;
 use plait_client::images::{self, ImageRef};
 use std::{collections::HashMap, path::PathBuf};
@@ -207,7 +207,7 @@ impl Composer {
         }
         self.add_images(Vec::new(), Some(bytes), cx);
     }
-    pub(super) fn drop_images(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+    pub(crate) fn drop_images(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
         if !self.enabled {
             return;
         }

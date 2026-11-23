@@ -37,7 +37,7 @@ impl Plait {
     /// The chip, or `None` when the harness lists no modes of its own.
     pub(super) fn permissions_chip(
         &self,
-        id: impl Into<ElementId>,
+        id: &'static str,
         permissions: Permissions,
         cx: &mut Context<Self>,
     ) -> Option<Control> {
@@ -54,7 +54,10 @@ impl Plait {
         let permissions = Rc::new(permissions);
         Some(
             menu_chip(id, Some("Permissions"), None, label, tip, blocked)
+                .relative()
+                .child(self.anchor_probe(id))
                 .on_activate(cx, move |this, window, cx| {
+                    this.anchor_next(id);
                     this.open_permissions(&permissions, window, cx)
                 }),
         )
@@ -123,13 +126,13 @@ pub(super) fn menu_chip(
         Some(caption) => format!("{caption}: {value}"),
         None => value.to_string(),
     };
-    let hover = tip.clone();
+    let hover = blocked.map_or_else(|| tip.clone(), SharedString::from);
     button(id, "")
         .min_w_0()
         .flex_shrink_1()
         .gap_1()
         .aria_label(name)
-        .aria_description(blocked.map_or_else(|| tip.clone(), SharedString::from))
+        .aria_description(hover.clone())
         .tooltip(move |_, cx| cx.new(|_| TextTooltip(hover.to_string())).into())
         .disabled(blocked.is_some())
         .when_some(caption, |el, caption| {

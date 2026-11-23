@@ -151,7 +151,20 @@ impl Plait {
                 composer.restore_images(draft.images, cx);
             });
         }
-        cx.observe(&composer, |this, _, cx| this.capture_session(cx))
+        let mut last = composer.read(cx).box_state();
+        cx.observe(&composer, move |this, composer, cx| {
+            this.capture_session(cx);
+            let next = composer.read(cx).box_state();
+            if next != last {
+                last = next;
+                cx.notify();
+            }
+        })
+        .detach();
+        let focus = composer.read(cx).focus_handle(cx);
+        cx.on_focus_in(&focus, window, |_, _, cx| cx.notify())
+            .detach();
+        cx.on_focus_out(&focus, window, |_, _, _, cx| cx.notify())
             .detach();
         cx.subscribe_in(&composer, window, |this, emitter, event, window, cx| {
             // Once delivered, the composer belongs to its thread.

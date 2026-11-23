@@ -1,7 +1,7 @@
-//! The new-thread draft on screen: a header row of choices above its composer
-//! (project, model, thinking, harness, permissions), and the menus those chips open.
-//! Every value here is read from state that replies already filled in; the
-//! menus are built when opened, never per frame.
+//! The new-thread draft on screen: project and harness above the message box,
+//! model, effort, and permissions inside the box's settings row, and the menus
+//! those controls open. Every value here is read from state that replies already
+//! filled in; the menus are built when opened, never per frame.
 
 use super::{
     OpenRepository, Plait,
@@ -11,15 +11,26 @@ use super::{
     palette::{Item, Options, Palette},
     permissions::{Permissions, menu_chip},
     theme::*,
-    thread_controls::{approval_label, thinking_value},
+    thread_controls::MessageBoxParts,
 };
 use gpui::{prelude::*, *};
-use plait_client::host::{ApprovalMode, harness::HarnessId};
+use plait_client::{
+    compose::{
+        approval_label, draft_approval_blocked, draft_approval_tip, draft_approval_value,
+        draft_thinking_tip, thinking_value,
+    },
+    host::{ApprovalMode, harness::HarnessId},
+};
 use std::rc::Rc;
 
 impl Plait {
     /// The conversation area while the draft is open. Nothing here runs an agent.
-    pub(super) fn draft_view(&self, wide: bool, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn draft_view(
+        &self,
+        wide: bool,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let project = self.active_project();
         let detail = format!(
             "It starts in {} on {} when you send its first message. Nothing is created before then.",
@@ -38,22 +49,20 @@ impl Plait {
                     .pt_2()
                     .pb_3()
                     .gap_2()
+                    // Project and harness stay in the row above the message box.
+                    .child(self.draft_header_row(cx))
                     .when_some(composer, |el, composer| {
+                        let parts = self.draft_message_box_parts(cx);
                         el.child(
-                            div()
-                                .w_full()
-                                .max_w(px(CONTENT_WIDTH))
-                                .mx_auto()
+                            self.message_box(composer, parts, window, cx)
                                 // Escape reaches here when the composer has nothing else to close.
-                                .on_action(cx.listener(|this, _: &composer::Cancel, window, cx| {
-                                    this.escape_draft(window, cx)
-                                }))
-                                .child(composer),
+                                .on_action(cx.listener(
+                                    |this, _: &composer::Cancel, window, cx| {
+                                        this.escape_draft(window, cx)
+                                    },
+                                )),
                         )
                     })
-                    // Under the box, where an open thread's controls are, so
-                    // the box stays where it is when the first message is sent.
-                    .child(self.draft_controls(cx))
                     .children(self.isolation_choice(cx))
                     .when(!self.draft_isolation_choice(), |el| {
                         el.children(self.draft_status(cx))
@@ -70,8 +79,8 @@ impl Plait {
             })
     }
 
-    /// Project | model | thinking | harness | permissions, then Discard.
-    fn draft_controls(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    /// Project and harness above the message box, with Discard at the right.
+    fn draft_header_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let locked = self.draft_locked();
         let project = self.active_project();
         let harness = self.draft_harness();
@@ -79,10 +88,7 @@ impl Plait {
             || SharedString::from(harness.label()),
             |row| row.name.clone(),
         );
-        let model = self
-            .draft_model_name()
-            .unwrap_or_else(|| "Choose a model".into());
-        let mut chips = row()
+        let chips = row()
             .flex_wrap()
             .flex_1()
             .min_w_0()
@@ -107,25 +113,6 @@ impl Plait {
             )
             .child(
                 menu_chip(
-                    "draft-model",
-                    None,
-                    None,
-                    model.clone(),
-                    format!("Model: {model}. Choose among {harness_name}'s models.").into(),
-                    locked,
-                )
-                .max_w(px(240.))
-                .aria_label(format!("Model: {model}"))
-                .relative()
-                .child(self.anchor_probe("draft-model"))
-                .on_activate(cx, |this, window, cx| {
-                    this.anchor_next("draft-model");
-                    this.open_model_picker(ModelPurpose::NewThread, window, cx)
-                }),
-            )
-            .children(self.draft_thinking_chip(cx))
-            .child(
-                menu_chip(
                     "draft-harness",
                     None,
                     harness_logo(harness).map(|logo| logo.text_color(rgb(colors().muted))),
@@ -142,14 +129,13 @@ impl Plait {
                     this.open_draft_harnesses(window, cx)
                 }),
             );
-        chips = chips.children(self.draft_permissions(cx));
         row()
             .w_full()
             .max_w(px(CONTENT_WIDTH))
             .mx_auto()
-            .items_start()
+            .items_center()
             .gap_2()
-            .text_size(px(11.))
+            .text_size(px(12.))
             .text_color(rgb(colors().muted))
             .child(chips)
             .child(
@@ -168,25 +154,74 @@ impl Plait {
             )
     }
 
+    /// Model, effort, and permissions inside the draft's message box.
+    fn draft_message_box_parts(&self, cx: &mut Context<Self>) -> MessageBoxParts {
+        let locked = self.draft_locked();
+        let harness = self.draft_harness();
+        let harness_name = self.harness_row(harness).map_or_else(
+            || SharedString::from(harness.label()),
+            |row| row.name.clone(),
+        );
+        let model = self
+            .draft_model_name()
+            .unwrap_or_else(|| "Choose a model".into());
+        let mut left = Vec::new();
+        left.push(
+            menu_chip(
+                "draft-model",
+                None,
+                None,
+                model.clone(),
+                format!("Model: {model}. Choose among {harness_name}'s models.").into(),
+                locked,
+            )
+            .max_w(px(240.))
+            .aria_label(format!("Model: {model}"))
+            .relative()
+            .child(self.anchor_probe("draft-model"))
+            .on_activate(cx, |this, window, cx| {
+                this.anchor_next("draft-model");
+                this.open_model_picker(ModelPurpose::NewThread, window, cx)
+            })
+            .into_any_element(),
+        );
+        if let Some(chip) = self.draft_thinking_chip(cx) {
+            left.push(chip.into_any_element());
+        }
+        if let Some(chip) = self.draft_permissions(cx) {
+            left.push(chip.into_any_element());
+        }
+        let mut notices = Vec::new();
+        // A harness that lists no modes has no Permissions chip to carry
+        // what protects the checkout, so it is said inside the box.
+        if let Some(row) = self
+            .harness_row(harness)
+            .filter(|row| harness != HarnessId::Pi && row.modes.is_empty())
+            && !row.protection.is_empty()
+        {
+            notices.push(
+                tag("draft-protection", row.protection.clone(), colors().subtle)
+                    .line_height(px(16.))
+                    .into_any_element(),
+            );
+        }
+        MessageBoxParts {
+            left,
+            right: Vec::new(),
+            notices,
+        }
+    }
+
     /// The level the thread starts at; none for a model without thinking levels.
     fn draft_thinking_chip(&self, cx: &mut Context<Self>) -> Option<Control> {
         let level = self.draft_thinking()?;
-        let source = if self.draft.thinking.is_some() {
-            "Chosen for this thread"
-        } else {
-            "The default from Settings → New threads"
-        };
         Some(
             menu_chip(
                 "draft-thinking",
                 None,
                 None,
                 thinking_value(level).into(),
-                format!(
-                    "Thinking: {}. {source}, at the nearest level this model has.",
-                    level.label()
-                )
-                .into(),
+                draft_thinking_tip(level, self.draft.thinking.is_some()).into(),
                 self.draft_locked(),
             )
             .aria_label(format!("Thinking level: {}", level.label()))
@@ -264,29 +299,24 @@ impl Plait {
             return self.permissions_chip("draft-permissions", permissions, cx);
         }
         let mode = self.draft_approval();
-        let value = match mode {
-            ApprovalMode::Ask => "Ask",
-            ApprovalMode::Auto => "Auto",
-        };
-        let source = if self.draft.approval.is_some() {
-            "Chosen for this thread."
-        } else {
-            "The default from Settings → New threads."
-        };
-        let blocked = locked.or_else(|| {
-            (self.host.connection.connected && self.host.protocol() < 2)
-                .then_some("This host asks before every edit and command.")
-        });
+        let value = draft_approval_value(mode);
+        let blocked =
+            draft_approval_blocked(locked, self.host.connection.connected, self.host.protocol());
         Some(
             menu_chip(
                 "draft-permissions",
                 Some("Permissions"),
                 None,
                 value.into(),
-                format!("{}. {source}", approval_label(mode)).into(),
+                draft_approval_tip(mode, self.draft.approval.is_some()).into(),
                 blocked,
             )
-            .on_activate(cx, |this, window, cx| this.open_draft_approvals(window, cx)),
+            .relative()
+            .child(self.anchor_probe("draft-permissions"))
+            .on_activate(cx, |this, window, cx| {
+                this.anchor_next("draft-permissions");
+                this.open_draft_approvals(window, cx)
+            }),
         )
     }
 
@@ -368,18 +398,7 @@ impl Plait {
                     .into_any_element(),
             );
         }
-        // A harness that lists no modes has no Permissions chip to carry
-        // what protects the checkout, so it is said here.
-        let harness = self.draft_harness();
-        let row = self
-            .harness_row(harness)
-            .filter(|row| harness != HarnessId::Pi && row.modes.is_empty())?;
-        let protection = row.protection.clone();
-        (!protection.is_empty()).then(|| {
-            line()
-                .child(tag("draft-protection", protection, colors().subtle).line_height(px(16.)))
-                .into_any_element()
-        })
+        None
     }
 
     /// The sidebar's projects, most recently active first, then Open project….
