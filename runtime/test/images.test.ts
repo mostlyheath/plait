@@ -98,7 +98,7 @@ for (const [name,make] of [['codex',codex],['claude',claude]] as const) test(`${
   await h.close();
   const reopened=new Store(h.store); assert.deepEqual(reopened.images.forRequest(thread.id,'image-request'),[image]);
   assert.equal(reopened.images.read(thread.id,image.id,0).data,png.toString('base64')); reopened.close();
-  const resumed = h.reopen();
+  const resumed = await h.reopen();
   assert.deepEqual(resumed.runtime.snapshot(thread.id).messages.find(m=>m.id==='request-image-request')?.images,[image]);
   assert.equal((await resumed.call({op:'submit',thread_id:thread.id,request_id:'image-after-restart',text:'again',images:[image.id]},6)).ok,true);
   await resumed.finish(thread.id);
@@ -226,7 +226,7 @@ test('Pi image-only input leaves the pinned provider free to supply its text pla
 });
 test('opening a Codex thread before the catalog arrives resolves text-only capability',async t=>{
   const h=await codex(t,'text-only'); const thread=await h.create(); await h.close();
-  const resumed=h.reopen();
+  const resumed=await h.reopen();
   assert.equal(resumed.runtime.snapshot(thread.id).image_input,'unknown');
   const watched=await resumed.call({op:'watch',thread_id:thread.id},6);
   assert.equal(watched.result.thread.image_input,'no');

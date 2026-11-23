@@ -4,9 +4,9 @@ export const EVENT_LIMIT = 1024 * 1024;
 
 export type RunnerState = 'preparing' | 'running' | 'awaiting_approval' | 'finishing';
 export type Attach = { type: 'attach'; protocol: 1; last_seq: number };
-export type Command = Attach | { type: 'start'; payload: unknown } | { type: 'approve'; approval_id: string; allow: boolean } | { type: 'stop' } | { type: 'steer'; request_id: string; text: string; images: unknown[] } | { type: 'set_mode'; mode: string } | { type: 'ack'; seq: number };
+export type Command = Attach | { type: 'start'; payload: unknown } | { type: 'approve'; approval_id: string; allow: boolean } | { type: 'stop' } | { type: 'steer'; request_id: string; text: string; images: unknown[] } | { type: 'set_mode'; mode: string } | { type: 'ack'; seq: number } | { type: 'ping'; nonce: string };
 export type Attached = { type: 'attached'; state: RunnerState; seq: number; snapshot: unknown; pending_approval: unknown; head: unknown; before_record_id: unknown };
-export type Event = { type: 'phase' | 'live' | 'commit' | 'approval_needed' | 'postimage' | 'record_before' | 'record_after' | 'finished'; seq: number; [key: string]: unknown };
+export type Event = { type: 'phase' | 'live' | 'commit' | 'approval_needed' | 'approval_settled' | 'forget' | 'pong' | 'postimage' | 'record_before' | 'record_after' | 'finished'; seq: number; [key: string]: unknown };
 export type RunnerMessage = Attached | Event;
 
 function sequence(value: unknown): value is number {
@@ -35,6 +35,7 @@ export function parseCommand(value: unknown): Command {
     case 'stop': return value as Command;
     case 'steer': if (typeof value.request_id === 'string' && typeof value.text === 'string' && Array.isArray(value.images) && value.images.every(image)) return value as Command; break;
     case 'set_mode': if (typeof value.mode === 'string') return value as Command; break;
+    case 'ping': if (typeof value.nonce === 'string') return value as Command; break;
     case 'ack': if (sequence(value.seq)) return value as Command; break;
   }
   throw new Error('invalid or unknown command');
@@ -49,6 +50,9 @@ export function parseRunnerMessage(value: unknown): RunnerMessage {
     case 'live': if (object(value.payload)) return value as Event; break;
     case 'commit': if (object(value.item) && nullableString(value.head) && strings(value.placed) && strings(value.changed_paths) && (value.usage === null || object(value.usage))) return value as Event; break;
     case 'approval_needed': if (approval(value.approval)) return value as Event; break;
+    case 'approval_settled': if (typeof value.id === 'string') return value as Event; break;
+    case 'forget': if (typeof value.path === 'string') return value as Event; break;
+    case 'pong': if (typeof value.nonce === 'string') return value as Event; break;
     case 'postimage': if (object(value.postimage)) return value as Event; break;
     case 'record_before': case 'record_after': if (object(value.record)) return value as Event; break;
     case 'finished': if (object(value.result)) return value as Event; break;
