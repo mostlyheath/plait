@@ -786,7 +786,7 @@ impl Plait {
         let summary = self
             .host
             .connection
-            .threads
+            .threads()
             .iter()
             .find(|thread| thread.id == id)?;
         self.saved_thread(summary)?.approval

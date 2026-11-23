@@ -198,7 +198,14 @@ fn two_creations_complete_once_in_their_tabs_after_switch_and_close() {
         // B can complete while A is still preparing; closing A must preserve its operation.
         p.request_tab(crate::ui::tab_lifecycle::Intent::Close(a),w,cx);
         let reply=|id:&str| Ok(plait_client::host::ThreadReply { thread: Snapshot { id:id.into(),checkout:repo.clone(),model:choice(),..Default::default() } });
+        // The host update can precede creation completion and its saved title.
+        p.host.connection.threads_mut().push(ThreadSummary { id: "created-b".into(), checkout: repo.clone(), model: choice(), ..Default::default() });
+        p.rebuild_projects(cx);
+        p.navigation.filter.update(cx, |field, cx| field.set_text("message b", cx));
+        assert!(p.filtered_threads(cx).is_empty());
         finish(p,"send-b",reply("created-b"),w,cx);
+        assert_eq!(p.filtered_threads(cx).len(), 1);
+        p.navigation.filter.update(cx, |field, cx| field.set_text("", cx));
         assert_eq!(p.tabs.model.active(),Some(b));
         finish(p,"send-a",reply("created-a"),w,cx);
         assert_eq!(p.tabs.model.active(),Some(b));

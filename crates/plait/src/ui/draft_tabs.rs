@@ -525,10 +525,10 @@ impl Plait {
             ));
             self.refresh_host_worktrees(cx);
         }
-        if !self.host.connection.threads.iter().any(|t| t.id == id) {
+        if !self.host.connection.threads().iter().any(|t| t.id == id) {
             self.host
                 .connection
-                .threads
+                .threads_mut()
                 .insert(0, host::ThreadSummary::from(&reply.thread));
             self.rebuild_projects(cx);
         }
@@ -591,6 +591,7 @@ impl Plait {
                 },
             );
             data.clear_draft_tab(&draft_id);
+            self.navigation.invalidate_search();
         }
         if in_front {
             if let Some(composer) = draft.composer.take() {

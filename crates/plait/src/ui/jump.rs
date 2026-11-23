@@ -80,7 +80,7 @@ impl Plait {
         let Some(jump) = plait_client::navigation::jump(
             self.lists(),
             &self.state.projects,
-            &self.host.connection.threads,
+            self.host.connection.threads(),
             &self.filtered_threads(cx),
             self.preferences.value.jump_target,
             number,
@@ -94,7 +94,7 @@ impl Plait {
         self.state
             .collapsed_machines
             .remove(&(jump.project, jump.machine));
-        let id = self.host.connection.threads[jump.thread].id.clone();
+        let id = self.host.connection.threads()[jump.thread].id.clone();
         self.select_host_thread(id, window, cx);
     }
 
@@ -146,7 +146,7 @@ impl Plait {
                     this.load_fonts(cx);
                 }
                 this.pump_preferences(cx);
-                let threads = this.host.connection.threads.clone();
+                let threads = this.host.connection.threads().to_vec();
                 this.update_lists(
                     |lists| {
                         lists.observe(&threads, None, true);

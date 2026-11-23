@@ -45,7 +45,7 @@ impl Plait {
                     if this
                         .host
                         .connection
-                        .threads
+                        .threads()
                         .iter()
                         .any(|thread| thread.id == id)
                     {
@@ -123,7 +123,7 @@ impl Plait {
                     this.navigation.watch = Some(lease);
                     this.admission.queue = queue;
                     this.navigation.loading = false;
-                    this.host.connection.threads = all;
+                    this.host.connection.set_threads(all);
                     this.apply_thread_activity(true, window, cx);
                     this.reconcile_checkout_waits(window, cx);
                     this.rebuild_projects(cx);
@@ -156,13 +156,13 @@ impl Plait {
                                         && this
                                             .host
                                             .connection
-                                            .threads
+                                            .threads()
                                             .iter()
                                             .find(|old| old.id == new.id)
                                             .is_none_or(|old| old.status != new.status)
                                 });
                                 if let Err(error) = navigation::merge_threads(
-                                    &mut this.host.connection.threads,
+                                    this.host.connection.threads_mut(),
                                     live,
                                 ) {
                                     this.thread_list_failed(
@@ -229,7 +229,7 @@ impl Plait {
         .then_some(self.host.thread.selected.as_deref())
         .flatten();
         let mut lists = self.lists().clone();
-        let notifications = lists.observe(&self.host.connection.threads, visible, initial);
+        let notifications = lists.observe(self.host.connection.threads(), visible, initial);
         self.update_lists(|current| *current = lists, cx);
         if cfg!(test) {
             return;
@@ -242,7 +242,7 @@ impl Plait {
             let Some(thread) = self
                 .host
                 .connection
-                .threads
+                .threads()
                 .iter()
                 .find(|thread| thread.id == id)
             else {
@@ -299,9 +299,10 @@ impl Plait {
     }
 
     pub(super) fn rebuild_projects(&mut self, cx: &mut Context<Self>) {
+        self.navigation.invalidate_search();
         let machine = self.current_machine();
         self.state.projects = navigation::projects(
-            &self.host.connection.threads,
+            self.host.connection.threads(),
             self.lists(),
             &self.host.creation.checkout,
             &machine,
@@ -357,7 +358,7 @@ impl Plait {
         summary: ThreadSummary,
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
-        navigation::merge_threads(&mut self.host.connection.threads, vec![summary])?;
+        navigation::merge_threads(self.host.connection.threads_mut(), vec![summary])?;
         self.rebuild_projects(cx);
         self.capture_session(cx);
         cx.notify();

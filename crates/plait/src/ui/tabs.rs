@@ -208,7 +208,7 @@ impl Plait {
             &self.tabs.model,
             &RowContext {
                 host: &self.tabs.host,
-                threads: &self.host.connection.threads,
+                threads: self.host.connection.threads(),
                 navigation: self.lists(),
                 machine: &self.active_project().machines[0].name,
             },

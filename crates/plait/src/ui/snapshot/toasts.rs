@@ -8,7 +8,7 @@ fn two(h: &mut Harness) -> (String, String) {
         ids = p
             .host
             .connection
-            .threads
+            .threads()
             .iter()
             .take(2)
             .map(|thread| thread.id.clone())

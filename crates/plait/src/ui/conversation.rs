@@ -40,7 +40,7 @@ impl Plait {
                 ),
                 Some("Reconnect"),
             )
-        } else if self.host.connection.threads.is_empty() {
+        } else if self.host.connection.threads().is_empty() {
             (
                 "No threads yet",
                 plait_client::host::policy::idle_detail(

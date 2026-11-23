@@ -131,13 +131,13 @@ fn choice_flow() {
     wait(&mut harness, |p| {
         p.host
             .connection
-            .threads
+            .threads()
             .iter()
             .any(|t| t.id == "12345678-1234-4abc-8abc-123456789abc")
     });
     harness.update(|p,_,_|{
         assert!(!p.draft_visible());
-        let created=p.host.connection.threads.iter().find(|t|t.id=="12345678-1234-4abc-8abc-123456789abc").unwrap();
+        let created=p.host.connection.threads().iter().find(|t|t.id=="12345678-1234-4abc-8abc-123456789abc").unwrap();
         assert_eq!(created.harness,Some(HarnessId::Claude));assert_ne!(created.checkout,root);
         assert_ne!(p.host.thread.selected.as_deref(),Some(created.id.as_str()));
         let tab=p.tabs.model.tabs().iter().find(|tab|matches!(tab.session().target(),plait_client::tabs::TabTarget::Existing{id,..} if id==&created.id)).unwrap();

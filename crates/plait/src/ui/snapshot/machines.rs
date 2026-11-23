@@ -413,7 +413,7 @@ fn a_remote_window_shows_only_its_hosts_workspace() {
         let remote = plait_client::machines::MachineId::new("workstation").unwrap();
         let client = p.host_client();
         p.use_machine_client(client, remote, false, window, cx);
-        assert!(p.host.connection.threads.is_empty());
+        assert!(p.host.connection.threads().is_empty());
         // The host's view arrives once the link is up, as it would be here.
         p.host.connection.connecting = false;
         p.host.connection.connected = true;

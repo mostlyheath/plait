@@ -265,7 +265,7 @@ impl Plait {
         // A new link to the same machine keeps what is on screen; another
         // machine starts empty, so nothing of the previous one shows as its.
         if std::mem::replace(&mut self.machines.active, machine) != self.machines.active {
-            self.host.connection.threads.clear();
+            self.host.connection.threads_mut().clear();
             self.navigation.available.clear();
             self.host_workspace = Default::default();
             self.switch_machine_tabs(window, cx);
@@ -529,7 +529,7 @@ impl Plait {
         let current = self.host.thread.selected.as_ref().and_then(|id| {
             indices
                 .iter()
-                .position(|&index| &self.host.connection.threads[index].id == id)
+                .position(|&index| &self.host.connection.threads_mut()[index].id == id)
         });
         let next = match (current, forward) {
             (Some(index), true) => (index + 1) % count,
@@ -538,7 +538,7 @@ impl Plait {
             (None, false) => count - 1,
         };
         self.interaction = Some(std::time::Instant::now());
-        let id = self.host.connection.threads[indices[next]].id.clone();
+        let id = self.host.connection.threads()[indices[next]].id.clone();
         self.select_host_thread(id, window, cx);
     }
 
@@ -1269,7 +1269,7 @@ impl Render for Plait {
                 if let Some(thread) = this
                     .host
                     .connection
-                    .threads
+                    .threads()
                     .iter()
                     .find(|thread| Some(&thread.id) == this.host.thread.selected.as_ref())
                 {

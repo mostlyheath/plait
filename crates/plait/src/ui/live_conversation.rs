@@ -1135,7 +1135,7 @@ Tone::Filled,
             .or_else(|| {
                 self.host
                     .connection
-                    .threads
+                    .threads()
                     .iter()
                     .find(|thread| Some(&thread.id) == self.host.thread.selected.as_ref())
                     .map(|thread| &thread.model)

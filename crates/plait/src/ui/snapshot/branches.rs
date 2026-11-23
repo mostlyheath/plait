@@ -172,8 +172,8 @@ fn a_branch_write_is_refused_while_git_or_a_thread_is_busy_here() {
             .unwrap()
             .root
             .clone();
-        plait.host.connection.threads[0].checkout = root;
-        plait.host.connection.threads[0].status = ThreadStatus::Running;
+        plait.host.connection.threads_mut()[0].checkout = root;
+        plait.host.connection.threads_mut()[0].status = ThreadStatus::Running;
     });
     open(&mut harness, false);
     harness.update(|plait, window, cx| {
@@ -194,7 +194,7 @@ fn a_branch_write_is_refused_while_git_or_a_thread_is_busy_here() {
     harness.update(|plait, _, _| assert_eq!(branch_now(plait).as_deref(), Some("main")));
     // The thread in another checkout, such as its own worktree, does not stop it.
     harness.update(|plait, _, _| {
-        plait.host.connection.threads[0].checkout = PathBuf::from("/elsewhere");
+        plait.host.connection.threads_mut()[0].checkout = PathBuf::from("/elsewhere");
         assert!(plait.branch_blocker().is_none());
     });
     drop(harness);
@@ -259,7 +259,7 @@ pub(super) fn branches_walk(harness: &mut Harness, repository: &Path, suffix: &s
     // No thread is running here, so the control is ready.
     harness.change_snapshot(|snapshot| snapshot.status = ThreadStatus::Idle);
     harness.update(|plait, window, cx| {
-        for thread in &mut plait.host.connection.threads {
+        for thread in plait.host.connection.threads_mut() {
             thread.status = ThreadStatus::Idle;
         }
         plait.show_tab(Workspace::Changes, window, cx);
@@ -282,7 +282,7 @@ pub(super) fn branches_walk(harness: &mut Harness, repository: &Path, suffix: &s
             .unwrap()
             .root
             .clone();
-        plait.host.connection.threads[0].checkout = root;
+        plait.host.connection.threads_mut()[0].checkout = root;
     });
     // The header and the sidebar both show the thread running.
     harness.change_snapshot(|snapshot| snapshot.status = ThreadStatus::Running);

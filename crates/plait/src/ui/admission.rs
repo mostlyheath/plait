@@ -252,7 +252,7 @@ impl Plait {
         let busy = self
             .host
             .connection
-            .threads
+            .threads()
             .iter()
             .any(|thread| thread.checkout == snapshot.checkout && thread.status.busy());
         if !busy && self.admission.refused_busy.as_ref() != Some(&snapshot.id) {

@@ -454,7 +454,7 @@ pub fn run() -> Vec<Row> {
                 let summaries = plait
                     .host
                     .connection
-                    .threads
+                    .threads()
                     .iter()
                     .enumerate()
                     .map(|(index, thread)| {
@@ -471,7 +471,7 @@ pub fn run() -> Vec<Row> {
                     })
                     .collect();
                 plait_client::navigation::merge_threads(
-                    &mut plait.host.connection.threads,
+                    plait.host.connection.threads_mut(),
                     summaries,
                 )
                 .unwrap();

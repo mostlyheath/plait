@@ -142,6 +142,7 @@ impl Plait {
                         let selected = data.selected.clone();
                         this.session.journal = Some(journal);
                         this.session.data = Some(data);
+                        this.navigation.invalidate_search();
                         this.session.note = None;
                         for (id, composer) in &this.workspace.composers {
                             this.restore_composer(id, composer, cx);
@@ -286,7 +287,7 @@ impl Plait {
             && let Some(summary) = self
                 .host
                 .connection
-                .threads
+                .threads()
                 .iter()
                 .find(|thread| thread.id == id)
             && self.saved_thread(summary).is_some()
@@ -302,7 +303,7 @@ impl Plait {
     pub(super) fn session_accepts_thread(&self, id: &str) -> bool {
         self.host
             .connection
-            .threads
+            .threads()
             .iter()
             .find(|summary| summary.id == id)
             .is_some_and(|summary| {
@@ -322,7 +323,7 @@ impl Plait {
         if let Some(saved) = self
             .host
             .connection
-            .threads
+            .threads()
             .iter()
             .find(|thread| thread.id == id)
             .and_then(|summary| self.saved_thread(summary))
@@ -387,7 +388,7 @@ impl Plait {
             .selected
             .clone()
             .or_else(|| self.session.restore_thread.clone());
-        for summary in &self.host.connection.threads {
+        for summary in self.host.connection.threads() {
             let Some(composer) = self.workspace.composers.get(&summary.id) else {
                 continue;
             };
@@ -465,6 +466,7 @@ impl Plait {
             journal.queue(next.clone());
         }
         self.session.data = Some(next);
+        self.navigation.invalidate_search();
         self.schedule_session_save(removed_image, cx);
     }
 
@@ -524,12 +526,8 @@ impl Plait {
     }
 
     pub(super) fn thread_title(&self, id: &str) -> String {
-        self.host
-            .connection
-            .threads
-            .iter()
-            .find(|thread| thread.id == id)
-            .map(|summary| self.summary_title(summary))
+        self.thread_index(id)
+            .map(|index| self.summary_title(&self.host.connection.threads()[index]))
             .unwrap_or_else(|| UNTITLED.to_owned())
     }
 
@@ -539,7 +537,7 @@ impl Plait {
         match self
             .host
             .connection
-            .threads
+            .threads()
             .iter()
             .find(|thread| thread.id == id)
             .and_then(|summary| self.chosen_title(summary))
@@ -553,7 +551,7 @@ impl Plait {
     pub(super) fn rename_text(&self, id: &str) -> String {
         self.host
             .connection
-            .threads
+            .threads()
             .iter()
             .find(|thread| thread.id == id)
             .and_then(|summary| self.chosen_title(summary))

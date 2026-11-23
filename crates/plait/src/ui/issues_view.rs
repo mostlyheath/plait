@@ -751,7 +751,7 @@ impl Plait {
         let items = self
             .host
             .connection
-            .threads
+            .threads()
             .iter()
             .filter(|thread| {
                 thread.archived != Some(true) && self.project_of(&thread.checkout) == project

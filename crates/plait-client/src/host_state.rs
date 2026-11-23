@@ -23,13 +23,31 @@ pub struct HostConnection {
     pub error: Option<String>,
     pub status: Option<Status>,
     pub catalog_revision: u64,
-    pub threads: Vec<ThreadSummary>,
+    threads: Vec<ThreadSummary>,
+    threads_revision: u64,
     pub settings_model: Option<ModelChoice>,
     pub saving: bool,
     pub save_message: Option<String>,
 }
 
 impl HostConnection {
+    pub fn threads(&self) -> &[ThreadSummary] {
+        &self.threads
+    }
+    pub fn threads_mut(&mut self) -> &mut Vec<ThreadSummary> {
+        self.threads_revision = self
+            .threads_revision
+            .checked_add(1)
+            .expect("thread revision exhausted");
+        &mut self.threads
+    }
+    pub fn set_threads(&mut self, threads: Vec<ThreadSummary>) {
+        *self.threads_mut() = threads;
+    }
+    pub fn threads_revision(&self) -> u64 {
+        self.threads_revision
+    }
+
     pub fn checkout_identity(
         &self,
         key: Option<&CheckoutKey>,
@@ -182,6 +200,11 @@ impl HostState {
             self.submissions.disconnected();
             self.connection = HostConnection {
                 epoch: self.connection.epoch,
+                threads_revision: self
+                    .connection
+                    .threads_revision
+                    .checked_add(1)
+                    .expect("thread revision exhausted"),
                 catalog_revision: self.connection.catalog_revision.wrapping_add(1),
                 ..Default::default()
             };
@@ -271,7 +294,7 @@ impl HostState {
         }
         let expected = self
             .connection
-            .threads
+            .threads()
             .iter()
             .find(|thread| thread.id == snapshot.id)
             .map(|thread| (&thread.model, &thread.checkout))
@@ -291,7 +314,7 @@ impl HostState {
         }
         if let Some(thread) = self
             .connection
-            .threads
+            .threads_mut()
             .iter_mut()
             .find(|thread| thread.id == snapshot.id)
         {
@@ -1015,12 +1038,29 @@ mod tests {
     }
 
     #[test]
+    fn thread_revision_tracks_mutation_and_checkout_reset() {
+        let mut state = HostState::new("/repo".into());
+        let initial = state.connection.threads_revision();
+        state
+            .connection
+            .threads_mut()
+            .push(ThreadSummary::default());
+        let mutated = state.connection.threads_revision();
+        assert!(mutated > initial);
+        state.connection.set_threads(Vec::new());
+        let replaced = state.connection.threads_revision();
+        assert!(replaced > mutated);
+        state.change_checkout("/other".into()).unwrap();
+        assert!(state.connection.threads_revision() > replaced);
+    }
+
+    #[test]
     fn scoped_host_state_preserves_defaults_and_selection_transitions() {
         let mut state = HostState::new("/repo".into());
         assert_eq!(state.connection.epoch, 0);
         assert!(!state.connection.connected);
         assert!(!state.connection.connecting);
-        assert!(state.connection.threads.is_empty());
+        assert!(state.connection.threads().is_empty());
         assert_eq!(state.creation.checkout, PathBuf::from("/repo"));
         assert_eq!(state.thread.watch_epoch, 0);
         assert!(state.thread.selected.is_none());

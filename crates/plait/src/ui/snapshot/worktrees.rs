@@ -127,7 +127,7 @@ fn host_defaults_and_grouping() {
             let summary = plait
                 .host
                 .connection
-                .threads
+                .threads()
                 .iter()
                 .find(|thread| thread.harness == Some(chosen))
                 .unwrap();
