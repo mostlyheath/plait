@@ -5,10 +5,10 @@ import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
-export type Manifest = { run_id: string; thread_id: string; request_id: string; checkout: string; harness: string; build_id: string };
+export type Manifest = { run_id: string; thread_id: string; request_id: string; checkout: string; harness: string; build_id: string; lease?: { root: string; identity: { dev: string; ino: string } } };
 export type RunnerEntry = { manifest: Manifest; status: 'live' | 'finished' | 'dead'; receipt?: unknown };
 function id(value: string): string {
-  if (!/^[A-Za-z0-9_-]+$/.test(value)) throw new Error('invalid runner id');
+  if (!/^[A-Za-z0-9_-]{1,32}$/.test(value)) throw new Error('invalid runner id');
   return value;
 }
 function manifest(value: unknown): Manifest {
@@ -29,13 +29,18 @@ export function helper(fd: number, operation: string): Promise<boolean> {
 }
 export class RunnerRegistry {
   readonly directory: string;
-  constructor(store: string) { this.directory = join(store, 'runners'); }
+  /** Sockets live in a separate short folder: macOS limits Unix socket paths to 104 bytes. */
+  readonly sockets: string;
+  constructor(store: string) { this.directory = join(store, 'runners'); this.sockets = join(store, 'r'); }
   async prepare(): Promise<void> {
-    await mkdir(this.directory, { mode: 0o700 }).catch((error: NodeJS.ErrnoException) => { if (error.code !== 'EEXIST') throw error; });
-    const stat = await lstat(this.directory);
-    if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== process.getuid?.() || (stat.mode & 0o077) !== 0) throw new Error('invalid runners directory');
+    for (const directory of [this.directory, this.sockets]) {
+      await mkdir(directory, { mode: 0o700 }).catch((error: NodeJS.ErrnoException) => { if (error.code !== 'EEXIST') throw error; });
+      const stat = await lstat(directory);
+      if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== process.getuid?.() || (stat.mode & 0o077) !== 0) throw new Error('invalid runners directory');
+    }
   }
   path(runId: string, suffix: string): string { return join(this.directory, `${id(runId)}${suffix}`); }
+  socketPath(runId: string): string { return join(this.sockets, id(runId)); }
   private async lockFile(runId: string): Promise<FileHandle> {
     const file = await open(this.path(runId, '.lock'), constants.O_RDWR | constants.O_CREAT | constants.O_NOFOLLOW, 0o600);
     try { const stat = await file.stat(); if (!stat.isFile() || stat.nlink !== 1 || stat.uid !== process.getuid?.() || (stat.mode & 0o077) !== 0) throw new Error('invalid runner lock'); return file; } catch (error) { await file.close(); throw error; }

@@ -57,3 +57,13 @@ os.close(fd)`;
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('runner sockets fit the macOS Unix socket limit for a long store path', async () => {
+  const { socketPathFits } = await import('../src/runner/socket.ts');
+  // As long as a CI temp store on macOS: /private/var/folders/xx/<28>/T/plait-sandbox-xxxxxx
+  const store = '/private/var/folders/q2/p1t6rgxj5fj32g1dc7dmd49r0000gn/T/plait-sandbox-myr1mc';
+  const path = new RunnerRegistry(store).socketPath('0123456789ab');
+  assert.ok(Buffer.byteLength(path) <= 103, path);
+  socketPathFits(path);
+  assert.throws(() => socketPathFits('/x'.repeat(60)), /too long/);
+});
