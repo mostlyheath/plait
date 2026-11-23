@@ -217,3 +217,59 @@ test('pending root refresh is not downgraded by a watcher tick', async t => {
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.deepEqual(workspace.view().projects[0].fingerprint?.roots, ['abc']);
 });
+
+test('invalid hidden fingerprints are backfilled and folder summaries clear fingerprints', async t => {
+  const { store, repo } = await setup(t);
+  store.db.prepare('INSERT INTO workspace_projects(path,hidden,added_at,fingerprint) VALUES (?,1,0,?)').run(repo, '{"roots":"bad","remote":null}');
+  const requests: boolean[] = [];
+  let folder = false;
+  const workspace = new Workspace(store, () => {}, async (_path, roots) => {
+    requests.push(roots);
+    return folder ? { vcs: 'folder' } : { vcs: 'git', fingerprint: { roots: ['root'], remote: null } };
+  });
+  assert.equal(workspace.view().projects[0].fingerprint, undefined);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.deepEqual(requests, [true]);
+  workspace.refreshSummary(repo);
+  assert.deepEqual(requests, [true]);
+  await workspace.handle({ op: 'workspace_hide_project', path: repo, hidden: false });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  folder = true;
+  workspace.refreshSummary(repo, false);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(workspace.view().projects[0].fingerprint, undefined);
+  assert.equal(store.db.prepare('SELECT fingerprint FROM workspace_projects WHERE path=?').get(repo)?.fingerprint, null);
+});
+
+test('failed roots read keeps roots on a pending refresh', async t => {
+  const { store, repo } = await setup(t);
+  store.db.prepare('INSERT INTO workspace_projects(path,hidden,added_at) VALUES (?,0,0)').run(repo);
+  const requests: boolean[] = [];
+  let rejectRead!: (error: Error) => void;
+  const workspace = new Workspace(store, () => {}, async (_path, roots) => {
+    requests.push(roots);
+    if (requests.length === 1) return await new Promise((_resolve, reject) => { rejectRead = reject; });
+    return { vcs: 'git', fingerprint: { roots: ['new'], remote: null } };
+  });
+  workspace.refreshSummary(repo, false);
+  rejectRead(new Error('transient'));
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.deepEqual(requests, [true, true]);
+});
+
+test('a failed summary notification does not stop the queue or reject unhandled', async t => {
+  const { store } = await setup(t);
+  for (const folder of ['/one', '/two', '/three']) store.db.prepare('INSERT INTO workspace_projects(path,hidden,added_at) VALUES (?,0,0)').run(folder);
+  const releases: (() => void)[] = [];
+  const requests: string[] = [];
+  new Workspace(store, () => { throw new Error('subscriber failed'); }, async folder => {
+    requests.push(folder);
+    await new Promise<void>(resolve => releases.push(resolve));
+    return { vcs: 'folder' };
+  });
+  releases.shift()!();
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.ok(requests.includes('/three'));
+  releases.splice(0).forEach(release => release());
+  await new Promise(resolve => setTimeout(resolve, 20));
+});

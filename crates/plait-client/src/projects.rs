@@ -64,20 +64,21 @@ fn find(parent: &mut [usize], mut i: usize) -> usize {
     }
     i
 }
-fn merge(parent: &mut [usize], a: usize, b: usize, forbidden: &[(usize, usize)]) {
+fn merge(parent: &mut [usize], a: usize, b: usize, forbidden: &[(usize, usize)]) -> bool {
     let a = find(parent, a);
     let b = find(parent, b);
     if a == b {
-        return;
+        return true;
     }
     for &(x, y) in forbidden {
         let x = find(parent, x);
         let y = find(parent, y);
         if (x == a && y == b) || (x == b && y == a) {
-            return;
+            return false;
         }
     }
     parent[b] = a;
+    true
 }
 
 pub fn group(
@@ -100,7 +101,17 @@ pub fn group(
         for (path, worktree) in &host.worktrees {
             mains.insert(path.as_path(), worktree.main.as_path());
         }
-        let main_path = |path: &Path| mains.get(path).copied().unwrap_or(path).to_path_buf();
+        let main_path = |path: &Path| {
+            let mut current = path;
+            let mut visited = BTreeSet::new();
+            while visited.insert(current) {
+                match mains.get(current) {
+                    Some(next) => current = next,
+                    None => return current.to_path_buf(),
+                }
+            }
+            visited.into_iter().min().unwrap_or(current).to_path_buf()
+        };
         for thread in &host.threads {
             threads_by_copy
                 .entry(CopyRef {
@@ -117,16 +128,35 @@ pub fn group(
             .collect();
         for project in &host.projects {
             let main = main_path(&project.path);
-            if main != project.path || (project.hidden && !occupied.contains(&main)) {
+            if project.hidden && !occupied.contains(&main) {
                 continue;
             }
-            entries.insert(
-                CopyRef {
-                    host: host.host.clone(),
-                    path: project.path.clone(),
-                },
-                (host, project),
-            );
+            let key = CopyRef {
+                host: host.host.clone(),
+                path: main.clone(),
+            };
+            let mut entry = project.clone();
+            entry.path = main.clone();
+            if main == project.path {
+                entries.insert(key, (host, entry));
+            } else {
+                entries.entry(key).or_insert((host, entry));
+            }
+        }
+        for path in occupied {
+            let key = CopyRef {
+                host: host.host.clone(),
+                path: path.clone(),
+            };
+            entries.entry(key).or_insert_with(|| {
+                (
+                    host,
+                    workspace::Project {
+                        path,
+                        ..Default::default()
+                    },
+                )
+            });
         }
     }
     let entries: Vec<_> = entries.into_iter().collect();
@@ -177,28 +207,36 @@ pub fn group(
         }
     }
     for candidates in roots.values() {
-        if let Some((&first, rest)) = candidates.split_first() {
-            for &candidate in rest {
-                merge(&mut parent, first, candidate, &forbidden);
+        let mut representatives = Vec::new();
+        for &candidate in candidates {
+            if !representatives
+                .iter()
+                .any(|&rep| merge(&mut parent, rep, candidate, &forbidden))
+            {
+                representatives.push(candidate);
             }
         }
     }
     for candidates in names.values() {
-        if let Some((&first, rest)) = candidates.split_first() {
-            // A second host connects copies on the first host without matching them by name directly.
-            let other = rest
-                .iter()
-                .copied()
-                .find(|&i| entries[i].0.host != entries[first].0.host);
-            if let Some(other) = other {
-                for &candidate in rest {
-                    let anchor = if entries[candidate].0.host == entries[first].0.host {
-                        other
-                    } else {
-                        first
-                    };
-                    merge(&mut parent, anchor, candidate, &forbidden);
+        let mut representatives: Vec<(usize, Option<usize>)> = Vec::new();
+        for &candidate in candidates {
+            let mut joined = false;
+            for (rep, alternate) in &mut representatives {
+                let anchor = if entries[*rep].0.host != entries[candidate].0.host {
+                    Some(*rep)
+                } else {
+                    *alternate
+                };
+                if anchor.is_some_and(|anchor| merge(&mut parent, anchor, candidate, &forbidden)) {
+                    if alternate.is_none() && entries[*rep].0.host != entries[candidate].0.host {
+                        *alternate = Some(candidate);
+                    }
+                    joined = true;
+                    break;
                 }
+            }
+            if !joined {
+                representatives.push((candidate, None));
             }
         }
     }
@@ -218,7 +256,7 @@ pub fn group(
         let root = members
             .iter()
             .flat_map(|&i| {
-                let project = entries[i].1.1;
+                let project = &entries[i].1.1;
                 project
                     .fingerprint
                     .iter()
@@ -277,7 +315,7 @@ pub fn group(
     for group in &result {
         *counts.entry(group.id.0.clone()).or_insert(0usize) += 1;
     }
-    // IDs use the full group even when the displayed copies are filtered.
+    // IDs use the full group even when filtered; collisions append a copy suffix.
     for (group, members) in result.iter_mut().zip(grouped.values()) {
         if counts[&group.id.0] > 1 {
             let key = &entries[members[0]].0;
@@ -400,6 +438,78 @@ mod tests {
         assert_eq!(groups[0].threads.len(), 1);
         assert_eq!(groups[0].last_activity, 12);
     }
+    #[test]
+    fn missing_projects_and_chained_worktrees_keep_threads() {
+        let mut tree = project("/w1", &["root"]);
+        tree.main_checkout = Some("/main".into());
+        let mut nested = project("/w2", &["root"]);
+        nested.main_checkout = Some("/w1".into());
+        let mut h = host("a", vec![tree, nested]);
+        for path in ["/w2", "/legacy"] {
+            h.threads.push(ThreadSummary {
+                id: path.into(),
+                checkout: path.into(),
+                ..Default::default()
+            });
+        }
+        let groups = group(&[h], &ProjectLinks::default(), None);
+        let main = groups
+            .iter()
+            .find(|g| g.copies[0].path == Path::new("/main"))
+            .unwrap();
+        assert_eq!(main.id.0, "git:root");
+        assert_eq!(main.threads[0].1.id, "/w2");
+        let legacy = groups
+            .iter()
+            .find(|g| g.copies[0].path == Path::new("/legacy"))
+            .unwrap();
+        assert_eq!(legacy.id.0, "name:legacy");
+        assert_eq!(legacy.threads.len(), 1);
+    }
+
+    #[test]
+    fn cyclic_worktrees_resolve_without_losing_threads() {
+        let mut a = project("/a", &["r"]);
+        a.main_checkout = Some("/b".into());
+        let mut b = project("/b", &["r"]);
+        b.main_checkout = Some("/a".into());
+        let mut h = host("a", vec![a, b]);
+        h.threads.push(ThreadSummary {
+            checkout: "/b".into(),
+            ..Default::default()
+        });
+        let groups = group(&[h], &ProjectLinks::default(), None);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].threads.len(), 1);
+    }
+
+    #[test]
+    fn unlinked_first_candidate_does_not_split_other_copies() {
+        for roots in [&["r"][..], &[][..]] {
+            let hosts = vec![
+                host("a", vec![project("/fork/repo", roots)]),
+                host("b", vec![project("/upstream/repo", roots)]),
+                host("c", vec![project("/upstream/repo", roots)]),
+            ];
+            let mut links = ProjectLinks::default();
+            links
+                .unlinked
+                .insert((key("a", "/fork/repo"), key("b", "/upstream/repo")));
+            links
+                .unlinked
+                .insert((key("a", "/fork/repo"), key("c", "/upstream/repo")));
+            let groups = group(&hosts, &links, None);
+            assert_eq!(groups.len(), 2);
+            assert!(groups.iter().any(|g| {
+                g.copies
+                    .iter()
+                    .map(|c| c.host.0.as_str())
+                    .collect::<Vec<_>>()
+                    == ["b", "c"]
+            }));
+        }
+    }
+
     #[test]
     fn conflicting_manual_links_are_deterministic() {
         let hosts = vec![

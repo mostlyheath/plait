@@ -30,7 +30,7 @@ pub fn checkout_summary(root: &Path, include_roots: bool) -> Result<CheckoutSumm
     }
     let head = query(root, &["symbolic-ref", "--quiet", "HEAD"])?;
     let head_ref = if head.status.success() {
-        Some(text(&head)?.trim_end())
+        Some(text(&head)?.trim_end()).filter(|head_ref| valid_head_ref(head_ref))
     } else {
         None
     };
@@ -64,31 +64,6 @@ pub fn checkout_summary(root: &Path, include_roots: bool) -> Result<CheckoutSumm
             });
         }
     }
-    if let Some(tracking) = branch.as_mut().and_then(|branch| branch.tracking.as_mut())
-        && !tracking.gone
-    {
-        let counts = query(
-            root,
-            &["rev-list", "--left-right", "--count", "HEAD...@{u}"],
-        )?;
-        if !counts.status.success() {
-            return Err(counts.failure());
-        }
-        let mut values = text(&counts)?.split_whitespace();
-        tracking.ahead = values
-            .next()
-            .ok_or("Missing ahead count.")?
-            .parse()
-            .map_err(|_| "Invalid ahead count.")?;
-        tracking.behind = values
-            .next()
-            .ok_or("Missing behind count.")?
-            .parse()
-            .map_err(|_| "Invalid behind count.")?;
-        if values.next().is_some() {
-            return Err("Invalid tracking counts.".into());
-        }
-    }
     let no_branch_ref = branch.is_none();
     if branch.is_none() {
         if let Some(head_ref) = head_ref {
@@ -115,15 +90,7 @@ pub fn checkout_summary(root: &Path, include_roots: bool) -> Result<CheckoutSumm
     let fingerprint = if include_roots {
         let roots_raw = query(root, &["rev-list", "--max-parents=0", "HEAD"])?;
         let roots = if roots_raw.status.success() {
-            let mut roots: Vec<String> = text(&roots_raw)?
-                .lines()
-                .map(str::to_ascii_lowercase)
-                .collect();
-            if roots.len() > 32 || roots.iter().any(|id| !super::log::is_object_id(id)) {
-                return Err("Git returned too many or invalid root commits.".into());
-            }
-            roots.sort();
-            roots
+            select_roots(text(&roots_raw)?, 32)?
         } else if no_branch_ref && head_ref.is_some() {
             Vec::new()
         } else {
@@ -175,21 +142,38 @@ pub fn checkout_summary(root: &Path, include_roots: bool) -> Result<CheckoutSumm
     })
 }
 
+fn valid_head_ref(head_ref: &str) -> bool {
+    head_ref.starts_with("refs/heads/")
+        && !head_ref.starts_with('-')
+        && !head_ref.contains(['*', '?', '['])
+}
+
+fn select_roots(output: &str, limit: usize) -> Result<Vec<String>> {
+    let mut roots: Vec<String> = output.lines().map(str::to_ascii_lowercase).collect();
+    if roots.iter().any(|id| !super::log::is_object_id(id)) {
+        return Err("Git returned invalid root commits.".into());
+    }
+    roots.sort();
+    roots.truncate(limit);
+    Ok(roots)
+}
+
 fn normalize_remote(input: &str) -> Option<String> {
     let input = input.trim().split(['?', '#']).next()?;
     let (authority, path) = if let Some((scheme, rest)) = input.split_once("://") {
         if scheme.eq_ignore_ascii_case("file") {
             return None;
         }
-        let rest = rest.rsplit_once('@').map_or(rest, |(_, rest)| rest);
         rest.split_once('/')?
     } else {
         if input.starts_with('/') || input.starts_with('.') || input.contains('\\') {
             return None;
         }
-        let rest = input.rsplit_once('@').map_or(input, |(_, rest)| rest);
-        rest.split_once(':')?
+        input.split_once(':')?
     };
+    let authority = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
     let host = match authority.rsplit_once(':') {
         Some((host, port)) if !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()) => host,
         _ => authority,
@@ -221,8 +205,6 @@ mod tests {
             "https://user:secret@EXAMPLE.com/org/repo.git/",
             "ssh://git@example.com/org/repo",
             "git@example.com:org/repo.git",
-            "user:pass@word@example.com:org/repo.git",
-            "https://u:p/ss@EXAMPLE.com/org/repo///",
             "https://u:p@ss:word@EXAMPLE.com/org/repo",
             "ssh://git@example.com:2222/org/repo",
             "git://EXAMPLE.com/org/repo",
@@ -241,12 +223,39 @@ mod tests {
             "/tmp/repo",
             "../repo",
             "file:///tmp/repo",
+            "https://example.com/@scope/repo.git",
+            "https://u:p/ss@EXAMPLE.com/org/repo///",
+            "user:pass@word@example.com:org/repo.git",
             "https://host/o/has space",
             "https://host/o/has\ncontrol",
         ] {
             assert_eq!(normalize_remote(url), None);
         }
     }
+    #[test]
+    fn summary_limits_sorted_roots() {
+        let ids = ["c".repeat(40), "a".repeat(40), "b".repeat(40)];
+        assert_eq!(
+            select_roots(&ids.join("\n"), 2).unwrap(),
+            vec![ids[1].clone(), ids[2].clone()]
+        );
+        assert!(select_roots("invalid", 0).is_err());
+    }
+
+    #[test]
+    fn summary_validates_head_refs() {
+        assert!(valid_head_ref("refs/heads/main"));
+        for invalid in [
+            "-option",
+            "refs/tags/main",
+            "refs/heads/*",
+            "refs/heads/a?",
+            "refs/heads/[a]",
+        ] {
+            assert!(!valid_head_ref(invalid));
+        }
+    }
+
     #[test]
     fn summary_repository_states() {
         use crate::git::tests::Repo;

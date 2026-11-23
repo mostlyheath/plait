@@ -147,7 +147,7 @@ export class Runtime {
     // Each device writes only its own state and nothing subscribes to it, so it announces nothing.
     this.devices = new Devices(this.store, () => {});
     this.workspace = new Workspace(this.store, () => this.changed(WORKSPACE_TOPIC), (path, roots) => this.gitReads.checkoutSummary(path, roots));
-    this.checkoutWatcher = new CheckoutWatcher(folder => { if (folder) this.workspace.refreshSummary(folder); this.changed(WORKSPACE_TOPIC); });
+    this.checkoutWatcher = new CheckoutWatcher((folder, refsChanged) => { if (folder && refsChanged) this.workspace.refreshSummary(folder); this.changed(WORKSPACE_TOPIC); });
     this.workspace.setWatcher(this.checkoutWatcher);
     this.linear = new LinearService(this.store, directory);
     this.records.start();
