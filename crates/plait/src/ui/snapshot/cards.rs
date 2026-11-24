@@ -333,6 +333,10 @@ pub(super) fn walk(h: &mut Harness, repository: &Path, suffix: &str) {
         h.update(|p, _, _| assert!(p.navigation.collapsed.contains(repository)));
         h.draw();
         h.keystroke("enter");
+        // GPUI activates a button when the pressed key is released.
+        h.pointer(PlatformInput::KeyUp(KeyUpEvent {
+            keystroke: Keystroke::parse("enter").unwrap(),
+        }));
         h.update(|p, _, _| assert!(!p.navigation.collapsed.contains(repository)));
         for _ in 0..18 {
             h.draw();
