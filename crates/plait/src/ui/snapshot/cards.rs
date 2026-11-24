@@ -40,6 +40,14 @@ fn reset(p: &mut Plait) {
     p.navigation.scroll.scroll_to(ListOffset::default());
 }
 
+fn rebuild_scene_projects(p: &mut Plait, cx: &mut Context<Plait>) {
+    p.rebuild_projects(cx);
+    // The workspace also draws these labels in sidebar captures.
+    for project in &mut p.state.projects {
+        project.machines[0].name = "studio".into();
+    }
+}
+
 fn states(h: &mut Harness, repository: &Path) {
     h.connect(repository, false);
     h.update(|p, _, cx| {
@@ -83,7 +91,7 @@ fn states(h: &mut Harness, repository: &Path) {
             .navigation
             .unread
             .insert("cards-3".into());
-        p.rebuild_projects(cx);
+        rebuild_scene_projects(p, cx);
     });
 }
 
@@ -134,7 +142,7 @@ pub(super) fn install_many(h: &mut Harness, repository: &Path) {
         p.navigation
             .available
             .extend(projects.into_iter().map(|project| (project, true)));
-        p.rebuild_projects(cx);
+        rebuild_scene_projects(p, cx);
     });
 }
 
@@ -171,6 +179,34 @@ fn click(h: &mut Harness, position: Point<Pixels>, button: MouseButton) {
         click_count: 1,
         modifiers: Modifiers::default(),
     }));
+}
+
+#[cfg(debug_assertions)]
+fn assert_menu_actions(h: &mut Harness, labels: &[&str]) {
+    let (sidebar_width, window_height) = h
+        .window
+        .update(&mut h.cx, |p, window, _| {
+            (
+                px(p.panel_width(super::super::panels::Panel::Sidebar)),
+                window.viewport_size().height,
+            )
+        })
+        .unwrap();
+    let frame = h.draw_a11y();
+    for &label in labels {
+        assert!(
+            frame.has_node(Role::Button, |node| {
+                node.label.as_deref() == Some(label)
+                    && node.bounds.left() >= px(0.)
+                    && node.bounds.top() >= px(0.)
+                    && node.bounds.right() <= sidebar_width
+                    && node.bounds.bottom() <= window_height
+                    && node.bounds.size.width > px(0.)
+                    && node.bounds.size.height > px(0.)
+            }),
+            "missing sidebar menu action within the window: {label}"
+        );
+    }
 }
 
 pub(super) fn walk(h: &mut Harness, repository: &Path, suffix: &str) {
@@ -212,13 +248,17 @@ pub(super) fn walk(h: &mut Harness, repository: &Path, suffix: &str) {
         assert_eq!(p.host.thread.selected.as_deref(), Some(THREAD));
     });
     h.capture(&format!("cards-thread-menu-{suffix}"));
+    #[cfg(debug_assertions)]
+    assert_menu_actions(h, &["Rename thread…", "Archive thread"]);
     h.update(|p, _, _| p.navigation.menu = None);
     h.draw();
     click(h, approval.center(), MouseButton::Right);
     h.update(|p, _, _| {
         assert_eq!(p.navigation.menu.as_deref(), Some("cards-0"));
-        p.navigation.menu = None;
     });
+    #[cfg(debug_assertions)]
+    assert_menu_actions(h, &["Rename thread…", "Archive thread"]);
+    h.update(|p, _, _| p.navigation.menu = None);
     h.draw();
 
     let project = item(h, 0);
@@ -233,6 +273,8 @@ pub(super) fn walk(h: &mut Harness, repository: &Path, suffix: &str) {
         )
     });
     h.capture(&format!("cards-project-menu-{suffix}"));
+    #[cfg(debug_assertions)]
+    assert_menu_actions(h, &["Project settings…", "Remove from sidebar"]);
 
     h.update(|p, _, cx| {
         p.navigation.menu = None;
@@ -243,7 +285,7 @@ pub(super) fn walk(h: &mut Harness, repository: &Path, suffix: &str) {
             repository.into(),
             "plait/review-permission-check".into(),
         );
-        p.rebuild_projects(cx);
+        rebuild_scene_projects(p, cx);
     });
     h.capture(&format!("cards-worktree-{suffix}"));
     assert!(
@@ -313,6 +355,7 @@ pub(super) fn compact(repository: &Path, output: Option<&Path>) {
     let mut h = Harness::with_host(repository, output, 720., 600., None);
     states(&mut h, repository);
     capture_both(&mut h, "cards-narrow");
+    assert!(item(&mut h, 1).size.width <= px(236.));
 }
 
 #[core::prelude::v1::test]

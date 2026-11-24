@@ -547,14 +547,7 @@ impl Plait {
         );
         let palette = colors();
         use nav::ThreadRowState::*;
-        let state_color = match card.state {
-            Working => palette.blue,
-            Approval | Interrupted => palette.amber,
-            Failed => palette.red,
-            FinishedUnread => palette.mint,
-            Queued(_) => palette.subtle,
-            Other => palette.faint,
-        };
+        let state_color = thread_row_colors(card.state, selected).0;
         let emphasis = !matches!(card.state, Queued(_) | Other);
         let actions = self.host.protocol() >= 3;
         let tooltip = thread.checkout_queue.as_ref().map_or_else(
