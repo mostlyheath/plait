@@ -5,7 +5,15 @@ use plait_client::{
     tabs::bookmark::{TextPosition, ViewDetails},
 };
 
-pub(super) fn walk(harness: &mut Harness, repository: &Path, suffix: &str) {
+pub(super) fn walk(
+    repository: &Path,
+    output: Option<&Path>,
+    suffix: &str,
+    width: f32,
+    height: f32,
+) {
+    let mut scene = Harness::new(repository, output, width, height);
+    let harness = &mut scene;
     let narrow = suffix == "narrow";
     let capture = |harness: &mut Harness, name: &str| {
         if narrow {
@@ -15,6 +23,10 @@ pub(super) fn walk(harness: &mut Harness, repository: &Path, suffix: &str) {
         }
     };
     messages::stage(harness, repository);
+    harness.update(|plait, _, _| {
+        plait.state.projects[0].machines[0].name = "Sample Mac".into();
+        plait.preferences.value.hide_inspector = true;
+    });
     capture(harness, "turns-line");
     harness.update(|plait, _, _| {
         plait.preferences.value.turns = Turns::Bubbles;
@@ -78,6 +90,21 @@ pub(super) fn walk(harness: &mut Harness, repository: &Path, suffix: &str) {
     harness.update(|plait, _, _| plait.workspace.live_scroll.scroll_to(ListOffset::default()));
     capture(harness, "bubbles-folded-turns");
     harness.update(|plait, _, _| plait.preferences.value.fold_earlier_turns = previous);
+}
+
+#[core::prelude::v1::test]
+#[ignore = "writes turn-style PNGs; set PLAIT_SNAPSHOT_DIR and pass --ignored"]
+fn turn_snapshots() {
+    if !isolated("bubbles::turn_snapshots") {
+        return;
+    }
+    let output = PathBuf::from(std::env::var_os("PLAIT_SNAPSHOT_DIR").unwrap());
+    std::fs::create_dir_all(&output).unwrap();
+    let repository =
+        fixture_repository(&PathBuf::from(std::env::var_os("HOME").unwrap()).join("turn-scenes"));
+    for (width, height, suffix) in [(1380., 860., "wide"), (900., 600., "narrow")] {
+        walk(&repository, Some(&output), suffix, width, height);
+    }
 }
 
 #[core::prelude::v1::test]
