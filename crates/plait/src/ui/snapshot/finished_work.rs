@@ -93,7 +93,7 @@ fn walk(h: &mut Harness, repository: &Path, suffix: &str) {
         h.capture("closing-line-narrow");
     }
     h.capture(&name("work-folded"));
-    h.capture(&name("closing-line-finished"));
+    capture_both(h, &name("closing-line-finished"));
     #[cfg(debug_assertions)]
     {
         let frame = h.draw_a11y();
