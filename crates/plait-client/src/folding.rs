@@ -323,13 +323,19 @@ impl WorkFold {
             return None;
         }
         let work = &slots[1..slots.len() - 1];
-        let tools: Vec<_> = work
-            .iter()
-            .filter_map(|slot| match slot {
-                Slot::Tool(ix) => snapshot.tools.get(*ix),
-                _ => None,
-            })
-            .collect();
+        // The live snapshot can clip tools independently of its messages.
+        let summary = if snapshot.truncated {
+            "Work".into()
+        } else {
+            let tools: Vec<_> = work
+                .iter()
+                .filter_map(|slot| match slot {
+                    Slot::Tool(ix) => snapshot.tools.get(*ix),
+                    _ => None,
+                })
+                .collect();
+            crate::tool_view::summary(&tools, false)
+        };
         let find_inside = find.is_some_and(|id| {
             work.iter()
                 .any(|slot| matches!(slot, Slot::Message(ix) if snapshot.messages[*ix].id == id))
@@ -338,7 +344,7 @@ impl WorkFold {
             request: turn.id.clone(),
             manually_open: opened.contains(&turn.id),
             rows: first_row + 1..first_row + slots.len() - 1,
-            summary: crate::tool_view::summary(&tools, false),
+            summary,
             find_inside,
         })
     }

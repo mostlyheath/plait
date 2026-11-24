@@ -317,6 +317,29 @@ fn clicking_find_opened_work_does_not_pin_it_open() {
     });
 }
 
+#[cfg(debug_assertions)]
+#[core::prelude::v1::test]
+fn clipped_work_does_not_claim_a_complete_step_count() {
+    if !isolated("finished_work::clipped_work_does_not_claim_a_complete_step_count") {
+        return;
+    }
+    let repo =
+        fixture_repository(&PathBuf::from(std::env::var_os("HOME").unwrap()).join("clipped"));
+    let mut harness = this_turn::harness(&repo, None, 1024., 740.);
+    stage(&mut harness, &repo);
+    harness.change_snapshot(|snapshot| snapshot.truncated = true);
+    install_records(&mut harness, vec![record("finished")]);
+    let frame = harness.draw_a11y();
+    assert!(!frame.nodes.iter().any(|node| {
+        node.label
+            .as_deref()
+            .is_some_and(|label| label.contains("2 steps"))
+    }));
+    assert!(frame.has_node(Role::Group, |node| node.label.as_deref()
+        == Some("Finished")));
+    assert!(frame.has_node(Role::Button, |node| node.label.as_deref() == Some("Work")));
+}
+
 #[core::prelude::v1::test]
 fn recorded_work_scenes_draw_with_injected_records() {
     if !isolated("finished_work::recorded_work_scenes_draw_with_injected_records") {

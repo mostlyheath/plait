@@ -516,6 +516,7 @@ impl Plait {
         let (glyph, word, tint) = closing_state(line, live);
         let steps = line
             .steps
+            .filter(|_| self.conversation_snapshot().is_some_and(|s| !s.truncated))
             .map(|n| format!("{n} {}", if n == 1 { "step" } else { "steps" }));
         let name = steps
             .as_ref()
