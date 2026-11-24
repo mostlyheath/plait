@@ -672,7 +672,7 @@ impl Plait {
         Some(selection::text(blocks, &span)).filter(|text| !text.is_empty())
     }
 
-    fn selected_reply(&self) -> Option<&str> {
+    fn selected_reply(&self, expected: Option<&str>) -> Option<&str> {
         let selection = self.workspace.reading.selection.as_ref()?;
         if self.settings_open
             || self.workspace.tab != super::Workspace::Conversation
@@ -685,19 +685,34 @@ impl Plait {
         let Owner::Message(id) = &selection.anchor.owner else {
             return None;
         };
-        let row = *self.workspace.live_layout.row_of_message.get(id.as_ref())?;
-        (self.workspace.reading.span.get().is_some() && self.work_open_at(row) != Some(false))
-            .then_some(id.as_ref())
+        let id = id.as_ref();
+        if expected.is_some_and(|expected| id != expected) {
+            return None;
+        }
+        let row = *self.workspace.live_layout.row_of_message.get(id)?;
+        if self.work_open_at(row) == Some(false) {
+            return None;
+        }
+        // Two distinct carets can enclose only the gap between paragraphs.
+        let reading = &self.workspace.reading;
+        let span = reading.span.get()?;
+        let message = self.workspace.formatted.messages.get(id)?;
+        let blocks = message.blocks.get(span.start.block..=span.end.block)?;
+        blocks
+            .iter()
+            .zip(span.start.block..)
+            .any(|(block, index)| {
+                reading
+                    .selected(span.start.row, index, block, &(0..block.text.len()))
+                    .is_some()
+            })
+            .then_some(id)
     }
 
     pub(super) fn can_quote_reply(&self, id: &str, cx: &App) -> bool {
-        self.selected_reply() == Some(id)
+        self.selected_reply(Some(id)).is_some()
             && self
-                .host
-                .thread
-                .selected
-                .as_ref()
-                .and_then(|thread| self.workspace.composers.get(thread))
+                .visible_composer()
                 .is_some_and(|composer| composer.read(cx).accepts_quote())
     }
 
@@ -708,12 +723,9 @@ impl Plait {
         cx: &mut Context<Self>,
     ) -> bool {
         self.resolve_selection();
-        let Some(reply) = self.selected_reply() else {
+        let Some(reply) = self.selected_reply(expected) else {
             return false;
         };
-        if expected.is_some_and(|expected| expected != reply) {
-            return false;
-        }
         let Some(snapshot) = self.conversation_snapshot() else {
             return false;
         };
@@ -722,13 +734,7 @@ impl Plait {
         }) {
             return false;
         }
-        let composer = self
-            .host
-            .thread
-            .selected
-            .as_ref()
-            .and_then(|thread| self.workspace.composers.get(thread))
-            .cloned();
+        let composer = self.visible_composer().cloned();
         let (Some(text), Some(composer)) = (self.selected_text(), composer) else {
             return false;
         };

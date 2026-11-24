@@ -216,3 +216,43 @@ fn quote_selection_skips_a_reply_hidden_by_a_turn_fold() {
         assert!(p.workspace.composers[THREAD].read(cx).text().is_empty());
     });
 }
+
+#[cfg(debug_assertions)]
+#[core::prelude::v1::test]
+fn quote_selection_requires_text_between_the_carets() {
+    if !isolated("quote_selection::quote_selection_requires_text_between_the_carets") {
+        return;
+    }
+    let home = PathBuf::from(std::env::var_os("HOME").unwrap());
+    let repo = fixture_repository(&home.join("quote-gap"));
+    let mut h = this_turn::harness(&repo, None, 900., 600.);
+    stage(&mut h, &repo);
+    let start = messages::caret(&mut h, "reply", 0, "Check the queue.".len());
+    let end = messages::caret(&mut h, "reply", 1, 0);
+    h.pointer(PlatformInput::MouseDown(MouseDownEvent {
+        position: start,
+        button: MouseButton::Left,
+        click_count: 1,
+        ..Default::default()
+    }));
+    h.pointer(PlatformInput::MouseMove(MouseMoveEvent {
+        position: end,
+        pressed_button: Some(MouseButton::Left),
+        ..Default::default()
+    }));
+    h.pointer(PlatformInput::MouseUp(MouseUpEvent {
+        position: end,
+        button: MouseButton::Left,
+        click_count: 1,
+        ..Default::default()
+    }));
+    let frame = h.draw_a11y();
+    h.update(|p, _, _| assert_eq!(p.selected_text(), None));
+    assert!(
+        !frame
+            .nodes
+            .iter()
+            .any(|n| n.label.as_deref() == Some("Quote selection")),
+        "offered Quote selection for an empty paragraph gap"
+    );
+}
