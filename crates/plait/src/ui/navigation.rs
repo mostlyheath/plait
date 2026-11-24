@@ -17,6 +17,7 @@ use std::{
 
 pub(super) struct Navigation {
     cached_rows: HashMap<String, (ThreadRowFlags, Entity<ThreadCard>)>,
+    cached_rows_revision: Option<u64>,
     row_cache: RefCell<RowCache>,
     layout: RefCell<TreeLayout>,
     pub scroll: ListState,
@@ -38,6 +39,7 @@ impl Navigation {
     pub fn new() -> Self {
         Self {
             cached_rows: HashMap::new(),
+            cached_rows_revision: None,
             row_cache: RefCell::new(RowCache::default()),
             layout: RefCell::new(TreeLayout::default()),
             scroll: ListState::new(0, ListAlignment::Top, px(120.)),
@@ -335,6 +337,7 @@ impl Plait {
         after: bool,
         folded: Option<usize>,
         focus: &FocusHandle,
+        focused: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let project = &self.state.projects[pi];
@@ -408,7 +411,7 @@ impl Plait {
                             format!("New thread in {}", project.name),
                         )
                         .size(px(22.))
-                        .opacity(0.)
+                        .opacity(if focused { 1. } else { 0. })
                         .group_hover(group.clone(), |s| s.opacity(1.))
                         .focus_visible(|s| s.border_color(rgb(colors().blue)).opacity(1.))
                         .tooltip(|_, cx| cx.new(|_| TextTooltip("New thread here".into())).into())
@@ -423,7 +426,7 @@ impl Plait {
                             format!("Actions for {} project", project.name),
                         )
                         .size(px(22.))
-                        .opacity(0.)
+                        .opacity(if focused { 1. } else { 0. })
                         .group_hover(group, |s| s.opacity(1.))
                         .focus_visible(|s| s.border_color(rgb(colors().blue)).opacity(1.))
                         .on_activate(cx, move |this, _, cx| {
@@ -441,7 +444,16 @@ impl Plait {
         focus: &FocusHandle,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let thread = &self.host.connection.threads()[index];
+        let revision = self.host.connection.threads_revision();
+        let threads = self.host.connection.threads();
+        if self.navigation.cached_rows_revision != Some(revision) {
+            let ids: HashSet<_> = threads.iter().map(|thread| thread.id.as_str()).collect();
+            self.navigation
+                .cached_rows
+                .retain(|id, _| ids.contains(id.as_str()));
+            self.navigation.cached_rows_revision = Some(revision);
+        }
+        let thread = &threads[index];
         let flags = ThreadRowFlags {
             checkout: thread.checkout.clone(),
             unread: self.lists().unread.contains(&thread.id),
@@ -561,6 +573,7 @@ impl Plait {
             if card.unread { ". Unread activity" } else { "" },
         );
         column()
+            .w_full()
             .pb(px(2.))
             .relative()
             .group("thread-card")
@@ -593,7 +606,7 @@ impl Plait {
                             .hover(|s| s.bg(rgba(colors().hover)))
                             .active(|s| s.opacity(0.6))
                     })
-                    .tooltip(move |_, cx| cx.new(|_| TextTooltip(tooltip.clone().into())).into())
+                    .tooltip(move |_, cx| cx.new(|_| TextTooltip(tooltip.clone())).into())
                     .child(
                         row()
                             .line_height(px(16.))
@@ -676,6 +689,7 @@ impl Plait {
                     .focus_visible(|s| focused_control(s).opacity(1.))
                     .on_activate(cx, move |this, _, cx| {
                         this.navigation.menu = Some(menu_id.clone());
+                        cx.stop_propagation();
                         cx.notify();
                     }),
                 )
@@ -827,14 +841,21 @@ impl Plait {
                 el.child(
                     list(
                         self.navigation.scroll.clone(),
-                        cx.processor(move |this, position, _, cx| {
+                        cx.processor(move |this, position, window, cx| {
                             let (_, focus) = &items[position];
                             match rows[position] {
                                 Row::Project {
                                     index,
                                     after,
                                     folded,
-                                } => this.project_row(index, after, folded, focus, cx),
+                                } => this.project_row(
+                                    index,
+                                    after,
+                                    folded,
+                                    focus,
+                                    focus.is_focused(window),
+                                    cx,
+                                ),
                                 Row::Thread(index) => this.thread_card_entity(index, focus, cx),
                                 Row::Draft => this.draft_row(focus, cx),
                             }

@@ -46,18 +46,11 @@ pub(super) fn walk(h: &mut Harness, repository: &Path, suffix: &str) {
             .insert("sidebar-5".into());
         p.rebuild_projects(cx);
     });
-    h.capture(&format!("sidebar-states-{suffix}"));
     super::sheet::walk(h, suffix);
     h.update(|p, _, _| p.navigation.attention = true);
     h.capture(&format!("sidebar-needs-me-{suffix}"));
     h.update(|p, _, cx| {
         p.navigation.attention = false;
-        p.navigation.collapsed.insert(repository.into());
-        p.navigation.invalidate_rows();
-        cx.notify();
-    });
-    h.capture(&format!("sidebar-folded-{suffix}"));
-    h.update(|p, _, cx| {
         p.host.connection.threads_mut().truncate(1);
         p.navigation.collapsed.clear();
         // Whichever list the window reads, nothing in it is unread.

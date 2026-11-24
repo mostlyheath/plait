@@ -107,6 +107,15 @@ Control-local bindings defined in `crates/plait/src/ui/palette.rs`:
 | Cmd-D | Model picker: add or remove favorite |
 | Escape | Close overlay and return focus |
 
+## Sidebar
+
+| Key | Action |
+| --- | --- |
+| Up / Down | Move focus between sidebar project labels, thread cards, and drafts, scrolling them into view |
+| Tab / Shift-Tab | Move through sidebar controls, including project and thread menus |
+| Enter / Space | Activate the focused project, thread, draft, or menu |
+| Enter / Escape | Save or cancel an inline thread rename |
+
 ## Conversation, Find, and views
 
 Bindings defined in `crates/plait/src/ui/selection.rs`, `crates/plait/src/ui/file_view.rs`, and `crates/plait/src/ui/worktrees_view/render.rs`:

@@ -714,6 +714,14 @@ pub fn run() -> Vec<Row> {
     harness.update(|plait, window, cx| plait.show_settings(false, window, cx));
     rows.push(harness.steady("modal closed, same heavy conversation"));
 
+    super::cards::install_many(&mut harness, &heavy);
+    harness.draw();
+    rows.push(harness.scrolling(
+        "d8 sidebar, wheel-scrolling 300 thread cards across six projects",
+        point(px(125.), px(400.)),
+        -85.,
+    ));
+
     drop(harness);
     let _ = std::fs::remove_dir_all(&scratch);
     rows

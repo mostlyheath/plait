@@ -75,6 +75,8 @@ Opening a repository adds it to the sidebar. Selecting a thread switches its con
 
 Choose **New thread** to open a draft. **Needs you** shows only threads with unread activity, pending approvals, failures, or interrupted runs. Its count excludes archived threads. Select it again to clear the filter. **Find anything** opens the palette to search threads and commands. Expand a project to see its threads and their states, or fold it to see its count. **Open project…** is below the list.
 
+Each thread card shows its title and a state mark. Within a project, approvals come first, then failures and interruptions, finished unread threads, working threads, and everything else. Each group is ordered by most recent update. Cards show the harness, model, and update age when available. A branch appears when Plait knows the branch of that thread's own Plait-created worktree.
+
 Use **Show or Hide Archived Threads** in the menu or palette. Rename or archive threads from thread actions or the **Thread** menu; archiving only hides a thread from the default list and never stops an active run. The host streams live updates for the newest 200 threads; use **Refresh Threads and Folders** in the **Thread** menu or the palette for older threads and folder state. **Mute or Unmute Thread Alerts** and **Show Hidden Projects** are there too.
 
 **Mute or Unmute Thread Alerts** toggles alerts (unread markers stay when muted). While Plait is active, alerts for other threads appear as toasts in the upper right (up to three, 8 seconds each). While inactive, a bundled app posts macOS notifications (subject to system permission and Focus).
