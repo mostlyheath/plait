@@ -273,8 +273,8 @@ pub(super) fn cold_workspaces() {
     ] {
         let old = h
             .window
-            .update(&mut h.cx, |p, _, cx| {
-                p.workspace.tab = view;
+            .update(&mut h.cx, |p, w, cx| {
+                p.show_tab(view, w, cx);
                 p.workspace.thread_files.collapsed = true;
                 p.workspace.thread_controls.usage_open = true;
                 p.workspace
@@ -311,7 +311,7 @@ pub(super) fn cold_workspaces() {
         h.draw();
         h.keystroke("cmd-1");
         h.update(|p, _, cx| {
-            assert_eq!(p.workspace.tab, view);
+            assert_eq!(p.selected_view(), view);
             assert_eq!(
                 p.workspace.composers[THREAD].read(cx).saved_draft().0,
                 "Draft survives parking"
@@ -443,7 +443,8 @@ pub(super) fn restore_preferences() {
         p.install_tab_identity(host.clone(), vec![checkout.clone()], cx);
         p.try_restore_tabs(w, cx);
         assert_eq!(p.tabs.model.tabs().len(), 3);
-        assert_eq!(p.workspace.tab, super::super::Workspace::Files);
+        assert_eq!(p.selected_view(), super::super::Workspace::Conversation);
+        assert!(!p.panel_is_open());
         assert_eq!(p.workspace.file_viewer.path, Some("src/review.rs".into()));
         assert!(!p.tabs.model.accepts_lifetime(previous.0));
         assert_eq!(p.workspace.composers.len(), 1);
@@ -613,12 +614,11 @@ pub(super) fn unloaded_views() {
     h.update(|p, w, cx| {
         p.host.connection.connected = false;
         let stamp = p.host.read_stamp();
-        let formatted = p.workspace.formatted.clone();
         p.show_tab(super::super::Workspace::Changes, w, cx);
-        assert!(!p.host.accepts_read(&stamp));
-        assert!(p.workspace.host_watch.is_none());
-        p.conversation_changed(w, cx);
-        assert!(Arc::ptr_eq(&formatted, &p.workspace.formatted));
+        assert!(
+            p.host.accepts_read(&stamp),
+            "opening a panel retains its conversation"
+        );
         let mut saved = ThreadBookmark::default();
         saved.conversation.scroll = ConversationScroll::Anchored {
             row: "message:older".into(),
@@ -722,7 +722,7 @@ pub(super) fn created_in_front() {
             TabTarget::Existing { id, .. } if id == "created-thread"
         ));
         assert_eq!(p.host.thread.selected.as_deref(), Some("created-thread"));
-        assert_eq!(p.workspace.tab, super::super::Workspace::Changes);
+        assert_eq!(p.selected_view(), super::super::Workspace::Changes);
         assert!(p.workspace.composers.contains_key("created-thread"));
     });
     drop(h);

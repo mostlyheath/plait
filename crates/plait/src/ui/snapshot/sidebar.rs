@@ -84,7 +84,6 @@ fn navigation_sidebar_scenes() {
     let output = std::env::var_os("PLAIT_SNAPSHOT_DIR").map(PathBuf::from);
     for (suffix, w, h) in [("wide", 1380., 860.), ("narrow", 900., 600.)] {
         let mut harness = Harness::with_host(&repo, output.as_deref(), w, h, None);
-        harness.update(|p, _, _| p.preferences.value.hide_inspector = true);
         walk(&mut harness, &repo, suffix);
     }
     std::fs::remove_dir_all(scratch).unwrap();

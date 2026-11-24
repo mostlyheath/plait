@@ -55,7 +55,7 @@ fn stage(h: &mut Harness, repository: &Path) {
         p.state.projects[0].machines[0].name = "studio".into();
         p.preferences.value.turns = Turns::Bubbles;
         p.preferences.value.fold_finished_work = Some(true);
-        p.preferences.value.hide_inspector = true;
+        p.tabs.model.panel_mut().unwrap().open = false;
         p.settings_open = false;
         p.overlay = None;
         p.workspace.tab = super::super::Workspace::Conversation;
@@ -354,5 +354,57 @@ fn recorded_work_scenes_draw_with_injected_records() {
     let repo = fixture_repository(&PathBuf::from(std::env::var_os("HOME").unwrap()).join("scenes"));
     for (suffix, width, height) in [("wide", 1380., 860.), ("narrow", 900., 600.)] {
         scenes(&repo, None, suffix, width, height);
+    }
+}
+
+#[cfg(debug_assertions)]
+#[core::prelude::v1::test]
+fn closing_line_opens_recorded_panel() {
+    if !isolated("finished_work::closing_line_opens_recorded_panel") {
+        return;
+    }
+    use plait_client::panel::{PanelKind, Scope};
+    let repo = fixture_repository(&PathBuf::from(std::env::var_os("HOME").unwrap()).join("route"));
+    let mut h = this_turn::harness(&repo, None, 1380., 860.);
+    for (label, path) in [("Review", None), ("Modified ·", Some("src/refresh.rs"))] {
+        stage(&mut h, &repo);
+        if path.is_some() {
+            h.update(|p, _, cx| p.toggle_record_files("changes", cx));
+        }
+        let position = h
+            .draw_a11y()
+            .nodes
+            .into_iter()
+            .find(|node| {
+                node.role == Role::Button
+                    && node
+                        .label
+                        .as_ref()
+                        .is_some_and(|name| name.starts_with(label))
+            })
+            .unwrap()
+            .bounds
+            .center();
+        h.pointer(PlatformInput::MouseDown(MouseDownEvent {
+            button: MouseButton::Left,
+            position,
+            click_count: 1,
+            ..Default::default()
+        }));
+        h.pointer(PlatformInput::MouseUp(MouseUpEvent {
+            button: MouseButton::Left,
+            position,
+            click_count: 1,
+            ..Default::default()
+        }));
+        h.update(|p, _, _| {
+            let panel = p.tabs.model.panel().unwrap();
+            assert!(panel.open);
+            assert_eq!(panel.kind, PanelKind::Changes);
+            assert_eq!(panel.scope, Scope::ThisTurn);
+            let target = panel.recorded.as_ref().unwrap();
+            assert_eq!(target.record, "changes");
+            assert_eq!(target.path.as_deref(), path.map(Path::new));
+        });
     }
 }

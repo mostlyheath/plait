@@ -263,8 +263,11 @@ impl Plait {
             .work_mut()
             .is_some_and(|w| w.route(Workspace::Files, visible));
         if !routed {
-            self.pause_conversation(None, cx);
-            self.workspace.tab = Workspace::Files;
+            if let Some(panel) = self.tabs.model.panel_mut() {
+                panel.open_on(plait_client::panel::PanelKind::Files);
+            }
+            self.workspace.tab = Workspace::Conversation;
+            self.panels.focused = Some(plait_client::panes::PaneKind::Files);
         }
         self.workspace.restore_pending[3] = false;
         let root = self.file_root();
@@ -351,6 +354,7 @@ impl Plait {
     /// Reread the open file if its size or time changed. Cheap: one stat.
     pub(super) fn check_file(&mut self, cx: &mut Context<Self>) {
         if self.workspace.tab != Workspace::Files
+            && !self.shows_kind(plait_client::panes::PaneKind::Files)
             && !self.remembers_kind(plait_client::panes::PaneKind::Files)
         {
             return;
@@ -514,7 +518,11 @@ impl Plait {
         find.matches = Arc::default();
         // Whatever search is running now answers nothing.
         find.generation += 1;
-        window.focus(&self.focus, cx);
+        if self.panel_is_open() {
+            window.focus(&self.work_focus[self.panel_focus_kind() as usize], cx);
+        } else {
+            window.focus(&self.focus, cx);
+        }
         cx.notify();
     }
 
@@ -684,6 +692,7 @@ impl Plait {
                 &display,
                 self.shortcut_aria("file.open_in_editor"),
                 self.host_is_local(),
+                false,
                 cx,
             ))
             .child(ways_out::finder_button(
@@ -804,7 +813,11 @@ impl Plait {
         match target {
             FindIn::Changes => {
                 self.workspace.diff_find.open = false;
-                window.focus(&self.focus, cx);
+                if self.panel_is_open() {
+                    window.focus(&self.work_focus[self.panel_focus_kind() as usize], cx);
+                } else {
+                    window.focus(&self.focus, cx);
+                }
                 cx.notify();
             }
             FindIn::File => self.close_find(window, cx),

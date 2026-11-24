@@ -4,20 +4,23 @@ use plait_client::update::{Manifest, Offer, Version};
 /// Use the sidebar fixture's mixed thread states so its attention count is visible.
 pub(super) fn walk(h: &mut Harness, suffix: &str) {
     // Keep the captures independent of the workstation and scratch path.
-    let (machine, hide_inspector) = h
+    let (machine, panel_open) = h
         .window
         .update(&mut h.cx, |p, _, _| {
             (
                 std::mem::replace(&mut p.state.projects[0].machines[0].name, "studio".into()),
-                std::mem::replace(&mut p.preferences.value.hide_inspector, true),
+                p.tabs
+                    .model
+                    .panel_mut()
+                    .map(|panel| std::mem::take(&mut panel.open)),
             )
         })
         .unwrap();
     h.update(|p, _, _| {
         assert_eq!(p.active_project().machines[0].name, "studio");
         assert!(
-            !p.shows_inspector(true),
-            "the inspector displays the fixture checkout path"
+            !p.panel_is_open(),
+            "sheet captures show the conversation with the panel closed"
         );
     });
     capture_both(h, &format!("sheet-{suffix}"));
@@ -69,7 +72,9 @@ pub(super) fn walk(h: &mut Harness, suffix: &str) {
     h.update(move |p, _, _| {
         p.updates = Default::default();
         p.state.projects[0].machines[0].name = machine;
-        p.preferences.value.hide_inspector = hide_inspector;
+        if let (Some(panel), Some(open)) = (p.tabs.model.panel_mut(), panel_open) {
+            panel.open = open;
+        }
     });
 }
 

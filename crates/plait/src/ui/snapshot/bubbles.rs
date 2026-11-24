@@ -9,7 +9,6 @@ fn turn_scene(repository: &Path, output: Option<&Path>, width: f32, height: f32)
     let mut harness = Harness::with_host(repository, output, width, height, None);
     harness.update(|plait, _, _| {
         plait.state.projects[0].machines[0].name = "Sample Mac".into();
-        plait.preferences.value.hide_inspector = true;
     });
     harness
 }
@@ -397,8 +396,8 @@ fn turn_scenes_use_portable_chrome_in_both_styles() {
             plait.set_turns(turns, cx);
             assert_eq!(plait.state.projects[0].machines[0].name, "Sample Mac");
             assert!(
-                !plait.shows_inspector(true),
-                "the inspector shows the real fixture path"
+                !plait.panel_is_open(),
+                "the panel must stay closed in portable scenes"
             );
         });
     }
