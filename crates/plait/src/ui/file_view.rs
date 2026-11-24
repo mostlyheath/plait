@@ -692,6 +692,7 @@ impl Plait {
                 &display,
                 self.shortcut_aria("file.open_in_editor"),
                 self.host_is_local(),
+                false,
                 cx,
             ))
             .child(ways_out::finder_button(

@@ -216,21 +216,22 @@ impl Plait {
                 colors().subtle,
             ));
             if let Some(action) = model.action {
-                heading = heading.child(self.record_undo_button(line, action, None, cx));
+                heading = heading.child(self.record_undo_button(line, action, None, cx).px_1());
             }
         }
         Some(
             heading
                 .when(model.heading == "Earlier turn", |el| {
-                    el.child(
-                        button("turn-latest", "Latest").on_activate(cx, |this, w, cx| {
+                    el.child(button("turn-latest", "Latest").px_1().on_activate(
+                        cx,
+                        |this, w, cx| {
                             this.workspace.turn_records.selection.latest();
                             if let Some(panel) = this.tabs.model.panel_mut() {
                                 panel.recorded = None;
                             }
                             this.sync_work_scope(true, w, cx);
-                        }),
-                    )
+                        },
+                    ))
                 })
                 .into_any_element(),
         )

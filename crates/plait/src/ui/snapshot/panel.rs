@@ -6,6 +6,11 @@ pub(super) fn scenes(h: &mut Harness, repo: &Path, suffix: &str) {
     turn_review::scene(h, repo, "ready", None);
     h.update(|p, _, _| {
         p.workspace.tab = crate::ui::Workspace::Conversation;
+        p.state.projects[0].machines[0].name = "studio".into();
+        let mut latest = undo::record("last", &["last"], "ready");
+        latest["created_at"] = serde_json::json!((crate::ui::commits::now() - 30) * 1000);
+        latest["paths"][0]["added"] = serde_json::json!(2);
+        undo::inject(p, vec![latest]);
         p.tabs.model.panel_mut().unwrap().close();
     });
     h.capture(&format!("panel-closed-{suffix}"));
@@ -19,8 +24,11 @@ pub(super) fn scenes(h: &mut Harness, repo: &Path, suffix: &str) {
     h.capture(&format!("panel-changes-turn-{suffix}"));
     h.update(|p, _, _| {
         let mut earlier = undo::record("first", &["first"], "ready");
-        earlier["created_at"] = serde_json::json!(crate::ui::commits::now() * 1000 - 600_000);
-        undo::inject(p, vec![undo::record("last", &["last"], "ready"), earlier]);
+        let now = crate::ui::commits::now();
+        earlier["created_at"] = serde_json::json!((now - 630) * 1000);
+        let mut latest = undo::record("last", &["last"], "ready");
+        latest["created_at"] = serde_json::json!((now - 30) * 1000);
+        undo::inject(p, vec![latest, earlier]);
         p.workspace.turn_records.selection.earlier("first");
         let target = plait_client::review::recorded::Target {
             thread: THREAD.into(),
@@ -165,6 +173,43 @@ fn keys_focus_fill_and_tab_memory() {
     });
     h.keystroke("cmd-shift-1");
     h.update(|p, _, _| assert!(!p.panel_is_open()));
+}
+
+#[cfg(debug_assertions)]
+#[core::prelude::v1::test]
+fn panel_changes_handoff_stays_on_the_scope_row() {
+    if !isolated("panel::panel_changes_handoff_stays_on_the_scope_row") {
+        return;
+    }
+    let home = PathBuf::from(std::env::var_os("HOME").unwrap());
+    let repo = fixture_repository(&home.join("panel-bar"));
+    let mut h = Harness::new(&repo, None, 1380., 860.);
+    turn_review::scene(&mut h, &repo, "ready", None);
+    h.update(|p, _, _| {
+        p.workspace.tab = crate::ui::Workspace::Conversation;
+        p.tabs
+            .model
+            .panel_mut()
+            .unwrap()
+            .open_on(PanelKind::Changes);
+    });
+    h.draw();
+    let frame = h.draw_a11y();
+    let bounds = |id: &str| {
+        frame
+            .nodes
+            .iter()
+            .find(|node| node.path.ends_with(id))
+            .unwrap_or_else(|| panic!("missing {id}"))
+            .bounds
+    };
+    let scope = bounds("work-recorded");
+    let editor = bounds("panel-editor");
+    assert!(editor.center().y <= scope.bottom(), "the handoff wrapped");
+    assert!(
+        bounds("review-panel").right() - editor.right() <= px(12.),
+        "the handoff is not at the right edge"
+    );
 }
 
 #[core::prelude::v1::test]

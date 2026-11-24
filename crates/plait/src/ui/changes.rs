@@ -546,6 +546,7 @@ impl Plait {
                     &change.display_path(),
                     self.shortcut_aria("file.open_in_editor"),
                     self.host_is_local(),
+                    false,
                     cx,
                 ))
             })
@@ -1209,10 +1210,15 @@ impl Plait {
             .child(
                 row()
                     .min_h(px(40.))
+                    .px_2()
                     .flex_wrap()
                     .gap_1()
                     .child(switch)
-                    .child(tag("panel-count", format!("{count} files"), colors().muted))
+                    .child(tag(
+                        "panel-count",
+                        format!("{count} {}", if count == 1 { "file" } else { "files" }),
+                        colors().muted,
+                    ))
                     .when_some(
                         self.workspace
                             .turn_review
@@ -1228,13 +1234,17 @@ impl Plait {
                     })
                     .when(recorded, |el| el.children(self.panel_turn_heading(cx)))
                     .when_some(self.way_out_target(), |el, target| {
-                        el.child(super::ways_out::editor_button(
-                            "panel-editor",
-                            &target.display,
-                            self.shortcut_aria("file.open_in_editor"),
-                            self.host_is_local(),
-                            cx,
-                        ))
+                        el.child(
+                            super::ways_out::editor_button(
+                                "panel-editor",
+                                &target.display,
+                                self.shortcut_aria("file.open_in_editor"),
+                                self.host_is_local(),
+                                true,
+                                cx,
+                            )
+                            .ml_auto(),
+                        )
                     }),
             )
             .when(recorded, |el| {

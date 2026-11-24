@@ -311,12 +311,18 @@ pub(super) fn editor_button(
     name: &str,
     shortcut: String,
     local: bool,
+    compact: bool,
     cx: &mut Context<Plait>,
 ) -> super::theme::Control {
     let plait = cx.weak_entity();
-    super::theme::button(id, "Editor")
+    let label = format!("Open {name} in your editor");
+    let editor = if compact {
+        super::theme::icon_button(id, "open-external", label)
+    } else {
+        super::theme::button(id, "Editor").aria_label(label)
+    };
+    editor
         .disabled(!local)
-        .aria_label(format!("Open {name} in your editor"))
         .aria_keyshortcuts(shortcut)
         .tooltip(move |_, cx| {
             let text = plait
