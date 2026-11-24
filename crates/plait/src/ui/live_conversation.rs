@@ -1462,7 +1462,7 @@ Tone::Filled,
                             .text_size(px(12.))
                             .when(joined, |el| el.child(strand_end(center)))
                             .child(if snapshot.status == ThreadStatus::Running {
-                                strand_mark_ground(center, 9.).child(running_mark(px(9.)))
+                                strand_mark_ground(center, 13.).child(running_mark(px(13.)))
                             } else {
                                 strand_mark(center, NODE, tint, false)
                             })

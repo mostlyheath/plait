@@ -151,7 +151,7 @@ fn tint(state: TabState, active: bool) -> u32 {
 }
 fn tab_state_mark(meta: &TabMetadata) -> AnyElement {
     if meta.state == TabState::Working {
-        running_mark(px(9.)).into_any_element()
+        running_mark(px(13.)).into_any_element()
     } else {
         dot(tint(meta.state, meta.active || meta.word == "Ready")).into_any_element()
     }

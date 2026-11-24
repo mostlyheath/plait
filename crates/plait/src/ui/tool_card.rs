@@ -37,13 +37,13 @@ fn tool_line_height() -> f32 {
 const SUBJECT_LINES: usize = 4;
 
 /// A chevron centered on the first line of a row that may wrap.
-fn line_icon(name: &'static str) -> Div {
+fn line_icon(mark: Svg) -> Div {
     div()
         .flex()
         .flex_shrink_0()
         .items_center()
         .h(px(tool_line_height()))
-        .child(icon(name))
+        .child(mark)
 }
 
 /// Rounded surface for a tool's content, matching fenced code.
@@ -264,7 +264,11 @@ impl Plait {
                         tool.status.label()
                     ))
                     .aria_expanded(expanded)
-                    .child(line_icon(if expanded { "down" } else { "right" }))
+                    .child(line_icon(if tool.status == ToolStatus::Running {
+                        running_mark(px(13.))
+                    } else {
+                        icon(if expanded { "down" } else { "right" })
+                    }))
                     .child(
                         div()
                             .flex_shrink_0()
@@ -288,14 +292,6 @@ impl Plait {
                             tag("tool-facts", facts, colors().subtle)
                                 .flex_shrink_0()
                                 .whitespace_nowrap(),
-                        )
-                    })
-                    .when(tool.status == ToolStatus::Running, |el| {
-                        el.child(
-                            row()
-                                .flex_shrink_0()
-                                .h(px(tool_line_height()))
-                                .child(running_mark(px(9.))),
                         )
                     })
                     // Completion is the normal case; only call out the others.

@@ -69,9 +69,11 @@ app after UI changes. With Accessibility permission already granted,
 repositories. See [UI checks](../CONTRIBUTING.md#required-checks).
 
 The `running-mark` scenes show the same resting ring in the sidebar, tab,
-turn state, and running tool. A focused test checks that the mark queues no
-view redraw callbacks. The pinned GPUI rotation test checks that its sprite
-advances while the owning view’s render count stays constant. In a native
+turn state, and running tool. Tests check that all four marks switch between
+animated and still sprites when Reduce Motion changes, keep their visible
+starting pose, and queue no view redraw callbacks. The pinned GPUI rotation
+test checks that a sprite advances while its owning view’s render count
+stays constant. In a native
 build, observe an active turn and toggle macOS Reduce Motion while it is
 working. The ring should stand still with Reduce Motion on and resume
 turning with it off.

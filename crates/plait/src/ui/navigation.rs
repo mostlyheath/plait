@@ -558,7 +558,7 @@ impl Plait {
                 .aria_selected(selected)
                 .pl(px(RAIL_X - 4.))
                 .child(thread_mark(if state == nav::ThreadRowState::Working {
-                    running_mark(px(7.)).into_any_element()
+                    running_mark(px(13.)).into_any_element()
                 } else {
                     dot(node).into_any_element()
                 }))

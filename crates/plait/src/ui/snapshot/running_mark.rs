@@ -5,6 +5,12 @@ use std::{cell::Cell, path::Path, rc::Rc, sync::Arc, time::Duration};
 
 pub(super) fn walk(harness: &mut Harness, repository: &Path, suffix: &str) {
     harness.cx.update(|cx| cx.set_reduce_motion(true));
+    install(harness, repository);
+    harness.capture(&format!("running-mark-{suffix}"));
+    harness.cx.update(|cx| cx.set_reduce_motion(false));
+}
+
+fn install(harness: &mut Harness, repository: &Path) {
     harness.connect(repository, false);
     harness.change_snapshot(|snapshot| {
         snapshot.messages = vec![snapshot.messages[0].clone()];
@@ -12,8 +18,6 @@ pub(super) fn walk(harness: &mut Harness, repository: &Path, suffix: &str) {
         snapshot.tools[0].after = Some(Some(snapshot.messages[0].id.clone()));
         snapshot.live_text.clear();
     });
-    harness.capture(&format!("running-mark-{suffix}"));
-    harness.cx.update(|cx| cx.set_reduce_motion(false));
 }
 
 #[core::prelude::v1::test]
@@ -54,44 +58,90 @@ fn running_mark_does_not_schedule_view_renders() {
 
 #[cfg(target_os = "macos")]
 #[core::prelude::v1::test]
-fn reduced_motion_renders_the_unrotated_ring() {
-    use crate::ui::theme::{colors, icon};
+fn plait_uses_animated_sprites_until_motion_is_reduced() {
+    use super::{fixture_repository, isolated};
+    use crate::ui::Plait;
+    use std::time::Instant;
 
-    struct Pose(bool);
+    if !isolated("running_mark::plait_uses_animated_sprites_until_motion_is_reduced") {
+        return;
+    }
 
-    impl Render for Pose {
-        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-            div().size_full().bg(white()).child(if self.0 {
-                running_mark(px(32.))
-            } else {
-                icon("running-mark")
-                    .size(px(32.))
-                    .text_color(rgb(colors().blue))
-            })
+    struct Meter {
+        renderer: Box<dyn PlatformHeadlessRenderer>,
+        animated: Rc<Cell<usize>>,
+    }
+
+    impl PlatformHeadlessRenderer for Meter {
+        fn render_scene_to_image(
+            &mut self,
+            scene: &Scene,
+            size: Size<DevicePixels>,
+        ) -> gpui::Result<image::RgbaImage> {
+            self.animated.set(
+                scene
+                    .monochrome_sprites
+                    .iter()
+                    .filter(|sprite| sprite.animation != SpriteAnimationId::NONE)
+                    .count(),
+            );
+            self.renderer.render_scene_to_image(scene, size)
+        }
+
+        fn render_scene(&mut self, scene: &Scene, size: Size<DevicePixels>) -> gpui::Result<()> {
+            self.renderer.render_scene(scene, size)
+        }
+
+        fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
+            self.renderer.sprite_atlas()
         }
     }
 
-    // Compare the reduced-motion element with the same asset drawn without a
-    // transform. This also checks the registered SVG actually paints pixels.
-    let mut cx = HeadlessAppContext::with_platform(
-        text_system(),
-        Arc::new(Assets),
-        gpui_platform::current_headless_renderer,
-    );
-    cx.update(|cx| cx.set_reduce_motion(true));
-    let draw = |cx: &mut HeadlessAppContext, reduced_mark| {
-        let handle = cx
-            .open_window(size(px(48.), px(48.)), |_, cx| {
-                cx.new(|_| Pose(reduced_mark))
+    let home = std::env::var_os(super::SCENE_HOME).expect("scene home");
+    let repository = fixture_repository(&Path::new(&home).join("running-mark"));
+    let animated = Rc::new(Cell::new(0));
+    let mut cx = HeadlessAppContext::with_platform(text_system(), Arc::new(Assets), {
+        let animated = animated.clone();
+        move || {
+            Ok(gpui_platform::current_headless_renderer()?.map(|renderer| {
+                Box::new(Meter {
+                    renderer,
+                    animated: animated.clone(),
+                }) as Box<dyn PlatformHeadlessRenderer>
+            }))
+        }
+    });
+    cx.allow_parking();
+    cx.update(crate::ui::menus);
+    let window = cx
+        .open_window(size(px(1380.), px(860.)), |window, cx| {
+            let client = plait_client::host::Client::with_test_git_host(
+                None,
+                repository.join("absent.sock"),
+            );
+            cx.new(|cx| {
+                Plait::with_host_client(repository.clone(), Instant::now(), client, window, cx)
             })
-            .unwrap();
-        cx.advance_clock(Duration::from_millis(300));
-        cx.update_window(handle.into(), |_, window, cx| window.draw(cx).clear(cx))
-            .unwrap();
-        cx.capture_screenshot(handle.into())
-            .expect("running mark screenshot")
+        })
+        .unwrap();
+    let mut harness = Harness {
+        cx,
+        window,
+        output: None,
+        _host: None,
     };
-    let reduced = draw(&mut cx, true);
-    assert!(reduced.pixels().any(|pixel| pixel.0[0] < 240));
-    assert_eq!(reduced, draw(&mut cx, false));
+    harness.settle();
+    install(&mut harness, &repository);
+
+    let mut starting_pose = None;
+    for (reduced, expected) in [(false, 4), (true, 0), (false, 4)] {
+        harness.cx.update(|cx| cx.set_reduce_motion(reduced));
+        harness.draw();
+        let frame = harness.cx.capture_screenshot(window.into()).unwrap();
+        assert_eq!(animated.get(), expected, "reduce motion = {reduced}");
+        // Offscreen captures show each sprite before presentation advances it.
+        // Reduced motion must preserve those same pixels.
+        let reference = starting_pose.get_or_insert_with(|| frame.clone());
+        assert!(frame == *reference, "the starting pose changed");
+    }
 }

@@ -530,7 +530,7 @@ pub fn thread_mark(mark: impl IntoElement) -> Div {
         .items_center()
         .gap(px(3.))
         .child(line())
-        .child(mark)
+        .child(row().size(px(7.)).justify_center().child(mark))
         .child(line())
 }
 
@@ -562,7 +562,7 @@ pub fn running_mark(size: Pixels) -> Svg {
         .text_color(rgb(colors().blue))
         .with_timed_transformation(
             TimedTransformation::rotation(
-                std::time::Duration::from_millis(1200),
+                std::time::Duration::from_millis(900),
                 Transformation::default(),
             )
             .with_max_fps(30.),
