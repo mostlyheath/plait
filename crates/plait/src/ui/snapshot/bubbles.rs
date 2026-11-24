@@ -201,3 +201,112 @@ fn changing_style_keeps_the_readers_row() {
         });
     }
 }
+
+#[core::prelude::v1::test]
+fn bubbles_folded_turns_draw_as_one_full_width_hint_row() {
+    if !isolated("bubbles::bubbles_folded_turns_draw_as_one_full_width_hint_row") {
+        return;
+    }
+    let repository = fixture_repository(
+        &PathBuf::from(std::env::var_os("HOME").unwrap()).join("bubble-folded-row"),
+    );
+    let mut harness = Harness::with_host(&repository, None, 900., 600., None);
+    harness.update(|plait, _, cx| {
+        plait.set_fold_earlier_turns(true, cx);
+        plait.set_turns(Turns::Bubbles, cx);
+    });
+    folded_turns::install_long_thread(&mut harness, &repository);
+    harness.update(|plait, _, _| plait.workspace.live_scroll.scroll_to(ListOffset::default()));
+    harness.draw();
+
+    let (row_bounds, col_width) = harness
+        .window
+        .update(&mut harness.cx, |plait, _, _| {
+            let ix = plait
+                .workspace
+                .live_layout
+                .folded_row_index("request-r1")
+                .expect("r1 folded");
+            let bounds = plait
+                .workspace
+                .live_scroll
+                .bounds_for_item(ix)
+                .expect("r1 visible");
+            let view = plait.workspace.live_scroll.viewport_bounds();
+            let col = (view.size.width - px(48.)).min(px(super::super::theme::CONTENT_WIDTH));
+            (bounds, col)
+        })
+        .unwrap();
+
+    // DESIGN.md: In Bubbles a folded turn is one 32-point full-width row, not a
+    // bubble plus a second closing-line row underneath.
+    assert!(
+        row_bounds.size.height <= px(46.),
+        "folded turn in Bubbles should be one compact 32pt row, got height {:?}",
+        row_bounds.size.height
+    );
+
+    #[cfg(debug_assertions)]
+    {
+        let frame = harness.draw_a11y();
+        frame.assert_no_duplicates("bubbles-folded-turns");
+        let disclosure = frame
+            .nodes
+            .iter()
+            .find(|node| {
+                node.role == Role::Button
+                    && node.label.as_deref().is_some_and(|label| {
+                        label.contains("Audit the retry backoff bounds")
+                            && label.contains("1 file +12 −4")
+                            && label.contains("Show turn")
+                    })
+            })
+            .expect("folded turn disclosure button");
+        assert!(
+            disclosure.bounds.size.height >= px(31.) && disclosure.bounds.size.height <= px(33.),
+            "folded turn button should be 32pt high, got {:?}",
+            disclosure.bounds.size.height
+        );
+        assert!(
+            disclosure.bounds.size.width >= col_width - px(4.),
+            "folded turn button should fill the column ({col_width:?}), got {:?}",
+            disclosure.bounds.size.width
+        );
+        // No separate per-file/step closing-line buttons inside a folded turn in Bubbles.
+        assert!(
+            !frame.nodes.iter().any(|node| {
+                node.role == Role::Button
+                    && node
+                        .label
+                        .as_deref()
+                        .is_some_and(|label| label.contains("src/retry.rs"))
+            }),
+            "folded turn in Bubbles should not render a separate closing line row"
+        );
+    }
+
+    // Switching to Line restores the two-row folded turn with its closing line.
+    harness.update(|plait, _, cx| plait.set_turns(Turns::Line, cx));
+    harness.draw();
+    let line_height = harness
+        .window
+        .update(&mut harness.cx, |plait, _, _| {
+            let ix = plait
+                .workspace
+                .live_layout
+                .folded_row_index("request-r1")
+                .expect("r1 folded in line style");
+            plait
+                .workspace
+                .live_scroll
+                .bounds_for_item(ix)
+                .expect("r1 visible in line style")
+                .size
+                .height
+        })
+        .unwrap();
+    assert!(
+        line_height > px(60.),
+        "Line style keeps the request row plus closing line, got {line_height:?}"
+    );
+}

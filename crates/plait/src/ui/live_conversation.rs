@@ -198,6 +198,52 @@ fn strand_mark(style: Turns, center: f32, size: f32, color: u32, hollow: bool) -
     )
 }
 
+/// Honest file and line totals for a folded earlier turn in Bubbles mode,
+/// using only counts the host reported and never inventing missing values.
+fn folded_turn_summary(
+    recorded: Option<&plait_client::history::records::Line>,
+    records: &[plait_client::host::TurnRecord],
+    legacy: Option<&history::TurnSummary>,
+) -> Option<String> {
+    if let Some(line) = recorded {
+        if line.undone {
+            return Some("Undone".into());
+        }
+        if line.paths_total == 0 {
+            return None;
+        }
+        let files = if line.paths_total == 1 {
+            "1 file".to_owned()
+        } else {
+            format!("{} files", line.paths_total)
+        };
+        let totals = records
+            .iter()
+            .find(|record| record.id == line.displayed)
+            .filter(|record| record.paths.len() == line.paths_total)
+            .and_then(|record| {
+                record
+                    .paths
+                    .iter()
+                    .try_fold((0u64, 0u64), |(added, removed), path| {
+                        Some((
+                            added.checked_add(path.added?)?,
+                            removed.checked_add(path.removed?)?,
+                        ))
+                    })
+            });
+        return Some(match totals {
+            Some((added, removed)) => format!("{files} +{added} −{removed}"),
+            None => files,
+        });
+    }
+    legacy.and_then(|summary| match summary.files.len() {
+        0 => None,
+        1 => Some("1 file".into()),
+        count => Some(format!("{count} files")),
+    })
+}
+
 /// A tool's path as Changes lists it: relative to the checkout.
 fn checkout_relative(checkout: &std::path::Path, path: &str) -> std::path::PathBuf {
     let path = std::path::Path::new(path);
@@ -812,6 +858,76 @@ impl Plait {
             _ => None,
         });
         let preview = folding::first_request_line(&request.text, request.images.len());
+        let open_id = turn_id.to_owned();
+        if self.preferences.value.turns == Turns::Bubbles {
+            let summary = folded_turn_summary(
+                recorded,
+                &self.workspace.turn_records.data,
+                legacy.map(|(_, summary)| summary),
+            );
+            let accessible_name = match (&preview[..], &summary) {
+                ("", Some(summary)) => format!("Turn hidden, {summary}. Show turn"),
+                ("", None) => "Turn hidden. Show turn".into(),
+                (text, Some(summary)) => format!("Turn hidden: {text}, {summary}. Show turn"),
+                (text, None) => format!("Turn hidden: {text}. Show turn"),
+            };
+            let disclosure = button(
+                (
+                    ElementId::from("folded-turn"),
+                    SharedString::from(turn_id.to_owned()),
+                ),
+                "",
+            )
+            .w_full()
+            .min_w_0()
+            .h(px(32.))
+            .px(px(10.))
+            .rounded(px(CONTROL_CORNER))
+            .text_size(px(12.))
+            .text_color(rgb(colors().subtle))
+            .justify_between()
+            .gap(px(9.))
+            .when(cfg!(test), |el| {
+                let mut context = KeyContext::default();
+                context.set("folded-turn", turn_id.to_owned());
+                el.key_context(context)
+            })
+            .aria_label(accessible_name)
+            .aria_expanded(false)
+            .child(
+                row()
+                    .min_w_0()
+                    .flex_1()
+                    .gap(px(9.))
+                    .child(icon("right"))
+                    .child(div().min_w_0().truncate().text_size(px(12.)).child(preview)),
+            )
+            .when_some(summary, |el, summary| {
+                el.child(
+                    div()
+                        .flex_shrink_0()
+                        .text_size(px(12.))
+                        .text_color(rgb(colors().subtle))
+                        .child(summary),
+                )
+            })
+            .on_activate(cx, move |this, _, cx| this.open_folded_turn(&open_id, cx));
+            return div()
+                .group(row_group(index))
+                .w_full()
+                .px(px(self.conversation_padding()))
+                .child(
+                    div()
+                        .relative()
+                        .w_full()
+                        .max_w(px(CONTENT_WIDTH))
+                        .mx_auto()
+                        .pt(px(8.))
+                        .child(disclosure)
+                        .when_some(recorded, |el, line| el.children(self.undo_panel(line, cx))),
+                )
+                .into_any_element();
+        }
         let age = recorded
             .filter(|line| line.created_at > 0)
             .map(|line| {
@@ -829,12 +945,9 @@ impl Plait {
             (text, Some(age)) => format!("Turn hidden: {text}, {age}. Show turn"),
             (text, None) => format!("Turn hidden: {text}. Show turn"),
         };
-        let open_id = turn_id.to_owned();
-        let bubble = self.preferences.value.turns == Turns::Bubbles;
         let disclosure = div()
             .relative()
-            .when(!bubble, |el| el.w_full())
-            .when(bubble, |el| el.ml_auto().max_w(relative(0.84)))
+            .w_full()
             .min_w_0()
             .children(strand_mark(
                 self.preferences.value.turns,
@@ -855,14 +968,7 @@ impl Plait {
                 .min_w_0()
                 .h(px(ROW_HEIGHT))
                 .px_2()
-                .when(!bubble, |el| el.ml(px(-8.)))
-                .when(bubble, |el| {
-                    el.bg(rgb(colors().raised))
-                        .border_1()
-                        .border_color(rgb(colors().edge))
-                        .rounded(px(12.))
-                        .rounded_br(px(4.))
-                })
+                .ml(px(-8.))
                 .justify_between()
                 .gap_2()
                 .when(cfg!(test), |el| {
@@ -906,19 +1012,15 @@ impl Plait {
                     .w_full()
                     .max_w(px(CONTENT_WIDTH))
                     .mx_auto()
-                    .pt(px(if bubble { 22. } else { TOP }))
-                    .pb(px(if bubble { 0. } else { BOTTOM }))
+                    .pt(px(TOP))
+                    .pb(px(BOTTOM))
                     .children(strand_line(self.preferences.value.turns, from))
                     .child(disclosure)
                     .when_some(recorded, |el, line| {
                         el.child(
                             div()
                                 .relative()
-                                .pt(px(if self.preferences.value.turns == Turns::Line {
-                                    4.
-                                } else {
-                                    14.
-                                }))
+                                .pt_1()
                                 .children(strand_mark(
                                     self.preferences.value.turns,
                                     4. + RECORD_LINE / 2.,
@@ -1666,7 +1768,141 @@ fn row_group(row: usize) -> SharedString {
 
 #[cfg(test)]
 mod tests {
-    use super::{Approval, HarnessId, approvable};
+    use super::{Approval, HarnessId, approvable, folded_turn_summary};
+    use plait_client::{
+        history::{
+            TurnSummary,
+            records::{Availability, Line},
+        },
+        host::{RecordChange, RecordKind, RecordPath, RecordState, TurnRecord},
+    };
+
+    #[test]
+    fn folded_turn_summary_uses_only_reported_counts() {
+        let make_line = |displayed: &str, paths_total: usize, undone: bool| Line {
+            created_at: 0,
+            paths_total,
+            run: displayed.into(),
+            displayed: displayed.into(),
+            target: None,
+            availability: Availability::Ready,
+            undone,
+            steps: Some(1),
+            files: Vec::new(),
+            not_covered: Vec::new(),
+            detail: String::new(),
+            review_detail: String::new(),
+            more_label: String::new(),
+            more_detail: String::new(),
+            outcome: None,
+            after_restart: false,
+            head_moved: false,
+        };
+        let make_record = |id: &str, paths: Vec<RecordPath>| TurnRecord {
+            id: id.into(),
+            request_ids: vec!["r1".into()],
+            request_ids_offset: 0,
+            request_ids_total: 1,
+            kind: RecordKind::Turn,
+            undoes: None,
+            state: RecordState::Ready,
+            head_moved: false,
+            outcome: None,
+            after_restart: false,
+            paths_offset: 0,
+            paths_total: paths.len(),
+            paths,
+            not_covered: Vec::new(),
+            not_covered_offset: 0,
+            not_covered_total: 0,
+            created_at: 0,
+        };
+        let counted = make_record(
+            "rec-1",
+            vec![
+                RecordPath {
+                    path: "a.rs".into(),
+                    change: RecordChange::Modified,
+                    added: Some(12),
+                    removed: Some(4),
+                },
+                RecordPath {
+                    path: "b.rs".into(),
+                    change: RecordChange::Added,
+                    added: Some(3),
+                    removed: Some(0),
+                },
+            ],
+        );
+        let uncounted = make_record(
+            "rec-2",
+            vec![RecordPath {
+                path: "bin.dat".into(),
+                change: RecordChange::Modified,
+                added: None,
+                removed: None,
+            }],
+        );
+        let mixed = make_record(
+            "rec-3",
+            vec![
+                RecordPath {
+                    path: "code.rs".into(),
+                    change: RecordChange::Modified,
+                    added: Some(1),
+                    removed: Some(1),
+                },
+                RecordPath {
+                    path: "data.bin".into(),
+                    change: RecordChange::Modified,
+                    added: None,
+                    removed: None,
+                },
+            ],
+        );
+        let records = vec![counted, uncounted, mixed];
+        assert_eq!(
+            folded_turn_summary(Some(&make_line("rec-1", 2, false)), &records, None).as_deref(),
+            Some("2 files +15 −4")
+        );
+        // Binary/uncounted changes must not invent +0 −0.
+        assert_eq!(
+            folded_turn_summary(Some(&make_line("rec-2", 1, false)), &records, None).as_deref(),
+            Some("1 file")
+        );
+        assert_eq!(
+            folded_turn_summary(Some(&make_line("rec-3", 2, false)), &records, None).as_deref(),
+            Some("2 files")
+        );
+        // Zero changed files or absent records emit nothing rather than "0 files".
+        assert_eq!(
+            folded_turn_summary(Some(&make_line("rec-0", 0, false)), &records, None),
+            None
+        );
+        assert_eq!(
+            folded_turn_summary(Some(&make_line("rec-1", 2, true)), &records, None).as_deref(),
+            Some("Undone")
+        );
+        let legacy = TurnSummary {
+            steps: 2,
+            files: vec!["a.rs".into()],
+        };
+        assert_eq!(
+            folded_turn_summary(None, &[], Some(&legacy)).as_deref(),
+            Some("1 file")
+        );
+        assert_eq!(
+            folded_turn_summary(
+                None,
+                &[],
+                Some(&TurnSummary {
+                    steps: 1,
+                    files: Vec::new()
+                })
+            ),
+            None
+        );
+    }
 
     #[test]
     fn only_pi_needs_the_full_arguments_to_approve() {
