@@ -81,13 +81,19 @@ pub(super) fn scenes(
 }
 
 fn walk(h: &mut Harness, repository: &Path, suffix: &str) {
+    let name = |state: &str| {
+        if suffix == "wide" {
+            state.to_owned()
+        } else {
+            format!("{state}-{suffix}")
+        }
+    };
     stage(h, repository);
     if suffix == "narrow" {
         h.capture("closing-line-narrow");
-        return;
     }
-    h.capture("work-folded");
-    h.capture("closing-line-finished");
+    h.capture(&name("work-folded"));
+    h.capture(&name("closing-line-finished"));
     #[cfg(debug_assertions)]
     {
         let frame = h.draw_a11y();
@@ -112,12 +118,12 @@ fn walk(h: &mut Harness, repository: &Path, suffix: &str) {
         assert_eq!(p.work_open_at(1), Some(true));
         assert!(p.capture_tab_bookmark(None, cx).details.folded.is_empty());
     });
-    h.capture("work-opened");
+    h.capture(&name("work-opened"));
     h.update(|p, _, cx| {
         p.toggle_finished_work("request-changes", cx);
         p.toggle_record_files("changes", cx);
     });
-    h.capture("closing-line-files-open");
+    h.capture(&name("closing-line-files-open"));
     #[cfg(debug_assertions)]
     {
         let frame = h.draw_a11y();
@@ -144,7 +150,7 @@ fn walk(h: &mut Harness, repository: &Path, suffix: &str) {
         .collect();
     many["paths_total"] = 45.into();
     install_records(h, vec![many]);
-    h.capture("closing-line-many-files");
+    h.capture(&name("closing-line-many-files"));
     h.update(|p, _, cx| p.toggle_record_files("changes", cx));
     install_records(h, vec![record("finished")]);
 
@@ -157,7 +163,7 @@ fn walk(h: &mut Harness, repository: &Path, suffix: &str) {
             .unwrap()
             .update(cx, |field, cx| field.set_text("polling loop", cx));
     });
-    h.capture("work-find-inside");
+    h.capture(&name("work-find-inside"));
     #[cfg(debug_assertions)]
     assert!(h.draw_a11y().nodes.iter().any(|node| {
         node.label
@@ -170,7 +176,7 @@ fn walk(h: &mut Harness, repository: &Path, suffix: &str) {
         assert_eq!(p.work_open_at(1), Some(false));
         p.preferences.value.fold_finished_work = Some(false);
     });
-    h.capture("work-setting-off");
+    h.capture(&name("work-setting-off"));
 
     h.update(|p, _, _| p.preferences.value.fold_finished_work = Some(true));
     for (status, outcome, scene, answer) in [
@@ -198,9 +204,9 @@ fn walk(h: &mut Harness, repository: &Path, suffix: &str) {
             s.tools[1].output = answer.into();
         });
         install_records(h, vec![record(outcome)]);
-        h.capture(scene);
+        h.capture(&name(scene));
         if status == ThreadStatus::Error {
-            h.capture("work-failed-open");
+            h.capture(&name("work-failed-open"));
         }
     }
 
@@ -213,7 +219,7 @@ fn walk(h: &mut Harness, repository: &Path, suffix: &str) {
     child["undoes"] = "changes".into();
     child["outcome"] = Value::Null;
     install_records(h, vec![child, original]);
-    h.capture("closing-line-undone");
+    h.capture(&name("closing-line-undone"));
 
     install_records(h, vec![record("finished")]);
     h.update(|p, _, _| {
@@ -224,7 +230,7 @@ fn walk(h: &mut Harness, repository: &Path, suffix: &str) {
         .unwrap();
         p.workspace.turn_records.block("changes", refused);
     });
-    h.capture("closing-line-undo-refused");
+    h.capture(&name("closing-line-undo-refused"));
     h.update(|p, _, cx| p.cancel_undo_panel(cx));
     let mut empty = record("finished");
     empty["paths"] = json!([]);
@@ -236,15 +242,15 @@ fn walk(h: &mut Harness, repository: &Path, suffix: &str) {
         s.tools.clear();
     });
     install_records(h, vec![empty]);
-    h.capture("work-no-work");
-    h.capture("closing-line-no-files");
+    h.capture(&name("work-no-work"));
+    h.capture(&name("closing-line-no-files"));
     stage(h, repository);
     h.update(|p, _, _| {
         p.host.connection.status.as_mut().unwrap().protocol_version = 4;
         p.workspace.turn_records = Default::default();
         p.reconcile_live_folding();
     });
-    h.capture("closing-line-older-host");
+    h.capture(&name("closing-line-older-host"));
     h.change_snapshot(|s| {
         long_run(s, true);
         s.messages.truncate(1);
@@ -252,7 +258,7 @@ fn walk(h: &mut Harness, repository: &Path, suffix: &str) {
             t.after = Some(Some("request-changes".into()));
         }
     });
-    h.capture("work-running");
+    h.capture(&name("work-running"));
 }
 
 #[cfg(debug_assertions)]
