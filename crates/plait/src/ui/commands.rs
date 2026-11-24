@@ -155,14 +155,19 @@ fn action_items(view: &Plait, window: &Window) -> Vec<Item> {
         .map(|action| {
             let run = action.action();
             let hint = shortcut(run.as_ref(), window);
-            let refusal = view.pane_action_refusal(action.id);
+            let refusal = match action.id {
+                "pane.next" | "pane.previous" if view.overview.is_some() => {
+                    Some("Close Every Thread to focus a pane.")
+                }
+                _ => view.pane_action_refusal(action.id).map(|why| why.reason()),
+            };
             Item::new(
                 format!("action:{}", action.id),
                 action.title,
                 Command::Action(run),
             )
             .enabled(refusal.is_none())
-            .detail(refusal.map_or(action.category, |why| why.reason()))
+            .detail(refusal.unwrap_or(action.category))
             .section("Commands")
             .hint(hint)
         })

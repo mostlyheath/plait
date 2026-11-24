@@ -471,6 +471,38 @@ fn assert_cards(h: &mut Harness, title: &str, count: &str) {
 
 #[cfg(debug_assertions)]
 #[core::prelude::v1::test]
+fn overview_palette_explains_why_pane_focus_is_unavailable() {
+    if !isolated("overview::overview_palette_explains_why_pane_focus_is_unavailable") {
+        return;
+    }
+    let home = PathBuf::from(std::env::var_os("HOME").unwrap());
+    let repository = fixture_repository(&home.join("overview-pane-palette"));
+    let mut h = Harness::with_host(&repository, None, 1380., 860., None);
+    h.connect(&repository, false);
+    h.update(|p, window, cx| p.show_tab(super::super::Workspace::Changes, window, cx));
+    h.keystroke("cmd-shift-e");
+    for detail in ["Close Every Thread to focus a pane.", "View"] {
+        h.keystroke("cmd-k");
+        for title in ["Focus Next Pane", "Focus Previous Pane"] {
+            set_query(&mut h, title);
+            let label = format!("{title}, {detail},");
+            assert!(
+                h.draw_a11y().has_node(Role::ListBoxOption, |node| node
+                    .label
+                    .as_deref()
+                    .is_some_and(|name| name.starts_with(&label))),
+                "{label}"
+            );
+        }
+        h.keystroke("escape");
+        if detail != "View" {
+            h.keystroke("escape");
+        }
+    }
+}
+
+#[cfg(debug_assertions)]
+#[core::prelude::v1::test]
 fn overview_closes_when_a_project_view_opens() {
     if !isolated("overview::overview_closes_when_a_project_view_opens") {
         return;
