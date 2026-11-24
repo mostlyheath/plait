@@ -1299,12 +1299,12 @@ mod turns_tests {
     #[test]
     fn old_or_unknown_turn_styles_keep_other_preferences() {
         for json in [
-            r#"{"hide_inspector":true}"#,
-            r#"{"turns":"future","hide_inspector":true}"#,
-            r#"{"turns":42,"hide_inspector":true}"#,
+            r#"{"interface_font":"system"}"#,
+            r#"{"turns":"future","interface_font":"system"}"#,
+            r#"{"turns":42,"interface_font":"system"}"#,
         ] {
             let preferences: Preferences = serde_json::from_str(json).unwrap();
-            assert!(preferences.hide_inspector);
+            assert_eq!(preferences.interface_font, InterfaceFont::System);
             assert_eq!(preferences.turns, Turns::Bubbles);
         }
         let preferences: Preferences = serde_json::from_str(r#"{"turns":"line"}"#).unwrap();
