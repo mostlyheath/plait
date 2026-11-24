@@ -144,9 +144,8 @@ fn strand_end(to: f32) -> Div {
         .bg(rgb(colors().edge))
 }
 
-/// A round mark centered on the turn line, `center` points below its
-/// parent's top edge, on a little clear ground.
-fn strand_mark(center: f32, size: f32, color: u32, hollow: bool) -> Div {
+/// A clear ground centered on the turn line, `center` points below its parent's top edge.
+fn strand_mark_ground(center: f32, size: f32) -> Div {
     let ground = size + MARK_GAP * 2.;
     div()
         .absolute()
@@ -158,23 +157,26 @@ fn strand_mark(center: f32, size: f32, color: u32, hollow: bool) -> Div {
         .flex()
         .items_center()
         .justify_center()
-        .child(
-            div()
-                .size(px(size))
-                .rounded_full()
-                .bg(rgb(color))
-                .flex()
-                .items_center()
-                .justify_center()
-                .when(hollow, |el| {
-                    el.child(
-                        div()
-                            .size(px(size - 3.))
-                            .rounded_full()
-                            .bg(rgb(colors().bg)),
-                    )
-                }),
-        )
+}
+
+fn strand_mark(center: f32, size: f32, color: u32, hollow: bool) -> Div {
+    strand_mark_ground(center, size).child(
+        div()
+            .size(px(size))
+            .rounded_full()
+            .bg(rgb(color))
+            .flex()
+            .items_center()
+            .justify_center()
+            .when(hollow, |el| {
+                el.child(
+                    div()
+                        .size(px(size - 3.))
+                        .rounded_full()
+                        .bg(rgb(colors().bg)),
+                )
+            }),
+    )
 }
 
 /// A tool's path as Changes lists it: relative to the checkout.
@@ -1459,7 +1461,11 @@ Tone::Filled,
                             .pb(px(6.))
                             .text_size(px(12.))
                             .when(joined, |el| el.child(strand_end(center)))
-                            .child(strand_mark(center, NODE, tint, false))
+                            .child(if snapshot.status == ThreadStatus::Running {
+                                strand_mark_ground(center, 9.).child(running_mark(px(9.)))
+                            } else {
+                                strand_mark(center, NODE, tint, false)
+                            })
                             .child(
                                 div()
                                     .min_w_0()

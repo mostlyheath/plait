@@ -290,6 +290,14 @@ impl Plait {
                                 .whitespace_nowrap(),
                         )
                     })
+                    .when(tool.status == ToolStatus::Running, |el| {
+                        el.child(
+                            row()
+                                .flex_shrink_0()
+                                .h(px(tool_line_height()))
+                                .child(running_mark(px(9.))),
+                        )
+                    })
                     // Completion is the normal case; only call out the others.
                     .when(tool.status != ToolStatus::Done, |el| {
                         el.child(

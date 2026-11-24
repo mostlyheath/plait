@@ -517,7 +517,7 @@ pub fn thread_row_colors(
     (node, if selected { c.strong } else { title }, detail)
 }
 
-pub fn thread_mark(color: u32) -> Div {
+pub fn thread_mark(mark: impl IntoElement) -> Div {
     // Interrupt the line so hover and selection show through the three-point gap.
     let line = || {
         div()
@@ -530,7 +530,7 @@ pub fn thread_mark(color: u32) -> Div {
         .items_center()
         .gap(px(3.))
         .child(line())
-        .child(dot(color).size(px(7.)))
+        .child(mark)
         .child(line())
 }
 
@@ -552,6 +552,21 @@ pub fn icon(name: &'static str) -> Svg {
         } else {
             colors().muted
         }))
+}
+
+/// Rotate the painted sprite without asking the owning view to render again.
+/// GPUI paints the starting pose when the app has Reduce Motion enabled.
+pub fn running_mark(size: Pixels) -> Svg {
+    icon("running-mark")
+        .size(size)
+        .text_color(rgb(colors().blue))
+        .with_timed_transformation(
+            TimedTransformation::rotation(
+                std::time::Duration::from_millis(1200),
+                Transformation::default(),
+            )
+            .with_max_fps(30.),
+        )
 }
 
 /// The logo of the harness that runs a thread, tinted like other icons. A
@@ -616,6 +631,7 @@ impl AssetSource for Assets {
             "harness-claude" => include_str!("../../../../assets/harnesses/claude.svg"),
             "harness-openai" => include_str!("../../../../assets/harnesses/openai.svg"),
             "harness-pi" => include_str!("../../../../assets/harnesses/pi.svg"),
+            "running-mark" => include_str!("../../../../assets/running-mark.svg"),
             "more" => {
                 r#"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><circle cx="3" cy="8" r="1"/><circle cx="8" cy="8" r="1"/><circle cx="13" cy="8" r="1"/></svg>"#
             }

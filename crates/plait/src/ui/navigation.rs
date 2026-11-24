@@ -557,7 +557,11 @@ impl Plait {
                 .aria_level(2)
                 .aria_selected(selected)
                 .pl(px(RAIL_X - 4.))
-                .child(thread_mark(node))
+                .child(thread_mark(if state == nav::ThreadRowState::Working {
+                    running_mark(px(7.)).into_any_element()
+                } else {
+                    dot(node).into_any_element()
+                }))
                 .child(
                     title(label)
                         .text_color(rgb(title_color))

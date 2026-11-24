@@ -149,6 +149,14 @@ fn tint(state: TabState, active: bool) -> u32 {
         _ => colors().subtle,
     }
 }
+fn tab_state_mark(meta: &TabMetadata) -> AnyElement {
+    if meta.state == TabState::Working {
+        running_mark(px(9.)).into_any_element()
+    } else {
+        dot(tint(meta.state, meta.active || meta.word == "Ready")).into_any_element()
+    }
+}
+
 /// Accents follow the urgent-count order: needs me, then failed, then working.
 fn urgent_hidden(hidden: impl Iterator<Item = TabState>) -> Option<TabState> {
     let rank = |state: TabState| match state {
@@ -860,8 +868,7 @@ impl Plait {
                             .text_color(rgb(colors().muted))
                             .into_any_element()
                     } else {
-                        dot(tint(meta.state, meta.active || meta.word == "Ready"))
-                            .into_any_element()
+                        tab_state_mark(meta)
                     }),
             )
             .child(
@@ -1035,7 +1042,7 @@ impl Plait {
             .group(SharedString::from(group.clone()))
             .text_size(px(12.))
             .tooltip(move |_, cx| tooltip(hover.clone(), cx))
-            .child(dot(tint(meta.state, meta.active || meta.word == "Ready")))
+            .child(tab_state_mark(meta))
             .child(
                 div()
                     .min_w_0()
