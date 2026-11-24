@@ -3678,13 +3678,17 @@ checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 name = "plait"
 version = "0.1.0"
 dependencies = [
+ "async-channel",
  "base64",
+ "block2 0.6.2",
  "gpui",
  "gpui_apple",
  "gpui_platform",
  "gpui_wgpu",
  "image",
  "libc",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
  "plait-client",
  "plait-engine",
  "plait-protocol",

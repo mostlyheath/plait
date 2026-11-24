@@ -191,20 +191,17 @@ fn card_detail_line() -> Div {
         .text_color(rgb(colors().subtle))
 }
 
-fn card_mark(state: nav::ThreadRowState, color: u32) -> AnyElement {
+fn card_mark(state: nav::ThreadRowState, color: u32, connected: bool) -> AnyElement {
     use nav::ThreadRowState::*;
     match state {
-        Working => svg()
-            .data(br#"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><path d="M13.7 8A5.7 5.7 0 1 1 8 2.3" fill="none" stroke="black" stroke-width="2.5" stroke-linecap="round"/></svg>"#)
-            .size(px(13.))
-            .text_color(rgb(color))
-            .with_timed_transformation(
-                TimedTransformation::rotation(std::time::Duration::from_millis(900), Transformation::default())
-                    .with_max_fps(30.),
-            )
+        Working if connected => running_mark(px(13.)).into_any_element(),
+        Queued(_) | Other => div()
+            .size(px(7.))
+            .rounded_full()
+            .border_1()
+            .border_color(rgb(color))
             .into_any_element(),
-        Queued(_) | Other => div().size(px(7.)).rounded_full().border_1().border_color(rgb(color)).into_any_element(),
-        Approval | Failed | Interrupted | FinishedUnread => dot(color).into_any_element(),
+        Working | Approval | Failed | Interrupted | FinishedUnread => dot(color).into_any_element(),
     }
 }
 
@@ -605,13 +602,9 @@ impl Plait {
                             .line_height(px(16.))
                             .gap(px(2.))
                             .when(actions, |el| el.pr(px(19.)))
-                            .child(
-                                row()
-                                    .w(px(13.))
-                                    .justify_center()
-                                    .flex_shrink_0()
-                                    .child(card_mark(card.state, state_color)),
-                            )
+                            .child(row().w(px(13.)).justify_center().flex_shrink_0().child(
+                                card_mark(card.state, state_color, self.host.connection.connected),
+                            ))
                             .child(
                                 title(card.title)
                                     .text_size(px(12.))
