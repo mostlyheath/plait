@@ -97,6 +97,8 @@ fn focus_cycles_inside_and_workspace_shortcuts_are_inert() {
     let mut harness = Harness::new(&repository, None, 900., 600.);
     harness.connect(&repository, true);
     harness.update(|plait, window, cx| {
+        // An approval hides the composer until Reply instead opens it.
+        plait.workspace.show_composer_for_approval("a1".into());
         plait.focus_composer(window, cx);
         plait.show_settings(true, window, cx);
     });

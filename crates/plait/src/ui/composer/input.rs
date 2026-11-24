@@ -9,14 +9,20 @@ pub(super) const LINE_HEIGHT: f32 = 21.;
 /// Shown in an empty draft. It names the two triggers, so no line of key
 /// hints has to sit under the draft while nothing is running.
 pub(super) const PLACEHOLDER: &str = "Write a message · @ files · / commands";
+/// The draft grows up to 200 points high (including 18 points of vertical
+/// padding) before scrolling, while staying within a third of short windows.
+const MAX_DRAFT_HEIGHT: f32 = 200.;
+const DRAFT_VERTICAL_PADDING: f32 = 18.;
+const MAX_ROW_LIMIT: usize = ((MAX_DRAFT_HEIGHT - DRAFT_VERTICAL_PADDING) / LINE_HEIGHT) as usize;
 /// The input never scrolls before it shows this many lines, however short the window.
 const MIN_ROW_LIMIT: usize = 4;
 
-/// Lines the input may show before it scrolls: about a third of the window,
-/// so a long draft cannot push the conversation off screen.
+/// Lines the input may show before it scrolls: capped at 200 points total height
+/// (and about a third of shorter windows), so a long draft cannot push the
+/// conversation off screen.
 pub(super) fn row_limit(viewport_height: Pixels) -> usize {
     let rows = (viewport_height / 3. / px(LINE_HEIGHT)).floor();
-    (rows.max(0.) as usize).max(MIN_ROW_LIMIT)
+    (rows.max(0.) as usize).clamp(MIN_ROW_LIMIT, MAX_ROW_LIMIT)
 }
 
 /// One line when empty, growing with the draft up to `limit` lines.
@@ -394,7 +400,8 @@ fn paint_placeholder(
 mod tests {
     // Not a glob: GPUI exports its own `test` attribute.
     use super::{
-        LINE_HEIGHT, MIN_ROW_LIMIT, clamp_scroll, input_height, reveal, row_limit, scroll_marker,
+        DRAFT_VERTICAL_PADDING, LINE_HEIGHT, MAX_DRAFT_HEIGHT, MAX_ROW_LIMIT, MIN_ROW_LIMIT,
+        clamp_scroll, input_height, reveal, row_limit, scroll_marker,
     };
     use gpui::px;
 
@@ -409,16 +416,17 @@ mod tests {
     }
 
     #[test]
-    fn the_limit_is_about_a_third_of_the_window_with_a_floor() {
-        assert_eq!(row_limit(px(600.)), 9);
-        assert_eq!(row_limit(px(860.)), 13);
-        assert_eq!(row_limit(px(1440.)), 22);
+    fn the_limit_caps_draft_height_at_200_with_a_floor() {
+        assert_eq!(row_limit(px(400.)), 6);
+        assert_eq!(row_limit(px(600.)), MAX_ROW_LIMIT);
+        assert_eq!(row_limit(px(860.)), MAX_ROW_LIMIT);
+        assert_eq!(row_limit(px(1440.)), MAX_ROW_LIMIT);
         assert_eq!(row_limit(px(120.)), MIN_ROW_LIMIT);
         assert_eq!(row_limit(px(0.)), MIN_ROW_LIMIT);
-        for height in [600., 860., 1440.] {
+        for height in [400., 600., 860., 1440.] {
             let tallest = input_height(usize::MAX, row_limit(px(height)));
+            assert!(tallest + px(DRAFT_VERTICAL_PADDING) <= px(MAX_DRAFT_HEIGHT));
             assert!(tallest <= px(height / 3.));
-            assert!(tallest > px(height / 3. - LINE_HEIGHT));
         }
     }
 

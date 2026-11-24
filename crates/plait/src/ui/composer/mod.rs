@@ -400,6 +400,11 @@ impl Composer {
         self.draft.value.text.is_empty() && self.images.references.is_empty()
     }
 
+    /// True when the draft has neither non-whitespace text nor images to send.
+    pub fn is_blank(&self) -> bool {
+        self.draft.value.text.trim().is_empty() && self.images.references.is_empty()
+    }
+
     /// Nothing typed, attached, or still being attached.
     pub fn holds_nothing(&self) -> bool {
         self.is_empty() && !self.images.loading
@@ -1060,12 +1065,13 @@ impl Composer {
 
     /// The box-chrome state rendered by the parent message box. Comparing this
     /// lets the parent redraw only when send/stop availability or the hint changes.
-    pub fn box_state(&self) -> (bool, bool, bool, bool, String) {
+    pub fn box_state(&self) -> (bool, bool, bool, bool, bool, String) {
         (
             self.can_send(),
             self.busy,
             self.queue_enabled,
             self.can_stop(),
+            self.is_blank(),
             self.hint(),
         )
     }
@@ -1361,15 +1367,16 @@ impl Render for Composer {
                     .track_focus(&self.focus)
                     .key_context("PlaitComposer")
                     .cursor(CursorStyle::IBeam)
-                    .px_3()
-                    .pt_3()
-                    .pb_1()
+                    .px(px(14.))
+                    .pt(px(12.))
+                    .pb(px(6.))
+                    .min_h(px(42.))
                     .text_color(rgb(if self.enabled {
                         colors().text
                     } else {
                         colors().muted
                     }))
-                    .text_size(px(13.))
+                    .text_size(px(14.5))
                     .line_height(px(LINE_HEIGHT))
                     .on_action(cx.listener(|this, _: &Submit, window, cx| {
                         if !this.accept(None, window, cx) {

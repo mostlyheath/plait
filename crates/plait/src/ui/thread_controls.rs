@@ -303,7 +303,7 @@ impl Plait {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let (focused, can_send, busy, queue_enabled, can_stop, hint) = {
+        let (focused, can_send, busy, queue_enabled, can_stop, is_blank, hint) = {
             let state = composer.read(cx);
             (
                 state.is_focused(window),
@@ -311,12 +311,14 @@ impl Plait {
                 state.busy(),
                 state.queue_enabled(),
                 state.can_stop(),
+                state.is_blank(),
                 state.hint(),
             )
         };
         let drop_composer = composer.clone();
         let stop_composer = composer.clone();
         let send_composer = composer.clone();
+        let show_stop = busy && (is_blank || !queue_enabled);
         let left_controls = row()
             .flex_wrap()
             .items_center()
@@ -330,18 +332,33 @@ impl Plait {
             .gap_x_2()
             .ml_auto()
             .children(parts.right)
-            .when(busy, |el| {
+            .when(show_stop, |el| {
+                let tip = if can_stop {
+                    "Stop this run (Esc twice)"
+                } else {
+                    "Cannot stop this run right now."
+                };
                 el.child(
-                    toned_icon_button("composer-stop", "stop", "Stop", Tone::Filled)
+                    // While a run is active and the draft is empty, the action
+                    // slot becomes Stop in coral.
+                    toned_icon_button("composer-stop", "stop", "Stop", Tone::Primary)
+                        .rounded(px(8.))
+                        .bg(rgb(colors().red))
                         .disabled(!can_stop)
+                        .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.into())).into())
                         .on_activate(cx, move |_, _, cx| {
                             stop_composer.update(cx, |composer, cx| composer.stop_from_button(cx));
                         }),
                 )
             })
-            .when(!busy || queue_enabled, |el| {
+            .when(!show_stop, |el| {
+                let disabled_tip = if hint.is_empty() {
+                    "Write a message to send.".to_owned()
+                } else {
+                    hint.clone()
+                };
                 el.child(
-                    // Send is the one affirmative control; Stop stays neutral.
+                    // Send is the primary action: 28 square, 8 corners, disabled when empty.
                     toned_icon_button(
                         "composer-send",
                         "send",
@@ -352,14 +369,14 @@ impl Plait {
                             Tone::Filled
                         },
                     )
-                    .rounded_lg()
+                    .rounded(px(8.))
                     .tab_stop(can_send)
-                    .a11y_synthetic_children(move |builder| {
-                        if !can_send {
-                            builder.parent_node().set_disabled();
-                        }
+                    .disabled(!can_send)
+                    .when(!can_send, |button| {
+                        button.tooltip(move |_, cx| {
+                            cx.new(|_| TextTooltip(disabled_tip.clone())).into()
+                        })
                     })
-                    .when(!can_send, |button| button.opacity(0.5).cursor_default())
                     .on_activate(cx, move |_, _, cx| {
                         send_composer.update(cx, |composer, cx| composer.submit_from_button(cx));
                     }),
@@ -373,9 +390,10 @@ impl Plait {
             .justify_between()
             .gap_x_2()
             .gap_y_1()
-            .pl_3()
-            .pr_2()
-            .pb_2()
+            .pl(px(8.))
+            .pr(px(6.))
+            .pt(px(4.))
+            .pb(px(6.))
             .text_size(px(12.))
             .text_color(rgb(colors().muted))
             .child(left_controls)
@@ -398,10 +416,10 @@ impl Plait {
             .max_w(px(CONTENT_WIDTH))
             .mx_auto()
             .rounded(px(SURFACE_CORNER))
-            .shadow(box_shadow())
+            .shadow(message_box_shadows(focused))
             .border_1()
             .border_color(rgb(if focused {
-                colors().focus_edge
+                colors().subtle
             } else {
                 colors().edge
             }))
@@ -419,7 +437,7 @@ impl Plait {
                         .w_full()
                         .min_w_0()
                         .gap_1()
-                        .px_3()
+                        .px(px(14.))
                         .pb_2()
                         .children(notices),
                 )
@@ -461,7 +479,7 @@ impl Plait {
         }
         left.push(
             locked(
-                button("thread-model", "")
+                box_control(button("thread-model", ""))
                     .max_w(px(240.))
                     .flex_shrink_1()
                     .aria_label(format!("Change thread model: {model_name}"))
@@ -485,7 +503,7 @@ impl Plait {
         if !levels.is_empty() {
             left.push(
                 locked(
-                    button("thread-thinking", thinking_value(level))
+                    box_control(button("thread-thinking", thinking_value(level)))
                         .aria_label(format!("Thinking level: {}", level.label()))
                         .aria_description(reason.unwrap_or("Choose how much this model thinks."))
                         .relative()
@@ -501,7 +519,11 @@ impl Plait {
         }
         if let Some(mode) = mode {
             if let Some(chip) = self.thread_permissions(mode).and_then(|permissions| {
+                let full_access = is_full_access_mode(&permissions.current, &mode.label);
                 self.permissions_chip("thread-permissions", permissions, cx)
+                    .map(|chip| {
+                        box_control(chip).when(full_access, |el| el.text_color(rgb(colors().amber)))
+                    })
             }) {
                 left.push(chip.into_any_element());
             }
@@ -520,7 +542,7 @@ impl Plait {
                 ContextPressure::NearlyFull => colors().red,
             };
             right.push(
-                button("thread-usage", usage.label.clone())
+                box_control(button("thread-usage", usage.label.clone()))
                     .text_color(rgb(tint))
                     .aria_description(detail.clone())
                     .tooltip(move |_, cx| cx.new(|_| TextTooltip(detail.clone())).into())
@@ -731,9 +753,14 @@ impl Plait {
                 .map_or(0, |p| p.images.len());
             stack = stack.child(
                 row()
+                    .h(px(ROW_HEIGHT))
+                    .px(px(9.))
                     .gap_2()
                     .w_full()
                     .min_w_0()
+                    .rounded(px(CONTROL_CORNER))
+                    .bg(rgba(colors().hover))
+                    .text_color(rgb(colors().muted))
                     .child(tag(
                         SharedString::from(format!("queued-mode-{request_id}")),
                         mode,
@@ -752,6 +779,9 @@ impl Plait {
                                 SharedString::from(format!("edit-queued-{request_id}")),
                                 "Edit",
                             )
+                            .h(px(22.))
+                            .px(px(7.))
+                            .rounded(px(ITEM_CORNER))
                             .aria_label("Cancel queued message into draft")
                             .disabled(cancelling || !self.host.connection.connected)
                             .on_activate(
@@ -771,6 +801,9 @@ impl Plait {
                                 "Cancel"
                             },
                         )
+                        .h(px(22.))
+                        .px(px(7.))
+                        .rounded(px(ITEM_CORNER))
                         .aria_label("Cancel queued message")
                         .disabled(cancelling || !self.host.connection.connected)
                         .on_activate(cx, move |this, window, cx| {
@@ -790,9 +823,14 @@ impl Plait {
                 .unwrap_or("Retry uses the same request ID.");
             stack = stack.child(
                 row()
+                    .h(px(ROW_HEIGHT))
+                    .px(px(9.))
                     .gap_2()
                     .w_full()
                     .min_w_0()
+                    .rounded(px(CONTROL_CORNER))
+                    .bg(rgba(colors().hover))
+                    .text_color(rgb(colors().muted))
                     .child(
                         button(
                             SharedString::from(format!("pending-{request_id}")),
@@ -804,6 +842,9 @@ impl Plait {
                                 "Unconfirmed"
                             },
                         )
+                        .h(px(22.))
+                        .px(px(7.))
+                        .rounded(px(ITEM_CORNER))
                         .text_color(rgb(if sending {
                             colors().blue
                         } else {
@@ -831,6 +872,9 @@ impl Plait {
                             SharedString::from(format!("retry-{request_id}")),
                             "Retry safely",
                         )
+                        .h(px(22.))
+                        .px(px(7.))
+                        .rounded(px(ITEM_CORNER))
                         .aria_description(detail.to_owned())
                         .disabled(
                             sending || !self.host.connection.connected || !self.session.ready(),
@@ -881,7 +925,7 @@ impl Plait {
         let own = self.thread_approval(&id);
         let label = approval_label(own.unwrap_or_else(|| self.default_approval()));
         let tip = approval_tip(own.is_some());
-        button("thread-run-settings", "")
+        box_control(button("thread-run-settings", ""))
             .min_w_0()
             .flex_shrink_1()
             .aria_label(format!("Run settings: {label}"))
@@ -1175,6 +1219,31 @@ impl Plait {
     }
 }
 
+/// Settings-row controls inside the message box: 24 high, 6 corners, hover fill.
+fn box_control(control: Control) -> Control {
+    control
+        .h(px(24.))
+        .rounded(px(ITEM_CORNER))
+        .px(px(7.))
+        .font_weight(FontWeight::NORMAL)
+}
+
+/// Box shadow at rest; when focused, adds a 3-point ring in the focus color at 13%.
+fn message_box_shadows(focused: bool) -> Vec<BoxShadow> {
+    let mut shadows = box_shadow();
+    if focused {
+        shadows.push(
+            BoxShadow::new(px(0.), px(0.), rgba((colors().blue << 8) | 0x21).into())
+                .spread_radius(px(3.)),
+        );
+    }
+    shadows
+}
+
+fn is_full_access_mode(id: &str, label: &str) -> bool {
+    id == "full_access" || label.eq_ignore_ascii_case("Full access")
+}
+
 /// The harness's logo where the composer row starts; its name and version are
 /// the hover text and what assistive technology reads. Without a logo, the name.
 fn harness_mark(id: HarnessId, label: SharedString, tip: SharedString) -> Control {
@@ -1182,7 +1251,7 @@ fn harness_mark(id: HarnessId, label: SharedString, tip: SharedString) -> Contro
     div()
         .id("thread-harness")
         .flex_shrink_0()
-        .h(px(ROW_HEIGHT))
+        .h(px(24.))
         .px_1()
         .flex()
         .items_center()

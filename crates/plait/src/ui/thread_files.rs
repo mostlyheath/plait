@@ -7,15 +7,13 @@ use gpui::{prelude::*, *};
 use plait_client::{
     git::LineCount,
     host::{self, Request},
-    model::DiffMode,
+    model::{Change, DiffMode},
 };
 use std::path::PathBuf;
 
-/// Rows shown before the card scrolls.
+/// Rows shown before the strip scrolls.
 const VISIBLE_ROWS: usize = 6;
-const ROW_HEIGHT: f32 = 26.;
 
-#[derive(Default)]
 pub(super) struct ThreadFiles {
     /// The thread and checkout the paths and counts belong to.
     thread: Option<String>,
@@ -33,6 +31,26 @@ pub(super) struct ThreadFiles {
     /// The host epoch whose host does not know the operation.
     unsupported: Option<u64>,
     pub collapsed: bool,
+}
+
+impl Default for ThreadFiles {
+    fn default() -> Self {
+        Self {
+            thread: None,
+            root: PathBuf::new(),
+            paths: Vec::new(),
+            provenance: Vec::new(),
+            record_paths: Vec::new(),
+            request_generation: 0,
+            requested: false,
+            counts: Vec::new(),
+            tools_done: 0,
+            generation: 0,
+            unsupported: None,
+            // The changed-files strip starts closed until the person opens it.
+            collapsed: true,
+        }
+    }
 }
 
 /// Tools that can change files in the checkout.
@@ -281,8 +299,8 @@ impl Plait {
         }
     }
 
-    /// The card above the composer, or nothing when the thread has no
-    /// uncommitted changes of its own.
+    /// The strip joined to the top of the message box, or nothing when the
+    /// thread has no uncommitted changes of its own.
     pub(super) fn thread_files_card(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let files = &self.workspace.thread_files;
         if !self.shows_thread_files()
@@ -295,57 +313,87 @@ impl Plait {
         let removed: usize = files.counts.iter().filter_map(|c| c.removed).sum();
         let count = files.counts.len();
         let collapsed = files.collapsed;
-        let header = row()
-            .id("thread-files-toggle")
-            .role(Role::Button)
+        let changes: &[Change] = self
+            .state
+            .repository
+            .snapshot()
+            .ready()
+            .filter(|snapshot| snapshot.root == files.root)
+            .map_or(&[], |snapshot| snapshot.changes.as_slice());
+        let header = button("thread-files-toggle", "")
+            .w_full()
+            .min_w_0()
+            .h(px(ROW_HEIGHT))
+            .px(px(10.))
+            .gap_2()
+            .rounded_none()
+            .rounded_t(px(SURFACE_CORNER))
+            .border_0()
+            .text_size(px(11.))
+            .font_weight(FontWeight::NORMAL)
+            .text_color(rgb(colors().subtle))
             .aria_expanded(!collapsed)
-            .audited()
             .aria_label(format!(
                 "{count} {} changed by this thread, {added} lines added, {removed} removed",
                 if count == 1 { "file" } else { "files" }
             ))
-            .h(px(ROW_HEIGHT))
-            .px_3()
-            .gap_2()
-            .cursor_pointer()
             .child(icon(if collapsed { "right" } else { "down" }).size(px(12.)))
-            .child(div().text_color(rgb(colors().muted)).child(format!(
+            .child(div().flex_shrink_0().child(format!(
                 "{count} {} changed",
                 if count == 1 { "file" } else { "files" }
             )))
             .child(counts(Some(added), Some(removed)))
-            .child(div().flex_1())
-            .child(div().text_color(rgb(colors().subtle)).child("Uncommitted"))
-            .on_click(cx.listener(|this, _, _, cx| {
+            .child(div().flex_shrink_0().child("Uncommitted"))
+            .child(div().flex_1().min_w_0())
+            .when(collapsed, |el| {
+                el.child(
+                    div()
+                        .min_w_0()
+                        .max_w(relative(0.5))
+                        .truncate()
+                        .font_family(mono())
+                        .text_size(px(11.))
+                        .text_color(rgb(colors().subtle))
+                        .child(file_names_preview(&files.counts)),
+                )
+            })
+            .on_activate(cx, |this, _, cx| {
                 this.workspace.thread_files.collapsed = !this.workspace.thread_files.collapsed;
                 cx.notify();
-            }));
+            });
         let rows = (!collapsed).then(|| {
             column()
                 .id("thread-files")
-                .max_h(px(ROW_HEIGHT * VISIBLE_ROWS as f32))
+                .max_h(px(ROW_HEIGHT * VISIBLE_ROWS as f32 + 4.))
                 .overflow_y_scroll()
+                .px_1()
                 .pb_1()
                 .children(
                     files
                         .counts
                         .iter()
                         .enumerate()
-                        .map(|(index, count)| file_row(index, count, cx)),
+                        .map(|(index, count)| file_row(index, count, changes, cx)),
                 )
         });
         Some(
-            column()
+            div()
                 .w_full()
                 .max_w(px(CONTENT_WIDTH))
                 .mx_auto()
-                .border_1()
-                .border_color(rgb(colors().edge))
-                .rounded_md()
-                .bg(rgb(colors().panel))
-                .text_size(px(12.))
-                .child(header)
-                .children(rows)
+                .px(px(10.))
+                .child(
+                    column()
+                        .w_full()
+                        .min_w_0()
+                        .rounded_t(px(SURFACE_CORNER))
+                        .border_t_1()
+                        .border_x_1()
+                        .border_color(rgb(colors().border))
+                        .bg(rgb(colors().rail))
+                        .child(header)
+                        .children(rows),
+                )
                 .into_any_element(),
         )
     }
@@ -356,7 +404,7 @@ fn counts(added: Option<usize>, removed: Option<usize>) -> Div {
         .gap_1()
         .flex_shrink_0()
         .font_family(mono())
-        .text_size(px(code_size()))
+        .text_size(px(11.))
         .when_some(added.filter(|n| *n > 0), |el, n| {
             el.child(div().text_color(rgb(colors().mint)).child(format!("+{n}")))
         })
@@ -365,7 +413,41 @@ fn counts(added: Option<usize>, removed: Option<usize>) -> Div {
         })
 }
 
-fn file_row(index: usize, count: &LineCount, cx: &mut Context<Plait>) -> Control {
+fn file_names_preview(counts: &[LineCount]) -> String {
+    counts
+        .iter()
+        .map(|count| {
+            count.path.file_name().map_or_else(
+                || count.path.to_string_lossy().into_owned(),
+                |name| name.to_string_lossy().into_owned(),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("  ")
+}
+
+fn change_badge(count: &LineCount, changes: &[Change]) -> (&'static str, &'static str, u32) {
+    if count.untracked {
+        return ("A", "Added", colors().mint);
+    }
+    if let Some(change) = changes.iter().find(|change| change.path == count.path) {
+        if change.index == b'?' || change.index == b'A' {
+            return ("A", "Added", colors().mint);
+        }
+        if change.index == b'D' || change.worktree == b'D' {
+            return ("D", "Deleted", colors().red);
+        }
+    }
+    ("M", "Modified", colors().blue)
+}
+
+fn file_row(
+    index: usize,
+    count: &LineCount,
+    changes: &[Change],
+    cx: &mut Context<Plait>,
+) -> Control {
+    let (letter, word, letter_color) = change_badge(count, changes);
     let name = count
         .path
         .file_name()
@@ -377,21 +459,32 @@ fn file_row(index: usize, count: &LineCount, cx: &mut Context<Plait>) -> Control
         .unwrap_or_default();
     let path = count.path.clone();
     let binary = count.added.is_none();
-    row()
-        .id(("thread-file", index))
-        .role(Role::Button)
-        .aria_label(format!("Show {} in Changes", count.path.display()))
-        .audited()
+    button(("thread-file", index), "")
+        .w_full()
+        .min_w_0()
         .h(px(ROW_HEIGHT))
-        .px_3()
+        .px_2()
         .gap_2()
-        .rounded_sm()
-        .cursor_pointer()
-        .hover(|el| el.bg(rgb(colors().rail)))
-        .child(div().w(px(12.)).flex_shrink_0())
+        .rounded(px(CONTROL_CORNER))
+        .border_0()
+        .font_weight(FontWeight::NORMAL)
+        .aria_label(format!("{word} {}. Show in Changes", count.path.display()))
+        .child(
+            div()
+                .w(px(14.))
+                .flex_shrink_0()
+                .text_center()
+                .font_family(mono())
+                .text_size(px(11.))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(rgb(letter_color))
+                .child(letter),
+        )
         .child(
             div()
                 .flex_shrink_0()
+                .font_family(mono())
+                .text_size(px(12.))
                 .text_color(rgb(colors().text))
                 .child(name),
         )
@@ -400,19 +493,18 @@ fn file_row(index: usize, count: &LineCount, cx: &mut Context<Plait>) -> Control
                 .flex_1()
                 .min_w_0()
                 .truncate()
+                .font_family(mono())
+                .text_size(px(11.))
                 .text_color(rgb(colors().subtle))
                 .child(directory),
         )
-        .when(count.untracked, |el| {
-            el.child(tag("thread-file-new", "New", colors().subtle).flex_shrink_0())
-        })
         .when(binary, |el| {
             el.child(tag("thread-file-binary", "Binary", colors().subtle).flex_shrink_0())
         })
         .child(counts(count.added, count.removed))
-        .on_click(
-            cx.listener(move |this, _, window, cx| this.open_thread_file(path.clone(), window, cx)),
-        )
+        .on_activate(cx, move |this, window, cx| {
+            this.open_thread_file(path.clone(), window, cx)
+        })
 }
 
 #[cfg(test)]
@@ -448,5 +540,52 @@ mod tests {
             files.reset();
             assert!(!files.accept_paths(old, vec!["late after reset".into()]));
         }
+    }
+
+    #[core::prelude::v1::test]
+    fn strip_starts_closed_and_formats_badges_and_file_names() {
+        let files = ThreadFiles::default();
+        assert!(files.collapsed, "changed-files strip starts closed");
+
+        let count = |path: &str, untracked| LineCount {
+            path: path.into(),
+            added: Some(4),
+            removed: Some(1),
+            untracked,
+        };
+        let changes = vec![
+            Change {
+                path: "src/added.rs".into(),
+                original: None,
+                index: b'A',
+                worktree: b' ',
+            },
+            Change {
+                path: "src/deleted.rs".into(),
+                original: None,
+                index: b' ',
+                worktree: b'D',
+            },
+            Change {
+                path: "src/edited.rs".into(),
+                original: None,
+                index: b' ',
+                worktree: b'M',
+            },
+        ];
+        assert_eq!(change_badge(&count("src/new.rs", true), &changes).0, "A");
+        assert_eq!(change_badge(&count("src/added.rs", false), &changes).0, "A");
+        assert_eq!(
+            change_badge(&count("src/deleted.rs", false), &changes).0,
+            "D"
+        );
+        assert_eq!(
+            change_badge(&count("src/edited.rs", false), &changes).0,
+            "M"
+        );
+        assert_eq!(
+            file_names_preview(&[count("src/added.rs", false), count("README.md", false)]),
+            "added.rs  README.md"
+        );
     }
 }

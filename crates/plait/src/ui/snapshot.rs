@@ -64,6 +64,7 @@ mod settings_modal;
 mod sheet;
 mod showcase;
 mod sidebar;
+mod step21;
 mod storage;
 mod tabs;
 mod test_host;
@@ -2434,6 +2435,7 @@ fn walk(output: Option<&Path>) {
         images::walk(&mut harness, &repository, suffix);
         composer_v3_walk(&mut harness, &repository, suffix);
         message_box::walk(&mut harness, &repository, suffix);
+        step21::walk(&mut harness, &repository, suffix);
         settings_modal::walk(&mut harness, &repository, suffix);
         settings_walk(&mut harness, &repository, suffix);
         settings_controls_walk(&mut harness, &repository, suffix);

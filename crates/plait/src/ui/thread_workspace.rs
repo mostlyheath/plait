@@ -44,7 +44,9 @@ pub(super) struct ThreadWorkspace {
     pub(super) turn_records: turn_records::TurnRecords,
     pub(super) turn_review: turn_review::TurnReview,
     pub(super) reveal: live_conversation::Reveals,
-    /// The inspector toggle was used on a window too narrow to show it.
+    /// Pending approval ID for which `Reply instead` draws the message box
+    /// below the approval card. Device-ephemeral and cleared when answered.
+    pub(super) approval_reply_id: Option<String>,
     pub(super) thread_controls: thread_controls::ThreadControls,
     pub(super) expanded_live_tools: HashSet<String>,
     pub(super) reading: selection::Reading,
@@ -85,6 +87,7 @@ impl ThreadWorkspace {
             turn_records: Default::default(),
             turn_review: Default::default(),
             reveal: Default::default(),
+            approval_reply_id: None,
             thread_controls: Default::default(),
             expanded_live_tools: HashSet::new(),
             reading: Default::default(),
@@ -115,12 +118,28 @@ impl ThreadWorkspace {
         state.pending = false;
     }
 
+    /// Whether `Reply instead` has revealed the message box for `approval_id`.
+    pub(super) fn showing_composer_for_approval(&self, approval_id: &str) -> bool {
+        self.approval_reply_id.as_deref() == Some(approval_id)
+    }
+
+    /// Show the message box below `approval_id` until it is answered or replaced.
+    pub(super) fn show_composer_for_approval(&mut self, approval_id: String) {
+        self.approval_reply_id = Some(approval_id);
+    }
+
+    /// Hide the extra message box once the approval is answered.
+    pub(super) fn clear_approval_reply(&mut self) {
+        self.approval_reply_id = None;
+    }
+
     /// Reset connection-bound presentation state when reconnecting the host.
     pub(super) fn reset_for_reconnect(&mut self) {
         self.host_watch = None;
         self.images = Default::default();
         self.history = Default::default();
         self.turn_review.generation += 1;
+        self.approval_reply_id = None;
     }
 
     /// Preserve today's reset path when selecting a different host thread.
@@ -132,6 +151,7 @@ impl ThreadWorkspace {
         self.opened_turns.clear();
         self.tab = Workspace::Conversation;
         self.formatted = Default::default();
+        self.approval_reply_id = None;
     }
 
     /// Reset checkout-bound presentation handles when switching checkouts.
@@ -139,5 +159,20 @@ impl ThreadWorkspace {
         self.history = Default::default();
         self.host_watch = None;
         self.file_scroll = UniformListScrollHandle::new();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn approval_reply_state_is_scoped_to_one_approval_id() {
+        let mut reply_id: Option<String> = None;
+        let showing = |state: &Option<String>, id: &str| state.as_deref() == Some(id);
+        assert!(!showing(&reply_id, "a1"));
+        reply_id = Some("a1".into());
+        assert!(showing(&reply_id, "a1"));
+        assert!(!showing(&reply_id, "a2"));
+        reply_id = None;
+        assert!(!showing(&reply_id, "a1"));
     }
 }
