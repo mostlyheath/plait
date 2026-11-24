@@ -665,6 +665,20 @@ fn inspect_strip(harness: &mut Harness) {
 
 #[cfg(debug_assertions)]
 #[core::prelude::v1::test]
+fn review_legacy_changed_files_scenes() {
+    if !isolated("step21::review_legacy_changed_files_scenes") {
+        return;
+    }
+    let home = PathBuf::from(std::env::var_os(SCENE_HOME).unwrap());
+    let repository = fixture_repository(&home);
+    for (suffix, width, height) in [("wide", 1380., 860.), ("narrow", 900., 600.)] {
+        let mut harness = Harness::with_host(&repository, None, width, height, None);
+        composer_v3_walk(&mut harness, &repository, suffix);
+    }
+}
+
+#[cfg(debug_assertions)]
+#[core::prelude::v1::test]
 fn review_approval_shortcuts_respect_panel_visibility() {
     if !isolated("step21::review_approval_shortcuts_respect_panel_visibility") {
         return;
