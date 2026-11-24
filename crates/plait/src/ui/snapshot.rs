@@ -65,6 +65,7 @@ mod mixed_tabs;
 mod panel;
 mod pickers;
 mod quote_selection;
+mod running_mark;
 mod settings_modal;
 mod sheet;
 mod showcase;
@@ -2422,6 +2423,7 @@ fn walk(output: Option<&Path>) {
         harness.connect(&repository, true);
         harness.update(|plait, _, cx| plait.toggle_live_tool("t1", cx));
         harness.capture(&format!("live-approval-{suffix}"));
+        running_mark::walk(&mut harness, &repository, suffix);
         streaming_walk(&mut harness, &repository, suffix);
         tool_states_walk(&mut harness, &repository, suffix);
         reading_walk(&mut harness, &repository, suffix);
