@@ -113,6 +113,9 @@ that the application's frame or latency goals are met.
 
 ## Known gaps
 
+- The message box, changed-files strip, and approval card have wide and narrow
+  test scenes. Native focus, input-method composition, VoiceOver, and the cost
+  of drawing the box shadow while typing and scrolling still need inspection.
 - Headless tests cover all three bundled IBM Plex Sans weights, tabular
   figures, and switching between Plex Sans and System. They check that both
   font choices fit the Appearance controls at 1380 × 860 and 900 × 600.
@@ -132,6 +135,10 @@ that the application's frame or latency goals are met.
   folded and missing projects, and scrolling 300 threads across six projects.
   Native inspection in both themes and widths, VoiceOver announcements, and
   comparison of the d1–d8 frame cases are pending.
+- Every thread has headless scenes for keyboard focus, pending approval, idle
+  and empty lists, a single project, 300 threads, and both sidebar positions.
+  Native pointer and keyboard checks in both themes and widths, VoiceOver
+  announcements, and the d1–d7 and d9 frame checks are pending.
 - The earlier desktop layout (sidebar, status line, message box, This turn,
   folded turns, Work view) was released without inspection in the native app.
   Its scenes were rendered and looked at on Linux only. See

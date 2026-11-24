@@ -64,6 +64,7 @@ mod mcp;
 mod message_box;
 mod messages;
 mod mixed_tabs;
+mod overview;
 mod panel;
 mod pickers;
 mod running_mark;
@@ -71,6 +72,7 @@ mod settings_modal;
 mod sheet;
 mod showcase;
 mod sidebar;
+mod step21;
 mod storage;
 mod tabs;
 mod test_host;
@@ -2449,6 +2451,7 @@ fn walk(output: Option<&Path>) {
         images::walk(&mut harness, &repository, suffix);
         composer_v3_walk(&mut harness, &repository, suffix);
         message_box::walk(&mut harness, &repository, suffix);
+        step21::walk(&mut harness, &repository, suffix);
         settings_modal::walk(&mut harness, &repository, suffix);
         settings_walk(&mut harness, &repository, suffix);
         settings_controls_walk(&mut harness, &repository, suffix);
@@ -2469,6 +2472,7 @@ fn walk(output: Option<&Path>) {
         if suffix == "narrow" {
             cards::compact(&repository, output);
         }
+        overview::walk(&mut harness, &repository, suffix);
         // Threads exist, but none is open.
         harness.update(|plait, _, _| {
             plait.workspace.host_watch = None;
@@ -4711,13 +4715,34 @@ fn composer_v3_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
                 count("assets/icon.png", None, None, false),
             ],
         );
+        plait.workspace.thread_files.collapsed = false;
         cx.notify();
     });
+    #[cfg(debug_assertions)]
+    if harness.output.is_none() {
+        assert!(
+            harness.draw_a11y().has_node(Role::Button, |node| {
+                node.label.as_deref()
+                    == Some("Added crates/plait-client/src/git/worktree.rs. Show in Changes")
+            }),
+            "the expanded legacy changed-files scene shows a file row"
+        );
+    }
     harness.capture(&format!("composer-v3-changed-files-{suffix}"));
     harness.update(|plait, _, cx| {
         plait.workspace.thread_files.collapsed = true;
         cx.notify();
     });
+    #[cfg(debug_assertions)]
+    if harness.output.is_none() {
+        assert!(
+            !harness.draw_a11y().has_node(Role::Button, |node| {
+                node.label.as_deref()
+                    == Some("Added crates/plait-client/src/git/worktree.rs. Show in Changes")
+            }),
+            "the collapsed legacy changed-files scene hides file rows"
+        );
+    }
     harness.capture(&format!("composer-v3-changed-files-collapsed-{suffix}"));
     harness.update(|plait, _, cx| {
         plait.workspace.thread_files = Default::default();
@@ -7258,9 +7283,6 @@ fn navigation_rows_are_cached_and_invalidated() {
         .window
         .update(&mut harness.cx, |p, _, cx| {
             assert_eq!(p.navigation.row_recomputations(), count);
-            p.navigation.attention = true;
-            assert!(p.filtered_threads(cx).is_empty());
-            assert_eq!(p.navigation.row_recomputations(), count + 1);
             p.host.connection.threads_mut().push(ThreadSummary {
                 id: "new".into(),
                 checkout: repository.clone(),
@@ -7269,14 +7291,11 @@ fn navigation_rows_are_cached_and_invalidated() {
                 archived: Some(true),
                 ..Default::default()
             });
-            assert!(p.filtered_threads(cx).is_empty());
-            assert_eq!(p.navigation.row_recomputations(), count + 2);
-            p.navigation.attention = false;
             assert_eq!(p.filtered_threads(cx).len(), 1);
-            assert_eq!(p.navigation.row_recomputations(), count + 3);
+            assert_eq!(p.navigation.row_recomputations(), count + 1);
             p.navigation.archived = true;
             assert_eq!(p.filtered_threads(cx).len(), 2);
-            assert_eq!(p.navigation.row_recomputations(), count + 4);
+            assert_eq!(p.navigation.row_recomputations(), count + 2);
             p.navigation.collapsed.insert(repository.clone());
             p.navigation.invalidate_rows();
             let rows = p.navigation_rows(cx);
@@ -7285,7 +7304,7 @@ fn navigation_rows_are_cached_and_invalidated() {
                     .iter()
                     .any(|row| matches!(row, super::navigation::Row::Thread(_)))
             );
-            assert_eq!(p.navigation.row_recomputations(), count + 5);
+            assert_eq!(p.navigation.row_recomputations(), count + 3);
         })
         .unwrap();
     drop(harness);

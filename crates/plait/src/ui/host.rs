@@ -370,6 +370,8 @@ impl Plait {
         else {
             return;
         };
+        // Selecting the thread already open changes no tab, so nothing else closes it.
+        self.close_overview(window, cx);
         self.open_tab_target(
             plait_client::tabs::TabTarget::Existing {
                 id,

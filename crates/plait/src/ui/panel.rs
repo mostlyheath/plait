@@ -72,6 +72,7 @@ impl Plait {
     }
 
     pub(super) fn fill_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_overview(window, cx);
         if !self.panel_is_open() {
             self.toggle_panel(window, cx);
         }

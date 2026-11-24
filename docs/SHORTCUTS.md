@@ -25,6 +25,7 @@ This table matches `ACTIONS` in `crates/plait/src/ui/actions.rs` (checked by aut
 | Cmd-Shift-W | Close Window | `window.close` |
 | Cmd-K | Command Palette… | `palette.toggle` |
 | Cmd-B | Toggle Sidebar | `view.toggle_sidebar` |
+| Cmd-Shift-E | Every Thread | `view.overview` |
 | Cmd-Backslash | Fill Panel | `view.toggle_work` |
 | Cmd-Option-Right | Focus Next Pane | `pane.next` |
 | Cmd-Option-Left | Focus Previous Pane | `pane.previous` |
@@ -61,7 +62,7 @@ Notes on application shortcuts:
 
 - **Thread tabs.** All tab shortcuts, including **Show All Tabs…**, work with either **Hide** or **Show** in Settings → Appearance.
 - **Rebinding rules:** Text-editing keys and reserved macOS system shortcuts (such as `Cmd-Space`, `Cmd-Tab`, and `Cmd-Shift-3`–`5`) cannot be assigned. `Tab` and `Shift-Tab` always keep a binding. Each numbered jump set (`tab_jump.1`–`9` and `jump.1`–`9`) changes modifiers as one set.
-- **Approvals (`Cmd-Option-Y`, `Cmd-Option-period`) and Undo (`Cmd-Option-U`):** Act only in the visible conversation with no modal or palette open over it. Holding an approval key answers at most one card.
+- **Approvals (`Cmd-Option-Y`, `Cmd-Option-period`) and Undo (`Cmd-Option-U`):** Act only in the visible conversation with no modal or palette open over it. An approval key works with focus in the draft after **Reply instead**. Holding the key answers at most one card.
 - **Unbound menu actions:** Actions without a default shortcut (such as **Worktrees**, **Linear Issues**, **Project Settings…**, **Show in Finder**, **Files**, **Rename Thread…**, **Archive or Unarchive Thread**, **Stage All Changes**, **Push**, **Pull**, **Fetch**, and **New Branch…**) can still be assigned a shortcut in **Settings → Keyboard**.
 
 Work view also has these assignable pane actions.
@@ -71,6 +72,15 @@ Work view also has these assignable pane actions.
 | — | Split Pane Right | `pane.split_right` |
 | — | Split Pane Down | `pane.split_down` |
 | — | Close Pane | `pane.close` |
+
+## Every thread
+
+| Key | Action |
+| --- | --- |
+| Arrow keys | Move focus by row or column |
+| Home / End | Focus the first or last card |
+| Enter | Open the focused thread |
+| Escape | Return to the workspace |
 
 ## Composer and text fields
 
