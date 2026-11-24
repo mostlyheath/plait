@@ -281,6 +281,18 @@ impl Plait {
 
     fn perform_tab(&mut self, intent: Intent, window: &mut Window, cx: &mut Context<Self>) {
         let previous = self.tabs.model.active();
+        // The workspace is rebuilt for the next tab; keep this tab's Find in Changes.
+        let find = &self.workspace.diff_find;
+        if let Some(field) = &find.field {
+            let saved = plait_client::tabs::bookmark::FindBookmark {
+                open: find.open,
+                query: field.read(cx).text().into(),
+                current: find.bookmark_match(),
+            };
+            if let Some(panel) = self.tabs.model.panel_mut() {
+                panel.diff_find = saved;
+            }
+        }
         let covered = self.settings_open;
         let connection = self
             .host

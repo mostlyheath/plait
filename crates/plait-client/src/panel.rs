@@ -23,6 +23,8 @@ pub struct Panel {
     pub fill: bool,
     pub scope: Scope,
     pub recorded: Option<Target>,
+    /// Find in Changes, kept with the tab while the window is open; never saved.
+    pub diff_find: crate::tabs::bookmark::FindBookmark,
 }
 
 impl Panel {

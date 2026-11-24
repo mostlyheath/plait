@@ -284,6 +284,15 @@ impl Plait {
                 self.workspace.history.expanded.insert(id.into());
             }
         }
+        if let Some(saved) = self
+            .tabs
+            .model
+            .panel()
+            .map(|p| p.diff_find.clone())
+            .filter(|f| f.open || !f.query.is_empty())
+        {
+            self.restore_find_bookmark(FindIn::Changes, &saved, cx);
+        }
         if let Some(composer) = self.visible_composer() {
             composer.update(cx, |c, _| c.restore_cursor(&bookmark.draft));
         }
