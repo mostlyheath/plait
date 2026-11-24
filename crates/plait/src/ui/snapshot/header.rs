@@ -107,8 +107,6 @@ pub(super) fn walk(output: Option<&Path>) {
         capture_both(&mut h, &format!("header-tabs-{suffix}"));
         tabs::install(&mut h, 20);
         h.capture(&format!("header-tabs-overflow-{suffix}"));
-        // Views that are not a thread, in the title form.
-        h.update(|p, _, _| p.preferences.value.thread_tabs = Some(ThreadTabs::Hide));
         worktrees_view::install(&mut h, 3);
         h.capture(&format!("header-worktrees-{suffix}"));
         #[cfg(debug_assertions)]
@@ -157,8 +155,8 @@ fn header_forms() {
 
 #[cfg(debug_assertions)]
 #[core::prelude::v1::test]
-fn non_thread_views_keep_the_tabs_without_thread_controls() {
-    if !isolated("header::non_thread_views_keep_the_tabs_without_thread_controls") {
+fn non_thread_views_keep_their_title_with_tabs_enabled() {
+    if !isolated("header::non_thread_views_keep_their_title_with_tabs_enabled") {
         return;
     }
     let mut h = fixture(None, 900., 600.);
@@ -166,41 +164,23 @@ fn non_thread_views_keep_the_tabs_without_thread_controls() {
         p.host.connection.connected = false;
         p.preferences.value.thread_tabs = Some(ThreadTabs::Show);
     });
-    // Each view's tab stays in the strip, active, with no thread state, panel
-    // toggle or header chips.
-    let assert_tabs = |h: &mut Harness, title: &str| {
-        let frame = h.draw_a11y();
-        assert!(frame.has_node(Role::TabList, |n| n.label.as_deref() == Some("Open tabs")));
-        let tabs: Vec<_> = frame
+    worktrees_view::install(&mut h, 3);
+    assert_project_header(&mut h, "Worktrees");
+    h.update(|p, w, cx| p.open_issues(PathBuf::from(PROJECT), w, cx));
+    assert_project_header(&mut h, "Linear issues");
+    h.update(|p, w, cx| p.open_draft(w, cx));
+    assert_project_header(&mut h, super::super::session::UNTITLED);
+    let frame = h.draw_a11y();
+    assert!(!frame.has_node(Role::TabList, |n| n.label.as_deref() == Some("Open tabs")));
+    assert_eq!(
+        frame
             .nodes
             .iter()
-            .filter(|n| n.role == Role::Tab)
-            .filter_map(|n| n.label.clone())
-            .collect();
-        assert!(
-            tabs.iter().any(|l| l.starts_with(title)),
-            "{title}: {tabs:?}"
-        );
-        h.update(|p, _, _| {
-            let active = p.tabs.rows.iter().find(|row| row.active).unwrap();
-            assert!(active.title.starts_with(title));
-        });
-        assert!(frame.has_node(Role::Button, |n| n.label.as_deref()
-            == Some("New thread tab")));
-        assert!(!frame.nodes.iter().any(|n| n.path.contains("header-title")
-            || n.path.contains("header-state")
-            || n.path.contains("header-panel-toggle")
-            || n.path.contains("checkout-project")));
-    };
-    worktrees_view::install(&mut h, 3);
-    assert_tabs(&mut h, "Worktrees");
-    h.update(|p, w, cx| p.open_issues(PathBuf::from(PROJECT), w, cx));
-    assert_tabs(&mut h, "Issues");
-    h.update(|p, w, cx| p.open_draft(w, cx));
-    assert_tabs(&mut h, super::super::session::UNTITLED);
-    // The draft still names its project, in its own Project control.
-    assert!(h.draw_a11y().has_node(Role::Button, |n| n.label.as_deref()
-        == Some("Project: forecast")));
+            .filter(|n| n.path.ends_with("project-name"))
+            .count(),
+        1,
+        "a draft shows its checkout only in the title form"
+    );
 }
 
 #[cfg(debug_assertions)]
