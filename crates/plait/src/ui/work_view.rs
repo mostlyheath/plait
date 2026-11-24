@@ -65,7 +65,7 @@ impl Plait {
                 let _ = view.update(cx, |this, cx| {
                     if this.workspace.work_area != bounds {
                         this.workspace.work_area = bounds;
-                        if this.tabs.model.work().is_some_and(|w| w.open) {
+                        if this.panel_is_open() || this.tabs.model.work().is_some_and(|w| w.open) {
                             cx.notify();
                         }
                     }
@@ -248,13 +248,24 @@ impl Plait {
             let records = &self.workspace.turn_records;
             let line = records.selection.review_line(&records.lines);
             if let (Some(line), Some(thread)) = (line, self.host.thread.selected.as_ref()) {
-                let target = Target {
+                let remembered = self
+                    .tabs
+                    .model
+                    .panel()
+                    .filter(|p| p.open)
+                    .and_then(|p| p.recorded.as_ref())
+                    .filter(|t| {
+                        &t.thread == thread
+                            && t.checkout == self.host.creation.checkout
+                            && t.original == line.run
+                    });
+                let target = remembered.cloned().unwrap_or_else(|| Target {
                     thread: thread.clone(),
                     checkout: self.host.creation.checkout.clone(),
                     record: line.displayed.clone(),
                     original: line.run.clone(),
                     path: None,
-                };
+                });
                 if !self
                     .workspace
                     .turn_review

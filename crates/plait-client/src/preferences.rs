@@ -115,8 +115,6 @@ pub struct Preferences {
     /// Ask before each edit and command. Off by default: runs approve their own
     /// edits and sandboxed commands, and file protections still apply.
     pub ask_before_actions: bool,
-    /// Hide the Git inspector beside the conversation on wide windows.
-    pub hide_inspector: bool,
     /// Hide the card above the composer listing the files a thread changed.
     pub hide_changed_files: bool,
     /// Widths dragged on this desktop, in points. `None` keeps the default;
@@ -555,12 +553,21 @@ mod tests {
     use crate::model::Machine;
 
     #[test]
+    fn legacy_inspector_settings_do_not_open_or_size_the_review_panel() {
+        let old: Preferences =
+            serde_json::from_str(r#"{"hide_inspector":true,"inspector_width":402}"#).unwrap();
+        assert_eq!(old.panel_width, None);
+        let new: Preferences = serde_json::from_str(r#"{"panel_width":440}"#).unwrap();
+        assert_eq!(new.panel_width, Some(440));
+    }
+
+    #[test]
     fn preferences_machines_old_and_bad_entries() {
-        let old: Preferences = serde_json::from_str(r#"{"hide_inspector":true}"#).unwrap();
-        assert!(old.hide_inspector);
+        let old: Preferences = serde_json::from_str(r#"{"hide_changed_files":true}"#).unwrap();
+        assert!(old.hide_changed_files);
         assert_eq!(old.machines.list().len(), 1);
-        let saved: Preferences = serde_json::from_str(r#"{"hide_inspector":true,"machines":[{"id":"bad id","name":"Bad","transport":{"type":"local"}},{"id":"remote","name":"Remote","transport":{"type":"tailnet","host":"node","port":123}},{"id":"bad","name":"Bad","transport":{"type":"tailnet","host":"node","port":0}}]}"#).unwrap();
-        assert!(saved.hide_inspector);
+        let saved: Preferences = serde_json::from_str(r#"{"hide_changed_files":true,"machines":[{"id":"bad id","name":"Bad","transport":{"type":"local"}},{"id":"remote","name":"Remote","transport":{"type":"tailnet","host":"node","port":123}},{"id":"bad","name":"Bad","transport":{"type":"tailnet","host":"node","port":0}}]}"#).unwrap();
+        assert!(saved.hide_changed_files);
         assert_eq!(saved.machines.list().len(), 2);
         assert_eq!(
             serde_json::from_str::<Preferences>(&serde_json::to_string(&saved).unwrap()).unwrap(),
@@ -573,9 +580,10 @@ mod tests {
         let old: Preferences = serde_json::from_str("{}").unwrap();
         assert_eq!(old.selected_machine.as_str(), "local");
         let invalid: Preferences =
-            serde_json::from_str(r#"{"selected_machine":"bad id","hide_inspector":true}"#).unwrap();
+            serde_json::from_str(r#"{"selected_machine":"bad id","hide_changed_files":true}"#)
+                .unwrap();
         assert_eq!(invalid.selected_machine.as_str(), "local");
-        assert!(invalid.hide_inspector);
+        assert!(invalid.hide_changed_files);
         let saved: Preferences = serde_json::from_str(r#"{"selected_machine":"remote"}"#).unwrap();
         let restored: Preferences =
             serde_json::from_str(&serde_json::to_string(&saved).unwrap()).unwrap();
@@ -590,10 +598,10 @@ mod tests {
         assert_eq!(saved.default_thinking(), ThinkingLevel::High);
         // A level from a newer client leaves the rest of the file intact.
         let newer: Preferences =
-            serde_json::from_str(r#"{"default_thinking":"extreme","hide_inspector":true}"#)
+            serde_json::from_str(r#"{"default_thinking":"extreme","hide_changed_files":true}"#)
                 .unwrap();
         assert_eq!(newer.default_thinking(), ThinkingLevel::Medium);
-        assert!(newer.hide_inspector);
+        assert!(newer.hide_changed_files);
     }
 
     #[test]
@@ -605,15 +613,15 @@ mod tests {
         assert_eq!(saved.appearance, Appearance::Light);
         assert_eq!(saved.light_theme.as_deref(), Some("Nord"));
         let newer: Preferences =
-            serde_json::from_str(r#"{"appearance":"dusk","hide_inspector":true}"#).unwrap();
+            serde_json::from_str(r#"{"appearance":"dusk","hide_changed_files":true}"#).unwrap();
         assert_eq!(newer.appearance, Appearance::System);
-        assert!(newer.hide_inspector);
+        assert!(newer.hide_changed_files);
     }
 
     #[test]
     fn code_font_is_the_systems_until_a_family_is_named() {
         // A file saved before the setting existed keeps the system font.
-        let older: Preferences = serde_json::from_str(r#"{"hide_inspector":true}"#).unwrap();
+        let older: Preferences = serde_json::from_str(r#"{"hide_changed_files":true}"#).unwrap();
         assert_eq!(older.code_font(), None);
         let saved: Preferences =
             serde_json::from_str(r#"{"code_font":" JetBrains Mono "}"#).unwrap();
@@ -629,9 +637,9 @@ mod tests {
     #[test]
     fn code_size_defaults_clamps_and_round_trips() {
         // A file saved before the setting existed loads at 12 points.
-        let older: Preferences = serde_json::from_str(r#"{"hide_inspector":true}"#).unwrap();
+        let older: Preferences = serde_json::from_str(r#"{"hide_changed_files":true}"#).unwrap();
         assert_eq!(older.code_size(), CODE_SIZE_DEFAULT);
-        assert!(older.hide_inspector);
+        assert!(older.hide_changed_files);
 
         // Values outside 12–14 are clamped rather than rejected, and an
         // unreadable value falls back to 12 without failing the rest of the file.
@@ -647,11 +655,12 @@ mod tests {
             ("null", 12),
             (r#""huge""#, 12),
         ] {
-            let loaded: Preferences =
-                serde_json::from_str(&format!(r#"{{"code_size":{raw},"hide_inspector":true}}"#))
-                    .unwrap();
+            let loaded: Preferences = serde_json::from_str(&format!(
+                r#"{{"code_size":{raw},"hide_changed_files":true}}"#
+            ))
+            .unwrap();
             assert_eq!(loaded.code_size(), expected, "raw={raw}");
-            assert!(loaded.hide_inspector);
+            assert!(loaded.hide_changed_files);
         }
 
         // Saving and reloading round-trips every valid size and clamps out-of-range sets.
@@ -667,10 +676,10 @@ mod tests {
             assert_eq!(loaded.code_size(), expected);
         }
         // A hand-edited out-of-range value on disk loads clamped, not rejected.
-        fs::write(&path, r#"{"code_size": 24, "hide_inspector": true}"#).unwrap();
+        fs::write(&path, r#"{"code_size": 24, "hide_changed_files": true}"#).unwrap();
         let loaded = load(&path).unwrap();
         assert_eq!(loaded.code_size(), 14);
-        assert!(loaded.hide_inspector);
+        assert!(loaded.hide_changed_files);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -678,9 +687,9 @@ mod tests {
     fn fold_earlier_turns_defaults_to_on_and_survives_older_files() {
         assert!(Preferences::default().fold_earlier_turns());
         // A file saved before the setting existed still loads with folding on.
-        let older: Preferences = serde_json::from_str(r#"{"hide_inspector":true}"#).unwrap();
+        let older: Preferences = serde_json::from_str(r#"{"hide_changed_files":true}"#).unwrap();
         assert!(older.fold_earlier_turns());
-        assert!(older.hide_inspector);
+        assert!(older.hide_changed_files);
         // Explicit false and true round-trip cleanly.
         let off: Preferences = serde_json::from_str(r#"{"fold_earlier_turns":false}"#).unwrap();
         assert!(!off.fold_earlier_turns());
@@ -689,24 +698,24 @@ mod tests {
         assert!(!restored.fold_earlier_turns());
         // A malformed value falls back to on without dropping other settings.
         let bad: Preferences =
-            serde_json::from_str(r#"{"fold_earlier_turns":"always","hide_inspector":true}"#)
+            serde_json::from_str(r#"{"fold_earlier_turns":"always","hide_changed_files":true}"#)
                 .unwrap();
         assert!(bad.fold_earlier_turns());
-        assert!(bad.hide_inspector);
+        assert!(bad.hide_changed_files);
         // Startup merge preserves a saved false when untouched during startup.
         let untouched = Preferences {
-            hide_inspector: true,
+            hide_changed_files: true,
             ..Default::default()
         };
         let merged = merge_startup(off, &untouched).unwrap();
         assert!(!merged.fold_earlier_turns());
-        assert!(merged.hide_inspector);
+        assert!(merged.hide_changed_files);
     }
 
     #[test]
     fn editor_and_terminal_choices_round_trip_and_refuse_unusable_commands() {
         // A file saved before the settings existed opens with the system's choices.
-        let older: Preferences = serde_json::from_str(r#"{"hide_inspector":true}"#).unwrap();
+        let older: Preferences = serde_json::from_str(r#"{"hide_changed_files":true}"#).unwrap();
         assert_eq!(older.open_files_with, EditorChoice::System);
         assert_eq!(older.open_terminals_with, TerminalChoice::Terminal);
         let root = scratch("ways-out");
@@ -748,13 +757,13 @@ mod tests {
         // client, reads as the default and leaves the rest of the file.
         fs::write(
             &path,
-            r#"{"open_files_with":{"with":"custom","command":"zed"},"open_terminals_with":{"with":"someday"},"hide_inspector":true}"#,
+            r#"{"open_files_with":{"with":"custom","command":"zed"},"open_terminals_with":{"with":"someday"},"hide_changed_files":true}"#,
         )
         .unwrap();
         let loaded = load(&path).unwrap();
         assert_eq!(loaded.open_files_with, EditorChoice::System);
         assert_eq!(loaded.open_terminals_with, TerminalChoice::Terminal);
-        assert!(loaded.hide_inspector);
+        assert!(loaded.hide_changed_files);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -766,11 +775,11 @@ mod tests {
         // A harness from a newer client, or a malformed value, leaves the rest intact.
         for value in [r#""someday""#, "7", "null"] {
             let newer: Preferences = serde_json::from_str(&format!(
-                r#"{{"default_harness":{value},"hide_inspector":true}}"#
+                r#"{{"default_harness":{value},"hide_changed_files":true}}"#
             ))
             .unwrap();
             assert_eq!(newer.default_harness, HarnessId::Pi, "{value}");
-            assert!(newer.hide_inspector);
+            assert!(newer.hide_changed_files);
         }
         // `Other` is never written, so saving cannot fail on it.
         let other = Preferences {
@@ -789,12 +798,12 @@ mod tests {
         };
         // An edit elsewhere keeps the saved harness.
         let edited = Preferences {
-            hide_inspector: true,
+            hide_changed_files: true,
             ..Default::default()
         };
         let merged = merge_startup(loaded.clone(), &edited).unwrap();
         assert_eq!(merged.default_harness, HarnessId::Codex);
-        assert!(merged.hide_inspector);
+        assert!(merged.hide_changed_files);
         // Choosing one before loading finished wins.
         let mut chose = Preferences {
             default_harness: HarnessId::Codex,
@@ -836,12 +845,12 @@ mod tests {
         loaded.navigation.open(std::path::Path::new("/previous"));
         loaded.toggle_favorite(&choice("p", "m"));
         let mut edited = Preferences {
-            hide_inspector: true,
+            hide_changed_files: true,
             ..Default::default()
         };
         edited.navigation.open(std::path::Path::new("/current"));
         let merged = merge_startup(loaded, &edited).unwrap();
-        assert!(merged.ask_before_actions && merged.hide_inspector);
+        assert!(merged.ask_before_actions && merged.hide_changed_files);
         assert!(merged.is_favorite(&choice("p", "m")));
         assert_eq!(merged.navigation.opened.len(), 2);
     }
@@ -852,7 +861,7 @@ mod tests {
         writes.queue(1, Preferences::default());
         assert_eq!(writes.next_write().unwrap().0, 1);
         let mut latest = Preferences {
-            hide_inspector: true,
+            hide_changed_files: true,
             ..Default::default()
         };
         writes.queue(2, latest.clone());
@@ -878,7 +887,7 @@ mod tests {
         let mut chosen = Preferences {
             jump_target: JumpTarget::Machines,
             ask_before_actions: true,
-            hide_inspector: true,
+            hide_changed_files: true,
             sidebar_width: Some(318),
             panel_width: Some(402),
             ..Preferences::default()
@@ -934,7 +943,7 @@ mod tests {
         let loaded = load(&path).unwrap();
         assert_eq!(loaded.jump_target, JumpTarget::Machines);
         assert!(loaded.ask_before_actions);
-        assert!(!loaded.hide_inspector);
+        assert!(!loaded.hide_changed_files);
         assert_eq!((loaded.sidebar_width, loaded.panel_width), (None, None));
         assert!(loaded.favorite_models.is_empty());
         assert!(loaded.recent_models.is_empty());

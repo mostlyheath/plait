@@ -507,7 +507,7 @@ fn scope_keys_and_clean_files() {
             p.workspace.turn_review.record.as_ref().unwrap().files.len(),
             1
         );
-        assert!(p.focus.is_focused(w));
+        assert!(p.work_focus[plait_client::panes::PaneKind::Changes as usize].is_focused(w));
         p.open_review_scopes(w, cx);
     });
     wait(&mut h, |p| p.overlay.is_some());
@@ -515,7 +515,7 @@ fn scope_keys_and_clean_files() {
     press(&mut h, "escape");
     h.update(|p, w, _| {
         assert!(p.overlay.is_none());
-        assert!(p.focus.is_focused(w));
+        assert!(p.work_focus[plait_client::panes::PaneKind::Changes as usize].is_focused(w));
     });
     h.update(|p, w, cx| p.open_review_scopes(w, cx));
     wait(&mut h, |p| p.overlay.is_some());
@@ -813,7 +813,7 @@ fn first_old_host_file_click_opens_current() {
         let detail = p.closing_file_detail(&line.files[0], line);
         assert!(detail.contains("current Changes"));
         assert!(!detail.contains("recorded"));
-        assert_eq!(p.workspace.tab, Workspace::Changes);
+        assert_eq!(p.selected_view(), Workspace::Changes);
     });
     // A second click uses the known capability and performs no further probe.
     let probes = host.requests.lock().unwrap().len();

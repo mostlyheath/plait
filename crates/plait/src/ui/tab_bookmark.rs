@@ -327,7 +327,8 @@ impl Plait {
             && let Some(thread) = self.host.thread.selected.clone()
         {
             self.clear_turn_review();
-            if self.tabs.model.work().is_some_and(|w| w.open && w.recorded) {
+            if self.panel_recorded() || self.tabs.model.work().is_some_and(|w| w.open && w.recorded)
+            {
                 self.workspace.turn_records.selection.earlier(original);
             }
             self.workspace.turn_review.window = Some(window.window_handle());
@@ -343,7 +344,13 @@ impl Plait {
         let focus = bookmark.focus;
         let view = Workspace::Conversation;
         self.install_view_locations(bookmark, cx);
-        if let Some(target) = self.tabs.model.panel().and_then(|p| p.recorded.clone()) {
+        if let Some(target) = self
+            .tabs
+            .model
+            .panel()
+            .filter(|p| p.scope == plait_client::panel::Scope::ThisTurn)
+            .and_then(|p| p.recorded.clone())
+        {
             self.workspace
                 .turn_records
                 .selection

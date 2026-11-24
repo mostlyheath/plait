@@ -180,7 +180,7 @@ impl Plait {
             .snapshot()
             .ready()
             .map(|snapshot| snapshot.branch.clone());
-        let stacked = width < 540.;
+        let stacked = self.panel_is_open() || width < 540.;
         row()
             .when(stacked, |el| el.flex_col())
             .gap_0()
@@ -193,7 +193,7 @@ impl Plait {
                         if stacked {
                             el.w_full().h(relative(0.45)).min_h_0().overflow_hidden()
                         } else {
-                            el.w(px(if width > super::WIDE_WINDOW {
+                            el.w(px(if width > super::EXPANDED_CHROME_WIDTH {
                                 320.
                             } else {
                                 264.

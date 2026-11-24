@@ -152,7 +152,7 @@ actions!(
 pub(super) use plait_client::thread_view::ThreadView as Workspace;
 
 /// Below this width This turn is not shown; Git stays in Changes.
-const WIDE_WINDOW: f32 = 1150.;
+const EXPANDED_CHROME_WIDTH: f32 = 1150.;
 
 pub struct Plait {
     tabs: tabs::Tabs,
@@ -594,11 +594,11 @@ impl Plait {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.ensure_view_tab() {
+            return;
+        }
         self.workspace.restore_pending[1] = false;
         let work = self.draws_work();
-        if !work {
-            self.pause_conversation(Some(window), cx);
-        }
         window.focus(&self.focus, cx);
         self.interaction = Some(Instant::now());
         match step {
@@ -607,7 +607,16 @@ impl Plait {
         }
         self.workspace.diff_scroll = UniformListScrollHandle::new();
         if !work {
-            self.workspace.tab = Workspace::Changes;
+            if let Some(panel) = self.tabs.model.panel_mut() {
+                panel.open_on(plait_client::panel::PanelKind::Changes);
+                panel.select_scope(plait_client::panel::Scope::Uncommitted);
+            }
+            self.workspace.tab = Workspace::Conversation;
+            self.panels.focused = Some(plait_client::panes::PaneKind::Changes);
+            window.focus(
+                &self.work_focus[plait_client::panes::PaneKind::Changes as usize],
+                cx,
+            );
         }
         self.refresh_turn_review(cx);
         self.pump(cx);
@@ -794,7 +803,7 @@ impl Plait {
     }
 
     fn wide(window: &Window) -> bool {
-        window.viewport_size().width > px(WIDE_WINDOW)
+        window.viewport_size().width > px(EXPANDED_CHROME_WIDTH)
     }
 
     fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -816,6 +825,9 @@ impl Plait {
         {
             return;
         }
+        if tab != Workspace::Conversation && !self.panel_is_open() {
+            self.leave_conversation_focus(window, cx);
+        }
         let Some(panel) = self.tabs.model.panel_mut() else {
             return;
         };
@@ -827,12 +839,14 @@ impl Plait {
             Workspace::Files => panel.open_on(PanelKind::Files),
         }
         self.present_workspace(Workspace::Conversation, window, cx);
-        if tab == Workspace::Changes {
+        if tab == Workspace::Changes && self.workspace.turn_review.target.is_none() {
             self.sync_work_scope(self.panel_recorded(), window, cx);
         }
         if tab == Workspace::Conversation {
             window.focus(&self.focus, cx);
+            self.return_conversation_focus(window, cx);
         } else {
+            self.panels.focused = Some(self.panel_focus_kind());
             window.focus(&self.work_focus[self.panel_focus_kind() as usize], cx);
         }
     }
@@ -881,7 +895,7 @@ impl Plait {
     }
 
     fn load_workspace_locations(&mut self, cx: &mut Context<Self>) {
-        let tab = self.workspace.tab;
+        let tab = self.selected_view();
         let work = self
             .tabs
             .model
@@ -889,7 +903,8 @@ impl Plait {
             .filter(|w| w.chat_locations.is_some())
             .map(|w| w.recorded);
         if tab == Workspace::Changes || work.is_some() {
-            if work != Some(true)
+            if !self.panel_recorded()
+                && work != Some(true)
                 && self.workspace.restore_pending[1]
                 && let Some(saved) = self.workspace.restore.as_ref()
                 && let Some(path) = saved.changes.path.as_ref()
@@ -907,7 +922,6 @@ impl Plait {
             self.refresh_turn_review(cx);
         }
         if tab == Workspace::History
-            || self.panel_kind() == Some(plait_client::panel::PanelKind::History)
             || work.is_some() && self.remembers_kind(plait_client::panes::PaneKind::History)
         {
             self.state.repository.request_history();
@@ -925,7 +939,6 @@ impl Plait {
             self.state.repository.leave_history();
         }
         if tab == Workspace::Files
-            || self.panel_kind() == Some(plait_client::panel::PanelKind::Files)
             || work.is_some() && self.remembers_kind(plait_client::panes::PaneKind::Files)
         {
             self.check_file(cx);
@@ -1079,7 +1092,7 @@ impl Plait {
                 ),
             };
             controls = controls.child(
-                segment(id, title, self.workspace.tab == view)
+                segment(id, title, self.selected_view() == view)
                     .map(|el| self.covered_tab_control(el))
                     .aria_keyshortcuts(self.shortcut_aria(action))
                     .tooltip(move |_, cx| {
@@ -1270,16 +1283,23 @@ impl Render for Plait {
             .on_action(
                 cx.listener(|this, _: &ToggleWorkView, window, cx| this.fill_panel(window, cx)),
             )
+            .when(
+                !self.settings_open && (self.panel_is_open() || self.draws_work()),
+                |el| {
+                    el.on_action(cx.listener(|this, _: &FocusNextPane, window, cx| {
+                        use plait_client::panes::*;
+                        this.pane_command(PaneCommand::Next, window, cx)
+                    }))
+                    .on_action(cx.listener(
+                        |this, _: &FocusPreviousPane, window, cx| {
+                            use plait_client::panes::*;
+                            this.pane_command(PaneCommand::Previous, window, cx)
+                        },
+                    ))
+                },
+            )
             .when(!self.settings_open && self.draws_work(), |el| {
-                el.on_action(cx.listener(|this, _: &FocusNextPane, window, cx| {
-                    use plait_client::panes::*;
-                    this.pane_command(PaneCommand::Next, window, cx)
-                }))
-                .on_action(cx.listener(|this, _: &FocusPreviousPane, window, cx| {
-                    use plait_client::panes::*;
-                    this.pane_command(PaneCommand::Previous, window, cx)
-                }))
-                .on_action(cx.listener(|this, _: &SplitPaneRight, window, cx| {
+                el.on_action(cx.listener(|this, _: &SplitPaneRight, window, cx| {
                     use plait_client::panes::*;
                     this.pane_command(PaneCommand::Split(SplitDirection::SideBySide), window, cx)
                 }))

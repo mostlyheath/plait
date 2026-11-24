@@ -58,6 +58,7 @@ mod mcp;
 mod message_box;
 mod messages;
 mod mixed_tabs;
+mod panel;
 mod pickers;
 mod settings_modal;
 mod sheet;
@@ -1327,7 +1328,7 @@ fn files_tab_reads_finds_and_reloads_a_real_file() {
     };
     harness.update(|plait, _, cx| plait.open_file("src/review.rs".into(), Some(2), cx));
     harness.update(|plait, _, _| {
-        assert_eq!(plait.workspace.tab, super::Workspace::Files);
+        assert_eq!(plait.selected_view(), super::Workspace::Files);
         assert!(text(plait).contains("notify_when_ready"));
     });
     harness.draw();
@@ -2026,7 +2027,7 @@ fn changed_files_count_with_git_hide_on_request_and_open_in_changes() {
         assert!(plait.thread_files_card(cx).is_none());
         plait.preferences.value.hide_changed_files = false;
         plait.open_thread_file("src/review.rs".into(), window, cx);
-        assert_eq!(plait.workspace.tab, super::Workspace::Changes);
+        assert_eq!(plait.selected_view(), super::Workspace::Changes);
         let repo = &plait.state.repository;
         let key = repo.selected_diff().unwrap();
         assert_eq!(
@@ -2423,7 +2424,7 @@ fn walk(output: Option<&Path>) {
         if suffix == "wide" {
             work_view::scenes(&repository, output);
         }
-        this_turn::scenes(&mut harness, &repository, suffix);
+        panel::scenes(&mut harness, &repository, suffix);
         undo::undo_walk(&mut harness, &repository, suffix);
         turn_review::walk(&mut harness, &repository, suffix);
         history_walk(&mut harness, &repository, suffix);
@@ -2973,7 +2974,7 @@ fn composer_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
         let event =
             super::composer::ComposerEvent::Command(super::composer::CommandId::ShowChanges);
         plait.composer_event(&event, window, cx);
-        assert_eq!(plait.workspace.tab, super::Workspace::Changes);
+        assert_eq!(plait.selected_view(), super::Workspace::Changes);
         let event =
             super::composer::ComposerEvent::Command(super::composer::CommandId::ShowConversation);
         plait.composer_event(&event, window, cx);

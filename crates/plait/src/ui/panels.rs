@@ -158,9 +158,13 @@ impl Plait {
             let x = f32::from(event.event.position.x);
             let width = match panel {
                 Panel::Sidebar => x,
-                Panel::Review => this.panels.viewport - x,
+                Panel::Review => f32::from(this.workspace.work_area.right()) - x,
             };
-            this.panels.live = Some((panel, fit(panel, width, this.room_for(panel))));
+            let room = match panel {
+                Panel::Sidebar => this.room_for(panel),
+                Panel::Review => this.sheet_width(),
+            };
+            this.panels.live = Some((panel, fit(panel, width, room)));
             cx.notify();
         }))
         // Any release ends the drag. One released outside the window is saved

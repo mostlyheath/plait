@@ -486,33 +486,36 @@ impl Plait {
         const LEAD: f32 = 260.;
         // The file and the side being shown come first, then what can be
         // done to that side.
+        let in_panel = self.panel_is_open();
         let lead = row()
             .flex_wrap()
             .flex_1()
-            .min_w(px(LEAD))
+            .min_w(px(if in_panel { 0. } else { LEAD }))
             .gap_2()
-            .child(
-                column()
-                    .flex_1()
-                    // The path stays readable when the header is crowded.
-                    .min_w(px(96.))
-                    .child(
-                        div()
-                            .truncate()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(change.display_path()),
-                    )
-                    .when_some(change.original.as_ref(), |el, original| {
-                        el.child(
-                            tag(
-                                "diff-renamed-from",
-                                format!("Renamed from {}", original.to_string_lossy()),
-                                colors().subtle,
-                            )
-                            .truncate(),
+            .when(!in_panel, |el| {
+                el.child(
+                    column()
+                        .flex_1()
+                        // The path stays readable when the header is crowded.
+                        .min_w(px(96.))
+                        .child(
+                            div()
+                                .truncate()
+                                .font_weight(FontWeight::MEDIUM)
+                                .child(change.display_path()),
                         )
-                    }),
-            )
+                        .when_some(change.original.as_ref(), |el, original| {
+                            el.child(
+                                tag(
+                                    "diff-renamed-from",
+                                    format!("Renamed from {}", original.to_string_lossy()),
+                                    colors().subtle,
+                                )
+                                .truncate(),
+                            )
+                        }),
+                )
+            })
             .when(self.workspace.turn_review.target.is_some(), |el| {
                 el.child(self.recorded_switch(cx))
             })
@@ -527,7 +530,7 @@ impl Plait {
             .ml_auto()
             .gap_2()
             // A deleted file has nothing left to open.
-            .when(change.worktree != b'D', |el| {
+            .when(!in_panel && change.worktree != b'D', |el| {
                 let path = change.path.clone();
                 el.child(
                     button("diff-open-file", "Open")
@@ -537,7 +540,7 @@ impl Plait {
                         }),
                 )
             })
-            .when(super::ways_out::on_disk(change), |el| {
+            .when(!in_panel && super::ways_out::on_disk(change), |el| {
                 el.child(super::ways_out::editor_button(
                     "diff-editor",
                     &change.display_path(),
@@ -589,9 +592,9 @@ impl Plait {
             // One 44-point line where there is room. In a narrow window the
             // actions wrap beneath, so no control runs off the edge.
             row()
-                .min_h(px(44.))
-                .px_4()
-                .py(px(6.))
+                .min_h(px(if in_panel { 32. } else { 44. }))
+                .px_2()
+                .py(px(if in_panel { 0. } else { 6. }))
                 .gap_x_2()
                 .gap_y(px(2.))
                 .flex_wrap()
@@ -972,21 +975,24 @@ impl Plait {
                         .min_h_0(),
                     )
                     .children(bar)
-                    .child(
-                        row()
-                            .h(px(28.))
-                            .px_4()
-                            .flex_shrink_0()
-                            .justify_between()
-                            .text_size(px(11.))
-                            .text_color(rgb(colors().subtle))
-                            .child(format!(
-                                "{} patch lines · {} ms",
-                                count,
-                                elapsed.as_millis()
-                            ))
-                            .children(hint),
-                    )
+                    .when(self.diagnostics || hint.is_some(), |el| {
+                        el.child(
+                            row()
+                                .h(px(28.))
+                                .px_4()
+                                .flex_shrink_0()
+                                .justify_between()
+                                .text_size(px(11.))
+                                .text_color(rgb(colors().subtle))
+                                .when(self.diagnostics, |el| {
+                                    el.child(format!(
+                                        "{count} patch lines · {} ms",
+                                        elapsed.as_millis()
+                                    ))
+                                })
+                                .children(hint),
+                        )
+                    })
                     .into_any_element()
             }
         }
@@ -994,7 +1000,9 @@ impl Plait {
 
     pub(super) fn count_work_files(&mut self, cx: &mut Context<Self>) {
         self.workspace.work_counts.clear();
-        if self.panel_kind() != Some(plait_client::panel::PanelKind::Changes)
+        self.workspace.work_total = None;
+        if (self.panel_kind() != Some(plait_client::panel::PanelKind::Changes)
+            || self.panel_recorded())
             && !self
                 .tabs
                 .model
@@ -1018,16 +1026,21 @@ impl Plait {
         let tab = self.tabs.model.active();
         let task = cx.background_executor().spawn(async move {
             let mut labels = std::collections::HashMap::new();
+            let mut totals = (0_usize, 0_usize);
             // The host's bounded line-count read accepts 500 paths at a time.
             for changes in source.changes.chunks(500) {
                 let paths = changes.iter().map(|c| c.path.clone()).collect::<Vec<_>>();
                 for count in backend.line_counts(&source.root, &paths)? {
                     if let (Some(added), Some(removed)) = (count.added, count.removed) {
+                        totals.0 += added;
+                        totals.1 += removed;
                         labels.insert(count.path, format!("+{added} −{removed}"));
                     }
                 }
             }
-            Ok::<_, String>(labels)
+            let total = (labels.len() == source.changes.len())
+                .then(|| format!("+{} −{}", totals.0, totals.1));
+            Ok::<_, String>((labels, total))
         });
         cx.spawn(async move |this, cx| {
             let counts = task.await;
@@ -1039,9 +1052,10 @@ impl Plait {
                         .snapshot()
                         .ready()
                         .is_some_and(|s| std::sync::Arc::ptr_eq(s, &snapshot))
-                    && let Ok(counts) = counts
+                    && let Ok((counts, total)) = counts
                 {
                     this.workspace.work_counts = counts;
+                    this.workspace.work_total = total;
                     cx.notify();
                 }
             });
@@ -1070,7 +1084,7 @@ impl Plait {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.draws_work() {
+        if !self.draws_work() && !self.panel_is_open() {
             return;
         }
         if recorded {
@@ -1093,75 +1107,91 @@ impl Plait {
                 cx,
             );
         }
-        self.route_work_tab(super::Workspace::Changes, window, cx);
+        if self.panel_is_open() {
+            window.focus(
+                &self.work_focus[plait_client::panes::PaneKind::Changes as usize],
+                cx,
+            );
+        } else {
+            self.route_work_tab(super::Workspace::Changes, window, cx);
+        }
     }
-    pub(super) fn work_changes(&self, recorded: bool, width: f32, cx: &mut Context<Self>) -> Div {
-        let count = self.work_file_count(recorded);
+    fn panel_file_chip(
+        &self,
+        index: usize,
+        recorded: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let selected = if recorded {
             self.workspace.turn_review.selected
         } else {
             self.state.repository.selected_diff().map(|d| d.file)
         };
-        // Page the chips around the selection; a large checkout only draws visible files.
-        let page = 2 * (width / 120.).floor().max(1.) as usize;
-        let start = selected.unwrap_or(0) / page * page;
-        let end = (start + page).min(count);
-        let mut chips = row()
-            .id("panel-file-chips")
-            .flex_wrap()
-            .max_h(px(64.))
-            .min_w_0()
-            .overflow_y_scroll();
-        if start > 0 {
-            chips = chips.child(
-                button("work-prev-files", "‹")
-                    .aria_label("Previous files")
-                    .on_activate(cx, move |this, w, cx| {
-                        this.work_select_file(start - 1, recorded, w, cx)
-                    }),
-            );
-        }
-        for index in start..end {
-            let (name, path) = if recorded {
-                let file = &self.workspace.turn_review.record.as_ref().unwrap().files[index];
-                (
-                    format!("{} {}", file.name, file.counts),
-                    file.detail.clone(),
-                )
-            } else {
-                let file = &self.state.repository.snapshot().ready().unwrap().changes[index];
-                let path = file.display_path();
-                {
-                    let name = path.rsplit('/').next().unwrap_or(&path);
-                    let counts = self
-                        .workspace
-                        .work_counts
-                        .get(&file.path)
-                        .map_or("", String::as_str);
-                    (format!("{name} {counts}"), format!("{path} {counts}"))
-                }
-            };
-            chips = chips.child(
-                nav_row(("work-file", index), path, selected == Some(index))
-                    .w_auto()
-                    .max_w(px(160.))
-                    .aria_selected(selected == Some(index))
-                    .min_w_0()
-                    .child(div().truncate().child(name))
-                    .on_activate(cx, move |this, w, cx| {
-                        this.work_select_file(index, recorded, w, cx)
-                    }),
-            );
-        }
-        if end < count {
-            chips = chips.child(
-                button("work-next-files", "›")
-                    .aria_label("Next files")
-                    .on_activate(cx, move |this, w, cx| {
-                        this.work_select_file(end, recorded, w, cx)
-                    }),
-            );
-        }
+        let (name, path) = if recorded {
+            let file = self
+                .workspace
+                .turn_review
+                .record
+                .as_ref()?
+                .files
+                .get(index)?;
+            (
+                format!("{} {}", file.name, file.counts),
+                file.detail.clone(),
+            )
+        } else {
+            let file = self
+                .state
+                .repository
+                .snapshot()
+                .ready()?
+                .changes
+                .get(index)?;
+            let path = file.display_path();
+            {
+                let name = path.rsplit('/').next().unwrap_or(&path);
+                let counts = self
+                    .workspace
+                    .work_counts
+                    .get(&file.path)
+                    .map_or("", String::as_str);
+                (format!("{name} {counts}"), format!("{path} {counts}"))
+            }
+        };
+        Some(
+            nav_row(("work-file", index), path, selected == Some(index))
+                .w_auto()
+                .max_w(px(160.))
+                .aria_selected(selected == Some(index))
+                .min_w_0()
+                .child(div().truncate().child(name))
+                .on_activate(cx, move |this, w, cx| {
+                    this.work_select_file(index, recorded, w, cx)
+                })
+                .into_any_element(),
+        )
+    }
+    pub(super) fn work_changes(&self, recorded: bool, width: f32, cx: &mut Context<Self>) -> Div {
+        let count = self.work_file_count(recorded);
+        let per_row = (width / 132.).floor().max(1.) as usize;
+        let rows = count.div_ceil(per_row);
+        let chips = uniform_list(
+            "panel-file-chips",
+            rows,
+            cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
+                range
+                    .map(|row_index| {
+                        let start = row_index * per_row;
+                        row().h(px(30.)).min_w_0().gap_1().children(
+                            (start..(start + per_row).min(count))
+                                .filter_map(|i| this.panel_file_chip(i, recorded, cx)),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            }),
+        )
+        .h(px(30. * rows.min(2) as f32))
+        .flex_shrink_0();
         let mut switch = segmented();
         for (id, label, value) in [
             ("work-recorded", "This turn", true),
@@ -1169,6 +1199,7 @@ impl Plait {
         ] {
             switch = switch.child(
                 segment(id, label, value == recorded)
+                    .disabled(value && self.panel_is_open() && !self.has_panel_record())
                     .on_activate(cx, move |this, w, cx| this.choose_work_scope(value, w, cx)),
             );
         }
@@ -1190,20 +1221,34 @@ impl Plait {
                             .filter(|_| recorded),
                         |el, r| el.child(tag("panel-totals", r.counts.clone(), colors().subtle)),
                     )
+                    .when(!recorded, |el| {
+                        el.when_some(self.workspace.work_total.clone(), |el, total| {
+                            el.child(tag("panel-working-totals", total, colors().subtle))
+                        })
+                    })
                     .when(recorded, |el| el.children(self.panel_turn_heading(cx)))
-                    .when(
-                        !recorded && self.state.repository.selected_diff().is_some(),
-                        |el| {
-                            el.child(super::ways_out::editor_button(
-                                "panel-editor",
-                                "selected file",
-                                self.shortcut_aria("file.open_in_editor"),
-                                self.host_is_local(),
-                                cx,
-                            ))
-                        },
-                    ),
+                    .when_some(self.way_out_target(), |el, target| {
+                        el.child(super::ways_out::editor_button(
+                            "panel-editor",
+                            &target.display,
+                            self.shortcut_aria("file.open_in_editor"),
+                            self.host_is_local(),
+                            cx,
+                        ))
+                    }),
             )
+            .when(recorded, |el| {
+                let records = &self.workspace.turn_records;
+                let line = records.selection.review_line(&records.lines);
+                el.children(line.and_then(|line| self.undo_panel(line, cx)))
+            })
+            .when(self.workspace.turn_review.older, |el| {
+                el.child(tag(
+                    "panel-older-host",
+                    "Older host · recorded changes unavailable",
+                    colors().muted,
+                ))
+            })
             .child(chips)
             .when(self.workspace.diff_find.open, |el| {
                 el.child(self.find_bar(super::file_view::FindIn::Changes, cx))

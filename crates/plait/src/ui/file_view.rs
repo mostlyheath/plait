@@ -267,6 +267,7 @@ impl Plait {
                 panel.open_on(plait_client::panel::PanelKind::Files);
             }
             self.workspace.tab = Workspace::Conversation;
+            self.panels.focused = Some(plait_client::panes::PaneKind::Files);
         }
         self.workspace.restore_pending[3] = false;
         let root = self.file_root();
@@ -517,7 +518,11 @@ impl Plait {
         find.matches = Arc::default();
         // Whatever search is running now answers nothing.
         find.generation += 1;
-        window.focus(&self.focus, cx);
+        if self.panel_is_open() {
+            window.focus(&self.work_focus[self.panel_focus_kind() as usize], cx);
+        } else {
+            window.focus(&self.focus, cx);
+        }
         cx.notify();
     }
 
@@ -807,7 +812,11 @@ impl Plait {
         match target {
             FindIn::Changes => {
                 self.workspace.diff_find.open = false;
-                window.focus(&self.focus, cx);
+                if self.panel_is_open() {
+                    window.focus(&self.work_focus[self.panel_focus_kind() as usize], cx);
+                } else {
+                    window.focus(&self.focus, cx);
+                }
                 cx.notify();
             }
             FindIn::File => self.close_find(window, cx),

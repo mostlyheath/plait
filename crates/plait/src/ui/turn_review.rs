@@ -111,7 +111,8 @@ impl Plait {
         let snapshot = self.state.repository.snapshot().ready().cloned();
         let history = self.host.thread.snapshot.clone();
         let task_stamp = stamp.clone();
-        let read_record = self.workspace.tab == Workspace::Changes
+        let read_record = self.panel_kind() == Some(plait_client::panel::PanelKind::Changes)
+            || self.workspace.tab == Workspace::Changes
             || self
                 .tabs
                 .model
@@ -303,9 +304,6 @@ impl Plait {
             self.refresh_turn_review(cx);
         }
         self.show_tab(Workspace::Changes, window, cx);
-        if self.panel_is_open() {
-            self.refresh_turn_review(cx);
-        }
         if self.workspace.turn_review.older {
             self.workspace.turn_review.error = Some((
                 "Older host",

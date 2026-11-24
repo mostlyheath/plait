@@ -7,6 +7,15 @@ use plait_client::{
 };
 
 impl Plait {
+    pub(super) fn selected_view(&self) -> Workspace {
+        match self.panel_kind() {
+            Some(PanelKind::Changes) => Workspace::Changes,
+            Some(PanelKind::History) => Workspace::History,
+            Some(PanelKind::Files) => Workspace::Files,
+            None => self.workspace.tab,
+        }
+    }
+
     pub(super) fn panel_is_open(&self) -> bool {
         !self.worktrees_visible()
             && !self.draws_work()
@@ -27,6 +36,10 @@ impl Plait {
     }
 
     pub(super) fn sheet_width(&self) -> f32 {
+        let measured = f32::from(self.workspace.work_area.size.width);
+        if measured > 0. {
+            return measured;
+        }
         (self.panels.viewport
             - if self.visible_sidebar() {
                 self.panel_width(Edge::Sidebar)
@@ -114,6 +127,9 @@ impl Plait {
                         Tone::Ghost
                     },
                 )
+                .role(Role::Tab)
+                .aria_selected(k == kind)
+                .rounded(px(6.))
                 .h(px(26.))
                 .on_activate(cx, move |this, w, cx| this.show_tab(view, w, cx)),
             );
@@ -130,6 +146,9 @@ impl Plait {
         };
         column()
             .id("review-panel")
+            .role(Role::Group)
+            .aria_label("Review panel")
+            .audited()
             .tab_group()
             .track_focus(&self.work_focus[kind as usize])
             .relative()
@@ -140,11 +159,14 @@ impl Plait {
             .border_l_1()
             .border_color(rgb(colors().border))
             .bg(rgb(colors().rail))
-            .child(tabs.child(div().flex_1()).child(
-                icon_button("close-panel", "x", "Close panel").on_activate(cx, |this, w, cx| {
-                    this.show_tab(Workspace::Conversation, w, cx)
-                }),
-            ))
+            .child(
+                tabs.child(div().flex_1()).child(
+                    icon_button("close-panel", "close", "Close panel")
+                        .on_activate(cx, |this, w, cx| {
+                            this.show_tab(Workspace::Conversation, w, cx)
+                        }),
+                ),
+            )
             .child(body)
             .when(!self.panel_fills(), |el| {
                 el.child(self.resize_handle(Edge::Review, cx))
@@ -158,7 +180,11 @@ impl Plait {
                 .model
                 .panel()
                 .is_some_and(|p| p.scope == Scope::ThisTurn)
-            && !self.workspace.turn_review.older
+            && self.has_panel_record()
+    }
+
+    pub(super) fn has_panel_record(&self) -> bool {
+        !self.workspace.turn_review.older
             && self.host.protocol() >= 5
             && !self.plain_folder_open()
             && (self.workspace.turn_review.target.is_some()
@@ -216,9 +242,25 @@ impl Plait {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let (Some(line), Some(thread)) = (
+            self.workspace.turn_records.lines.runs.get(run),
+            self.host.thread.selected.as_ref(),
+        ) {
+            let target = plait_client::review::recorded::Target {
+                thread: thread.clone(),
+                checkout: self.host.creation.checkout.clone(),
+                record: line.displayed.clone(),
+                original: run.to_owned(),
+                path: None,
+            };
+            self.open_turn_review(target, window, cx);
+            return;
+        }
+        self.clear_turn_review();
         self.workspace.turn_records.selection.earlier(run);
         if let Some(p) = self.tabs.model.panel_mut() {
             p.select_scope(Scope::ThisTurn);
+            p.recorded = None;
         }
         self.show_tab(Workspace::Changes, window, cx);
     }

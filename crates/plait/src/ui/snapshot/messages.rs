@@ -159,6 +159,7 @@ fn copy_message_cross_label_selection_and_image_only_requests() {
 
     let quote = caret(&mut harness, "request", 0, 0);
     let answer0 = caret(&mut harness, "answer", 0, 0);
+    #[cfg(not(debug_assertions))]
     let view = harness
         .window
         .update(&mut harness.cx, |plait, _, _| {
@@ -167,6 +168,16 @@ fn copy_message_cross_label_selection_and_image_only_requests() {
         .unwrap();
 
     // Copy message on the author line copies the original source with `>` marks.
+    #[cfg(debug_assertions)]
+    let copy_pt = harness
+        .draw_a11y()
+        .nodes
+        .iter()
+        .find(|n| n.label.as_deref() == Some("Copy message source"))
+        .expect("request copy button")
+        .bounds
+        .center();
+    #[cfg(not(debug_assertions))]
     let copy_pt = point(view.right() - px(48.), quote.y - px(12. + 4. + 11. + 10.5));
     harness.pointer(PlatformInput::MouseMove(MouseMoveEvent {
         position: copy_pt,

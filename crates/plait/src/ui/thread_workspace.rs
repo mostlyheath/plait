@@ -20,6 +20,7 @@ use std::{
 pub(super) struct ThreadWorkspace {
     pub(super) diff_search: Option<(std::sync::Weak<plait_client::model::Diff>, String)>,
     pub(super) diff_find: file_view::Find,
+    pub(super) work_total: Option<String>,
     pub(super) work_counts: HashMap<std::path::PathBuf, String>,
     pub(super) work_area: Bounds<Pixels>,
     pub(super) restore: Option<plait_client::tabs::bookmark::ThreadBookmark>,
@@ -65,6 +66,7 @@ impl ThreadWorkspace {
             diff_search: None,
             diff_find: Default::default(),
             work_counts: Default::default(),
+            work_total: None,
             work_area: Default::default(),
             restore: None,
             restore_pending: [false; 4],
