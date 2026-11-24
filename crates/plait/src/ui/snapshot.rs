@@ -49,6 +49,7 @@ mod branches;
 mod code_size;
 mod find;
 mod folded_turns;
+mod git_step;
 mod header;
 mod isolation;
 mod issues;
@@ -2300,6 +2301,7 @@ fn walk(output: Option<&Path>) {
     let repository = fixture_repository(&scratch);
 
     header::walk(output);
+    git_step::walk(output);
     for (suffix, width, height) in [("wide", 1380., 860.), ("narrow", 900., 600.)] {
         tokens::walk(output, suffix, width, height);
         tabs::walk(&repository, output, suffix, width, height);
