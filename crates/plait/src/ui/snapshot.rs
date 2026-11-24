@@ -5798,7 +5798,7 @@ fn the_window_bar_moves_the_window_only_from_empty_space() {
     let scratch = std::env::temp_dir().join(format!("plait-window-bar-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&scratch);
     let repository = fixture_repository(&scratch);
-    let mut harness = Harness::new(&repository, None, 1380., 860.);
+    let mut harness = Harness::with_host(&repository, None, 1380., 860., None);
     let rail = harness
         .window
         .update(&mut harness.cx, |plait, _, _| {

@@ -185,6 +185,12 @@ mod tests {
     use super::{Panel, fit};
 
     #[test]
+    fn sidebar_default_changes_below_760_points() {
+        assert_eq!(Panel::Sidebar.default_width(759.), 236.);
+        assert_eq!(Panel::Sidebar.default_width(760.), 288.);
+    }
+
+    #[test]
     fn widths_stay_within_limits_and_leave_the_conversation_room() {
         assert_eq!(fit(Panel::Sidebar, 320., 1400.), 320.);
         assert_eq!(fit(Panel::Sidebar, 40., 1400.), 200.);

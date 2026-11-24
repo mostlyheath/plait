@@ -1556,6 +1556,7 @@ impl Render for Plait {
                             .min_w_0()
                             .min_h_0()
                             .bg(rgb(colors().bg))
+                            .overflow_hidden()
                             .when(sidebar, |sheet| {
                                 sheet
                                     .mt(px(8.))

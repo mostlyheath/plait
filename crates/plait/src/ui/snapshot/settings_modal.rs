@@ -2,7 +2,7 @@
 use super::*;
 use crate::ui::{Workspace, selection::Owner};
 
-fn click(harness: &mut Harness, x: f32, y: f32) {
+pub(super) fn click(harness: &mut Harness, x: f32, y: f32) {
     harness.draw();
     let position = point(px(x), px(y));
     harness.pointer(PlatformInput::MouseDown(MouseDownEvent {
