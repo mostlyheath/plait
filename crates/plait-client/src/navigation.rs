@@ -8,6 +8,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
+    borrow::Cow,
     cmp::Reverse,
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     path::{Path, PathBuf},
@@ -451,7 +452,7 @@ pub struct Card<'a> {
 
 pub struct CardDetails<'a> {
     pub harness: Option<HarnessId>,
-    pub model: Option<&'a str>,
+    pub model: Option<Cow<'a, str>>,
     pub age: Option<String>,
 }
 
@@ -487,7 +488,19 @@ impl<'a> Card<'a> {
         let harness = thread.harness;
         let model = model_name
             .filter(|name| !name.trim().is_empty())
-            .or_else(|| Some(thread.model.model_id.as_str()).filter(|id| !id.trim().is_empty()));
+            .map(Cow::Borrowed)
+            .or_else(|| {
+                let id = thread.model.model_id.trim();
+                if id.is_empty() {
+                    return None;
+                }
+                let provider = thread.model.provider.trim();
+                Some(if provider.is_empty() {
+                    Cow::Borrowed(id)
+                } else {
+                    Cow::Owned(format!("{provider}/{id}"))
+                })
+            });
         let age = thread.updated_at.map(|updated| age(Some(updated), now));
         Self {
             title,
@@ -982,11 +995,11 @@ mod tests {
         assert_eq!(card.branch, Some("plait/retry"));
         assert!(card.archived);
         let details = card.details.unwrap();
-        assert_eq!(details.model, Some("Codex Model"));
+        assert_eq!(details.model.as_deref(), Some("Codex Model"));
         assert_eq!(details.harness, Some(HarnessId::Codex));
         assert_eq!(details.age, None);
         let card = Card::new(&t, &lists, "Retry".into(), None, 120_000);
-        assert_eq!(card.details.unwrap().model, Some("codex-model"));
+        assert_eq!(card.details.unwrap().model.as_deref(), Some("codex-model"));
 
         t.status = ThreadStatus::Stopped;
         lists.unread.insert(t.id.clone());
@@ -994,6 +1007,19 @@ mod tests {
         assert_eq!(card.state, ThreadRowState::Other);
         assert_eq!(card.spoken_state, "Stopped");
         assert!(card.unread);
+    }
+
+    #[test]
+    fn uncatalogued_models_identify_the_provider_as_in_the_picker() {
+        let lists = Preferences::default();
+        let mut thread = ThreadSummary::default();
+        thread.model.provider = "provider-a".into();
+        thread.model.model_id = "shared-model".into();
+        let card = Card::new(&thread, &lists, "Thread".into(), None, 0);
+        assert_eq!(
+            card.details.unwrap().model.as_deref(),
+            Some("provider-a/shared-model")
+        );
     }
 
     #[test]

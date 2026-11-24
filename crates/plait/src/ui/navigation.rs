@@ -653,10 +653,10 @@ impl Plait {
                                         el.child(div().child(harness.label()))
                                     }
                                 })
-                                .when_some(details.model, |el, model| {
-                                    el.child(title(model.to_owned()))
-                                })
                                 .when(details.model.is_none(), |el| el.child(div().flex_1()))
+                                .when_some(details.model, |el, model| {
+                                    el.child(title(model.into_owned()))
+                                })
                                 .when_some(details.age, |el, age| {
                                     el.child(div().flex_shrink_0().font_family(mono()).child(age))
                                 }),
