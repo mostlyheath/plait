@@ -1,7 +1,8 @@
 //! Editable draft: text, selection, undo, IME composition, the acceptance
-//! guard, and recall of sent prompts. No GPUI, so every rule is unit-tested.
+//! guard, recall of sent prompts, and appending quotes from a reply.
 
 use super::history::PromptHistory;
+use gpui::{Context, Window};
 use std::{ops::Range, sync::Arc};
 use unicode_segmentation::{GraphemeCursor, UnicodeSegmentation};
 
@@ -258,6 +259,23 @@ impl Draft {
         self.replace(range, text, false);
     }
 
+    fn append_quote(&mut self, quote: &str) {
+        self.cancel_recall();
+        let (anchor, head) = (self.value.anchor, self.value.head);
+        let text = &self.value.text;
+        let end = text.len();
+        let gap = if text.is_empty() || text.ends_with("\n\n") {
+            ""
+        } else if text.ends_with('\n') {
+            "\n"
+        } else {
+            "\n\n"
+        };
+        self.replace(end..end, &format!("{gap}{quote}"), false);
+        self.value.anchor = anchor;
+        self.value.head = head;
+    }
+
     pub fn delete(&mut self, forward: bool) {
         self.finish_composition();
         let mut range = self.selection();
@@ -461,6 +479,27 @@ impl Draft {
     }
 }
 
+impl super::Composer {
+    pub(in crate::ui) fn accepts_quote(&self) -> bool {
+        self.enabled && self.draft.marked.is_none()
+    }
+
+    pub(in crate::ui) fn quote_selection(
+        &mut self,
+        selection: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.accepts_quote() || selection.is_empty() {
+            return false;
+        }
+        let quote = plait_client::selection::quote(selection);
+        window.focus(&self.focus, cx);
+        self.edit(|draft| draft.append_quote(&quote), window, cx);
+        true
+    }
+}
+
 // Native text services use UTF-16; editor state uses UTF-8 byte boundaries.
 fn byte_offset(text: &str, utf16: usize) -> usize {
     let mut units = 0;
@@ -502,6 +541,23 @@ mod tests {
         draft.insert("!");
         draft.undo(true);
         assert_eq!(draft.value.text, "first!\ntwo");
+    }
+
+    #[test]
+    fn appending_a_quote_preserves_the_caret_and_outlives_an_old_ack() {
+        let mut draft = Draft::default();
+        draft.insert("existing draft");
+        draft.select(4, false);
+        let submitted = draft.submit(true, false).unwrap();
+        let revision = draft.revision;
+        draft.append_quote("> a reply\n\n");
+        assert_eq!(draft.value.text, "existing draft\n\n> a reply\n\n");
+        assert_eq!(draft.selection(), 4..4);
+        assert_eq!(draft.revision, revision + 1);
+        assert!(!draft.clear_revision(&submitted, revision));
+        draft.undo(false);
+        assert_eq!(draft.value.text, submitted);
+        assert_eq!(draft.selection(), 4..4);
     }
 
     #[test]

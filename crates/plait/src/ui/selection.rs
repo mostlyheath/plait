@@ -20,7 +20,10 @@ use std::{
     rc::Rc,
 };
 
-actions!(plait, [CopySelection, HistoryStart, HistoryEnd]);
+actions!(
+    plait,
+    [CopySelection, QuoteSelection, HistoryStart, HistoryEnd]
+);
 
 pub(super) fn bind_keys(cx: &mut App) {
     // The composer binds Cmd-C in its own, deeper context and wins while it has focus.
@@ -102,6 +105,7 @@ pub(super) struct Hit {
 #[derive(Default)]
 pub(super) struct Reading {
     selection: Option<Selection>,
+    pub(super) quote_press: bool,
     dragging: bool,
     /// The link under the press; it opens if the release is still on it.
     pressed_link: Option<SharedString>,
@@ -410,12 +414,14 @@ impl Plait {
                     if phase != DispatchPhase::Bubble || event.button != MouseButton::Left {
                         return;
                     }
-                    if !bounds.contains(&event.position) {
-                        return;
-                    }
-                    let hit = under(&press_regions.borrow(), event.position, window);
                     let (count, extend) = (event.click_count, event.modifiers.shift);
                     let _ = press_entity.update(cx, |this, cx| {
+                        if std::mem::take(&mut this.workspace.reading.quote_press)
+                            || !bounds.contains(&event.position)
+                        {
+                            return;
+                        }
+                        let hit = under(&press_regions.borrow(), event.position, window);
                         this.press_text(hit, count, extend, window, cx)
                     });
                 });
@@ -666,6 +672,74 @@ impl Plait {
         Some(selection::text(blocks, &span)).filter(|text| !text.is_empty())
     }
 
+    fn selected_reply(&self) -> Option<&str> {
+        let selection = self.workspace.reading.selection.as_ref()?;
+        if self.settings_open
+            || (!self.draws_work() && self.workspace.tab != super::Workspace::Conversation)
+            || self.host.thread.selected.as_deref() != Some(selection.thread.as_str())
+            || self.conversation_snapshot()?.id != selection.thread
+            || selection.anchor.owner != selection.head.owner
+        {
+            return None;
+        }
+        match &selection.anchor.owner {
+            Owner::Message(id) if self.workspace.reading.span.get().is_some() => Some(id.as_ref()),
+            _ => None,
+        }
+    }
+
+    pub(super) fn can_quote_reply(&self, id: &str, cx: &App) -> bool {
+        self.selected_reply() == Some(id)
+            && self
+                .host
+                .thread
+                .selected
+                .as_ref()
+                .and_then(|thread| self.workspace.composers.get(thread))
+                .is_some_and(|composer| composer.read(cx).accepts_quote())
+    }
+
+    pub(super) fn quote_reply_selection(
+        &mut self,
+        expected: Option<&str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.resolve_selection();
+        let Some(reply) = self.selected_reply() else {
+            return false;
+        };
+        if expected.is_some_and(|expected| expected != reply) {
+            return false;
+        }
+        let Some(snapshot) = self.conversation_snapshot() else {
+            return false;
+        };
+        if !snapshot.messages.iter().any(|message| {
+            message.id == reply && message.role == plait_client::host::MessageRole::Assistant
+        }) {
+            return false;
+        }
+        let composer = self
+            .host
+            .thread
+            .selected
+            .as_ref()
+            .and_then(|thread| self.workspace.composers.get(thread))
+            .cloned();
+        let (Some(text), Some(composer)) = (self.selected_text(), composer) else {
+            return false;
+        };
+        if !composer.update(cx, |composer, cx| {
+            composer.quote_selection(&text, window, cx)
+        }) {
+            return false;
+        }
+        self.clear_reading_selection();
+        cx.notify();
+        true
+    }
+
     pub(super) fn on_selection_actions(
         &self,
         root: Stateful<Div>,
@@ -699,6 +773,11 @@ impl Plait {
                 None => cx.propagate(),
             },
         ))
+        .on_action(cx.listener(|this, _: &QuoteSelection, window, cx| {
+            if !this.quote_reply_selection(None, window, cx) {
+                cx.propagate();
+            }
+        }))
     }
 
     /// The middle of the caret before `offset` of a block, where it was last

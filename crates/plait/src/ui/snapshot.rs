@@ -61,6 +61,7 @@ mod message_box;
 mod messages;
 mod mixed_tabs;
 mod pickers;
+mod quote_selection;
 mod settings_modal;
 mod showcase;
 mod sidebar;
@@ -2418,6 +2419,7 @@ fn walk(output: Option<&Path>) {
         reading_walk(&mut harness, &repository, suffix);
         bubbles::walk(&repository, output, suffix, width, height);
         finished_work::scenes(&repository, output, suffix, width, height);
+        quote_selection::scenes(&repository, output, suffix, width, height);
         code_size::walk(&mut harness, &repository, suffix);
         find::find_walk(&mut harness, &repository, suffix);
         folded_turns::walk(&mut harness, &repository, suffix);

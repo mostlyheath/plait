@@ -143,6 +143,20 @@ pub fn text<'a>(
     out
 }
 
+/// Format the text from a reply selection as one Markdown quote paragraph.
+pub fn quote(text: &str) -> String {
+    let mut quoted = String::new();
+    for line in text.lines() {
+        quoted.push_str("> ");
+        quoted.push_str(line);
+        quoted.push('\n');
+    }
+    if !quoted.is_empty() {
+        quoted.push('\n');
+    }
+    quoted
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -201,6 +215,31 @@ mod tests {
         assert_eq!(&text[line(text, 12)], "second");
         assert_eq!(line(text, 13), 13..13);
         assert_eq!(&text[line(text, 99)], "last");
+    }
+
+    #[test]
+    fn quote_prefixes_lines_and_ends_with_a_blank_line() {
+        assert_eq!(
+            quote("one\r\ntwo\n\nthree\n"),
+            "> one\n> two\n> \n> three\n\n"
+        );
+        assert_eq!(quote(""), "");
+    }
+
+    #[test]
+    fn quote_preserves_the_selected_parts_of_prose_and_code() {
+        let message = Message::parse("Intro **bold**.\n\n```rust\nlet s = 1;\n    use_it(s);\n```");
+        let blocks = || {
+            message
+                .blocks
+                .iter()
+                .enumerate()
+                .map(|(i, block)| (0, i, block))
+        };
+        let across = Span::between(at(0, 0, 6), at(0, 1, "let s".len())).unwrap();
+        assert_eq!(quote(&text(blocks(), &across)), "> bold.\n> \n> let s\n\n");
+        let code = Span::between(at(0, 1, 4), at(0, 1, "let s = 1;\n    use_it".len())).unwrap();
+        assert_eq!(quote(&text(blocks(), &code)), "> s = 1;\n>     use_it\n\n");
     }
 
     #[test]
