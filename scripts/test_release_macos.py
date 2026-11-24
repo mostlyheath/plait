@@ -8,11 +8,19 @@ import xml.etree.ElementTree as ET
 
 from release_macos import (
     ROOT, copy_runtime_sources, AGENT_LABEL, HOST_BASE, client_preinstall, component_manifests, distribution,
-    host_package_id, host_postinstall, host_preinstall, launch_agent, manifest, normalize_modes, payload_digest, platform_preflight,
+    host_package_id, host_postinstall, host_preinstall, launch_agent, manifest, normalize_modes, payload_digest, platform_preflight, stage_font_notices,
 )
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_client_stages_complete_bundled_font_notices(self):
+        with tempfile.TemporaryDirectory() as directory:
+            resources = Path(directory)
+            stage_font_notices(resources)
+            for name in ("OFL.txt", "README.md"):
+                self.assertEqual((ROOT / "assets/fonts" / name).read_bytes(),
+                                 (resources / "fonts" / name).read_bytes())
+
     def test_runtime_package_contains_every_runner_source(self):
         with tempfile.TemporaryDirectory() as directory:
             runtime = Path(directory) / "runtime"
