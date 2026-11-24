@@ -447,6 +447,7 @@ impl Plait {
             });
         if self.host.thread.selected.is_some() && self.preferences.value.shows_thread_tabs() {
             column()
+                .id("message-box-with-environment")
                 .w_full()
                 .max_w(px(CONTENT_WIDTH))
                 .mx_auto()
