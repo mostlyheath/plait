@@ -3,6 +3,23 @@ use plait_client::update::{Manifest, Offer, Version};
 
 /// Use the sidebar fixture's mixed thread states so its attention count is visible.
 pub(super) fn walk(h: &mut Harness, suffix: &str) {
+    // Keep the captures independent of the workstation and scratch path.
+    let (machine, hide_inspector) = h
+        .window
+        .update(&mut h.cx, |p, _, _| {
+            (
+                std::mem::replace(&mut p.state.projects[0].machines[0].name, "studio".into()),
+                std::mem::replace(&mut p.preferences.value.hide_inspector, true),
+            )
+        })
+        .unwrap();
+    h.update(|p, _, _| {
+        assert_eq!(p.active_project().machines[0].name, "studio");
+        assert!(
+            !p.shows_inspector(true),
+            "the inspector displays the fixture checkout path"
+        );
+    });
     capture_both(h, &format!("sheet-{suffix}"));
     h.update(|p, window, _| {
         let body = p.workspace.work_area;
@@ -49,7 +66,11 @@ pub(super) fn walk(h: &mut Harness, suffix: &str) {
         p.updates = update_offer();
     });
     foot(h, suffix, "update", "Connected");
-    h.update(|p, _, _| p.updates = Default::default());
+    h.update(move |p, _, _| {
+        p.updates = Default::default();
+        p.state.projects[0].machines[0].name = machine;
+        p.preferences.value.hide_inspector = hide_inspector;
+    });
 }
 
 fn foot(h: &mut Harness, suffix: &str, name: &str, _state: &str) {
