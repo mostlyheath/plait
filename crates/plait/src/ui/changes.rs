@@ -107,7 +107,7 @@ fn hunk_button(target: &HunkTarget, hunk: usize, header: &str, cx: &mut Context<
         "diff-hunk",
     )
     .h(px(diff_line_height() - 2.))
-    .font_family(".SystemUIFont")
+    .font_family(ui_font())
     .text_size(px(11.))
     .disabled(target.busy)
     .on_activate(cx, move |this, _, cx| {
@@ -137,7 +137,7 @@ fn discard_hunk_button(
     );
     quiet_button(("hunk-discard", hunk), "Discard hunk…", "diff-hunk")
         .h(px(diff_line_height() - 2.))
-        .font_family(".SystemUIFont")
+        .font_family(ui_font())
         .text_size(px(11.))
         .disabled(target.busy)
         .on_activate(cx, move |this, window, cx| {

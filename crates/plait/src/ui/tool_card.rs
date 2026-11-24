@@ -332,7 +332,7 @@ impl Plait {
         });
         code_block()
             // Captions and notes are prose; each code body sets its own font.
-            .font_family(".SystemUIFont")
+            .font_family(ui_font())
             .group(group.clone())
             .relative()
             .gap_2()
