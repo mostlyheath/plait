@@ -298,7 +298,7 @@ impl Plait {
     ) -> AnyElement {
         let project = &self.state.projects[pi];
         let checkout = project.checkout.clone();
-        let hide = checkout.clone();
+        let menu_id = format!("project:{}", checkout.display());
         let start = checkout.clone();
         let group = SharedString::from(format!("project-row-{pi}"));
         let expanded = !self.navigation.collapsed.contains(&checkout);
@@ -376,17 +376,12 @@ impl Plait {
                     this.open_draft_in(start.clone(), window, cx)
                 }),
             )
-            .child(
-                icon_button(
-                    ("project-actions", pi),
-                    "more",
-                    format!("Actions for {} project", project.name),
-                )
-                .on_activate(cx, move |this, _, cx| {
-                    this.navigation.menu = Some(format!("project:{}", hide.display()));
-                    cx.notify();
-                }),
-            )
+            .child(self.menu_trigger(
+                ("project-actions", pi),
+                format!("Actions for {} project", project.name),
+                menu_id,
+                cx,
+            ))
             .into_any_element()
     }
 
@@ -593,17 +588,12 @@ impl Plait {
                 }),
             )
             .when(self.host.protocol() >= 3, |el| {
-                el.child(
-                    icon_button(
-                        "thread-actions",
-                        "more",
-                        format!("Actions for {}", self.thread_name(&menu_id)),
-                    )
-                    .on_activate(cx, move |this, _, cx| {
-                        this.navigation.menu = Some(menu_id.clone());
-                        cx.notify();
-                    }),
-                )
+                el.child(self.menu_trigger(
+                    "thread-actions",
+                    format!("Actions for {}", self.thread_name(&menu_id)),
+                    menu_id,
+                    cx,
+                ))
             })
             .into_any_element()
     }
@@ -697,23 +687,62 @@ impl Plait {
             })
     }
 
-    fn navigation_menu(&self, cx: &mut Context<Self>) -> AnyElement {
-        let Some(id) = &self.navigation.menu else {
-            return div().into_any_element();
-        };
+    fn menu_trigger(
+        &self,
+        button_id: impl Into<ElementId>,
+        label: String,
+        target: String,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let open = self.navigation.menu.as_ref() == Some(&target)
+            && !self.settings_open
+            && self.overlay.is_none()
+            && !self.tabs.list_open
+            && self.workspace.images.enlarged.is_none();
+        let menu = open.then(|| self.navigation_menu(&target, cx));
+        let trigger = icon_button(button_id, "more", label)
+            .aria_expanded(open)
+            .on_activate(cx, move |this, _, cx| {
+                this.navigation.menu = (!open).then(|| target.clone());
+                cx.notify();
+            });
+        div()
+            .relative()
+            .size(px(ROW_HEIGHT))
+            .flex_shrink_0()
+            .child(trigger)
+            .when_some(menu, |el, menu| {
+                // Keep the anchor in the row so it follows the virtual list. Draw
+                // the menu later so the list does not clip it at the sidebar edge.
+                el.child(div().absolute().top_0().left_full().ml_1().child(deferred(
+                    anchored().snap_to_window_with_margin(px(4.)).child(menu),
+                )))
+            })
+    }
+
+    fn navigation_menu(&self, id: &str, cx: &mut Context<Self>) -> AnyElement {
         let mut panel = column()
-            .mx_2()
-            .mb_2()
+            .id("navigation-menu")
+            .role(Role::Group)
+            .aria_label("Sidebar actions")
+            .audited()
+            .w(px(264.))
+            .occlude()
+            // On release, a second click on the trigger closes this menu instead
+            // of dismissing it on press and opening it again on release.
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    this.navigation.menu = None;
+                    cx.notify();
+                }),
+            )
             .p_2()
             .gap_2()
             .border_1()
             .border_color(rgb(colors().edge))
             .rounded_md()
             .bg(rgb(colors().panel));
-        // The status line owns the machine menu.
-        if id == "machines" {
-            return div().into_any_element();
-        }
         if let Some(path) = id.strip_prefix("project:") {
             let checkout = PathBuf::from(path);
             let select = checkout.clone();
@@ -742,8 +771,8 @@ impl Plait {
             .iter()
             .find(|thread| thread.id == *id)
         {
-            let rename = id.clone();
-            let archive = id.clone();
+            let rename = id.to_owned();
+            let archive = id.to_owned();
             let archived = thread.archived == Some(true);
             let worktrees = thread.checkout.clone();
             let tree = self.lists().worktree(&thread.checkout);
@@ -1106,7 +1135,6 @@ impl Plait {
             .child(self.actions(cx))
             .child(self.navigation_controls())
             .child(self.tree(cx))
-            .child(self.navigation_menu(cx))
             .child(div().px_2().child(self.open_project_row(cx)))
             .child(self.resize_handle(super::panels::Panel::Sidebar, cx))
     }

@@ -129,6 +129,91 @@ fn status_scenes(h: &mut Harness, suffix: &str) {
     h.update(|p, _, _| p.updates = Default::default());
 }
 
+#[cfg(debug_assertions)]
+#[core::prelude::v1::test]
+fn action_menus_stay_beside_their_rows() {
+    if !isolated("sidebar::action_menus_stay_beside_their_rows") {
+        return;
+    }
+    let scratch = std::env::temp_dir().join(format!("plait-sidebar-menu-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    let mut h = Harness::with_host(&repo, None, 900., 600., None);
+    h.connect(&repo, false);
+    h.update(|p, _, cx| {
+        p.sidebar = true;
+        p.host.connection.status.as_mut().unwrap().protocol_version = 3;
+        *p.host.connection.threads_mut() = (0..40)
+            .map(|i| ThreadSummary {
+                id: format!("sidebar-{i}"),
+                title: Some(format!("Thread {i}")),
+                checkout: repo.clone(),
+                ..Default::default()
+            })
+            .collect();
+        p.rebuild_projects(cx);
+    });
+    let bounds = |h: &mut Harness, label: &str| {
+        h.draw_a11y()
+            .nodes
+            .iter()
+            .find(|n| n.label.as_deref() == Some(label))
+            .unwrap_or_else(|| panic!("missing {label}"))
+            .bounds
+    };
+    let click = |h: &mut Harness, position| {
+        h.pointer(PlatformInput::MouseDown(MouseDownEvent {
+            button: MouseButton::Left,
+            position,
+            click_count: 1,
+            ..Default::default()
+        }));
+        h.pointer(PlatformInput::MouseUp(MouseUpEvent {
+            button: MouseButton::Left,
+            position,
+            click_count: 1,
+            ..Default::default()
+        }));
+    };
+    for (label, last) in [
+        ("Actions for plait project", false),
+        ("Actions for Thread 39", true),
+    ] {
+        if last {
+            h.update(|p, _, cx| {
+                let index = p.navigation_rows(cx).len() - 1;
+                p.navigation
+                    .scroll
+                    .scroll_to_item(index, ScrollStrategy::Nearest);
+            });
+        }
+        let trigger = bounds(&mut h, label);
+        let position = trigger.center();
+        click(&mut h, position);
+        let menu = bounds(&mut h, "Sidebar actions");
+        assert_eq!(
+            trigger,
+            bounds(&mut h, label),
+            "opening a menu moved its row"
+        );
+        assert_eq!(menu.left(), trigger.right() + px(4.));
+        assert!(
+            menu.top() <= position.y && menu.bottom() >= position.y,
+            "{menu:?} beside {trigger:?}"
+        );
+        assert!(menu.bottom() <= px(600.) && menu.right() <= px(900.));
+        if last {
+            let rename = bounds(&mut h, "Rename thread…").center();
+            click(&mut h, rename);
+            h.update(|p, _, _| assert_eq!(p.navigation.rename.as_ref().unwrap().0, "sidebar-39"));
+        } else {
+            click(&mut h, position);
+        }
+        h.update(|p, _, _| assert!(p.navigation.menu.is_none()));
+    }
+    drop(h);
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
 #[core::prelude::v1::test]
 fn navigation_sidebar_scenes() {
     if !isolated("sidebar::navigation_sidebar_scenes") {

@@ -71,7 +71,7 @@ The status line shows nonzero counts for working, finished and unread, failed, a
 
 ## Projects, threads, tabs, and drafts
 
-Opening a repository adds it to the sidebar. Selecting a thread switches its conversation, draft, and Git workspace together. Hovering or focusing a project row reveals **+** for a new thread; its **…** menu opens **Project settings…**, **Worktrees**, **Linear issues**, or hides the project (its host threads stay intact; use **Show Hidden Projects** in the **Thread** menu or the palette to list them again). Missing folders stay visible as **Missing** with readable history.
+Opening a repository adds it to the sidebar. Selecting a thread switches its conversation, draft, and Git workspace together. Click **…** on a project or thread to open its actions beside that row. On a project, you can open **Project settings…**, **Worktrees**, or **Linear issues**, or hide the project without removing its host threads. Use **Show Hidden Projects** in the **Thread** menu or the palette to list it again. Hover or focus a project row to show **+** for a new thread. Missing folders stay visible as **Missing** with readable history.
 
 Choose **New thread** to open a draft. **Needs me** shows only threads with unread activity, pending approvals, failures, or interrupted runs. Its count excludes archived threads. Select it again to clear the filter. **Find anything** opens the palette to search threads and commands. Expand a project to see its threads and their states, or fold it to see its count. **Open project…** is below the list.
 
