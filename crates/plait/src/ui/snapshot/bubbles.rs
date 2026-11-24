@@ -310,3 +310,68 @@ fn bubbles_folded_turns_draw_as_one_full_width_hint_row() {
         "Line style keeps the request row plus closing line, got {line_height:?}"
     );
 }
+
+#[core::prelude::v1::test]
+fn bubbles_keep_adjacent_work_rows_compact() {
+    if !isolated("bubbles::bubbles_keep_adjacent_work_rows_compact") {
+        return;
+    }
+    let repository = fixture_repository(
+        &PathBuf::from(std::env::var_os("HOME").unwrap()).join("bubble-work-spacing"),
+    );
+    let mut harness = Harness::with_host(&repository, None, 900., 600., None);
+    harness.connect(&repository, false);
+    use plait_client::{folding::DisplayRow, transcript::Slot};
+
+    harness.change_snapshot(|snapshot| {
+        finished_turn(snapshot);
+        let mut second_tool = snapshot.tools[0].clone();
+        second_tool.id = "t2".into();
+        snapshot.tools[1] = second_tool;
+        snapshot.messages.extend((0..20).map(|index| Message {
+            id: format!("later-{index}"),
+            role: MessageRole::Assistant,
+            text: "Later reply.".into(),
+            ..Default::default()
+        }));
+    });
+    let tool_index = |plait: &Plait, tool| {
+        plait
+            .workspace
+            .live_layout
+            .rows
+            .iter()
+            .position(|row| matches!(row, DisplayRow::Slot(Slot::Tool(ix)) if *ix == tool))
+            .expect("tool row")
+    };
+    harness.update(|plait, _, cx| {
+        plait.set_fold_earlier_turns(false, cx);
+        plait.set_turns(Turns::Bubbles, cx);
+        plait.workspace.live_scroll.scroll_to(ListOffset {
+            item_ix: tool_index(plait, 0),
+            offset_in_item: px(0.),
+        });
+    });
+    harness.draw();
+    let (first, second) = harness
+        .window
+        .update(&mut harness.cx, |plait, _, _| {
+            let tool_height = |tool| {
+                let index = tool_index(plait, tool);
+                plait
+                    .workspace
+                    .live_scroll
+                    .bounds_for_item(index)
+                    .expect("tool is visible")
+                    .size
+                    .height
+            };
+            (tool_height(0), tool_height(1))
+        })
+        .unwrap();
+    assert_eq!(
+        first - second,
+        px(12.),
+        "the first tool leads a work section by 14pt and its next tool by 2pt"
+    );
+}

@@ -1084,10 +1084,25 @@ impl Plait {
                 None => return div().into_any_element(),
             },
         };
-        let (top, bottom) = if self.preferences.value.turns == Turns::Bubbles {
-            (if request { 22. } else { 14. }, 0.)
-        } else {
-            (top, bottom)
+        let (top, bottom) = match self.preferences.value.turns {
+            Turns::Line => (top, bottom),
+            Turns::Bubbles if request => (22., 0.),
+            Turns::Bubbles
+                if matches!(
+                    slot,
+                    Slot::Tool(_) | Slot::Reasoning(_) | Slot::LiveReasoning
+                ) && index > 0
+                    && matches!(
+                        self.workspace.live_layout.rows.get(index - 1),
+                        Some(DisplayRow::Slot(
+                            Slot::Tool(_) | Slot::Reasoning(_) | Slot::LiveReasoning
+                        ))
+                    ) =>
+            {
+                // The section has 14 points above it; its own rows stay compact.
+                (top + bottom, 0.)
+            }
+            Turns::Bubbles => (14., 0.),
         };
         // The line starts with the first row: at the ring of a request, and
         // otherwise where the row's content begins, not in the space above it.
