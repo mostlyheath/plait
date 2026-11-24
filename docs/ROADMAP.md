@@ -13,12 +13,16 @@ for evidence and limits.
   Complete their verification and compatibility work.
 - Explore the prompt tree with mockups before agreeing its model and view.
   See [Host-first Plait](HOST-FIRST.md#the-prompt-tree).
-- Inspect the rebuilt desktop layout in the native app and fix what it shows.
-  The layout in the [design](../DESIGN.md) is built: sidebar rows and thread
-  marks, a status line, the message box, This turn beside the conversation,
-  folded earlier turns, a code size setting, and Work view with the thread
-  beside Changes, History, and Files panes. It was checked by tests and by
-  scenes rendered on Linux, not in the native app. See
+- Redraw the desktop as the [design](../DESIGN.md) sets out, in the order of
+  its [build order](../DESIGN.md#build-order), steps 10 to 26: new tokens
+  and controls; one sheet with one header in place of the tab row, workspace
+  bar, and status line; thread cards in the sidebar; a panel for Changes,
+  Files, and History in place of This turn and Work view; Every thread;
+  requests as bubbles, with the line kept as a setting; folded work; and the
+  approval in the message box's place. Every step is presentation only: no
+  change to the protocol, to stored state, to permissions, or to Git
+  writes. Each step is inspected in the native app before it merges. The
+  layout it replaces was released without that inspection; see
   [#130](https://github.com/mostlyheath/plait/issues/130).
 - Make the test suites reliable and faster. Several tests depend on timing and
   fail now and then on changes that do not touch them, and the macOS check
@@ -195,6 +199,14 @@ Live API verification remains open. See [Linear](LINEAR.md).
 - Add a browser, rendered documents, or a file editor.
 - Extend editor and terminal handoffs.
 - Show local usage totals with agreed accounting and storage.
+- Add to the thread list what a sidebar card cannot show today: each
+  thread's branch, when its run started, totals of what it changed, what it
+  is doing, and its pending approval. Send when a turn started and finished
+  with its record. See the [design](../DESIGN.md#needs-agreement).
+- Report, read-only, the agents a thread's harness starts itself. Plait
+  starts none and adds no orchestration.
+- Read provider limits and reset times, and say so when a limit ends a run.
+- Read pull-request and remote check state for a pushed branch.
 
 ## Performance goals
 
