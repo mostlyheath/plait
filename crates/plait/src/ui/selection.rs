@@ -20,7 +20,10 @@ use std::{
     rc::Rc,
 };
 
-actions!(plait, [CopySelection, HistoryStart, HistoryEnd]);
+actions!(
+    plait,
+    [CopySelection, QuoteSelection, HistoryStart, HistoryEnd]
+);
 
 pub(super) fn bind_keys(cx: &mut App) {
     // The composer binds Cmd-C in its own, deeper context and wins while it has focus.
@@ -403,18 +406,21 @@ impl Plait {
         let entity = cx.weak_entity();
         canvas(
             // Text paints after this and records itself for the new frame.
-            move |_, _, _| fresh.borrow_mut().clear(),
-            move |bounds, _, window, _| {
+            move |bounds, window, _| {
+                fresh.borrow_mut().clear();
+                window.insert_hitbox(bounds, HitboxBehavior::Normal)
+            },
+            move |bounds, surface, window, _| {
                 let (press_regions, press_entity) = (regions.clone(), entity.clone());
                 window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
-                    if phase != DispatchPhase::Bubble || event.button != MouseButton::Left {
+                    if phase != DispatchPhase::Bubble
+                        || event.button != MouseButton::Left
+                        || !surface.is_hovered(window)
+                    {
                         return;
                     }
-                    if !bounds.contains(&event.position) {
-                        return;
-                    }
-                    let hit = under(&press_regions.borrow(), event.position, window);
                     let (count, extend) = (event.click_count, event.modifiers.shift);
+                    let hit = under(&press_regions.borrow(), event.position, window);
                     let _ = press_entity.update(cx, |this, cx| {
                         this.press_text(hit, count, extend, window, cx)
                     });
@@ -666,6 +672,91 @@ impl Plait {
         Some(selection::text(blocks, &span)).filter(|text| !text.is_empty())
     }
 
+    fn selected_reply(&self, expected: Option<&str>) -> Option<&str> {
+        let selection = self.workspace.reading.selection.as_ref()?;
+        if self.settings_open
+            || self.workspace.tab != super::Workspace::Conversation
+            || self.host.thread.selected.as_deref() != Some(selection.thread.as_str())
+            || self.conversation_snapshot()?.id != selection.thread
+            || selection.anchor.owner != selection.head.owner
+        {
+            return None;
+        }
+        let Owner::Message(id) = &selection.anchor.owner else {
+            return None;
+        };
+        let id = id.as_ref();
+        if expected.is_some_and(|expected| id != expected) {
+            return None;
+        }
+        let row = *self.workspace.live_layout.row_of_message.get(id)?;
+        if self.work_open_at(row) == Some(false) {
+            return None;
+        }
+        // Two distinct carets can enclose only the gap between paragraphs.
+        let reading = &self.workspace.reading;
+        let span = reading.span.get()?;
+        let message = self.workspace.formatted.messages.get(id)?;
+        let blocks = message.blocks.get(span.start.block..=span.end.block)?;
+        blocks
+            .iter()
+            .zip(span.start.block..)
+            .any(|(block, index)| {
+                reading
+                    .selected(span.start.row, index, block, &(0..block.text.len()))
+                    .is_some()
+            })
+            .then_some(id)
+    }
+
+    pub(super) fn can_quote_reply(&self, id: &str, cx: &App) -> bool {
+        self.selected_reply(Some(id)).is_some()
+            && self
+                .visible_composer()
+                .is_some_and(|composer| composer.read(cx).accepts_quote())
+    }
+
+    pub(super) fn quote_reply_selection(
+        &mut self,
+        expected: Option<&str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.resolve_selection();
+        let Some(reply) = self.selected_reply(expected) else {
+            return false;
+        };
+        let Some(snapshot) = self.conversation_snapshot() else {
+            return false;
+        };
+        if !snapshot.messages.iter().any(|message| {
+            message.id == reply && message.role == plait_client::host::MessageRole::Assistant
+        }) {
+            return false;
+        }
+        let composer = self.visible_composer().cloned();
+        let (Some(text), Some(composer)) = (self.selected_text(), composer) else {
+            return false;
+        };
+        if let Some(snapshot) = &self.host.thread.snapshot
+            && self.host.thread.selected.as_deref() == Some(snapshot.id.as_str())
+            && let Some(approval) = &snapshot.pending_approval
+            && !text.is_empty()
+            && composer.read(cx).accepts_quote()
+        {
+            self.workspace
+                .show_composer_for_approval(approval.id.clone());
+        }
+        if !composer.update(cx, |composer, cx| {
+            composer.quote_selection(&text, window, cx)
+        }) {
+            return false;
+        }
+        self.clear_reading_selection();
+        cx.notify();
+        true
+    }
+
     pub(super) fn on_selection_actions(
         &self,
         root: Stateful<Div>,
@@ -699,6 +790,11 @@ impl Plait {
                 None => cx.propagate(),
             },
         ))
+        .on_action(cx.listener(|this, _: &QuoteSelection, window, cx| {
+            if !this.quote_reply_selection(None, window, cx) {
+                cx.propagate();
+            }
+        }))
     }
 
     /// The middle of the caret before `offset` of a block, where it was last

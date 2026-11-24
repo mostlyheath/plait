@@ -27,6 +27,8 @@ use std::{collections::BTreeMap, rc::Rc};
 pub(super) enum Place {
     /// A menu item and a command palette entry.
     Menu,
+    /// A command palette entry with an optional shortcut.
+    Palette,
     /// The same, starting a new group in its menu.
     MenuGroup,
     /// Shortcut only: movement that needs no menu item.
@@ -131,6 +133,7 @@ pub(super) const ACTIONS: &[AppAction] = &[
     entry("file.find", "Find", "View", Some("cmd-f"), Group, || Box::new(FindInFile)),
     entry("file.find_next", "Find Next", "View", Some("cmd-g"), Item, || Box::new(FindNext)),
     entry("file.find_previous", "Find Previous", "View", Some("cmd-shift-g"), Item, || Box::new(FindPrevious)),
+    entry("conversation.quote_selection", "Quote selection", "View", None, Place::Palette, || Box::new(super::selection::QuoteSelection)),
     entry("thread.next", "Next Thread", "View", Some("cmd-alt-down"), Group, || Box::new(NextThread)),
     entry("thread.next_needing_me", "Next Thread Needing Me", "View", Some("cmd-alt-j"), Item, || Box::new(NextThreadNeedingMe)),
     entry("thread.previous", "Previous Thread", "View", Some("cmd-alt-up"), Item, || Box::new(PreviousThread)),
@@ -262,7 +265,10 @@ fn winning_bindings(overrides: &KeyOverrides) -> Vec<bool> {
 /// The menu bar: one menu per category, in table order.
 fn menus() -> Vec<Menu> {
     let mut menus: Vec<(&str, Vec<MenuItem>)> = Vec::new();
-    for action in ACTIONS.iter().filter(|action| action.place != Hidden) {
+    for action in ACTIONS
+        .iter()
+        .filter(|action| matches!(action.place, Item | Group))
+    {
         if menus
             .last()
             .is_none_or(|(name, _)| *name != action.category)

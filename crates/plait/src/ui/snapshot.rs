@@ -67,6 +67,7 @@ mod mixed_tabs;
 mod overview;
 mod panel;
 mod pickers;
+mod quote_selection;
 mod running_mark;
 mod settings_modal;
 mod sheet;
@@ -2433,6 +2434,7 @@ fn walk(output: Option<&Path>) {
         reading_walk(&mut harness, &repository, suffix);
         bubbles::walk(&repository, output, suffix, width, height);
         finished_work::scenes(&repository, output, suffix, width, height);
+        quote_selection::scenes(&repository, output, suffix, width, height);
         code_size::walk(&mut harness, &repository, suffix);
         interface_font::walk(&mut harness, &repository, suffix);
         find::find_walk(&mut harness, &repository, suffix);

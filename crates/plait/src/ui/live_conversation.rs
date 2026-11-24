@@ -393,6 +393,7 @@ impl Plait {
                     .iter()
                     .any(|part| part.field == HistoryField::Text)
             });
+        let can_quote = !user && self.can_quote_reply(&message.id, cx);
         let copy = quiet_button(
             SharedString::from(format!("copy-message-{}", message.id)),
             if part {
@@ -402,6 +403,7 @@ impl Plait {
             },
             row_group(index),
         )
+        .when(can_quote, |el| el.opacity(1.))
         .aria_label(if part {
             "Copy this message part"
         } else {
@@ -424,7 +426,23 @@ impl Plait {
                     cx.write_to_clipboard(ClipboardItem::new_string(message.text.clone()));
                 }
             }
-        });
+        })
+        .h(px(AUTHOR_LINE));
+        let actions = row()
+            .gap_1()
+            .when(can_quote, |el| {
+                let reply = message.id.clone();
+                el.child(
+                    button("quote-selection", "Quote selection")
+                        .h(px(AUTHOR_LINE))
+                        .aria_keyshortcuts(self.shortcut_aria("conversation.quote_selection"))
+                        .block_mouse_except_scroll()
+                        .on_activate(cx, move |this, window, cx| {
+                            this.quote_reply_selection(Some(&reply), window, cx);
+                        }),
+                )
+            })
+            .child(copy);
         let id = (
             ElementId::from("live-message"),
             SharedString::from(message.id.clone()),
@@ -479,16 +497,12 @@ impl Plait {
                                 Turns::Line,
                                 if user { "You" } else { "Plait" },
                             ))
-                            .child(copy.h(px(AUTHOR_LINE))),
+                            .child(actions),
                     )
                     .child(body),
-                Turns::Bubbles => el.child(body).child(
-                    div()
-                        .absolute()
-                        .top(px(-14.))
-                        .right_0()
-                        .child(copy.h(px(AUTHOR_LINE))),
-                ),
+                Turns::Bubbles => el
+                    .child(body)
+                    .child(div().absolute().top(px(-14.)).right_0().child(actions)),
             })
             // A record stays on the open surface, never inside a request panel.
             .when_some(

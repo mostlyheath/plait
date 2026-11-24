@@ -139,3 +139,5 @@ Bindings defined in `crates/plait/src/ui/selection.rs`, `crates/plait/src/ui/fil
 | Enter / Shift-Enter | Find bar: jump to next / previous match |
 | Escape | Close Find bar, enlarged image overlay, or Settings modal |
 | Enter / Space | Activate focused control (including a folded turn, its work summary, or its recorded file list) or select a Worktrees lane |
+
+**Quote selection** is available in the command palette when text is selected within one reply. Bind it in **Settings → Keyboard** with the action ID `conversation.quote_selection`.
