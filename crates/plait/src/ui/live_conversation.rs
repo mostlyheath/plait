@@ -238,7 +238,7 @@ impl Plait {
         );
         super::thread_controls::MessageBoxParts {
             left: vec![
-                self.environment(
+                self.connection_details(
                     Some(model_label),
                     Some((self.approval_note(snapshot.map(|s| &**s)), colors().muted)),
                 )

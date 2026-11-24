@@ -1,4 +1,4 @@
-//! Window tab controls. The core owns every transition and presentation fact.
+//! Thread tabs and the tab list. The core owns every transition and presentation fact.
 use super::{Plait, theme::*, thread_controls::TextTooltip};
 use gpui::{prelude::*, *};
 use plait_client::tabs::{
@@ -10,29 +10,18 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-const STRIP_HEIGHT: f32 = 44.;
-
-/// Room the traffic lights take at the bar's left, and the inset that is left
-/// in full screen, where macOS hides them.
+pub(super) const HEADER_HEIGHT: f32 = 46.;
 const LIGHTS_INSET: f32 = 84.;
 const FULLSCREEN_INSET: f32 = 8.;
-/// The sidebar toggle and the space after it.
-const TOGGLE_WIDTH: f32 = 32.;
-/// The `+` button and the space before it.
 const NEW_TAB_WIDTH: f32 = 32.;
-/// The least empty bar kept at the right so the window can always be moved.
-const DRAG_MIN: f32 = 48.;
+const DRAG_MIN: f32 = 32.;
 
-/// Where the first tab starts. The lights and the toggle always fit before
-/// it; an open sidebar pushes it to the sidebar's edge so tabs sit over the
-/// content they switch, not over the thread list.
-fn strip_start(fullscreen: bool, sidebar: Option<f32>) -> f32 {
-    let lead = if fullscreen {
+pub(super) fn lights_inset(fullscreen: bool) -> f32 {
+    if fullscreen {
         FULLSCREEN_INSET
     } else {
         LIGHTS_INSET
-    } + TOGGLE_WIDTH;
-    sidebar.map_or(lead, |width| width.max(lead))
+    }
 }
 
 static WINDOW_IDS: AtomicU64 = AtomicU64::new(1);
@@ -77,8 +66,10 @@ pub(super) struct Tabs {
     layout: Option<TabLayout>,
     /// The most urgent state among hidden tabs, for the overflow summary's accent.
     overflow_state: Option<TabState>,
-    /// The window width and strip start the layout was measured for.
-    measured: Option<(f32, f32)>,
+    /// Bounds of the flexible slot between the header's other controls.
+    slot: Option<Bounds<Pixels>>,
+    measured: Option<(f32, usize)>,
+    overflow_width: f32,
     first_visible: usize,
     pub list_open: bool,
     list_cursor: Option<TabId>,
@@ -129,7 +120,9 @@ impl Default for Tabs {
             draft_row: None,
             layout: None,
             overflow_state: None,
+            slot: None,
             measured: None,
+            overflow_width: 0.,
             first_visible: 0,
             list_open: false,
             list_cursor: None,
@@ -523,44 +516,38 @@ impl Plait {
         cx.notify();
     }
 
-    /// Only width/metadata changes run layout; steady frames reuse its result.
-    /// Where the first tab starts in this window, as drawn now.
-    fn tab_strip_start(&self, window: &Window) -> f32 {
-        let sidebar = self
-            .visible_sidebar()
-            .then(|| self.panel_width(super::panels::Panel::Sidebar));
-        strip_start(window.is_fullscreen(), sidebar)
+    pub(super) fn sidebar_toggle(&self, cx: &mut Context<Self>) -> Control {
+        let keys = self.shortcut_label("view.toggle_sidebar");
+        let tip = format!("Toggle sidebar  {keys}").trim_end().to_owned();
+        icon_button("toggle-sidebar", "panel", "Toggle sidebar")
+            .map(|el| self.covered_tab_control(el))
+            .aria_keyshortcuts(self.shortcut_aria("view.toggle_sidebar"))
+            .tooltip(move |_, cx| tooltip(tip.clone(), cx))
+            .on_activate(cx, |this, window, cx| this.toggle_sidebar(window, cx))
     }
 
-    /// The window width and strip start that decide the tab layout.
-    fn tab_row_key(&self, window: &Window) -> (f32, f32) {
-        (
-            f32::from(window.viewport_size().width),
-            self.tab_strip_start(window),
-        )
-    }
-
-    fn measure_tabs(&mut self, window: &Window) {
-        let key = self.tab_row_key(window);
+    pub(super) fn measure_tabs(&mut self, window: &Window) {
+        let width = self
+            .tabs
+            .slot
+            .map_or(self.sheet_width(), |bounds| bounds.size.width.into());
+        let limit = if width > 760. { 2 } else { 1 };
+        let key = (width, limit);
         if self.tabs.measured == Some(key) {
             return;
         }
-        let (width, start) = key;
-        let available = width - start - NEW_TAB_WIDTH - DRAG_MIN;
+        let available = (width - NEW_TAB_WIDTH - DRAG_MIN).max(0.);
         let widths = |overflow| RowWidths {
             available,
             minimum_tab: 128.,
             maximum_tab: 240.,
             overflow,
         };
-        let limit = if width > super::EXPANDED_CHROME_WIDTH {
-            2
-        } else {
-            1
-        };
         let initial = model::layout(&self.tabs.rows, widths(44.), self.tabs.first_visible, limit);
         let overflow = (measure(&initial.overflow_label, window) + 16.)
-            .clamp(44., if limit == 2 { 164. } else { 140. });
+            .clamp(44., if limit == 2 { 164. } else { 140. })
+            .min((available - 48.).max(44.));
+        self.tabs.overflow_width = overflow;
         let layout = model::layout(
             &self.tabs.rows,
             widths(overflow),
@@ -594,17 +581,11 @@ impl Plait {
     }
 
     pub(super) fn tab_row(&mut self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let key = self.tab_row_key(window);
-        let redraw = self.tabs.strip_theme != colors().bg
-            || self.tabs.measured != Some(key)
-            || self.tabs.drag.is_some();
+        let last = self.tabs.measured;
         self.measure_tabs(window);
-        let (_, start) = key;
-        let inset = if window.is_fullscreen() {
-            FULLSCREEN_INSET
-        } else {
-            LIGHTS_INSET
-        };
+        let redraw = self.tabs.strip_theme != colors().bg
+            || last != self.tabs.measured
+            || self.tabs.drag.is_some();
         self.tabs.strip_theme = colors().bg;
         let layout = self.tabs.layout.as_ref().expect("measured tab row");
         let strip = self
@@ -618,39 +599,35 @@ impl Plait {
         if redraw {
             strip.update(cx, |_, cx| cx.notify());
         }
-        // Not `cached`: a view reused from the last frame contributes no
-        // accessibility nodes, so the tabs would vanish from them.
-        // It may shrink like the fixed-size view it replaces, so the row lays
-        // out exactly as it did.
+        // The strip contributes accessibility nodes on every frame.
         let strip = div()
             .h_full()
             .w(px(layout.visible.len() as f32 * layout.tab_width))
             .min_w_0()
+            .overflow_hidden()
             .child(strip);
-        let bar = self
-            .window_drag(row(), cx)
-            .id("window-tab-bar")
-            .h(px(STRIP_HEIGHT))
-            .flex_shrink_0()
+        let owner = cx.weak_entity();
+        let probe = canvas(
+            move |bounds, _, cx| {
+                let _ = owner.update(cx, |this, cx| {
+                    if this.tabs.slot != Some(bounds) {
+                        this.tabs.slot = Some(bounds);
+                        cx.notify();
+                    }
+                });
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .size_full();
+        let bar = row()
+            .relative()
+            .flex_1()
+            .min_w_0()
+            .h_full()
             .gap_0()
-            .bg(rgb(colors().rail))
-            // The lead holds the lights and the toggle; its empty rest is bar,
-            // so it moves the window like the right end does.
-            .child(
-                row()
-                    .w(px(start))
-                    .h_full()
-                    .flex_shrink_0()
-                    .pl(px(inset))
-                    .when(self.visible_sidebar(), |lead| lead.justify_end().pr(px(8.)))
-                    .child(
-                        icon_button("toggle-sidebar", "panel", "Toggle sidebar")
-                            .map(|el| self.covered_tab_control(el))
-                            .aria_keyshortcuts(self.shortcut_aria("view.toggle_sidebar"))
-                            .tooltip(|_, cx| tooltip("Toggle sidebar (⌘B)".into(), cx))
-                            .on_activate(cx, |this, window, cx| this.toggle_sidebar(window, cx)),
-                    ),
-            )
+            .overflow_hidden()
+            .child(probe)
             .child(strip)
             .when(!layout.hidden.is_empty(), |bar| {
                 let hover = layout.overflow_hover.clone();
@@ -658,16 +635,11 @@ impl Plait {
                 bar.child(
                     button("tab-overflow", layout.overflow_label.clone())
                         .font_features(tabular_nums())
-                        // Share the tab titles' line: tabs sit 3 points below the bar's centre.
-                        .relative()
-                        .top(px(3.))
-                        .ml_1()
+                        .w(px(self.tabs.overflow_width))
+                        .px_1()
+                        .justify_center()
                         .when_some(accent, |el, accent| el.text_color(rgb(accent)))
-                        .max_w(px(if self.panels.viewport > super::EXPANDED_CHROME_WIDTH {
-                            164.
-                        } else {
-                            140.
-                        }))
+                        .truncate()
                         .overflow_hidden()
                         .aria_label("Show all tabs")
                         .map(|el| self.covered_tab_control(el))
@@ -684,9 +656,10 @@ impl Plait {
                     .tooltip(|_, cx| tooltip("New thread tab (⌘T)".into(), cx))
                     .on_activate(cx, |this, window, cx| this.open_draft(window, cx)),
             )
-            .child(div().flex_1().min_w(px(DRAG_MIN)).h_full());
-        bar.on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, cx| {
-            let left = this.tab_strip_start(window);
+            .child(div().flex_1().h_full());
+        bar.on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
+            let Some(bounds) = this.tabs.slot else { return };
+            let left = f32::from(bounds.origin.x);
             let Some(drag) = this.tabs.drag.as_mut() else {
                 return;
             };
@@ -745,7 +718,7 @@ impl Plait {
             .gap_0()
             .min_w_0()
             .h_full()
-            .items_end();
+            .items_center();
         for (offset, meta) in self.tabs.rows[layout.first_visible..]
             .iter()
             .take(layout.visible.len())
@@ -794,26 +767,24 @@ impl Plait {
             .tab_stop(true)
             .map(|el| self.covered_tab_control(el))
             .cursor_pointer()
-            .w(px(width))
-            .h(px(34.))
+            .w(px((width - 3.).max(0.)))
+            .mr(px(3.))
+            .h(px(30.))
             .relative()
             .flex_shrink_0()
             .min_w_0()
             .gap(px(6.))
             .pl(px(8.))
             .pr(px(6.))
-            .rounded_t(px(6.))
+            .rounded(px(CONTROL_CORNER))
             .border_1()
             .border_color(if meta.active {
-                rgb(colors().border).into()
+                rgb(colors().edge).into()
             } else {
                 transparent_black()
             })
-            .bg(rgb(if meta.active {
-                colors().bg
-            } else {
-                colors().rail
-            }))
+            .when(meta.active, |el| el.bg(rgb(colors().selected)))
+            .when(!meta.active, |el| el.active(|s| pressed(s, Tone::Ghost)))
             .hover(|s| s.bg(rgba(colors().hover)))
             .focus_visible(|s| s.border_color(rgb(colors().blue)))
             .text_size(px(TYPE_CONTROL_SIZE))
@@ -850,17 +821,6 @@ impl Plait {
             .on_activate(cx, move |this, window, cx| {
                 this.activate_tab(id, window, cx)
             })
-            .when(attention, |el| {
-                el.child(
-                    div()
-                        .absolute()
-                        .top_0()
-                        .left(px(6.))
-                        .right(px(6.))
-                        .h(px(1.))
-                        .bg(rgb(tint(meta.state, meta.active || meta.word == "Ready"))),
-                )
-            })
             .when(insertion, |el| {
                 el.child(
                     div()
@@ -892,19 +852,8 @@ impl Plait {
                     .min_w_0()
                     .truncate()
                     .when(meta.active, |el| el.text_color(rgb(colors().strong)))
-                    .child(meta.title.clone()),
+                    .child(meta.title.replace(['\r', '\n'], " ")),
             )
-            .when(!meta.word.is_empty(), |el| {
-                el.child(
-                    tag(
-                        "tab-state",
-                        meta.word,
-                        tint(meta.state, meta.active || meta.word == "Ready"),
-                    )
-                    .text_size(px(11.))
-                    .flex_shrink_0(),
-                )
-            })
             .child(self.tab_close_control(id, &meta.title, close_hover, close, group, cx))
     }
 
@@ -973,7 +922,9 @@ impl Plait {
             .aria_label("All open tabs")
             .audited()
             .absolute()
-            .top(px(STRIP_HEIGHT))
+            .top(px(
+                HEADER_HEIGHT + if self.visible_sidebar() { 9. } else { 0. }
+            ))
             .right(px(48.))
             .w(px(320.))
             .max_h(px(336.))
@@ -1112,13 +1063,9 @@ mod tests {
     }
 
     #[core::prelude::v1::test]
-    fn tabs_start_at_the_sidebar_edge_but_clear_the_lights() {
-        assert_eq!(strip_start(false, None), 116.);
-        assert_eq!(strip_start(true, None), 40.);
-        assert_eq!(strip_start(false, Some(280.)), 280.);
-        assert_eq!(strip_start(true, Some(280.)), 280.);
-        // A sidebar narrower than the lead never puts tabs under the toggle.
-        assert_eq!(strip_start(false, Some(100.)), 116.);
+    fn a_hidden_sidebar_clears_the_native_lights() {
+        assert_eq!(lights_inset(false), 84.);
+        assert_eq!(lights_inset(true), 8.);
     }
 
     #[core::prelude::v1::test]

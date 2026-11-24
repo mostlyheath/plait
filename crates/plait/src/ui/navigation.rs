@@ -1457,6 +1457,14 @@ impl Plait {
             .w(px(self.panel_width(super::panels::Panel::Sidebar)))
             .flex_shrink_0()
             .bg(rgb(colors().rail))
+            .child(
+                self.window_drag(row(), cx)
+                    .h(px(44.))
+                    .flex_shrink_0()
+                    .pr(px(8.))
+                    .justify_end()
+                    .child(self.sidebar_toggle(cx)),
+            )
             .child(self.actions(cx))
             .child(self.navigation_controls())
             .child(self.tree(cx))
@@ -1466,6 +1474,14 @@ impl Plait {
             .when(self.navigation.menu.as_deref() == Some("machines"), |el| {
                 el.child(self.machine_menu(cx))
             })
-            .child(self.resize_handle(super::panels::Panel::Sidebar, cx))
+            .child(
+                div()
+                    .absolute()
+                    .right_0()
+                    .top(px(44.))
+                    .bottom_0()
+                    .w(px(super::panels::HANDLE))
+                    .child(self.resize_handle(super::panels::Panel::Sidebar, cx)),
+            )
     }
 }

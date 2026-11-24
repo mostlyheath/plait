@@ -20,7 +20,12 @@ pub(super) fn click(harness: &mut Harness, x: f32, y: f32) {
 }
 
 pub(super) fn walk(harness: &mut Harness, repository: &Path, suffix: &str) {
+    let before = harness
+        .window
+        .update(&mut harness.cx, |p, _, _| p.preferences.value.thread_tabs)
+        .unwrap();
     harness.connect(repository, false);
+    harness.update(|p, _, _| super::tabs::show_tabs(p));
     harness.change_snapshot(|snapshot| {
         snapshot.live_text = "Sample streaming text continues arriving.".into();
         snapshot.messages[1].text =
@@ -37,7 +42,10 @@ pub(super) fn walk(harness: &mut Harness, repository: &Path, suffix: &str) {
     harness.connect(repository, true);
     harness.update(|plait, window, cx| plait.show_settings(true, window, cx));
     harness.capture(&format!("tabs-modal-approval-shield-{suffix}"));
-    harness.update(|plait, window, cx| plait.show_settings(false, window, cx));
+    harness.update(|plait, window, cx| {
+        plait.show_settings(false, window, cx);
+        plait.preferences.value.thread_tabs = before;
+    });
 }
 
 #[core::prelude::v1::test]
