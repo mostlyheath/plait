@@ -1321,7 +1321,7 @@ Tone::Filled,
 
     pub(super) fn live_conversation(
         &self,
-        wide: bool,
+        _wide: bool,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -1545,10 +1545,8 @@ Tone::Filled,
             .flex_1()
             .min_h_0()
             .items_stretch()
-            .child(main)
-            .when(self.shows_inspector(wide), |el| {
-                el.child(self.inspector(cx))
-            })
+            .when(!self.panel_fills(), |el| el.child(main))
+            .when(self.panel_is_open(), |el| el.child(self.review_panel(cx)))
     }
 }
 

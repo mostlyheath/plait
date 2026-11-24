@@ -341,8 +341,16 @@ impl Plait {
             self.workspace.turn_review.current = *compare_current;
         }
         let focus = bookmark.focus;
-        let view = bookmark.view;
+        let view = Workspace::Conversation;
         self.install_view_locations(bookmark, cx);
+        if let Some(target) = self.tabs.model.panel().and_then(|p| p.recorded.clone()) {
+            self.workspace
+                .turn_records
+                .selection
+                .earlier(&target.original);
+            self.workspace.turn_review.target = Some(target);
+            self.workspace.turn_review.window = Some(window.window_handle());
+        }
         self.present_workspace(view, window, cx);
         if self
             .tabs

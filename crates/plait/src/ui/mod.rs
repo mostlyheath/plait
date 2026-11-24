@@ -34,6 +34,7 @@ mod navigation_host;
 mod new_thread;
 mod new_thread_view;
 mod palette;
+mod panel;
 mod panels;
 mod permissions;
 mod remote_browser;
@@ -60,7 +61,6 @@ mod tab_persistence;
 mod tabs;
 mod text_field;
 pub mod theme;
-mod this_turn;
 mod thread_controls;
 mod thread_files;
 mod thread_workspace;
@@ -797,66 +797,6 @@ impl Plait {
         window.viewport_size().width > px(WIDE_WINDOW)
     }
 
-    /// This turn beside the conversation: wide windows, unless hidden.
-    pub(super) fn shows_inspector(&self, wide: bool) -> bool {
-        wide && !self.worktrees_visible()
-            && self.tabs.model.active().is_some()
-            && !self.preferences.value.hide_inspector
-    }
-
-    /// Show or hide This turn and remember the choice. A narrow window
-    /// has no room for it, so the toggle says where Git is instead.
-    fn toggle_inspector(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.draws_work() {
-            return;
-        }
-        if !Self::wide(window) {
-            self.workspace.inspector_note = !self.workspace.inspector_note;
-            cx.notify();
-            return;
-        }
-        self.workspace.inspector_note = false;
-        let mut value = self.preferences.value.clone();
-        value.hide_inspector = !value.hide_inspector;
-        self.set_preferences(value, jump::PreferenceGroup::View, cx);
-    }
-
-    fn inspector_note(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        row()
-            .id("inspector-note")
-            .role(Role::Group)
-            .aria_label("This turn unavailable at this window width")
-            .audited()
-            .flex_shrink_0()
-            .px_4()
-            .py_2()
-            .gap_3()
-            .border_b_1()
-            .border_color(rgb(colors().border))
-            .text_size(px(12.))
-            .child(div().flex_1().min_w_0().text_color(rgb(colors().muted)).child(a11y_text(
-                "inspector-note-detail",
-                format!(
-                    "This turn needs a window wider than {WIDE_WINDOW} points. Git status and diffs are in Changes."
-                ),
-            )))
-            .child(
-                toned_button("inspector-note-changes", "Show Changes", Tone::Filled).on_activate(
-                    cx,
-                    |this, window, cx| {
-                        this.workspace.inspector_note = false;
-                        this.show_tab(Workspace::Changes, window, cx);
-                    },
-                ),
-            )
-            .child(
-                button("inspector-note-dismiss", "Dismiss").on_activate(cx, |this, _, cx| {
-                    this.workspace.inspector_note = false;
-                    cx.notify();
-                }),
-            )
-    }
-
     fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // Keep the shortcut context alive when its focused child is removed.
         window.focus(&self.focus, cx);
@@ -870,8 +810,30 @@ impl Plait {
     }
 
     fn show_tab(&mut self, tab: Workspace, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.route_work_tab(tab, window, cx) {
-            self.present_workspace(tab, window, cx);
+        if self.route_work_tab(tab, window, cx)
+            || self.worktrees_visible()
+            || !self.ensure_view_tab()
+        {
+            return;
+        }
+        let Some(panel) = self.tabs.model.panel_mut() else {
+            return;
+        };
+        use plait_client::panel::PanelKind;
+        match tab {
+            Workspace::Conversation => panel.close(),
+            Workspace::Changes => panel.open_on(PanelKind::Changes),
+            Workspace::History => panel.open_on(PanelKind::History),
+            Workspace::Files => panel.open_on(PanelKind::Files),
+        }
+        self.present_workspace(Workspace::Conversation, window, cx);
+        if tab == Workspace::Changes {
+            self.sync_work_scope(self.panel_recorded(), window, cx);
+        }
+        if tab == Workspace::Conversation {
+            window.focus(&self.focus, cx);
+        } else {
+            window.focus(&self.work_focus[self.panel_focus_kind() as usize], cx);
         }
     }
 
@@ -945,6 +907,7 @@ impl Plait {
             self.refresh_turn_review(cx);
         }
         if tab == Workspace::History
+            || self.panel_kind() == Some(plait_client::panel::PanelKind::History)
             || work.is_some() && self.remembers_kind(plait_client::panes::PaneKind::History)
         {
             self.state.repository.request_history();
@@ -962,6 +925,7 @@ impl Plait {
             self.state.repository.leave_history();
         }
         if tab == Workspace::Files
+            || self.panel_kind() == Some(plait_client::panel::PanelKind::Files)
             || work.is_some() && self.remembers_kind(plait_client::panes::PaneKind::Files)
         {
             self.check_file(cx);
@@ -1066,26 +1030,7 @@ impl Plait {
                     }),
             )
             .children(self.cleanup_control(cx))
-            .when(!self.draws_work(), |el| el.child(self.workspace_switch(cx)))
-            .when(self.tabs.model.work().is_some(), |el| {
-                el.child(self.work_switch(cx))
-            })
-            .when(!self.draws_work(), |el| {
-                el.child(
-                    icon_button(
-                        "toggle-inspector",
-                        "panel-right",
-                        if wide {
-                            "Toggle This Turn"
-                        } else {
-                            "This turn (needs a wider window)"
-                        },
-                    )
-                    .map(|el| self.covered_tab_control(el))
-                    .aria_keyshortcuts(self.shortcut_aria("view.toggle_inspector"))
-                    .on_activate(cx, |this, window, cx| this.toggle_inspector(window, cx)),
-                )
-            })
+            .child(self.workspace_switch(cx))
             .into_any_element()
     }
 
@@ -1323,7 +1268,7 @@ impl Render for Plait {
                 cx.listener(|this, _: &ToggleSidebar, window, cx| this.toggle_sidebar(window, cx)),
             )
             .on_action(
-                cx.listener(|this, _: &ToggleWorkView, window, cx| this.toggle_work(window, cx)),
+                cx.listener(|this, _: &ToggleWorkView, window, cx| this.fill_panel(window, cx)),
             )
             .when(!self.settings_open && self.draws_work(), |el| {
                 el.on_action(cx.listener(|this, _: &FocusNextPane, window, cx| {
@@ -1347,9 +1292,9 @@ impl Render for Plait {
                     this.pane_command(PaneCommand::Close, window, cx)
                 }))
             })
-            .on_action(cx.listener(|this, _: &ToggleInspector, window, cx| {
-                this.toggle_inspector(window, cx)
-            }))
+            .on_action(
+                cx.listener(|this, _: &ToggleInspector, window, cx| this.toggle_panel(window, cx)),
+            )
             .on_action(cx.listener(|this, _: &RenameThread, window, cx| {
                 if let Some(id) = this.host.thread.selected.clone() {
                     this.begin_rename(id, window, cx);
@@ -1609,10 +1554,6 @@ impl Render for Plait {
                             })
                             .when_some(self.build_progress_bar(cx), |el, bar| el.child(bar))
                             .when_some(self.creation_bar(cx), |el, bar| el.child(bar))
-                            .when(
-                                self.workspace.inspector_note && !wide && !self.draws_work(),
-                                |el| el.child(self.inspector_note(cx)),
-                            )
                             .child(
                                 column()
                                     .relative()

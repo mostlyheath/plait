@@ -263,8 +263,10 @@ impl Plait {
             .work_mut()
             .is_some_and(|w| w.route(Workspace::Files, visible));
         if !routed {
-            self.pause_conversation(None, cx);
-            self.workspace.tab = Workspace::Files;
+            if let Some(panel) = self.tabs.model.panel_mut() {
+                panel.open_on(plait_client::panel::PanelKind::Files);
+            }
+            self.workspace.tab = Workspace::Conversation;
         }
         self.workspace.restore_pending[3] = false;
         let root = self.file_root();
@@ -351,6 +353,7 @@ impl Plait {
     /// Reread the open file if its size or time changed. Cheap: one stat.
     pub(super) fn check_file(&mut self, cx: &mut Context<Self>) {
         if self.workspace.tab != Workspace::Files
+            && !self.shows_kind(plait_client::panes::PaneKind::Files)
             && !self.remembers_kind(plait_client::panes::PaneKind::Files)
         {
             return;

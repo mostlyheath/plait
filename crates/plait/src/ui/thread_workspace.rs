@@ -44,7 +44,6 @@ pub(super) struct ThreadWorkspace {
     pub(super) turn_review: turn_review::TurnReview,
     pub(super) reveal: live_conversation::Reveals,
     /// The inspector toggle was used on a window too narrow to show it.
-    pub(super) inspector_note: bool,
     pub(super) thread_controls: thread_controls::ThreadControls,
     pub(super) expanded_live_tools: HashSet<String>,
     pub(super) reading: selection::Reading,
@@ -84,7 +83,6 @@ impl ThreadWorkspace {
             turn_records: Default::default(),
             turn_review: Default::default(),
             reveal: Default::default(),
-            inspector_note: false,
             thread_controls: Default::default(),
             expanded_live_tools: HashSet::new(),
             reading: Default::default(),

@@ -285,11 +285,13 @@ impl Plait {
             self.open_thread_file(path.clone(), window, cx);
             return;
         }
-        if self.draws_work() {
-            self.workspace
-                .turn_records
-                .selection
-                .earlier(&target.original);
+        self.workspace
+            .turn_records
+            .selection
+            .earlier(&target.original);
+        if let Some(panel) = self.tabs.model.panel_mut() {
+            panel.select_scope(plait_client::panel::Scope::ThisTurn);
+            panel.recorded = Some(target.clone());
         }
         self.clear_turn_review();
         self.workspace.turn_review.window = Some(window.window_handle());
@@ -301,8 +303,8 @@ impl Plait {
             self.refresh_turn_review(cx);
         }
         self.show_tab(Workspace::Changes, window, cx);
-        if !self.draws_work() {
-            window.focus(&self.focus, cx);
+        if self.panel_is_open() {
+            self.refresh_turn_review(cx);
         }
         if self.workspace.turn_review.older {
             self.workspace.turn_review.error = Some((
@@ -331,6 +333,9 @@ impl Plait {
         self.workspace.restore_pending[1] = false;
         if let Some(target) = self.workspace.turn_review.target.as_mut() {
             target.path = Some(path);
+            if let Some(panel) = self.tabs.model.panel_mut() {
+                panel.recorded = Some(target.clone());
+            }
         }
         self.workspace.turn_review.selected = Some(index);
         self.workspace.turn_review.diff = None;

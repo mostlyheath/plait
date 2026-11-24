@@ -1,36 +1,8 @@
-use super::{Plait, panels::Panel, theme::*};
+use super::{Plait, theme::*};
 use gpui::{prelude::*, *};
 use plait_client::host::ApprovalMode;
 
 impl Plait {
-    /// Git for the checkout beside the conversation on wide windows.
-    pub(super) fn inspector(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        column()
-            .relative()
-            .w(px(self.panel_width(Panel::Inspector)))
-            .flex_shrink_0()
-            .border_l_1()
-            .border_color(rgb(colors().border))
-            .bg(rgb(colors().rail))
-            .child(if let Some(panel) = self.this_turn(cx) {
-                panel
-            } else {
-                column()
-                    .flex_1()
-                    .min_h_0()
-                    .child(
-                        row()
-                            .h(px(36.))
-                            .px_3()
-                            .flex_shrink_0()
-                            .child(section_label("inspector-working-tree", "Working tree")),
-                    )
-                    .child(self.file_panel(true, cx))
-                    .into_any_element()
-            })
-            .child(self.resize_handle(Panel::Inspector, cx))
-    }
-
     /// What to say, and offer, when no thread is selected.
     fn idle_prompt(&self) -> (&'static str, String, Option<&'static str>) {
         let machine = &self.active_project().machines[0].name;
@@ -68,7 +40,7 @@ impl Plait {
     }
 
     /// The workspace before a thread is chosen. Nothing here runs an agent.
-    pub(super) fn idle(&self, wide: bool, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn idle(&self, _wide: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let (title, detail, action) = self.idle_prompt();
         // The action sits directly under its message, inside the centered group.
         let mut body = empty(title, detail);
@@ -96,17 +68,17 @@ impl Plait {
             .flex_1()
             .min_h_0()
             .items_stretch()
-            .child(
-                column().flex_1().min_w_0().min_h_0().child(body).child(
-                    div()
-                        .flex_shrink_0()
-                        .px_6()
-                        .pb_3()
-                        .child(self.environment(self.new_thread_note(), None)),
-                ),
-            )
-            .when(self.shows_inspector(wide), |el| {
-                el.child(self.inspector(cx))
+            .when(!self.panel_fills(), |el| {
+                el.child(
+                    column().flex_1().min_w_0().min_h_0().child(body).child(
+                        div()
+                            .flex_shrink_0()
+                            .px_6()
+                            .pb_3()
+                            .child(self.environment(self.new_thread_note(), None)),
+                    ),
+                )
             })
+            .when(self.panel_is_open(), |el| el.child(self.review_panel(cx)))
     }
 }

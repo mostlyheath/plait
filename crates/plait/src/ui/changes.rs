@@ -994,11 +994,12 @@ impl Plait {
 
     pub(super) fn count_work_files(&mut self, cx: &mut Context<Self>) {
         self.workspace.work_counts.clear();
-        if !self
-            .tabs
-            .model
-            .work()
-            .is_some_and(|w| w.open && !w.recorded)
+        if self.panel_kind() != Some(plait_client::panel::PanelKind::Changes)
+            && !self
+                .tabs
+                .model
+                .work()
+                .is_some_and(|w| w.open && !w.recorded)
         {
             return;
         }
@@ -1102,10 +1103,15 @@ impl Plait {
             self.state.repository.selected_diff().map(|d| d.file)
         };
         // Page the chips around the selection; a large checkout only draws visible files.
-        let page = ((width - 240.) / 120.).floor().max(1.) as usize;
+        let page = 2 * (width / 120.).floor().max(1.) as usize;
         let start = selected.unwrap_or(0) / page * page;
         let end = (start + page).min(count);
-        let mut chips = row().flex_1().min_w_0().overflow_hidden();
+        let mut chips = row()
+            .id("panel-file-chips")
+            .flex_wrap()
+            .max_h(px(64.))
+            .min_w_0()
+            .overflow_y_scroll();
         if start > 0 {
             chips = chips.child(
                 button("work-prev-files", "‹")
@@ -1137,6 +1143,8 @@ impl Plait {
             };
             chips = chips.child(
                 nav_row(("work-file", index), path, selected == Some(index))
+                    .w_auto()
+                    .max_w(px(160.))
                     .aria_selected(selected == Some(index))
                     .min_w_0()
                     .child(div().truncate().child(name))
@@ -1167,7 +1175,36 @@ impl Plait {
         let body = column()
             .flex_1()
             .min_h_0()
-            .child(row().child(chips).child(switch))
+            .child(
+                row()
+                    .min_h(px(40.))
+                    .flex_wrap()
+                    .gap_1()
+                    .child(switch)
+                    .child(tag("panel-count", format!("{count} files"), colors().muted))
+                    .when_some(
+                        self.workspace
+                            .turn_review
+                            .record
+                            .as_ref()
+                            .filter(|_| recorded),
+                        |el, r| el.child(tag("panel-totals", r.counts.clone(), colors().subtle)),
+                    )
+                    .when(recorded, |el| el.children(self.panel_turn_heading(cx)))
+                    .when(
+                        !recorded && self.state.repository.selected_diff().is_some(),
+                        |el| {
+                            el.child(super::ways_out::editor_button(
+                                "panel-editor",
+                                "selected file",
+                                self.shortcut_aria("file.open_in_editor"),
+                                self.host_is_local(),
+                                cx,
+                            ))
+                        },
+                    ),
+            )
+            .child(chips)
             .when(self.workspace.diff_find.open, |el| {
                 el.child(self.find_bar(super::file_view::FindIn::Changes, cx))
             });
