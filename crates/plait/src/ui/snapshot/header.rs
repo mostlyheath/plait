@@ -105,7 +105,6 @@ pub(super) fn walk(output: Option<&Path>) {
         capture_both(&mut h, &format!("header-tabs-{suffix}"));
         tabs::install(&mut h, 20);
         h.capture(&format!("header-tabs-overflow-{suffix}"));
-        h.update(|p, _, _| p.preferences.value.thread_tabs = Some(ThreadTabs::Hide));
         worktrees_view::install(&mut h, 3);
         h.capture(&format!("header-worktrees-{suffix}"));
         #[cfg(debug_assertions)]
@@ -150,6 +149,36 @@ fn header_forms() {
     if isolated("header::header_forms") {
         walk(None);
     }
+}
+
+#[cfg(debug_assertions)]
+#[core::prelude::v1::test]
+fn non_thread_views_keep_their_title_with_tabs_enabled() {
+    if !isolated("header::non_thread_views_keep_their_title_with_tabs_enabled") {
+        return;
+    }
+    let mut h = fixture(None, 900., 600.);
+    h.update(|p, _, _| {
+        p.host.connection.connected = false;
+        p.preferences.value.thread_tabs = Some(ThreadTabs::Show);
+    });
+    worktrees_view::install(&mut h, 3);
+    assert_project_header(&mut h, "Worktrees");
+    h.update(|p, w, cx| p.open_issues(PathBuf::from(PROJECT), w, cx));
+    assert_project_header(&mut h, "Linear issues");
+    h.update(|p, w, cx| p.open_draft(w, cx));
+    assert_project_header(&mut h, super::super::session::UNTITLED);
+    let frame = h.draw_a11y();
+    assert!(!frame.has_node(Role::TabList, |n| n.label.as_deref() == Some("Open tabs")));
+    assert_eq!(
+        frame
+            .nodes
+            .iter()
+            .filter(|n| n.path.ends_with("project-name"))
+            .count(),
+        1,
+        "a draft shows its checkout only in the title form"
+    );
 }
 
 #[core::prelude::v1::test]

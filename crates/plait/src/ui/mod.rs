@@ -151,7 +151,7 @@ actions!(
 /// The workspace beside the sidebar (presentation-independent view kind from core).
 pub(super) use plait_client::thread_view::ThreadView as Workspace;
 
-/// Below this width This turn is not shown; Git stays in Changes.
+/// Breakpoint for the wider workspace layouts.
 const EXPANDED_CHROME_WIDTH: f32 = 1150.;
 
 pub struct Plait {
@@ -985,7 +985,6 @@ impl Plait {
 
     fn header(&mut self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let sidebar = self.visible_sidebar();
-        let show_tabs = self.preferences.value.shows_thread_tabs();
         let current_thread = !self.worktrees_visible()
             && !self.issues_visible()
             && self.host.thread.selected.is_some();
@@ -1009,7 +1008,7 @@ impl Plait {
             .border_color(rgb(colors().border))
             .when(!sidebar, |el| el.child(self.sidebar_toggle(cx)));
 
-        if show_tabs {
+        if current_thread && self.preferences.value.shows_thread_tabs() {
             header = header.child(self.tab_row(window, cx));
         } else {
             if self.tabs.list_open {

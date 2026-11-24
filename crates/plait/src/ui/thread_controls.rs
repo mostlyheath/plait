@@ -424,7 +424,7 @@ impl Plait {
                         .children(notices),
                 )
             });
-        if self.preferences.value.shows_thread_tabs() {
+        if self.host.thread.selected.is_some() && self.preferences.value.shows_thread_tabs() {
             column()
                 .w_full()
                 .max_w(px(CONTENT_WIDTH))
