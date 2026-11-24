@@ -683,7 +683,7 @@ impl Plait {
                                 this.refresh(&super::Refresh, window, cx)
                             }),
                     )
-                    .child(tag("recorded-refresh-shortcut", "⌘R", colors().subtle)),
+                    .child(key_hint("recorded-refresh-shortcut", "⌘R")),
             )
     }
     pub(super) fn recorded_header(&self, cx: &mut Context<Self>) -> Div {

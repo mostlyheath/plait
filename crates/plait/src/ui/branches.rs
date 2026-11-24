@@ -146,7 +146,7 @@ impl Plait {
                 .font_weight(FontWeight::MEDIUM)
                 .child(branch.to_owned()),
         )
-        .child(icon("down").size(px(12.)).text_color(rgb(colors().subtle)))
+        .child(icon("down").size(px(12.)))
         .on_activate(cx, |this, window, cx| this.open_branches(false, window, cx));
         match blocker {
             Some(_) => locked(control, blocker),

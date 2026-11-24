@@ -86,6 +86,7 @@ pub(super) fn page(id: &'static str) -> Stateful<Div> {
 pub(super) fn heading(text: impl Into<SharedString>) -> Div {
     div()
         .text_size(px(15.))
+        .text_color(rgb(colors().strong))
         .font_weight(FontWeight::MEDIUM)
         .child(text.into())
 }
@@ -344,7 +345,7 @@ impl Plait {
             .gap_2()
             .max_w(px(320.))
             .child(div().min_w_0().truncate().child(name))
-            .child(icon("down").text_color(rgb(colors().muted)))
+            .child(icon("down").text_color(rgb(colors().faint)))
             .disabled(!can_choose)
             .when(can_choose, |el| {
                 el.on_activate(cx, |this, window, cx| {
@@ -389,7 +390,7 @@ impl Plait {
             ))
             .gap_2()
             .child(level.label())
-            .child(icon("down").text_color(rgb(colors().muted)))
+            .child(icon("down").text_color(rgb(colors().faint)))
             .on_activate(cx, |this, window, cx| {
                 this.open_default_thinking(window, cx)
             });

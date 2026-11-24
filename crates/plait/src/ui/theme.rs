@@ -96,6 +96,44 @@ pub const CHROME_HEIGHT: f32 = 40.;
 /// Compact row for navigation, changed files, and model choices.
 pub const ROW_HEIGHT: f32 = 28.;
 
+pub const CONTROL_CORNER: f32 = 7.;
+pub const ITEM_CORNER: f32 = 6.;
+pub const SURFACE_CORNER: f32 = 12.;
+pub const PALETTE_CORNER: f32 = 14.;
+
+fn shadow_layer(y: f32, blur: f32, spread: f32, tint: u32) -> BoxShadow {
+    BoxShadow::new(px(0.), px(y), rgba(tint).into())
+        .blur_radius(px(blur))
+        .spread_radius(px(spread))
+}
+
+pub fn floating_shadow() -> Vec<BoxShadow> {
+    if colors().light {
+        vec![
+            shadow_layer(14., 36., -12., 0x242a3e38),
+            shadow_layer(2., 6., 0., 0x242a3e14),
+        ]
+    } else {
+        vec![
+            shadow_layer(18., 44., -12., 0x000000b3),
+            shadow_layer(2., 8., 0., 0x00000066),
+        ]
+    }
+}
+
+pub fn box_shadow() -> Vec<BoxShadow> {
+    vec![shadow_layer(
+        8.,
+        24.,
+        -10.,
+        if colors().light {
+            0x242a3e24
+        } else {
+            0x00000073
+        },
+    )]
+}
+
 /// The system's own monospaced font: SF Mono on macOS, asked for by the
 /// family name Core Text gives it, since it is not installed under a public one.
 #[cfg(target_os = "macos")]
@@ -177,6 +215,34 @@ pub enum Tone {
     Primary,
 }
 
+pub(super) fn hovered<E: Styled>(style: E, tone: Tone) -> E {
+    match tone {
+        Tone::Ghost => style
+            .bg(rgba(colors().hover))
+            .text_color(rgb(colors().text)),
+        Tone::Filled => style
+            .bg(rgb(colors().selected))
+            .border_color(rgb(colors().faint)),
+        Tone::Primary => style.opacity(0.88),
+        Tone::Selected => style,
+    }
+}
+
+pub(super) fn pressed<E: Styled>(style: E, tone: Tone) -> E {
+    match tone {
+        Tone::Ghost => style.opacity(0.6),
+        Tone::Filled | Tone::Primary => style.opacity(0.7),
+        Tone::Selected => style,
+    }
+}
+
+pub(super) fn focused_control<E: Styled>(style: E) -> E {
+    style.shadow(vec![
+        BoxShadow::new(px(0.), px(0.), rgb(colors().blue).into()).spread_radius(px(2.5)),
+        BoxShadow::new(px(0.), px(0.), rgb(colors().bg).into()).spread_radius(px(1.)),
+    ])
+}
+
 /// Focusable, keyboard-reachable base for every original control.
 fn control(id: impl Into<ElementId>, name: SharedString, tone: Tone) -> Control {
     let base = row()
@@ -186,28 +252,28 @@ fn control(id: impl Into<ElementId>, name: SharedString, tone: Tone) -> Control 
         .focusable()
         .tab_stop(true)
         .cursor_pointer()
-        .rounded_md()
+        .rounded(px(CONTROL_CORNER))
         .border_1()
         .border_color(gpui::transparent_black())
-        .focus_visible(|s| s.border_color(rgb(colors().blue)))
+        .focus_visible(focused_control)
+        .when(tone != Tone::Selected, |el| {
+            el.hover(move |s| hovered(s, tone))
+                .active(move |s| pressed(s, tone))
+        })
         .audited();
     match tone {
-        Tone::Ghost => base
-            .text_color(rgb(colors().muted))
-            .hover(|s| s.bg(rgba(colors().hover)).text_color(rgb(colors().text))),
+        Tone::Ghost => base.text_color(rgb(colors().muted)),
         Tone::Selected => base
             .bg(rgb(colors().selected))
             .text_color(rgb(colors().text)),
         Tone::Filled => base
-            .bg(rgb(colors().panel))
+            .bg(rgb(colors().raised))
             .border_color(rgb(colors().edge))
-            .text_color(rgb(colors().text))
-            .hover(|s| s.bg(rgb(colors().raised_hover))),
+            .text_color(rgb(colors().text)),
         Tone::Primary => base
-            .bg(rgb(colors().text))
+            .bg(rgb(colors().strong))
             .text_color(rgb(colors().bg))
-            .font_weight(FontWeight::MEDIUM)
-            .hover(|s| s.bg(rgb(colors().primary_hover))),
+            .font_weight(FontWeight::MEDIUM),
     }
 }
 
@@ -221,12 +287,12 @@ pub fn toned_button(
     tone: Tone,
 ) -> Control {
     let label = label.into();
-    let raised = matches!(tone, Tone::Filled | Tone::Primary);
     control(id, label.clone(), tone)
         .h(px(ROW_HEIGHT))
         .flex_shrink_0()
         .text_size(px(12.))
-        .map(|el| if raised { el.px_3() } else { el.px_2() })
+        .px(px(11.))
+        .font_weight(FontWeight::MEDIUM)
         // Callers that pass no label supply their own children.
         .when(!label.is_empty(), |el| el.child(label))
 }
@@ -239,7 +305,7 @@ pub fn quiet_button(
     group: impl Into<SharedString>,
 ) -> Control {
     button(id, label)
-        .h(px(22.))
+        .h(px(24.))
         .opacity(0.)
         .group_hover(group, |s| s.opacity(1.))
         .focus_visible(|s| s.border_color(rgb(colors().blue)).opacity(1.))
@@ -270,7 +336,7 @@ pub fn toned_icon_button(
         .size(px(ROW_HEIGHT))
         .flex_shrink_0()
         .justify_center()
-        .child(icon(glyph).text_color(rgb(tint)))
+        .child(icon(glyph).size(px(16.)).text_color(rgb(tint)))
 }
 
 /// Full-width row for the navigation rail and lists. Callers add the content,
@@ -345,6 +411,16 @@ pub fn tag(id: impl Into<ElementId>, text: impl Into<SharedString>, color: u32) 
         .child(a11y_text(id, text))
 }
 
+pub fn key_hint(id: impl Into<ElementId>, text: impl Into<SharedString>) -> Div {
+    tag(id, text, colors().subtle)
+        .h(px(17.))
+        .px(px(4.))
+        .rounded(px(4.))
+        .bg(rgba(colors().hover))
+        .text_size(px(10.5))
+        .font_family(mono())
+}
+
 pub fn host_status_color(status: host::ThreadStatus) -> u32 {
     match status {
         host::ThreadStatus::Idle => colors().mint,
@@ -366,7 +442,7 @@ pub fn segmented() -> Div {
         .gap(px(2.))
         .p(px(2.))
         .flex_shrink_0()
-        .rounded_lg()
+        .rounded(px(CONTROL_CORNER))
         .bg(rgb(colors().rail))
         .border_1()
         .border_color(rgb(colors().border))
@@ -379,7 +455,8 @@ pub fn segment(id: impl Into<ElementId>, label: &'static str, selected: bool) ->
         Tone::Ghost
     };
     toned_button(id, label, tone)
-        .h(px(24.))
+        .h(px(22.))
+        .rounded(px(ITEM_CORNER))
         .role(Role::Tab)
         .aria_selected(selected)
 }
@@ -391,7 +468,7 @@ pub fn chip(id: impl Into<ElementId>, label: &'static str, on: bool) -> Control 
         .h(px(22.))
         .px(px(9.))
         .flex_shrink_0()
-        .rounded_full()
+        .rounded(px(ITEM_CORNER))
         .text_size(px(11.))
         .when(!on, |el| el.border_color(rgb(colors().border)))
         .when(on, |el| el.border_color(rgb(colors().edge)))
@@ -435,7 +512,7 @@ pub fn thread_row_colors(
         Queued(_) | Other => (c.subtle, c.muted, c.subtle),
         FinishedUnread => (c.mint, c.text, c.subtle),
     };
-    (node, if selected { c.text } else { title }, detail)
+    (node, if selected { c.strong } else { title }, detail)
 }
 
 pub fn thread_mark(color: u32) -> Div {
@@ -457,7 +534,7 @@ pub fn thread_mark(color: u32) -> Div {
 
 pub fn dot(color: u32) -> Div {
     div()
-        .size(px(6.))
+        .size(px(7.))
         .flex_shrink_0()
         .rounded_full()
         .bg(rgb(color))
@@ -468,7 +545,11 @@ pub fn icon(name: &'static str) -> Svg {
         .path(name)
         .size(px(14.))
         .flex_shrink_0()
-        .text_color(rgb(colors().muted))
+        .text_color(rgb(if matches!(name, "right" | "up" | "down") {
+            colors().faint
+        } else {
+            colors().muted
+        }))
 }
 
 /// The logo of the harness that runs a thread, tinted like other icons. A
@@ -505,7 +586,7 @@ pub fn empty(title: &'static str, detail: impl Into<SharedString>) -> Control {
             div()
                 .text_size(px(15.))
                 .font_weight(FontWeight::MEDIUM)
-                .text_color(rgb(colors().text))
+                .text_color(rgb(colors().strong))
                 .child(title),
         )
         .child(

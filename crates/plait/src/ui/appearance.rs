@@ -765,6 +765,7 @@ impl Plait {
                         .min_w_0()
                         .truncate()
                         .text_size(px(12.))
+                        .when(selected, |el| el.text_color(rgb(colors().strong)))
                         .child(theme.name.clone()),
                 )
                 .on_activate(cx, move |this, _, cx| {
@@ -796,6 +797,24 @@ fn swatch(palette: &themes::Palette) -> Div {
 #[cfg(test)]
 mod tests {
     use super::{family_suggestions, installed_family};
+
+    #[test]
+    fn saved_stillwater_remains_selected_when_the_default_changes() {
+        let path =
+            std::env::temp_dir().join(format!("plait-old-theme-{}.json", std::process::id()));
+        std::fs::write(&path, br#"{"dark_theme":"Stillwater"}"#).unwrap();
+        let preferences = plait_client::preferences::load(&path).unwrap();
+        std::fs::remove_file(path).unwrap();
+        let themes = super::Themes::default();
+        assert_eq!(
+            themes.palette(preferences.dark_theme.as_deref(), false),
+            plait_client::theme::STILLWATER
+        );
+        assert_eq!(
+            themes.palette(None, false),
+            plait_client::theme::STILLWATER_DEEP
+        );
+    }
 
     fn installed() -> Vec<String> {
         [

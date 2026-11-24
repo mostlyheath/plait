@@ -117,11 +117,11 @@ impl Plait {
                         .w_full()
                         .gap_1()
                         .p_1()
-                        .rounded_lg()
+                        .rounded(px(SURFACE_CORNER))
                         .border_1()
                         .border_color(rgb(colors().edge))
-                        .bg(rgb(colors().panel))
-                        .shadow_md()
+                        .bg(rgb(colors().raised))
+                        .shadow(floating_shadow())
                         .child(
                             toned_button(
                                 SharedString::from(format!("toast-open:{}", toast.thread)),
@@ -144,7 +144,7 @@ impl Plait {
                                             .truncate()
                                             .text_size(px(12.))
                                             .font_weight(FontWeight::MEDIUM)
-                                            .text_color(rgb(colors().text))
+                                            .text_color(rgb(colors().strong))
                                             .child(toast.title.clone()),
                                     )
                                     .child(

@@ -337,8 +337,11 @@ impl Plait {
                         .w((bounds.width - px(64.)).min(px(1080.)))
                         .gap_2()
                         .p_3()
-                        .bg(rgb(colors().panel))
-                        .rounded_lg()
+                        .bg(rgb(colors().raised))
+                        .border_1()
+                        .border_color(rgb(colors().edge))
+                        .rounded(px(SURFACE_CORNER))
+                        .shadow(floating_shadow())
                         .child(
                             row()
                                 .justify_between()

@@ -137,7 +137,7 @@ impl Plait {
             ] {
                 if count > 0 {
                     line = line.child(row().flex_shrink_0().gap_1().child(dot(color)).child(
-                        tag(label, format!("{count} {label}"), colors().muted).text_size(px(12.)),
+                        tag(label, format!("{count} {label}"), colors().subtle).text_size(px(12.)),
                     ));
                 }
             }
@@ -148,7 +148,7 @@ impl Plait {
             })
             .when(self.update_available(), |el| {
                 el.child(
-                    toned_button("status-update", "Update", Tone::Filled)
+                    toned_button("status-update", "Update", Tone::Primary)
                         .h(px(24.))
                         .aria_label("Update available. Open Settings to install.")
                         .tooltip(|_, cx| {
@@ -177,8 +177,9 @@ impl Plait {
                             .gap_1()
                             .border_1()
                             .border_color(rgb(colors().edge))
-                            .rounded_md()
-                            .bg(rgb(colors().panel))
+                            .rounded(px(SURFACE_CORNER))
+                            .shadow(floating_shadow())
+                            .bg(rgb(colors().raised))
                             .occlude(),
                         cx,
                     ),

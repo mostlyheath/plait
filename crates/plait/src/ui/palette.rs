@@ -673,28 +673,9 @@ impl Palette {
     /// A quiet text button for the row's second action.
     fn aside_button(&self, row: usize, label: SharedString, cx: &mut Context<Self>) -> Control {
         let entity = cx.weak_entity();
-        div()
-            .id(("palette-aside", row))
-            .role(Role::Button)
-            .aria_label(label.clone())
-            .audited()
-            .flex_shrink_0()
-            .px(px(6.))
-            .h(px(20.))
-            .flex()
-            .items_center()
-            .rounded_md()
-            .border_1()
-            .border_color(rgb(colors().edge))
-            .cursor_pointer()
-            .text_size(px(11.))
-            .text_color(rgb(colors().muted))
-            .hover(|style| {
-                style
-                    .bg(rgba(colors().hover))
-                    .text_color(rgb(colors().text))
-            })
-            .child(label)
+        button(("palette-aside", row), label)
+            .h(px(24.))
+            .tab_stop(false)
             .on_click(cx.listener(move |this, _, _, cx| {
                 // The row underneath would otherwise run the item.
                 cx.stop_propagation();
@@ -774,7 +755,9 @@ impl Palette {
                     .flex_shrink_0()
                     .max_w(relative(0.7))
                     .truncate()
-                    .text_color(rgb(if item.enabled {
+                    .text_color(rgb(if selected && item.enabled {
+                        colors().strong
+                    } else if item.enabled {
                         colors().text
                     } else {
                         colors().muted
@@ -800,9 +783,7 @@ impl Palette {
                 el.child(self.toggle(row, item, on, cx))
             })
             .when(!item.hint.is_empty(), |el| {
-                el.child(
-                    tag("palette-row-hint", item.hint.clone(), colors().subtle).flex_shrink_0(),
-                )
+                el.child(key_hint("palette-row-hint", item.hint.clone()).flex_shrink_0())
             })
             .when(item.enabled, |el| {
                 el.cursor_pointer()
@@ -997,10 +978,11 @@ impl Render for Palette {
             .w_full()
             .max_w(px(620.))
             .overflow_hidden()
-            .rounded_xl()
+            .rounded(px(PALETTE_CORNER))
+            .shadow(floating_shadow())
             .border_1()
             .border_color(rgb(colors().edge))
-            .bg(rgb(colors().rail))
+            .bg(rgb(colors().raised))
             .child(div().p_2().child(self.field.clone()))
             .child(self.list(list_height, cx))
             .child(self.footer(searching));

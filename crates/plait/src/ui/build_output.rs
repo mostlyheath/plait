@@ -179,7 +179,7 @@ impl Plait {
                 let path = path.clone();
                 let value = path.clone();
                 content = content.child(row().gap_2().flex_wrap()
-                    .child(tag(("build-path", i), path, colors().text))
+                    .child(tag(("build-path", i), path, colors().subtle))
                     .child(button(("build-remove", i), "Remove").disabled(!enabled)
                         .tooltip(|_, cx| cx.new(|_| TextTooltip("Stop treating this directory as build output. Existing output stays; it will block worktree removal until approved again or removed manually.".into())).into())
                         .on_activate(cx, move |this, _, cx| {
@@ -194,7 +194,7 @@ impl Plait {
             {
                 let value = path.clone();
                 content = content.child(row().gap_2().flex_wrap()
-                    .child(tag(("build-suggestion", i), format!("Suggested · {path}"), colors().muted))
+                    .child(tag(("build-suggestion", i), format!("Suggested · {path}"), colors().subtle))
                     .child(button(("build-approve", i), "Approve").disabled(!enabled)
                         .tooltip(|_, cx| cx.new(|_| TextTooltip("Approve this ignored directory for copy-on-write cloning and removal with its worktree. A manifest only suggests it; nothing is approved automatically.".into())).into())
                         .on_activate(cx, move |this, _, cx| this.approve_build_directory(value.clone(), cx))));

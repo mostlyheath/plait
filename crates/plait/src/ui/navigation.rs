@@ -341,7 +341,7 @@ impl Plait {
                 })))
                 .child(
                     title(project.name.clone())
-                        .text_color(rgb(colors().text))
+                        .text_color(rgb(colors().strong))
                         .font_weight(FontWeight::MEDIUM),
                 )
                 .when(unavailable, |el| {
@@ -708,8 +708,9 @@ impl Plait {
             .gap_2()
             .border_1()
             .border_color(rgb(colors().edge))
-            .rounded_md()
-            .bg(rgb(colors().panel));
+            .rounded(px(SURFACE_CORNER))
+            .shadow(floating_shadow())
+            .bg(rgb(colors().raised));
         // The status line owns the machine menu.
         if id == "machines" {
             return div().into_any_element();
@@ -750,7 +751,7 @@ impl Plait {
             let branch = tree.map(|tree| tree.branch.clone());
             let remove = thread.checkout.clone();
             panel = panel
-                .child(tag("thread-menu-title", self.thread_title(id), colors().text).truncate())
+                .child(tag("thread-menu-title", self.thread_title(id), colors().strong).truncate())
                 .child(
                     button("thread-rename", "Rename thread…")
                         .on_activate(cx, move |this, window, cx| {
@@ -1002,7 +1003,9 @@ impl Plait {
                 .aria_selected(selected)
                 .pl(px(RAIL_X + 5.))
                 .child(icon("plus").size(px(12.)).text_color(rgb(colors().mint)))
-                .child(title(self.current_draft_title().to_owned()).text_color(rgb(colors().text)))
+                .child(
+                    title(self.current_draft_title().to_owned()).text_color(rgb(colors().strong)),
+                )
                 .child(tag("draft-badge", "Draft", colors().subtle).flex_shrink_0())
                 .on_activate(cx, |this, window, cx| {
                     this.show_tab(super::Workspace::Conversation, window, cx);
