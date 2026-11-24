@@ -255,6 +255,44 @@ fn overview_project_paths_read_from_home() {
     );
 }
 
+/// An input method owns Escape while it composes, here in the sidebar's
+/// rename field: the key cancels the composition, not Every thread.
+#[cfg(debug_assertions)]
+#[core::prelude::v1::test]
+fn overview_escape_leaves_an_input_method_composition_alone() {
+    if !isolated("overview::overview_escape_leaves_an_input_method_composition_alone") {
+        return;
+    }
+    let scratch = std::env::temp_dir().join(format!("plait-overview-ime-{}", std::process::id()));
+    std::fs::create_dir_all(&scratch).unwrap();
+    let repository = scratch.canonicalize().unwrap();
+    let mut h = Harness::with_host(&repository, None, 1380., 860., None);
+    h.connect(&repository, false);
+    install(&mut h, [&repository, &repository]);
+    h.update(|p, _, _| p.host.connection.status.as_mut().unwrap().protocol_version = 4);
+    h.keystroke("cmd-shift-e");
+    h.update(|p, window, cx| p.begin_rename("last".into(), window, cx));
+    h.draw();
+    h.update(|p, window, cx| {
+        let (_, field) = p.navigation.rename.clone().expect("rename field");
+        field.update(cx, |field, cx| {
+            field.replace_and_mark_text_in_range(None, "かな", None, window, cx)
+        });
+        assert!(field.read(cx).is_composing());
+        assert!(p.overview.is_some());
+    });
+    h.keystroke("escape");
+    h.update(|p, _, _| {
+        assert!(p.navigation.rename.is_some(), "rename kept");
+        assert!(
+            p.overview.is_some(),
+            "Escape closed Every thread mid-composition"
+        );
+    });
+    drop(h);
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
 #[cfg(debug_assertions)]
 fn assert_cards(h: &mut Harness, title: &str, count: &str) {
     let frame = h.draw_a11y();

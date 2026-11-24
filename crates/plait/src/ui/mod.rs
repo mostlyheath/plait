@@ -1415,6 +1415,12 @@ impl Render for Plait {
                     && !this.settings_open
                     && this.overlay.is_none()
                     && this.overview.is_some()
+                    // The rename field leaves Escape to an input method mid-composition.
+                    && !this
+                        .navigation
+                        .rename
+                        .as_ref()
+                        .is_some_and(|(_, field)| field.read(cx).is_composing())
                 {
                     this.close_overview(window, cx);
                     cx.stop_propagation();
