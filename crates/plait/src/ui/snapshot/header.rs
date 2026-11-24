@@ -61,6 +61,8 @@ pub(super) fn walk(output: Option<&Path>) {
     for (suffix, width, height) in [("wide", 1380., 860.), ("narrow", 900., 600.)] {
         let mut h = fixture(output, width, height);
         capture_both(&mut h, &format!("header-title-{suffix}"));
+        h.update(|p, _, _| p.workspace.work_total = Some("+12 −3".into()));
+        h.capture(&format!("header-panel-totals-{suffix}"));
         h.update(|p, _, _| {
             p.host.connection.threads_mut()[0].title = Some(
                 "Improve retry handling for forecast requests that reach the upstream rate limit"
@@ -179,6 +181,28 @@ fn non_thread_views_keep_their_title_with_tabs_enabled() {
         1,
         "a draft shows its checkout only in the title form"
     );
+}
+
+#[cfg(debug_assertions)]
+#[core::prelude::v1::test]
+fn panel_toggle_shows_only_known_checkout_totals() {
+    if !isolated("header::panel_toggle_shows_only_known_checkout_totals") {
+        return;
+    }
+    let mut h = fixture(None, 900., 600.);
+    let totals = |h: &mut Harness| {
+        h.draw_a11y().nodes.into_iter().find_map(|n| {
+            n.path
+                .ends_with("header-panel-totals")
+                .then(|| n.value.or(n.label))
+                .flatten()
+        })
+    };
+    assert_eq!(totals(&mut h), None);
+    h.update(|p, _, _| p.workspace.work_total = Some("+12 −3".into()));
+    assert_eq!(totals(&mut h).as_deref(), Some("+12 −3"));
+    h.update(|p, _, _| p.state.repository.data.snapshot = Load::Empty);
+    assert_eq!(totals(&mut h), None);
 }
 
 #[core::prelude::v1::test]

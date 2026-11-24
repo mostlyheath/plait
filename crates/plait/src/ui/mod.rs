@@ -1088,6 +1088,17 @@ impl Plait {
     fn header_panel_toggle(&self, cx: &mut Context<Self>) -> Control {
         let open = self.panel_is_open();
         let keys = self.shortcut_label("view.toggle_inspector");
+        let totals = self.workspace.work_total.as_ref().filter(|_| {
+            self.state
+                .repository
+                .snapshot()
+                .ready()
+                .is_some_and(|snapshot| {
+                    snapshot.root == self.host.creation.checkout
+                        && !snapshot.plain
+                        && !snapshot.changes.is_empty()
+                })
+        });
         let tip = format!("Toggle Panel  {keys}").trim_end().to_owned();
         toned_button(
             "header-panel-toggle",
@@ -1103,6 +1114,10 @@ impl Plait {
         .aria_keyshortcuts(self.shortcut_aria("view.toggle_inspector"))
         .tooltip(move |_, cx| cx.new(|_| thread_controls::TextTooltip(tip.clone())).into())
         .child(div().text_size(px(16.)).child("±"))
+        .when_some(totals, |el, totals| {
+            el.aria_description(format!("Uncommitted changes {totals}"))
+                .child(tag("header-panel-totals", totals.clone(), colors().muted))
+        })
         .on_activate(cx, |this, window, cx| this.toggle_panel(window, cx))
     }
 
