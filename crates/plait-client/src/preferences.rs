@@ -19,6 +19,15 @@ use std::{
 /// Larger files are not ours; refuse them rather than parse arbitrary input.
 const FILE_LIMIT: u64 = 512 * 1024;
 
+/// How requests and replies are drawn on this desktop.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Turns {
+    #[default]
+    Bubbles,
+    Line,
+}
+
 /// What Cmd-1 through Cmd-9 select, counted in sidebar order.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -146,6 +155,8 @@ pub struct Preferences {
     /// Read it through `code_size` and change it through `set_code_size`.
     #[serde(deserialize_with = "lenient_code_size")]
     pub code_size: Option<u8>,
+    #[serde(deserialize_with = "lenient")]
+    pub turns: Turns,
     /// Fold turns before the latest in the conversation. `None` means on; read
     /// through `fold_earlier_turns`.
     #[serde(deserialize_with = "lenient_bool")]
@@ -1172,5 +1183,26 @@ mod tests {
         assert_eq!(jump(&projects, 2, JumpTarget::Projects, 1), Some(thread(0)));
         assert_eq!(jump(&projects, 2, JumpTarget::Projects, 2), None);
         assert_eq!(jump(&projects, 2, JumpTarget::Projects, 9), None);
+    }
+}
+
+#[cfg(test)]
+mod turns_tests {
+    use super::*;
+
+    #[test]
+    fn old_or_unknown_turn_styles_keep_other_preferences() {
+        for json in [
+            r#"{"hide_inspector":true}"#,
+            r#"{"turns":"future","hide_inspector":true}"#,
+            r#"{"turns":42,"hide_inspector":true}"#,
+        ] {
+            let preferences: Preferences = serde_json::from_str(json).unwrap();
+            assert!(preferences.hide_inspector);
+            assert_eq!(preferences.turns, Turns::Bubbles);
+        }
+        let preferences: Preferences = serde_json::from_str(r#"{"turns":"line"}"#).unwrap();
+        assert_eq!(preferences.turns, Turns::Line);
+        assert_eq!(serde_json::to_value(preferences).unwrap()["turns"], "line");
     }
 }

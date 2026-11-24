@@ -562,6 +562,39 @@ impl Plait {
         cx.notify();
     }
 
+    fn turns_setting(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        use plait_client::preferences::Turns;
+        let mut choices = segmented();
+        for (index, (label, style)) in [("Bubbles", Turns::Bubbles), ("Line", Turns::Line)]
+            .into_iter()
+            .enumerate()
+        {
+            let selected = self.preferences.value.turns == style;
+            choices = choices.child(
+                segment(("turns", index), label, selected)
+                    .role(Role::RadioButton)
+                    .aria_toggled(if selected {
+                        Toggled::True
+                    } else {
+                        Toggled::False
+                    })
+                    .aria_label(format!("Turns: {label}"))
+                    .on_activate(cx, move |this, _, cx| {
+                        let mut value = this.preferences.value.clone();
+                        value.turns = style;
+                        this.set_preferences(value, PreferenceGroup::View, cx);
+                        this.workspace.live_scroll.remeasure();
+                        cx.notify();
+                    }),
+            );
+        }
+        super::settings::setting(
+            "Turns",
+            "Show requests in bubbles or connect turns with a line.",
+            choices,
+        )
+    }
+
     fn fold_earlier_turns_setting(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let fold = self.preferences.value.fold_earlier_turns();
         let mut choices = segmented();
@@ -700,6 +733,7 @@ impl Plait {
             )
             .child(self.code_font_setting(cx))
             .child(self.code_size_setting(cx))
+            .child(self.turns_setting(cx))
             .child(self.fold_earlier_turns_setting(cx))
     }
 

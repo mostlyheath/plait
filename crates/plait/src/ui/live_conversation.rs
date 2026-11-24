@@ -4,6 +4,7 @@ use super::{
     theme::*,
 };
 use gpui::{prelude::*, *};
+use plait_client::preferences::Turns;
 use std::time::Instant;
 
 pub(super) const LIST_TOP_PADDING: f32 = 8.;
@@ -94,15 +95,20 @@ fn banner(tint: u32) -> Div {
 /// The author and copy control share one line, clear of selectable text.
 const AUTHOR_LINE: f32 = 22.;
 
-fn message_author(author: &'static str) -> Div {
-    div()
-        .h(px(AUTHOR_LINE))
-        .flex()
-        .items_center()
-        .text_size(px(12.))
-        .font_weight(FontWeight::MEDIUM)
-        .text_color(rgb(colors().muted))
-        .child(author)
+fn message_author(style: Turns, author: &'static str) -> Option<Div> {
+    if style == Turns::Bubbles {
+        return None;
+    }
+    Some(
+        div()
+            .h(px(AUTHOR_LINE))
+            .flex()
+            .items_center()
+            .text_size(px(12.))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(rgb(colors().muted))
+            .child(author),
+    )
 }
 
 /// The turn line hangs in the middle of the conversation's 24-point left
@@ -121,60 +127,75 @@ const RECORD_LINE: f32 = 22.;
 
 /// One row's piece of the turn line, from `from` points below the row's top
 /// to its bottom. Rows are drawn edge to edge, so the pieces read as one line.
-fn strand_line(from: f32) -> Div {
-    div()
-        .absolute()
-        .left(px(-STRAND_LEFT))
-        .top(px(from))
-        .bottom_0()
-        .w(px(1.))
-        // The outline color, not the hairline: the line has to read as a
-        // line beside dense text.
-        .bg(rgb(colors().edge))
+fn strand_line(style: Turns, from: f32) -> Option<Div> {
+    if style == Turns::Bubbles {
+        return None;
+    }
+    Some(
+        div()
+            .absolute()
+            .left(px(-STRAND_LEFT))
+            .top(px(from))
+            .bottom_0()
+            .w(px(1.))
+            // The outline color, not the hairline: the line has to read as a
+            // line beside dense text.
+            .bg(rgb(colors().edge)),
+    )
 }
 
 /// The line's last piece, down to the live state's node.
-fn strand_end(to: f32) -> Div {
-    div()
-        .absolute()
-        .left(px(-STRAND_LEFT))
-        .top_0()
-        .h(px(to))
-        .w(px(1.))
-        .bg(rgb(colors().edge))
+fn strand_end(style: Turns, to: f32) -> Option<Div> {
+    if style == Turns::Bubbles {
+        return None;
+    }
+    Some(
+        div()
+            .absolute()
+            .left(px(-STRAND_LEFT))
+            .top_0()
+            .h(px(to))
+            .w(px(1.))
+            .bg(rgb(colors().edge)),
+    )
 }
 
 /// A round mark centered on the turn line, `center` points below its
 /// parent's top edge, on a little clear ground.
-fn strand_mark(center: f32, size: f32, color: u32, hollow: bool) -> Div {
+fn strand_mark(style: Turns, center: f32, size: f32, color: u32, hollow: bool) -> Option<Div> {
+    if style == Turns::Bubbles {
+        return None;
+    }
     let ground = size + MARK_GAP * 2.;
-    div()
-        .absolute()
-        .left(px(-STRAND_LEFT + 0.5 - ground / 2.))
-        .top(px(center - ground / 2.))
-        .size(px(ground))
-        .rounded_full()
-        .bg(rgb(colors().bg))
-        .flex()
-        .items_center()
-        .justify_center()
-        .child(
-            div()
-                .size(px(size))
-                .rounded_full()
-                .bg(rgb(color))
-                .flex()
-                .items_center()
-                .justify_center()
-                .when(hollow, |el| {
-                    el.child(
-                        div()
-                            .size(px(size - 3.))
-                            .rounded_full()
-                            .bg(rgb(colors().bg)),
-                    )
-                }),
-        )
+    Some(
+        div()
+            .absolute()
+            .left(px(-STRAND_LEFT + 0.5 - ground / 2.))
+            .top(px(center - ground / 2.))
+            .size(px(ground))
+            .rounded_full()
+            .bg(rgb(colors().bg))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(
+                div()
+                    .size(px(size))
+                    .rounded_full()
+                    .bg(rgb(color))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .when(hollow, |el| {
+                        el.child(
+                            div()
+                                .size(px(size - 3.))
+                                .rounded_full()
+                                .bg(rgb(colors().bg)),
+                        )
+                    }),
+            ),
+    )
 }
 
 /// A tool's path as Changes lists it: relative to the checkout.
@@ -274,8 +295,23 @@ impl Plait {
                 None => prose().child(message.text.clone()).into_any_element(),
             }
         });
+        let bubble = user && self.preferences.value.turns == Turns::Bubbles;
         let body = column()
-            .w_full()
+            .when(!bubble, |el| el.w_full())
+            .when(bubble, |el| {
+                el.max_w(relative(0.84))
+                    .ml_auto()
+                    .bg(rgb(colors().raised))
+                    .border_1()
+                    .border_color(rgb(colors().edge))
+                    .rounded(px(12.))
+                    .rounded_br(px(4.))
+                    .py(px(10.))
+                    .px(px(14.))
+            })
+            .when(bubble && !message.images.is_empty(), |el| {
+                el.child(self.image_row(&message.images, cx))
+            })
             .min_w_0()
             .gap_2()
             .children(self.history_parts(
@@ -284,10 +320,12 @@ impl Plait {
                 cx,
             ))
             .children(body)
-            .when(!message.images.is_empty(), |el| {
+            .when(!bubble && !message.images.is_empty(), |el| {
                 el.child(self.image_row(&message.images, cx))
             })
-            .when(user, |el| el.p_3().rounded_md().bg(rgb(colors().panel)));
+            .when(user && !bubble, |el| {
+                el.p_3().rounded_md().bg(rgb(colors().panel))
+            });
         let part = self
             .workspace
             .history
@@ -367,14 +405,27 @@ impl Plait {
             .min_w_0()
             .gap_1()
             .when(user, |el| {
-                el.child(strand_mark(AUTHOR_LINE / 2., RING, colors().muted, true))
+                el.children(strand_mark(
+                    self.preferences.value.turns,
+                    AUTHOR_LINE / 2.,
+                    RING,
+                    colors().muted,
+                    true,
+                ))
             })
             .child(
                 row()
-                    .w_full()
-                    .justify_between()
+                    .when(self.preferences.value.turns == Turns::Line, |el| {
+                        el.w_full().justify_between()
+                    })
+                    .when(self.preferences.value.turns == Turns::Bubbles, |el| {
+                        el.absolute().top_0().right_0()
+                    })
                     .gap_2()
-                    .child(message_author(if user { "You" } else { "Plait" }))
+                    .children(message_author(
+                        self.preferences.value.turns,
+                        if user { "You" } else { "Plait" },
+                    ))
                     .child(copy.h(px(AUTHOR_LINE))),
             )
             .child(body)
@@ -522,7 +573,13 @@ impl Plait {
             .pt(px(2.))
             .min_h(px(2. + line))
             .text_size(px(12.))
-            .child(strand_mark(2. + line / 2., NODE, colors().subtle, false))
+            .children(strand_mark(
+                self.preferences.value.turns,
+                2. + line / 2.,
+                NODE,
+                colors().subtle,
+                false,
+            ))
             .children(parts)
             .into_any_element()
     }
@@ -588,7 +645,7 @@ impl Plait {
             .w_full()
             .min_w_0()
             .gap_1()
-            .child(message_author("Plait"))
+            .children(message_author(self.preferences.value.turns, "Plait"))
             .child(body)
             .into_any_element()
     }
@@ -771,7 +828,13 @@ impl Plait {
             .relative()
             .w_full()
             .min_w_0()
-            .child(strand_mark(ROW_HEIGHT / 2., RING, colors().muted, true))
+            .children(strand_mark(
+                self.preferences.value.turns,
+                ROW_HEIGHT / 2.,
+                RING,
+                colors().muted,
+                true,
+            ))
             .child(
                 button(
                     (
@@ -830,14 +893,15 @@ impl Plait {
                     .mx_auto()
                     .pt(px(TOP))
                     .pb(px(BOTTOM))
-                    .child(strand_line(from))
+                    .children(strand_line(self.preferences.value.turns, from))
                     .child(disclosure)
                     .when_some(recorded, |el, line| {
                         el.child(
                             div()
                                 .relative()
                                 .pt_1()
-                                .child(strand_mark(
+                                .children(strand_mark(
+                                    self.preferences.value.turns,
                                     4. + RECORD_LINE / 2.,
                                     NODE,
                                     colors().subtle,
@@ -899,6 +963,11 @@ impl Plait {
                 None => return div().into_any_element(),
             },
         };
+        let (top, bottom) = if self.preferences.value.turns == Turns::Bubbles {
+            (if request { 22. } else { 14. }, 0.)
+        } else {
+            (top, bottom)
+        };
         // The line starts with the first row: at the ring of a request, and
         // otherwise where the row's content begins, not in the space above it.
         let from = match (index, request) {
@@ -919,14 +988,15 @@ impl Plait {
                     .mx_auto()
                     .pt(px(top))
                     .pb(px(bottom))
-                    .child(strand_line(from))
+                    .children(strand_line(self.preferences.value.turns, from))
                     .child(content)
                     .when_some(recorded, |el, line| {
                         el.child(
                             div()
                                 .relative()
                                 .pt_1()
-                                .child(strand_mark(
+                                .children(strand_mark(
+                                    self.preferences.value.turns,
                                     4. + RECORD_LINE / 2.,
                                     NODE,
                                     colors().subtle,
@@ -1377,7 +1447,7 @@ Tone::Filled,
                             .max_w(px(CONTENT_WIDTH))
                             .mx_auto()
                             .py_1()
-                            .when(joined, |el| el.child(strand_line(0.)))
+                            .when(joined, |el| el.children(strand_line(self.preferences.value.turns, 0.)))
                             .child(tag(
                                 "conversation-truncated",
                                 "Bounded preview · older messages or tool output have been clipped by the host.",
@@ -1403,8 +1473,14 @@ Tone::Filled,
                             .mx_auto()
                             .pt_2()
                             .pb(px(6.))
-                            .when(joined, |el| el.child(strand_end(8. + RECORD_LINE / 2.)))
-                            .child(strand_mark(
+                            .when(joined, |el| {
+                                el.children(strand_end(
+                                    self.preferences.value.turns,
+                                    8. + RECORD_LINE / 2.,
+                                ))
+                            })
+                            .children(strand_mark(
+                                self.preferences.value.turns,
                                 8. + RECORD_LINE / 2.,
                                 NODE,
                                 colors().muted,
@@ -1458,8 +1534,16 @@ Tone::Filled,
                             .pt(px(LEAD))
                             .pb(px(6.))
                             .text_size(px(12.))
-                            .when(joined, |el| el.child(strand_end(center)))
-                            .child(strand_mark(center, NODE, tint, false))
+                            .when(joined, |el| {
+                                el.children(strand_end(self.preferences.value.turns, center))
+                            })
+                            .children(strand_mark(
+                                self.preferences.value.turns,
+                                center,
+                                NODE,
+                                tint,
+                                false,
+                            ))
                             .child(
                                 div()
                                     .min_w_0()
