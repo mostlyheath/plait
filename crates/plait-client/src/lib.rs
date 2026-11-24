@@ -12,6 +12,7 @@ pub mod file_view;
 pub mod folding;
 pub mod fuzzy;
 pub use plait_protocol::git;
+pub mod git_step;
 pub mod handoff;
 pub mod highlight;
 pub mod host;
