@@ -70,7 +70,8 @@ parts alike once [step 11](#11-tokens-and-controls) merges.
   the content and will go away: a menu, a picker, the palette, a modal, a
   toast, the focused card in Every thread. The message box is the one
   resting element with a shadow, because the conversation scrolls under it.
-  Nothing else has a shadow. No gradients except in supplied brand artwork.
+  The approval in its place uses the floating shadow. Nothing else has a
+  shadow. No gradients except in supplied brand artwork.
 - **Motion is feedback.** Nothing moves for decoration. The only motion that
   repeats is the running mark. Other motion, where a step adds it, answers
   an action of the person, lasts 200 ms at most, never delays the action,

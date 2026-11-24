@@ -22,7 +22,8 @@ Original native layout, compact navigation, charcoal surfaces, and restrained
 mint, blue, and violet state colors. Use the [Plait artwork](assets/branding/README.md),
 native keyboard behavior, and text labels alongside status colors. Motion is
 feedback only: nothing moves for decoration, and nothing but the mark of a
-running thread moves on its own. Shadows mark what floats. See
+running thread moves on its own. Shadows mark floating surfaces, the message
+box, and the approval that takes its place. See
 [DESIGN.md](DESIGN.md#rules-for-drawing) for the rules, layout, and tokens.
 
 ## Principles
