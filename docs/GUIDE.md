@@ -65,6 +65,12 @@ Choose **Use** to connect in the background; if connecting fails, Plait stays on
 
 Press **Cmd-Option-J** (Next Thread Needing Me) to open the oldest waiting approval, followed by failures or interruptions, then unread results. Archived threads are excluded. Settings and any available Update sit beside the machine control.
 
+A blue open ring marks an active thread in the sidebar and tabs, and appears
+beside the current turn’s state and any tool still running. The ring turns
+while work is in progress. It stays still when macOS **System Settings →
+Accessibility → Display → Reduce motion** is enabled. If the host disconnects, cached activity stops animating until
+the connection returns.
+
 **Each machine's own projects:** Hosts supporting the workspace stream ([HOST.md](HOST.md#workspace)) keep their own opened and hidden projects, worktree ownership, and read/unread state. On this Mac, existing desktop lists import into this Mac's host once. Switching machines shows that machine's projects. Choose **Open project…** (`Cmd-O`) to pick a folder on this Mac, or browse another machine's folders through its host (repositories open in one step; a typed absolute path also works).
 
 **Plain folders:** A folder that is not a Git repository opens too. Threads, approvals, and the file viewer work there; Changes, History, branches, worktrees, and undo need Git and say so. Nothing an agent changes in a plain folder can be undone, and no file is protected as already changed.

@@ -12,20 +12,34 @@ use super::{
 };
 use gpui::{prelude::*, *};
 use plait_client::{
-    host::{Tool, ToolStatus},
+    host::{Snapshot, Tool, ToolStatus},
     markdown::Kind,
     tool_view::{Part, Run, Section, ToolView},
     transcript,
 };
 use std::{collections::HashMap, sync::Arc};
 
-fn tool_tint(status: ToolStatus) -> u32 {
-    match status {
-        ToolStatus::Running => colors().blue,
+/// A tool can be listed before authorization, or lack a final status after a run ends.
+fn tool_row_status(tool: &Tool, live: Option<&Snapshot>) -> (&'static str, u32, bool) {
+    let tint = match tool.status {
+        ToolStatus::Running => {
+            let Some(live) = live.filter(|s| s.status.busy()) else {
+                return ("Final status unknown", colors().subtle, false);
+            };
+            if live
+                .pending_approval
+                .as_ref()
+                .is_some_and(|a| a.tool_id == tool.id)
+            {
+                return ("Needs approval", colors().amber, false);
+            }
+            return (tool.status.label(), colors().blue, true);
+        }
         ToolStatus::Done => colors().subtle,
         ToolStatus::Error => colors().red,
         ToolStatus::Interrupted => colors().amber,
-    }
+    };
+    (tool.status.label(), tint, false)
 }
 
 /// Line height of a call's row, so a wrapped subject and its chevron align:
@@ -37,13 +51,13 @@ fn tool_line_height() -> f32 {
 const SUBJECT_LINES: usize = 4;
 
 /// A chevron centered on the first line of a row that may wrap.
-fn line_icon(name: &'static str) -> Div {
+fn line_icon(mark: Svg) -> Div {
     div()
         .flex()
         .flex_shrink_0()
         .items_center()
         .h(px(tool_line_height()))
-        .child(icon(name))
+        .child(mark)
 }
 
 /// Rounded surface for a tool's content, matching fenced code.
@@ -228,6 +242,7 @@ impl Plait {
     ) -> AnyElement {
         let expanded = self.workspace.expanded_live_tools.contains(&tool.id);
         let id = tool.id.clone();
+        let (status, tint, running) = tool_row_status(tool, self.host.thread.snapshot.as_deref());
         let subject = transcript::tool_subject(tool);
         let view = self.workspace.formatted.tools.get(&tool.id);
         let facts = view.and_then(|view| view.facts.clone());
@@ -261,10 +276,14 @@ impl Plait {
                             .as_ref()
                             .map(|subject| format!(" {subject}"))
                             .unwrap_or_default(),
-                        tool.status.label()
+                        status
                     ))
                     .aria_expanded(expanded)
-                    .child(line_icon(if expanded { "down" } else { "right" }))
+                    .child(line_icon(if self.host.connection.connected && running {
+                        running_mark(px(13.))
+                    } else {
+                        icon(if expanded { "down" } else { "right" })
+                    }))
                     .child(
                         div()
                             .flex_shrink_0()
@@ -292,10 +311,7 @@ impl Plait {
                     })
                     // Completion is the normal case; only call out the others.
                     .when(tool.status != ToolStatus::Done, |el| {
-                        el.child(
-                            tag("tool-status", tool.status.label(), tool_tint(tool.status))
-                                .flex_shrink_0(),
-                        )
+                        el.child(tag("tool-status", status, tint).flex_shrink_0())
                     })
                     .on_activate(cx, move |this, _, cx| this.toggle_live_tool(&id, cx)),
                 ),
