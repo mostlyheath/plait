@@ -662,3 +662,44 @@ fn inspect_strip(harness: &mut Harness) {
         assert_eq!(selected.mode, DiffMode::Unstaged);
     });
 }
+
+#[cfg(debug_assertions)]
+#[core::prelude::v1::test]
+fn review_approval_shortcuts_respect_panel_visibility() {
+    if !isolated("step21::review_approval_shortcuts_respect_panel_visibility") {
+        return;
+    }
+    let home = PathBuf::from(std::env::var_os(SCENE_HOME).unwrap());
+    let repository = fixture_repository(&home);
+    let mut harness = Harness::with_host(&repository, None, 1380., 860., None);
+    harness.connect(&repository, true);
+    harness.draw();
+    harness.keystroke("cmd-l");
+    assert!(harness.draw_a11y().has_node(Role::Button, |node| {
+        node.label.as_deref() == Some("Allow once")
+    }));
+    assert!(
+        harness.answers("cmd-alt-y", "a1"),
+        "the approval is beside the panel"
+    );
+
+    harness.new_approval("covered");
+    harness.update(|plait, window, cx| plait.fill_panel(window, cx));
+    assert!(!harness.draw_a11y().has_node(Role::Button, |node| {
+        node.label.as_deref() == Some("Allow once")
+    }));
+    assert!(
+        !harness.answers("cmd-alt-y", "covered"),
+        "Fill hides the call"
+    );
+    assert!(
+        !harness.answers("cmd-alt-.", "covered"),
+        "Fill hides the call"
+    );
+
+    harness.update(|plait, window, cx| plait.fill_panel(window, cx));
+    assert!(
+        harness.answers("cmd-alt-.", "covered"),
+        "the call is visible again"
+    );
+}

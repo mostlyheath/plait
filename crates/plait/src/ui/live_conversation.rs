@@ -1052,6 +1052,7 @@ impl Plait {
         // runs after the palette has closed.
         let shown = !self.settings_open
             && self.workspace.tab == super::Workspace::Conversation
+            && !self.panel_fills()
             && self.overlay.is_none();
         let snapshot = self.host.thread.snapshot.as_ref().filter(|snapshot| {
             shown && self.host.thread.selected.as_deref() == Some(snapshot.id.as_str())
