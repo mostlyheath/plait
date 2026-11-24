@@ -152,6 +152,14 @@ fn assert_font_controls_fit(harness: &mut Harness, scene: &str) {
     });
 }
 
+fn assert_prose_controls_use(harness: &mut Harness, expected: &str) {
+    let call = tool("font-probe", "read", ToolStatus::Done, "{}", "");
+    harness.update(|plait, _, cx| {
+        crate::ui::changes::assert_hunk_action_font(plait, cx, expected);
+        crate::ui::tool_card::assert_tool_caption_font(plait, &call, cx, expected);
+    });
+}
+
 #[core::prelude::v1::test]
 fn interface_font_switches_and_loads_older_preferences_as_plex() {
     if !isolated("interface_font::interface_font_switches_and_loads_older_preferences_as_plex") {
@@ -175,6 +183,7 @@ fn interface_font_switches_and_loads_older_preferences_as_plex() {
             assert_eq!(plait.preferences.value.interface_font, InterfaceFont::Plex);
         });
 
+        assert_prose_controls_use(&mut harness, PLEX_UI_FONT);
         show_appearance(&mut harness);
         #[cfg(debug_assertions)]
         assert_font_controls_fit(
@@ -187,6 +196,7 @@ fn interface_font_switches_and_loads_older_preferences_as_plex() {
             plait.set_interface_font(InterfaceFont::System, cx);
         });
         assert_eq!(ui_font().as_ref(), SYSTEM_UI_FONT);
+        assert_prose_controls_use(&mut harness, SYSTEM_UI_FONT);
         #[cfg(debug_assertions)]
         assert_font_controls_fit(
             &mut harness,

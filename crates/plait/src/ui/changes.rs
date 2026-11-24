@@ -1296,3 +1296,32 @@ mod tests {
         assert_eq!(stage_verb(&file, false), "Unstage");
     }
 }
+
+#[cfg(test)]
+pub(super) fn assert_hunk_action_font(plait: &Plait, cx: &mut Context<Plait>, expected: &str) {
+    for mode in [DiffMode::Unstaged, DiffMode::Staged] {
+        let target = HunkTarget {
+            checkout: plait.state.checkout_id(),
+            epoch: plait.state.repository.epoch(),
+            path: "src/main.rs".into(),
+            mode,
+            busy: false,
+        };
+        assert_eq!(
+            hunk_button(&target, 0, "@@", cx)
+                .text_style()
+                .font_family
+                .as_deref(),
+            Some(expected)
+        );
+        if mode == DiffMode::Unstaged {
+            assert_eq!(
+                discard_hunk_button(&target, 0, "@@", cx)
+                    .text_style()
+                    .font_family
+                    .as_deref(),
+                Some(expected)
+            );
+        }
+    }
+}

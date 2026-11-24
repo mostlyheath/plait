@@ -448,3 +448,22 @@ impl Plait {
             .into_any_element()
     }
 }
+
+#[cfg(test)]
+pub(super) fn assert_tool_caption_font(
+    plait: &Plait,
+    tool: &Tool,
+    cx: &mut Context<Plait>,
+    expected: &str,
+) {
+    let mut details = plait.tool_details(tool, None, 0, cx);
+    assert_eq!(
+        details
+            .downcast_mut::<Div>()
+            .unwrap()
+            .text_style()
+            .font_family
+            .as_deref(),
+        Some(expected)
+    );
+}
