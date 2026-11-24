@@ -184,4 +184,49 @@ fn plait_uses_animated_sprites_until_motion_is_reduced() {
             assert!(frame == *reference, "the starting pose changed");
         }
     }
+
+    check_tool_states(&mut harness, &repository, &animated);
+}
+
+#[cfg(target_os = "macos")]
+fn check_tool_states(harness: &mut Harness, repository: &Path, animated: &Cell<usize>) {
+    use plait_client::host::{ThreadStatus, checkout_queue};
+    let capture = |harness: &mut Harness| {
+        harness.draw();
+        harness
+            .cx
+            .capture_screenshot(harness.window.into())
+            .unwrap();
+        animated.get()
+    };
+    // A call awaiting authorization can already be in the tool list as Running.
+    let approval = super::thread_snapshot(repository, true).pending_approval;
+    harness.change_snapshot(|s| {
+        s.status = ThreadStatus::AwaitingApproval;
+        s.pending_approval = approval;
+    });
+    let waiting = capture(harness);
+    // Other calls in the same turn can still be working.
+    harness.change_snapshot(|s| s.pending_approval.as_mut().unwrap().tool_id = "other".into());
+    let parallel = capture(harness);
+    // A terminal snapshot can retain a tool for which no result arrived.
+    harness.change_snapshot(|s| {
+        s.status = ThreadStatus::Idle;
+        s.pending_approval = None;
+    });
+    let idle = capture(harness);
+    harness.update(|plait, _, _| {
+        plait.host.connection.threads_mut()[0].checkout_queue = Some(checkout_queue::Summary::new(
+            "later".into(),
+            checkout_queue::State::Waiting,
+            1,
+            1,
+        ));
+    });
+    let queued = capture(harness);
+    assert_eq!(
+        [waiting, parallel, idle, queued],
+        [0, 1, 0, 0],
+        "animated sprites for approval, another call's approval, idle, and queued"
+    );
 }
