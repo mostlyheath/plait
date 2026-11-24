@@ -50,6 +50,7 @@ mod cards;
 mod code_size;
 mod find;
 mod folded_turns;
+mod header;
 mod interface_font;
 mod isolation;
 mod issues;
@@ -2305,6 +2306,7 @@ fn walk(output: Option<&Path>) {
     let _ = std::fs::remove_dir_all(&scratch);
     let repository = fixture_repository(&scratch);
 
+    header::walk(output);
     for (suffix, width, height) in [("wide", 1380., 860.), ("narrow", 900., 600.)] {
         tokens::walk(output, suffix, width, height);
         tabs::walk(&repository, output, suffix, width, height);
@@ -6804,6 +6806,7 @@ fn ownership_scenes(
     let mut harness = Harness::new(repository, output, width, height);
     harness.connect(repository, false);
     harness.update(|plait, window, cx| {
+        tabs::show_tabs(plait);
         let stale = plait
             .host
             .thread
