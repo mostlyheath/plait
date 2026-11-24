@@ -51,6 +51,7 @@ mod code_size;
 mod find;
 mod finished_work;
 mod folded_turns;
+mod interface_font;
 mod isolation;
 mod issues;
 mod linear_settings;
@@ -62,6 +63,7 @@ mod messages;
 mod mixed_tabs;
 mod pickers;
 mod settings_modal;
+mod sheet;
 mod showcase;
 mod sidebar;
 mod storage;
@@ -726,8 +728,11 @@ impl Harness {
             }
         });
         cx.allow_parking();
-        // As main does, so scenes show the shortcuts the palette reads from the keymap.
-        cx.update(super::menus);
+        // As main does, register bundled interface fonts and shortcuts before opening the window.
+        cx.update(|cx| {
+            super::theme::load_bundled_fonts(cx.text_system());
+            super::menus(cx);
+        });
         let path = repository.to_owned();
         let window = cx
             .open_window(size(px(width), px(height)), |window, cx| {
@@ -2419,6 +2424,7 @@ fn walk(output: Option<&Path>) {
         bubbles::walk(&repository, output, suffix, width, height);
         finished_work::scenes(&repository, output, suffix, width, height);
         code_size::walk(&mut harness, &repository, suffix);
+        interface_font::walk(&mut harness, &repository, suffix);
         find::find_walk(&mut harness, &repository, suffix);
         folded_turns::walk(&mut harness, &repository, suffix);
         #[cfg(debug_assertions)]
@@ -5800,7 +5806,7 @@ fn the_window_bar_moves_the_window_only_from_empty_space() {
     let scratch = std::env::temp_dir().join(format!("plait-window-bar-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&scratch);
     let repository = fixture_repository(&scratch);
-    let mut harness = Harness::new(&repository, None, 1380., 860.);
+    let mut harness = Harness::with_host(&repository, None, 1380., 860., None);
     let rail = harness
         .window
         .update(&mut harness.cx, |plait, _, _| {
@@ -5849,7 +5855,7 @@ fn the_window_bar_moves_the_window_only_from_empty_space() {
     );
     assert!(arms(&mut harness, rail + 400.), "the header's empty middle");
     // A control in the bar keeps its click: this one hides the rail.
-    assert!(!arms(&mut harness, 98.), "the sidebar toggle");
+    assert!(!arms(&mut harness, rail - 22.), "the sidebar toggle");
     assert!(!sidebar(&mut harness));
     // With the rail hidden the header starts under the lights, so its toggle
     // moves clear of them and the space it leaves still moves the window.
