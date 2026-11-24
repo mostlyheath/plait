@@ -82,6 +82,36 @@ impl Plait {
         if !self.host_is_local() || self.settings_open {
             return None;
         }
+        if self.panel_is_open() {
+            use plait_client::panel::PanelKind;
+            return match self.panel_kind()? {
+                PanelKind::Files => self.files_target(),
+                PanelKind::Changes if !self.panel_recorded() => self.changes_target(),
+                PanelKind::Changes => {
+                    let file = self.recorded_file()?;
+                    if file.label == "Deleted"
+                        || !file
+                            .path
+                            .components()
+                            .all(|part| matches!(part, std::path::Component::Normal(_)))
+                    {
+                        return None;
+                    }
+                    Some(Target {
+                        display: file.display_path.clone(),
+                        absolute: self.file_root().join(&file.path),
+                        line: self
+                            .workspace
+                            .turn_review
+                            .diff
+                            .as_ref()
+                            .and_then(|diff| handoff::first_changed_line(&diff.lines))
+                            .unwrap_or(1),
+                    })
+                }
+                PanelKind::History => None,
+            };
+        }
         if let Some(kind) = self.focused_work_kind() {
             use plait_client::panes::PaneKind;
             return match kind {
@@ -281,12 +311,18 @@ pub(super) fn editor_button(
     name: &str,
     shortcut: String,
     local: bool,
+    compact: bool,
     cx: &mut Context<Plait>,
 ) -> super::theme::Control {
     let plait = cx.weak_entity();
-    super::theme::button(id, "Editor")
+    let label = format!("Open {name} in your editor");
+    let editor = if compact {
+        super::theme::icon_button(id, "open-external", label)
+    } else {
+        super::theme::button(id, "Editor").aria_label(label)
+    };
+    editor
         .disabled(!local)
-        .aria_label(format!("Open {name} in your editor"))
         .aria_keyshortcuts(shortcut)
         .tooltip(move |_, cx| {
             let text = plait
