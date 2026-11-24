@@ -404,6 +404,7 @@ impl Plait {
         this.load_preferences(cx);
         this.observe_appearance(window, cx);
         this.apply_theme(cx);
+        this.apply_interface_font(cx);
         this.apply_code_size(cx);
         this.load_themes(cx);
         // An open picker shows host state; keep it current as replies land.
@@ -1145,7 +1146,8 @@ impl Plait {
                     .when_some(changed.filter(|_| view == Workspace::Changes), |el, n| {
                         el.child(
                             div()
-                                .text_size(px(11.))
+                                .text_size(px(TYPE_META_SIZE))
+                                .font_features(tabular_nums())
                                 .text_color(rgb(colors().subtle))
                                 .child(n.to_string()),
                         )
@@ -1219,7 +1221,8 @@ impl Plait {
             .bg(rgb(colors().rail))
             .border_t_1()
             .border_color(rgb(colors().border))
-            .text_size(px(11.))
+            .text_size(px(TYPE_META_SIZE))
+            .font_features(tabular_nums())
             .text_color(rgb(colors().subtle))
             .child(a11y_text(
                 "diagnostics-summary",
@@ -1539,8 +1542,8 @@ impl Render for Plait {
             .overflow_hidden()
             .bg(rgb(colors().bg))
             .text_color(rgb(colors().text))
-            .text_size(px(13.))
-            .font_family(".SystemUIFont")
+            .text_size(px(TYPE_ROW_SIZE))
+            .font_family(ui_font())
             .child(self.tab_save_input(cx))
             .child(self.tab_row(window, cx))
             .child(

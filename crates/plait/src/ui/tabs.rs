@@ -172,18 +172,25 @@ fn tooltip(value: String, cx: &mut App) -> AnyView {
 fn measure(text: &str, window: &Window) -> f32 {
     let run = TextRun {
         len: text.len(),
-        font: font(".SystemUIFont"),
+        font: Font {
+            features: tabular_nums(),
+            ..font(ui_font())
+        },
         color: rgb(colors().muted).into(),
         ..Default::default()
     };
     window
         .text_system()
-        .shape_line(text.to_owned().into(), px(12.), &[run], None)
+        .shape_line(text.to_owned().into(), px(TYPE_CONTROL_SIZE), &[run], None)
         .width
         .into()
 }
 
 impl Plait {
+    pub(super) fn invalidate_tab_measurement(&mut self) {
+        self.tabs.measured = None;
+    }
+
     pub(super) fn dismiss_tab_controls(&mut self) {
         self.tabs.list_open = false;
         self.tabs.drag = None;
@@ -636,6 +643,7 @@ impl Plait {
                 let accent = self.tabs.overflow_state.map(|state| tint(state, false));
                 bar.child(
                     button("tab-overflow", layout.overflow_label.clone())
+                        .font_features(tabular_nums())
                         // Share the tab titles' line: tabs sit 3 points below the bar's centre.
                         .relative()
                         .top(px(3.))
