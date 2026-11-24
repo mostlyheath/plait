@@ -33,8 +33,8 @@ impl Panel {
 
     fn default_width(self, viewport: f32) -> f32 {
         match self {
-            Self::Sidebar if viewport > WIDE_WINDOW => 272.,
-            Self::Sidebar => 240.,
+            Self::Sidebar if viewport < 760. => 236.,
+            Self::Sidebar => 288.,
             Self::Inspector => 280.,
         }
     }

@@ -711,7 +711,7 @@ impl Plait {
             .rounded(px(SURFACE_CORNER))
             .shadow(floating_shadow())
             .bg(rgb(colors().raised));
-        // The status line owns the machine menu.
+        // The machine menu opens above its control in the foot.
         if id == "machines" {
             return div().into_any_element();
         }
@@ -1019,28 +1019,56 @@ impl Plait {
             .into_any_element()
     }
 
+    fn shortcut_row(
+        &self,
+        id: &'static str,
+        label: &'static str,
+        glyph: &'static str,
+        tint: u32,
+        action: &'static str,
+    ) -> Control {
+        // Only the key hint inherits this color. The label and glyph stay visible.
+        nav_row(id, label, false)
+            .h(px(30.))
+            .text_size(px(13.5))
+            .text_color(transparent_black())
+            .group(id)
+            .focus(|s| s.text_color(rgb(colors().subtle)))
+            .aria_keyshortcuts(self.shortcut_aria(action))
+            .child(icon(glyph).size(px(16.)).text_color(rgb(tint)))
+            .child(title(label).text_color(rgb(colors().muted)))
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .text_size(px(11.))
+                    .group_hover(id, |s| s.text_color(rgb(colors().subtle)))
+                    .child(self.shortcut_label(action)),
+            )
+    }
+
     fn needs_me_row(&self, cx: &mut Context<Self>) -> Control {
         self.ensure_navigation_rows();
         let count = self.navigation.row_cache.borrow().needs_me;
+        let tint = if count == 0 {
+            colors().subtle
+        } else {
+            colors().amber
+        };
         nav_row(
             "needs-me",
-            format!("Needs me, {count}"),
+            format!("Needs you, {count}"),
             self.navigation.attention,
         )
+        .h(px(30.))
+        .text_size(px(13.5))
         .aria_toggled(if self.navigation.attention {
             Toggled::True
         } else {
             Toggled::False
         })
-        .child(row().w(px(14.)).justify_center().child(dot(if count == 0 {
-            colors().subtle
-        } else {
-            colors().amber
-        })))
-        .child(title("Needs me"))
-        .when(count > 0, |el| {
-            el.child(tag("needs-me-count", count.to_string(), colors().amber))
-        })
+        .child(row().w(px(16.)).justify_center().child(dot(tint)))
+        .child(title("Needs you"))
+        .child(tag("needs-me-count", count.to_string(), tint).font_weight(FontWeight::MEDIUM))
         .on_activate(cx, |this, _, cx| {
             this.navigation.attention = !this.navigation.attention;
             cx.notify();
@@ -1051,40 +1079,36 @@ impl Plait {
         column()
             .flex_shrink_0()
             .px_2()
-            .pt(px((CHROME_HEIGHT - ROW_HEIGHT) / 2.))
             .pb_1()
             .gap(px(1.))
             .child(
-                nav_row("new-local-thread", "New thread", false)
-                    .aria_keyshortcuts(self.shortcut_aria("thread.new"))
-                    .child(icon("plus").text_color(rgb(colors().mint)))
-                    .child(title("New thread"))
-                    .child(tag(
-                        "new-thread-shortcut",
-                        self.shortcut_label("thread.new"),
-                        colors().subtle,
-                    ))
-                    .on_activate(cx, |this, window, cx| this.open_draft(window, cx)),
+                self.shortcut_row(
+                    "new-local-thread",
+                    "New thread",
+                    "plus",
+                    colors().mint,
+                    "thread.new",
+                )
+                .on_activate(cx, |this, window, cx| this.open_draft(window, cx)),
             )
             .child(self.needs_me_row(cx))
             .child(
-                nav_row("find-anything", "Find anything", false)
-                    .aria_keyshortcuts(self.shortcut_aria("palette.toggle"))
-                    .child(icon("search"))
-                    .child(title("Find anything"))
-                    .child(tag(
-                        "find-anything-shortcut",
-                        self.shortcut_label("palette.toggle"),
-                        colors().subtle,
-                    ))
-                    .on_activate(cx, |this, window, cx| {
-                        this.toggle_command_palette(window, cx)
-                    }),
+                self.shortcut_row(
+                    "find-anything",
+                    "Find anything",
+                    "search",
+                    colors().muted,
+                    "palette.toggle",
+                )
+                .on_activate(cx, |this, window, cx| {
+                    this.toggle_command_palette(window, cx)
+                }),
             )
     }
 
     fn open_project_row(&self, cx: &mut Context<Self>) -> Control {
         nav_row("open-repository", "Open project…", false)
+            .h(px(30.))
             .aria_keyshortcuts(self.shortcut_aria("repository.open"))
             .child(icon("folder"))
             .child(title("Open project…").text_color(rgb(colors().subtle)))
@@ -1098,19 +1122,151 @@ impl Plait {
             })
     }
 
+    pub(super) fn next_needing_me(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((index, _)) = self.activity().next {
+            let id = self.host.connection.threads()[index].id.clone();
+            self.select_host_thread(id, window, cx);
+        }
+    }
+
+    fn machine_control(&self, cx: &mut Context<Self>) -> Control {
+        let machine = self
+            .machines
+            .connecting
+            .as_ref()
+            .and_then(|id| self.preferences.value.machines.get(id))
+            .map(|m| m.name.clone())
+            .unwrap_or_else(|| self.machine_label());
+        let (state, tint) = if self.host.connection.connecting || self.machines.connecting.is_some()
+        {
+            ("Connecting…", colors().muted)
+        } else if self.host.connection.connected {
+            ("Connected", colors().mint)
+        } else {
+            ("Offline", colors().amber)
+        };
+        let hover = format!("{machine}, {state}. Switch machine…");
+        button("machine-switcher", "")
+            .h(px(24.))
+            .px_1()
+            .gap_1()
+            .min_w_0()
+            .flex_shrink_1()
+            .aria_label(hover.clone())
+            .aria_expanded(self.navigation.menu.as_deref() == Some("machines"))
+            .tooltip(move |_, cx| cx.new(|_| TextTooltip(hover.clone())).into())
+            .child(dot(tint))
+            .child(div().min_w_0().truncate().child(machine))
+            .when(state != "Connected", |el| {
+                el.child(div().flex_shrink_0().child(state))
+            })
+            .on_activate(cx, |this, _, cx| {
+                this.navigation.menu = (this.navigation.menu.as_deref() != Some("machines"))
+                    .then(|| "machines".into());
+                cx.notify();
+            })
+    }
+
+    /// The machines this device knows, and where to manage them.
+    fn machine_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut panel = column()
+            .id("sidebar-machines-menu")
+            .absolute()
+            .bottom(px(38.))
+            .left(px(8.))
+            .right(px(8.))
+            .max_h(relative(0.8))
+            .overflow_y_scroll()
+            .p_2()
+            .gap_1()
+            .border_1()
+            .border_color(rgb(colors().edge))
+            .rounded(px(SURFACE_CORNER))
+            .shadow(floating_shadow())
+            .bg(rgb(colors().raised))
+            .occlude()
+            .child(tag("machine-menu-heading", "Machines", colors().muted));
+        for (index, machine) in self.preferences.value.machines.list().iter().enumerate() {
+            let id = &machine.id;
+            let label = if self.machines.connecting.as_ref() == Some(id) {
+                format!("{} · Connecting…", machine.name)
+            } else if id == &self.machines.active {
+                format!("{} ✓", machine.name)
+            } else {
+                machine.name.clone()
+            };
+            let enabled = self.machines.connecting.as_ref() != Some(id)
+                && (id != &self.machines.active || self.machines.connecting.is_some());
+            let id = id.clone();
+            panel = panel.child(
+                button(("machine-use", index), label)
+                    .disabled(!enabled)
+                    .when(enabled, |el| {
+                        el.on_activate(cx, move |this, window, cx| {
+                            this.navigation.menu = None;
+                            this.use_machine(id.clone(), window, cx);
+                        })
+                    }),
+            );
+        }
+        panel.child(button("machine-manage", "Manage machines…").on_activate(
+            cx,
+            |this, window, cx| {
+                this.navigation.menu = None;
+                this.settings_tab = super::settings::SettingsTab::Machines;
+                this.show_settings(true, window, cx);
+            },
+        ))
+    }
+
+    fn sidebar_foot(&self, cx: &mut Context<Self>) -> Div {
+        row()
+            .h(px(30.))
+            .mx_2()
+            .mb_2()
+            .gap_1()
+            .flex_shrink_0()
+            .border_t_1()
+            .border_color(rgb(colors().border))
+            .child(self.machine_control(cx))
+            .child(div().flex_1())
+            .when(self.update_available(), |el| {
+                el.child(
+                    toned_button("sidebar-update", "Update", Tone::Filled)
+                        .h(px(24.))
+                        .aria_label("Update available. Open Settings to install.")
+                        .tooltip(|_, cx| {
+                            cx.new(|_| {
+                                TextTooltip("Update available. Open Settings to install.".into())
+                            })
+                            .into()
+                        })
+                        .on_activate(cx, |this, window, cx| this.show_settings(true, window, cx)),
+                )
+            })
+            .child(
+                icon_button("settings", "sliders", "Settings…")
+                    .size(px(24.))
+                    .aria_keyshortcuts(self.shortcut_aria("app.settings"))
+                    .on_activate(cx, |this, window, cx| this.show_settings(true, window, cx)),
+            )
+    }
+
     pub(super) fn navigation(&self, cx: &mut Context<Self>) -> impl IntoElement {
         column()
             .relative()
             .w(px(self.panel_width(super::panels::Panel::Sidebar)))
             .flex_shrink_0()
             .bg(rgb(colors().rail))
-            .border_r_1()
-            .border_color(rgb(colors().border))
             .child(self.actions(cx))
             .child(self.navigation_controls())
             .child(self.tree(cx))
             .child(self.navigation_menu(cx))
             .child(div().px_2().child(self.open_project_row(cx)))
+            .child(self.sidebar_foot(cx))
+            .when(self.navigation.menu.as_deref() == Some("machines"), |el| {
+                el.child(self.machine_menu(cx))
+            })
             .child(self.resize_handle(super::panels::Panel::Sidebar, cx))
     }
 }
