@@ -2,12 +2,20 @@
 use super::*;
 use plait_client::tabs::{CheckoutKey, TabTarget};
 
+pub(super) fn show_tabs(plait: &mut Plait) {
+    plait.preferences.value.thread_tabs = Some(plait_client::preferences::ThreadTabs::Show);
+    for project in &mut plait.state.projects {
+        project.machines[0].name = "studio".into();
+    }
+}
+
 pub(super) fn install(harness: &mut Harness, count: usize) {
     install_projects(harness, count, false);
 }
 
 fn install_projects(harness: &mut Harness, count: usize, projects: bool) {
     harness.update(move |plait, _, _| {
+        show_tabs(plait);
         plait.tabs = Default::default();
         let template = plait
             .host

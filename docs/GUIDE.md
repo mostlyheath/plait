@@ -61,7 +61,7 @@ To add a remote machine, choose **Add machine…**:
 
 Choose **Use** to connect in the background; if connecting fails, Plait stays on the current machine and reports the error. The window remembers its last machine and reconnects at launch without blocking. **Remove…** forgets a machine locally without affecting its host or threads. Live remote verification against a separate Linux host remains open; see [Remote hosts](REMOTE.md) for transport and Linux service details.
 
-**Which machine you are on:** The control at the foot of the sidebar names the machine and shows its connection state. Open it to switch machines or choose **Manage machines…**. The window title names a remote machine, and the workspace header shows `project / machine · branch`. A remote machine's name comes from its host (its hostname unless renamed); while it connects, the name you saved is shown.
+**Which machine you are on:** The control at the foot of the sidebar names the machine and shows its connection state. Open it to switch machines or choose **Manage machines…**. The window title also names a remote machine. A remote machine's name comes from its host (its hostname unless renamed); while it connects, the name you saved is shown.
 
 Press **Cmd-Option-J** (Next Thread Needing Me) to open the oldest waiting approval, followed by failures or interruptions, then unread results. Archived threads are excluded. Settings and any available Update sit beside the machine control.
 
@@ -81,15 +81,17 @@ Use **Show or Hide Archived Threads** in the menu or palette. Rename or archive 
 
 ### Tabs
 
-The 44-point top bar holds the window buttons, sidebar toggle, open tabs (threads, drafts, Worktrees, and Linear Issues), and **+**. When the sidebar is open, its toggle sits at the right edge and the tabs start above the workspace sheet. Drag empty bar space to move the window. Hiding the sidebar expands the sheet to the edges below the tabs. The 36-point second row shows the active checkout context, view switcher (**Conversation**, **Changes**, **History**, **Files**).
+The sheet opens with the thread title. Hover over a shortened title to read it in full or over the project chip for the checkout path. The branch chip opens **Switch Branch**. At window widths below 760 points, the title has the space normally used by the chips. The sidebar toggle sits beside the window buttons when the sidebar is hidden. Drag empty space in the header or the sidebar’s top strip to move the window.
 
-- Switch tabs with `Cmd-1`–`Cmd-8` (`Cmd-9` selects the last), `Cmd-Shift-[` / `Cmd-Shift-]`, or the overflow menu (`Cmd-Shift-Backslash`). Reorder tabs by dragging or with `Control-Shift-Left` / `Control-Shift-Right`.
+Choose **Settings → Appearance → Thread tabs → Show** to see the open tabs and the **+** control while viewing a thread. The project and branch then sit below that thread’s message box. Drafts, Worktrees and Linear issues show their own title. With either setting, the header names a working thread, a pending approval, a failure or an interruption. **Toggle Panel** opens or closes the thread’s review panel.
+
+- Switch tabs with `Cmd-1`–`Cmd-8` (`Cmd-9` selects the last), `Cmd-Shift-[` / `Cmd-Shift-]`, or **Show All Tabs** (`Cmd-Shift-Backslash`). These shortcuts also work with tabs hidden. Reorder tabs by dragging or with `Control-Shift-Left` / `Control-Shift-Right`.
 - Close a tab with `Cmd-W` or middle-click; closing never stops a running thread. Reopen closed tabs (and older nonempty drafts) with `Cmd-Shift-T`. Closing the last tab leaves an empty workspace; pressing `Cmd-W` again (or `Cmd-Shift-W`) closes the window.
-- Tab order and per-view bookmarks are stored in `~/Library/Application Support/Plait/tabs.json` (moving per-device tabs to the host is planned under [Host-first Plait](HOST-FIRST.md)).
+- Hiding the tabs preserves their saved order, per-view bookmarks, and unsent drafts.
 
 ### Review panel
 
-**Cmd-L** opens or closes the panel for the current tab. Choose **Changes**, **Files**, or **History** from the view switcher. **Conversation** closes the panel and returns focus to the thread. New and restored tabs start with the panel closed.
+Open **Toggle Panel** (`Cmd-L`) on a thread. Choose **Changes**, **Files**, or **History** inside the panel. The close control or **Conversation** (`Cmd-Shift-1`) returns focus to the thread. New and restored tabs start with the panel closed.
 
 **This turn** shows the selected turn’s recorded diff. **Uncommitted** shows the checkout’s current changes and commit controls. A thread without a recorded turn opens on **Uncommitted**. Use **Cmd-Option-Right** or **Cmd-Option-Left** to move focus between the conversation and panel. Find searches the focused conversation, diff, or file.
 
@@ -167,7 +169,7 @@ Git operations run on the machine that owns the checkout. On a remote machine, t
 
 ### Worktrees
 
-Open a project's **Worktrees** tab from its sidebar menu, **Project settings**, the command palette, or a worktree thread's header. The graph draws the main checkout's branch as the trunk and each worktree as a lane (capped at 300 commits), showing thread state, uncommitted counts, publication state as of the last fetch, and logical source and build-output sizes (walks stop at 50,000 entries or 250 ms and show **over** when clipped).
+Open a project's **Worktrees** tab from its sidebar menu, **Project settings**, the command palette, or the worktree control in a thread’s message box. The graph draws the main checkout's branch as the trunk and each worktree as a lane (capped at 300 commits), showing thread state, uncommitted counts, publication state as of the last fetch, and logical source and build-output sizes (walks stop at 50,000 entries or 250 ms and show **over** when clipped).
 
 Host-owned worktrees are created on `plait/<uuid-prefix>` branches under `<main-repo>.worktrees/` from a captured `HEAD`. Nothing is removed automatically: select a lane and choose **Remove** to confirm (**Remove if pushed**, or **Keep local commits only** when only unpushed/unknown upstream state blocks removal). Active work, uncommitted changes, unapproved ignored files, and detached-HEAD commits block removal. Branches, thread history, and private caches remain.
 
@@ -196,7 +198,7 @@ If any file changed after the run ended, Undo changes nothing and opens **Change
 
 Press `Cmd-comma` (or **Plait → Settings…**) for application Settings, and open **Project settings…** from any project's sidebar **…** menu, **File → Project Settings…**, or the command palette. Opening Project settings from a sidebar project menu targets that project without switching the active thread underneath. Press `Escape`, **Done**, or click outside to close.
 
-- **Application tabs:** **New threads** (default harness, model, thinking, Pi approval mode), **Providers** (subscriptions, API keys, custom servers), **Linear** (API key), **Machines** (This Mac, remote hosts, and host updates over SSH), **Agents** (install, sign-in, harness paths, setup, default modes), **Keyboard** (record, search, and reset shortcuts; see [SHORTCUTS.md](SHORTCUTS.md)), **Editor** (file and terminal handoffs), **Appearance** (light/dark/follow macOS, **Stillwater Deep** default dark, **Stillwater**, **Plait Dark**, **Plait Light** default light, bundled Base16 schemes, custom `.yaml` Base16 files in `~/Library/Application Support/Plait/themes/`, **Interface font** choosing bundled **Plex Sans** or **System**, monospaced **Code font** defaulting to SF Mono or any installed monospaced family such as `Menlo`, **Code size** from 12 to 14 points defaulting to 12, **Fold earlier turns**, and toggling the Changed files card), and **About** (build revision, host protocol, updates).
+- **Application tabs:** **New threads** (default harness, model, thinking, Pi approval mode), **Providers** (subscriptions, API keys, custom servers), **Linear** (API key), **Machines** (This Mac, remote hosts, and host updates over SSH), **Agents** (install, sign-in, harness paths, setup, default modes), **Keyboard** (record, search, and reset shortcuts; see [SHORTCUTS.md](SHORTCUTS.md)), **Editor** (file and terminal handoffs), **Appearance** (light/dark/follow macOS, **Stillwater Deep** default dark, **Stillwater**, **Plait Dark**, **Plait Light** default light, bundled Base16 schemes, custom `.yaml` Base16 files in `~/Library/Application Support/Plait/themes/`, **Interface font** choosing bundled **Plex Sans** or **System**, monospaced **Code font** defaulting to SF Mono or any installed monospaced family such as `Menlo`, **Code size** from 12 to 14 points defaulting to 12, **Thread tabs**, **Fold earlier turns**, and toggling the Changed files card), and **About** (build revision, host protocol, updates).
 - **Project settings:** **Commands** (Trusted vs Sandboxed), Pi skills/templates/instructions and **MCP servers**, **New threads** (busy-project behavior and **Build output** directories), **Linear** team link, and **Worktrees**.
 
 Preferences live in `~/Library/Application Support/Plait/desktop.json`. Custom Base16 themes automatically adjust low-contrast text and accents for readability.

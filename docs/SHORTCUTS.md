@@ -59,6 +59,7 @@ This table matches `ACTIONS` in `crates/plait/src/ui/actions.rs` (checked by aut
 
 Notes on application shortcuts:
 
+- **Thread tabs.** All tab shortcuts, including **Show All Tabs…**, work with either **Hide** or **Show** in Settings → Appearance.
 - **Rebinding rules:** Text-editing keys and reserved macOS system shortcuts (such as `Cmd-Space`, `Cmd-Tab`, and `Cmd-Shift-3`–`5`) cannot be assigned. `Tab` and `Shift-Tab` always keep a binding. Each numbered jump set (`tab_jump.1`–`9` and `jump.1`–`9`) changes modifiers as one set.
 - **Approvals (`Cmd-Option-Y`, `Cmd-Option-period`) and Undo (`Cmd-Option-U`):** Act only in the visible conversation with no modal or palette open over it. An approval key works with focus in the draft after **Reply instead**. Holding the key answers at most one card.
 - **Unbound menu actions:** Actions without a default shortcut (such as **Worktrees**, **Linear Issues**, **Project Settings…**, **Show in Finder**, **Files**, **Rename Thread…**, **Archive or Unarchive Thread**, **Stage All Changes**, **Push**, **Pull**, **Fetch**, and **New Branch…**) can still be assigned a shortcut in **Settings → Keyboard**.
