@@ -116,13 +116,37 @@ fn named_drafts_keep_accessibility_ids_through_title_edits() {
     std::fs::remove_dir_all(scratch).unwrap();
 }
 
-fn assert_views_reachable(frame: &A11yFrame, scene: &str) {
-    for view in ["Conversation", "Changes", "History", "Files"] {
-        assert!(
-            frame.has_node(Role::Tab, |node| node.label.as_deref() == Some(view)),
-            "{scene}: missing view tab {view:?} in accessibility tree"
+/// The header has no view switcher: the panel toggle is always reachable, and
+/// an open panel names its tabs and the close control that returns to the
+/// conversation.
+fn assert_views_reachable(frame: &A11yFrame, scene: &str, panel_open: bool) {
+    assert!(
+        frame.has_node(Role::Button, |node| node.label.as_deref()
+            == Some("Toggle Panel")),
+        "{scene}: missing the header's Toggle Panel control"
+    );
+    for view in ["Changes", "History", "Files"] {
+        let found = frame.has_node(Role::Tab, |node| {
+            node.label
+                .as_deref()
+                .is_some_and(|label| label.split(' ').next() == Some(view))
+        });
+        assert_eq!(
+            found, panel_open,
+            "{scene}: panel tab {view:?} reachable only while the panel is open"
         );
     }
+    assert_eq!(
+        frame.has_node(Role::Button, |node| node.label.as_deref()
+            == Some("Close panel")),
+        panel_open,
+        "{scene}: Close panel returns to the conversation"
+    );
+    assert!(
+        !frame.has_node(Role::Tab, |node| node.label.as_deref()
+            == Some("Conversation")),
+        "{scene}: the retired view switcher is drawn"
+    );
 }
 
 fn assert_workspace_reachable(
@@ -199,7 +223,7 @@ fn assert_workspace_reachable(
         );
     }
 
-    assert_views_reachable(frame, scene);
+    assert_views_reachable(frame, scene, false);
 
     assert!(
         !expected_messages.is_empty(),
@@ -419,17 +443,17 @@ fn assert_views_and_overlays(harness: &mut Harness, repository: &Path) {
     // Changes, History, and Files views.
     harness.update(|plait, window, cx| plait.show_tab(Workspace::Changes, window, cx));
     let changes = steady_frame(harness, "workspace-changes");
-    assert_views_reachable(&changes, "workspace-changes");
+    assert_views_reachable(&changes, "workspace-changes", true);
 
     harness.update(|plait, window, cx| plait.show_tab(Workspace::History, window, cx));
     harness.settle();
     let history = steady_frame(harness, "workspace-history");
-    assert_views_reachable(&history, "workspace-history");
+    assert_views_reachable(&history, "workspace-history", true);
 
     harness.update(|plait, _, cx| plait.open_file("src/review.rs".into(), Some(1), cx));
     harness.settle();
     let files = steady_frame(harness, "workspace-files");
-    assert_views_reachable(&files, "workspace-files");
+    assert_views_reachable(&files, "workspace-files", true);
 
     // Approval card over the conversation with tabs and sidebar.
     harness.connect(repository, true);
