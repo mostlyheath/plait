@@ -134,6 +134,9 @@ fn every_new_route_opens_independent_drafts_and_three_hundred_stay_cold() {
     });
     #[cfg(debug_assertions)]
     {
+        use plait_client::preferences::ThreadTabs;
+        // The header's tabs form, while a draft is the open tab.
+        h.update(|p, _, _| p.preferences.value.thread_tabs = Some(ThreadTabs::Show));
         let a = h.draw_a11y();
         let b = h.draw_a11y();
         a.assert_no_duplicates("300 drafts first");
@@ -146,6 +149,7 @@ fn every_new_route_opens_independent_drafts_and_three_hundred_stay_cold() {
                 .map(|node| (node.path.clone(), node.node_id))
                 .collect::<Vec<_>>()
         };
+        assert!(!tab_nodes(&b).is_empty(), "the tab strip is drawn");
         assert_eq!(
             tab_nodes(&a),
             tab_nodes(&b),
@@ -153,6 +157,13 @@ fn every_new_route_opens_independent_drafts_and_three_hundred_stay_cold() {
         );
         assert!(b.nodes.iter().filter(|node| node.role == Role::Tab).count() < 20);
         assert!(b.has_node(Role::Button, |n| n.label.as_deref()
+            == Some("New thread tab")));
+        // The title form draws no strip; the list below still reaches every tab.
+        h.update(|p, _, _| p.preferences.value.thread_tabs = Some(ThreadTabs::Hide));
+        let hidden = h.draw_a11y();
+        hidden.assert_no_duplicates("300 drafts, tabs hidden");
+        assert!(tab_nodes(&hidden).is_empty());
+        assert!(!hidden.has_node(Role::Button, |n| n.label.as_deref()
             == Some("New thread tab")));
         h.update(|p, _, _| p.tabs.list_open = true);
         let a = h.draw_a11y();

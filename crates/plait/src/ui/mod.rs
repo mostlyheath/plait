@@ -1008,7 +1008,9 @@ impl Plait {
             .border_color(rgb(colors().border))
             .when(!sidebar, |el| el.child(self.sidebar_toggle(cx)));
 
-        if current_thread && self.preferences.value.shows_thread_tabs() {
+        // The tabs form stays while a draft, Worktrees or Linear issues is open,
+        // so the strip that opened it can switch back, reorder and close.
+        if self.preferences.value.shows_thread_tabs() {
             header = header.child(self.tab_row(window, cx));
         } else {
             if self.tabs.list_open {

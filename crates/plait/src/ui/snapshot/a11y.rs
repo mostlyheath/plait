@@ -42,6 +42,8 @@ fn named_drafts_keep_accessibility_ids_through_title_edits() {
     let mut h = Harness::new(&repo, None, 1380., 860.);
     h.connect(&repo, false);
     h.update(|p, w, cx| {
+        // The header's tabs form, kept while a draft is the open tab.
+        p.preferences.value.thread_tabs = Some(plait_client::preferences::ThreadTabs::Show);
         // Keep the thread and add the other tab kind without asking the host.
         let checkout = p.tab_checkout(repo.clone());
         p.tabs
@@ -112,6 +114,27 @@ fn named_drafts_keep_accessibility_ids_through_title_edits() {
                 .is_some_and(|s| s.starts_with("Same first line renamed"))
         }));
     }
+    // With tabs hidden the header draws the draft's title; the list keeps
+    // every tab, with the same IDs.
+    h.update(|p, _, _| {
+        p.preferences.value.thread_tabs = Some(plait_client::preferences::ThreadTabs::Hide)
+    });
+    let hidden = steady_frame(&mut h, "draft titles, tabs hidden");
+    assert!(!hidden.has_node(Role::Tab, |n| n.path.contains("thread-tab-")));
+    let entries = |frame: &A11yFrame| {
+        frame
+            .nodes
+            .iter()
+            .filter(|n| n.role == Role::MenuItem && n.path.contains("tab-list"))
+            .map(|n| (n.path.clone(), n.node_id))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(entries(&hidden).len(), 4);
+    assert!(
+        entries(&first)
+            .iter()
+            .all(|entry| entries(&hidden).contains(entry))
+    );
     drop(h);
     std::fs::remove_dir_all(scratch).unwrap();
 }
