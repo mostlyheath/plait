@@ -88,7 +88,7 @@ impl Plait {
     fn room_for(&self, panel: Panel) -> f32 {
         let other = panel.other();
         let shown = match other {
-            Panel::Sidebar => self.visible_sidebar(),
+            Panel::Sidebar => self.sidebar,
             Panel::Review => false,
         };
         let taken = if shown {
@@ -158,7 +158,7 @@ impl Plait {
             let x = f32::from(event.event.position.x);
             let width = match panel {
                 Panel::Sidebar => x,
-                Panel::Review => f32::from(this.workspace.work_area.right()) - x,
+                Panel::Review => f32::from(this.workspace.sheet_body.right()) - x,
             };
             let room = match panel {
                 Panel::Sidebar => this.room_for(panel),

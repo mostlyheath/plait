@@ -811,7 +811,7 @@ impl Plait {
         if self.host.protocol() < 3 || !self.host.connection.connected {
             return;
         }
-        if !self.visible_sidebar() {
+        if !self.sidebar {
             self.toggle_sidebar(window, cx);
         }
         self.navigation.attention = false;

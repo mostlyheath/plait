@@ -1016,13 +1016,16 @@ mod tests {
         // keystroke no client can parse all load and save unchanged.
         fs::write(
             &path,
-            r#"{"keymap": {"thread.new": "cmd-t", "later.action": "cmd-l", "app.quit": "", "view.changes": "not a key"}}"#,
+            r#"{"keymap": {"thread.new": "cmd-t", "later.action": "cmd-l", "pane.split_right": "cmd-9", "pane.split_down": "cmd-8", "pane.close": "cmd-7", "app.quit": "", "view.changes": "not a key"}}"#,
         )
         .unwrap();
         let loaded = load(&path).unwrap();
         let expected = keymap(&[
             ("app.quit", ""),
             ("later.action", "cmd-l"),
+            ("pane.split_right", "cmd-9"),
+            ("pane.split_down", "cmd-8"),
+            ("pane.close", "cmd-7"),
             ("thread.new", "cmd-t"),
             ("view.changes", "not a key"),
         ]);

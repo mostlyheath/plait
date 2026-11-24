@@ -536,7 +536,7 @@ fn scope_keys_and_clean_files() {
             p.workspace.turn_review.record.as_ref().unwrap().files.len(),
             1
         );
-        assert!(p.work_focus[plait_client::panes::PaneKind::Changes as usize].is_focused(w));
+        assert!(p.panel_focus[plait_client::panes::PaneKind::Changes as usize].is_focused(w));
         p.open_review_scopes(w, cx);
     });
     wait(&mut h, |p| p.overlay.is_some());
@@ -544,7 +544,7 @@ fn scope_keys_and_clean_files() {
     press(&mut h, "escape");
     h.update(|p, w, _| {
         assert!(p.overlay.is_none());
-        assert!(p.work_focus[plait_client::panes::PaneKind::Changes as usize].is_focused(w));
+        assert!(p.panel_focus[plait_client::panes::PaneKind::Changes as usize].is_focused(w));
     });
     h.update(|p, w, cx| p.open_review_scopes(w, cx));
     wait(&mut h, |p| p.overlay.is_some());

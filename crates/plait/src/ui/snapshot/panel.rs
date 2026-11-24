@@ -157,6 +157,12 @@ fn keys_focus_fill_and_tab_memory() {
         assert_eq!(p.panel_kind(), Some(PanelKind::Changes));
         assert!(!p.panel_fills());
     });
+    h.keystroke("cmd-alt-right");
+    h.update(|p, w, _| assert!(p.focus.is_focused(w)));
+    h.keystroke("cmd-alt-left");
+    h.update(|p, w, cx| {
+        assert!(p.panel_focus[p.panel_focus_kind() as usize].contains_focused(w, cx));
+    });
     h.keystroke("cmd-shift-3");
     h.draw();
     h.update(|p, _, _| assert_eq!(p.panel_kind(), Some(PanelKind::History)));
@@ -200,7 +206,7 @@ fn filling_from_conversation_moves_find_into_panel() {
     h.update(|p, w, cx| {
         assert!(p.panel_fills());
         assert!(
-            p.work_focus[plait_client::panes::PaneKind::Changes as usize].contains_focused(w, cx)
+            p.panel_focus[plait_client::panes::PaneKind::Changes as usize].contains_focused(w, cx)
         );
         assert_eq!(p.find_target(), Some(FindIn::Changes));
     });
@@ -234,7 +240,7 @@ fn panel_changes_handoff_stays_on_the_scope_row() {
             .unwrap_or_else(|| panic!("missing {id}"))
             .bounds
     };
-    let scope = bounds("work-recorded");
+    let scope = bounds("panel-recorded");
     let editor = bounds("panel-editor");
     assert!(editor.center().y <= scope.bottom(), "the handoff wrapped");
     assert!(

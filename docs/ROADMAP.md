@@ -17,7 +17,7 @@ for evidence and limits.
   its [build order](../DESIGN.md#build-order), steps 10 to 26: new tokens
   and controls; one sheet with one header in place of the tab row, workspace
   bar, and status line; thread cards in the sidebar; a panel for Changes,
-  Files, and History in place of This turn and Work view; Every thread;
+  Files, and History; Every thread;
   requests as bubbles, with the line kept as a setting; folded work; and the
   approval in the message box's place. Every step is presentation only: no
   change to the protocol, to state the host stores, to permissions, or to Git

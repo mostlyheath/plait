@@ -107,7 +107,7 @@ that the application's frame or latency goals are met.
   the sheet corners, window dragging, and the foot controls by pointer and keyboard.
   Those checks and frame measurements are pending.
 - The earlier desktop layout (sidebar, status line, message box, This turn,
-  folded turns, Work view) was released without inspection in the native app.
+  folded turns, and the former split layout) was released without inspection in the native app.
   Its scenes were rendered and looked at on Linux only. See
   [#130](https://github.com/mostlyheath/plait/issues/130).
 - Some tests depend on timing and fail now and then on unrelated changes; one

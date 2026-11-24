@@ -4,6 +4,7 @@ use gpui::{prelude::*, *};
 use plait_client::{
     panel::{PanelKind, Scope},
     panes::PaneKind,
+    review::recorded::Target,
 };
 
 impl Plait {
@@ -17,9 +18,7 @@ impl Plait {
     }
 
     pub(super) fn panel_is_open(&self) -> bool {
-        !self.worktrees_visible()
-            && !self.draws_work()
-            && self.tabs.model.panel().is_some_and(|p| p.open)
+        !self.worktrees_visible() && self.tabs.model.panel().is_some_and(|p| p.open)
     }
 
     pub(super) fn panel_kind(&self) -> Option<PanelKind> {
@@ -36,12 +35,12 @@ impl Plait {
     }
 
     pub(super) fn sheet_width(&self) -> f32 {
-        let measured = f32::from(self.workspace.work_area.size.width);
+        let measured = f32::from(self.workspace.sheet_body.size.width);
         if measured > 0. {
             return measured;
         }
         (self.panels.viewport
-            - if self.visible_sidebar() {
+            - if self.sidebar {
                 self.panel_width(Edge::Sidebar)
             } else {
                 0.
@@ -80,7 +79,7 @@ impl Plait {
         }
         if self.panel_fills() {
             let kind = self.panel_focus_kind();
-            let focus = self.work_focus[kind as usize].clone();
+            let focus = self.panel_focus[kind as usize].clone();
             if !focus.contains_focused(window, cx) {
                 self.leave_conversation_focus(window, cx);
                 self.panels.focused = Some(kind);
@@ -150,7 +149,7 @@ impl Plait {
             PaneKind::History => self.history_view(width, cx).into_any_element(),
             PaneKind::Files => self.file_view(cx),
             _ => self
-                .work_changes(self.panel_recorded(), width, cx)
+                .panel_changes(self.panel_recorded(), width, cx)
                 .into_any_element(),
         };
         column()
@@ -159,7 +158,7 @@ impl Plait {
             .aria_label("Review panel")
             .audited()
             .tab_group()
-            .track_focus(&self.work_focus[kind as usize])
+            .track_focus(&self.panel_focus[kind as usize])
             .relative()
             .w(px(width))
             .flex_shrink_0()
@@ -238,7 +237,7 @@ impl Plait {
                             if let Some(panel) = this.tabs.model.panel_mut() {
                                 panel.recorded = None;
                             }
-                            this.sync_work_scope(true, w, cx);
+                            this.sync_panel_scope(true, w, cx);
                         },
                     ))
                 })
@@ -273,5 +272,135 @@ impl Plait {
             p.recorded = None;
         }
         self.show_tab(Workspace::Changes, window, cx);
+    }
+}
+
+impl Plait {
+    pub(super) fn watch_panel_focus(&self, window: &mut Window, cx: &mut Context<Self>) {
+        for (handle, kind) in self.panel_focus.iter().zip([
+            PaneKind::Thread,
+            PaneKind::Changes,
+            PaneKind::History,
+            PaneKind::Files,
+        ]) {
+            cx.on_focus_out(handle, window, move |this, _, _, cx| {
+                if this.panels.focused == Some(kind) {
+                    this.panels.focused = None;
+                    cx.notify();
+                }
+            })
+            .detach();
+            cx.on_focus_in(handle, window, move |this, _, cx| {
+                if this.panel_is_open() {
+                    this.panels.focused = Some(kind);
+                    cx.notify();
+                }
+            })
+            .detach();
+        }
+    }
+    pub(super) fn panel_area_probe(&self, cx: &Context<Self>) -> impl IntoElement {
+        let view = cx.weak_entity();
+        canvas(
+            move |bounds, _, cx| {
+                let _ = view.update(cx, |this, cx| {
+                    if this.workspace.sheet_body != bounds {
+                        this.workspace.sheet_body = bounds;
+                        if this.panel_is_open() {
+                            cx.notify();
+                        }
+                    }
+                });
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .size_full()
+    }
+    pub(super) fn choose_panel_scope(
+        &mut self,
+        recorded: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(panel) = self.tabs.model.panel_mut().filter(|p| p.open) {
+            panel.select_scope(if recorded {
+                Scope::ThisTurn
+            } else {
+                Scope::Uncommitted
+            });
+        }
+        self.sync_panel_scope(recorded, window, cx);
+    }
+    pub(super) fn sync_panel_scope(
+        &mut self,
+        recorded: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if recorded {
+            let records = &self.workspace.turn_records;
+            let line = records.selection.review_line(&records.lines);
+            if let (Some(line), Some(thread)) = (line, self.host.thread.selected.as_ref()) {
+                let remembered = self
+                    .tabs
+                    .model
+                    .panel()
+                    .filter(|p| p.open)
+                    .and_then(|p| p.recorded.as_ref())
+                    .filter(|t| {
+                        &t.thread == thread
+                            && t.checkout == self.host.creation.checkout
+                            && t.original == line.run
+                    });
+                let target = remembered.cloned().unwrap_or_else(|| Target {
+                    thread: thread.clone(),
+                    checkout: self.host.creation.checkout.clone(),
+                    record: line.displayed.clone(),
+                    original: line.run.clone(),
+                    path: None,
+                });
+                if !self
+                    .workspace
+                    .turn_review
+                    .target
+                    .as_ref()
+                    .is_some_and(|t| t.record == target.record && t.thread == target.thread)
+                    || self.workspace.turn_review.current
+                {
+                    self.clear_turn_review();
+                    self.workspace.turn_review.target = Some(target);
+                    self.workspace.turn_review.window = Some(window.window_handle());
+                    self.refresh_turn_review(cx);
+                }
+            } else if self.workspace.turn_review.target.is_some() && self.records_current() {
+                self.clear_turn_review();
+            }
+        } else {
+            if self.workspace.turn_review.target.is_some() {
+                self.clear_turn_review();
+            }
+            self.count_panel_files(cx);
+        }
+        self.search_panel_diff(cx);
+        cx.notify();
+    }
+
+    pub(super) fn focused_panel_kind(&self) -> Option<PaneKind> {
+        self.panels
+            .focused
+            .filter(|kind| self.panel_is_open() && *kind == self.panel_focus_kind())
+    }
+    pub(super) fn shows_kind(&self, kind: PaneKind) -> bool {
+        self.panel_is_open() && self.panel_focus_kind() == kind
+    }
+    pub(super) fn cycle_panel_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let handle = &self.panel_focus[self.panel_focus_kind() as usize];
+        if handle.contains_focused(window, cx) && !self.panel_fills() {
+            window.focus(&self.focus, cx);
+        } else {
+            window.focus(handle, cx);
+        }
+        cx.notify();
     }
 }

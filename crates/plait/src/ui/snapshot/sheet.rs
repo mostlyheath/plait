@@ -25,7 +25,7 @@ pub(super) fn walk(h: &mut Harness, suffix: &str) {
     });
     capture_both(h, &format!("sheet-{suffix}"));
     h.update(|p, window, _| {
-        let body = p.workspace.work_area;
+        let body = p.workspace.sheet_body;
         let rail = p.panel_width(crate::ui::panels::Panel::Sidebar);
         assert!(body.left() >= px(rail));
         assert!(body.right() <= window.viewport_size().width - px(8.));
@@ -34,7 +34,7 @@ pub(super) fn walk(h: &mut Harness, suffix: &str) {
     h.update(|p, _, _| p.sidebar = false);
     capture_both(h, &format!("sheet-hidden-{suffix}"));
     h.update(|p, window, _| {
-        let body = p.workspace.work_area;
+        let body = p.workspace.sheet_body;
         assert_eq!(body.left(), px(0.));
         assert_eq!(body.right(), window.viewport_size().width);
     });
@@ -153,7 +153,7 @@ fn foot_activation_and_next_thread_shortcut() {
 
     // The window action remains reachable while all foot controls are hidden.
     h.keystroke("cmd-b");
-    h.update(|p, _, _| assert!(!p.visible_sidebar()));
+    h.update(|p, _, _| assert!(!p.sidebar));
     h.keystroke("cmd-alt-j");
     h.update(|p, _, _| assert_eq!(p.host.thread.selected.as_deref(), Some("thr_0c44a9d1")));
     drop(h);

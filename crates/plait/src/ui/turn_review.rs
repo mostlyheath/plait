@@ -112,12 +112,7 @@ impl Plait {
         let history = self.host.thread.snapshot.clone();
         let task_stamp = stamp.clone();
         let read_record = self.panel_kind() == Some(plait_client::panel::PanelKind::Changes)
-            || self.workspace.tab == Workspace::Changes
-            || self
-                .tabs
-                .model
-                .work()
-                .is_some_and(|work| work.open && work.recorded);
+            || self.workspace.tab == Workspace::Changes;
         let client = self.host_client();
         let protocol = self.host.protocol();
         let task = cx.background_executor().spawn(async move {
@@ -269,7 +264,7 @@ impl Plait {
             }
         }
         self.sync_recorded_current(cx);
-        self.search_work_diff(cx);
+        self.search_panel_diff(cx);
         self.restore_ready_bookmarks(cx);
         self.pump_turn_review(cx);
         cx.notify();
@@ -285,7 +280,6 @@ impl Plait {
         {
             return;
         }
-        self.leave_work_fallback(window, cx);
         if self.workspace.turn_review.older
             && let Some(path) = &target.path
         {
@@ -305,10 +299,6 @@ impl Plait {
         self.workspace.turn_review.target = Some(target);
         self.workspace.diff_scroll = UniformListScrollHandle::new();
         self.workspace.file_scroll = UniformListScrollHandle::new();
-        if self.draws_work() {
-            self.tabs.model.work_mut().unwrap().select_scope(true);
-            self.refresh_turn_review(cx);
-        }
         self.show_tab(Workspace::Changes, window, cx);
         if self.workspace.turn_review.older {
             self.workspace.turn_review.error = Some((

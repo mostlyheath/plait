@@ -71,7 +71,6 @@ mod turn_review;
 mod update;
 mod ways_out;
 mod window_bar;
-mod work_view;
 mod worktree;
 mod worktrees_view;
 
@@ -129,12 +128,9 @@ actions!(
         SwitchThreadModel,
         CommandPalette,
         ToggleInspector,
-        ToggleWorkView,
+        FillPanel,
         FocusNextPane,
         FocusPreviousPane,
-        SplitPaneRight,
-        SplitPaneDown,
-        ClosePane,
         ToggleChangedFiles,
         RenameThread,
         ArchiveThread,
@@ -216,8 +212,7 @@ pub struct Plait {
     panels: panels::Panels,
     focus: FocusHandle,
     /// The conversation field that gets focus back after changing views.
-    kind_menu_focus: FocusHandle,
-    work_focus: [FocusHandle; 4],
+    panel_focus: [FocusHandle; 4],
     conversation_focus: Option<FocusHandle>,
     /// The window control that had focus before conversation find opened.
     conversation_find_focus: Option<FocusHandle>,
@@ -370,8 +365,7 @@ impl Plait {
             remote_listing: None,
             panels: Default::default(),
             focus,
-            kind_menu_focus: cx.focus_handle(),
-            work_focus: std::array::from_fn(|_| cx.focus_handle()),
+            panel_focus: std::array::from_fn(|_| cx.focus_handle()),
             conversation_focus: None,
             conversation_find_focus: None,
             sidebar: true,
@@ -441,7 +435,7 @@ impl Plait {
             )
         })
         .detach();
-        this.watch_work_focus(window, cx);
+        this.watch_panel_focus(window, cx);
         this.keep_focus_in_settings(window, cx);
         this.watch_approval_keys(window, cx);
         this.reconnect_host(window, cx);
@@ -481,11 +475,11 @@ impl Plait {
                 }
                 this.sync_recorded_current(cx);
                 if status {
-                    this.count_work_files(cx);
+                    this.count_panel_files(cx);
                     this.thread_files_status(cx);
                     this.check_file(cx);
                 }
-                this.search_work_diff(cx);
+                this.search_panel_diff(cx);
                 this.normalize_checkout(cx);
                 this.bind_selected_checkout();
                 this.deliver_files(cx);
@@ -568,7 +562,6 @@ impl Plait {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.leave_work_fallback(window, cx);
         let same_recorded_file = self.workspace.turn_review.current
             && self.recorded_file().is_some_and(|recorded| {
                 self.state
@@ -598,7 +591,6 @@ impl Plait {
             return;
         }
         self.workspace.restore_pending[1] = false;
-        let work = self.draws_work();
         window.focus(&self.focus, cx);
         self.interaction = Some(Instant::now());
         match step {
@@ -606,18 +598,16 @@ impl Plait {
             None => self.state.repository.select(file, mode),
         }
         self.workspace.diff_scroll = UniformListScrollHandle::new();
-        if !work {
-            if let Some(panel) = self.tabs.model.panel_mut() {
-                panel.open_on(plait_client::panel::PanelKind::Changes);
-                panel.select_scope(plait_client::panel::Scope::Uncommitted);
-            }
-            self.workspace.tab = Workspace::Conversation;
-            self.panels.focused = Some(plait_client::panes::PaneKind::Changes);
-            window.focus(
-                &self.work_focus[plait_client::panes::PaneKind::Changes as usize],
-                cx,
-            );
+        if let Some(panel) = self.tabs.model.panel_mut() {
+            panel.open_on(plait_client::panel::PanelKind::Changes);
+            panel.select_scope(plait_client::panel::Scope::Uncommitted);
         }
+        self.workspace.tab = Workspace::Conversation;
+        self.panels.focused = Some(plait_client::panes::PaneKind::Changes);
+        window.focus(
+            &self.panel_focus[plait_client::panes::PaneKind::Changes as usize],
+            cx,
+        );
         self.refresh_turn_review(cx);
         self.pump(cx);
         cx.notify();
@@ -809,20 +799,12 @@ impl Plait {
     fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // Keep the shortcut context alive when its focused child is removed.
         window.focus(&self.focus, cx);
-        let visible = self.draws_work();
-        if let Some(work) = self.tabs.model.work_mut() {
-            work.toggle_sidebar(&mut self.sidebar, visible);
-        } else {
-            self.sidebar = !self.sidebar;
-        }
+        self.sidebar = !self.sidebar;
         cx.notify();
     }
 
     fn show_tab(&mut self, tab: Workspace, window: &mut Window, cx: &mut Context<Self>) {
-        if self.route_work_tab(tab, window, cx)
-            || self.worktrees_visible()
-            || !self.ensure_view_tab()
-        {
+        if self.worktrees_visible() || !self.ensure_view_tab() {
             return;
         }
         if tab != Workspace::Conversation && !self.panel_is_open() {
@@ -840,14 +822,14 @@ impl Plait {
         }
         self.present_workspace(Workspace::Conversation, window, cx);
         if tab == Workspace::Changes && self.workspace.turn_review.target.is_none() {
-            self.sync_work_scope(self.panel_recorded(), window, cx);
+            self.sync_panel_scope(self.panel_recorded(), window, cx);
         }
         if tab == Workspace::Conversation {
             window.focus(&self.focus, cx);
             self.return_conversation_focus(window, cx);
         } else {
             self.panels.focused = Some(self.panel_focus_kind());
-            window.focus(&self.work_focus[self.panel_focus_kind() as usize], cx);
+            window.focus(&self.panel_focus[self.panel_focus_kind() as usize], cx);
         }
     }
 
@@ -896,15 +878,8 @@ impl Plait {
 
     fn load_workspace_locations(&mut self, cx: &mut Context<Self>) {
         let tab = self.selected_view();
-        let work = self
-            .tabs
-            .model
-            .work()
-            .filter(|w| w.chat_locations.is_some())
-            .map(|w| w.recorded);
-        if tab == Workspace::Changes || work.is_some() {
+        if tab == Workspace::Changes {
             if !self.panel_recorded()
-                && work != Some(true)
                 && self.workspace.restore_pending[1]
                 && let Some(saved) = self.workspace.restore.as_ref()
                 && let Some(path) = saved.changes.path.as_ref()
@@ -921,9 +896,7 @@ impl Plait {
             }
             self.refresh_turn_review(cx);
         }
-        if tab == Workspace::History
-            || work.is_some() && self.remembers_kind(plait_client::panes::PaneKind::History)
-        {
+        if tab == Workspace::History {
             self.state.repository.request_history();
             if self.workspace.restore_pending[2]
                 && let Some(commit) = self
@@ -938,9 +911,7 @@ impl Plait {
         } else {
             self.state.repository.leave_history();
         }
-        if tab == Workspace::Files
-            || work.is_some() && self.remembers_kind(plait_client::panes::PaneKind::Files)
-        {
+        if tab == Workspace::Files {
             self.check_file(cx);
         }
     }
@@ -984,7 +955,7 @@ impl Plait {
     }
 
     fn header(&mut self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let sidebar = self.visible_sidebar();
+        let sidebar = self.sidebar;
         let current_thread = !self.worktrees_visible()
             && !self.issues_visible()
             && self.host.thread.selected.is_some();
@@ -1103,15 +1074,12 @@ impl Plait {
                         return;
                     }
                     if step == GitStep::Commit {
-                        if this.tabs.model.work().is_some_and(|work| work.open) {
-                            this.toggle_work(window, cx);
-                        }
                         if let Some(panel) = this.tabs.model.panel_mut() {
                             panel.select_scope(plait_client::panel::Scope::Uncommitted);
                         }
                         this.show_tab(Workspace::Changes, window, cx);
                         if this.workspace.turn_review.target.is_some() {
-                            this.choose_work_scope(false, window, cx);
+                            this.choose_panel_scope(false, window, cx);
                         }
                         window.focus(&this.workspace.commit_message.focus_handle(cx), cx);
                     } else {
@@ -1163,7 +1131,7 @@ impl Plait {
     fn header_panel_toggle(&self, cx: &mut Context<Self>) -> Control {
         let open = self.panel_is_open();
         let keys = self.shortcut_label("view.toggle_inspector");
-        let totals = self.workspace.work_total.as_ref().filter(|_| {
+        let totals = self.workspace.panel_change_total.as_ref().filter(|_| {
             self.state
                 .repository
                 .snapshot()
@@ -1372,14 +1340,11 @@ impl Render for Plait {
         let wide = Self::wide(window);
         self.cover_workspace(window, cx);
         self.panels.viewport = f32::from(window.viewport_size().width);
-        if self.workspace.work_area.size.height > px(0.) {
-            self.sync_work_locations(window, cx);
-        }
         self.advance_reveals(window);
         self.settle_find_reveal(window);
         let real = self.host.thread.selected.is_some();
         let drafting = !real && self.draft.open;
-        let sidebar = self.visible_sidebar();
+        let sidebar = self.sidebar;
         let root = column()
             .id("plait")
             .role(Role::Application)
@@ -1410,37 +1375,14 @@ impl Render for Plait {
             .on_action(
                 cx.listener(|this, _: &ToggleSidebar, window, cx| this.toggle_sidebar(window, cx)),
             )
-            .on_action(
-                cx.listener(|this, _: &ToggleWorkView, window, cx| this.fill_panel(window, cx)),
-            )
-            .when(
-                !self.settings_open && (self.panel_is_open() || self.draws_work()),
-                |el| {
-                    el.on_action(cx.listener(|this, _: &FocusNextPane, window, cx| {
-                        use plait_client::panes::*;
-                        this.pane_command(PaneCommand::Next, window, cx)
-                    }))
-                    .on_action(cx.listener(
-                        |this, _: &FocusPreviousPane, window, cx| {
-                            use plait_client::panes::*;
-                            this.pane_command(PaneCommand::Previous, window, cx)
-                        },
-                    ))
-                },
-            )
-            .when(!self.settings_open && self.draws_work(), |el| {
-                el.on_action(cx.listener(|this, _: &SplitPaneRight, window, cx| {
-                    use plait_client::panes::*;
-                    this.pane_command(PaneCommand::Split(SplitDirection::SideBySide), window, cx)
+            .on_action(cx.listener(|this, _: &FillPanel, window, cx| this.fill_panel(window, cx)))
+            .when(!self.settings_open && self.panel_is_open(), |el| {
+                el.on_action(cx.listener(|this, _: &FocusNextPane, window, cx| {
+                    this.cycle_panel_focus(window, cx)
                 }))
-                .on_action(cx.listener(|this, _: &SplitPaneDown, window, cx| {
-                    use plait_client::panes::*;
-                    this.pane_command(PaneCommand::Split(SplitDirection::Stacked), window, cx)
-                }))
-                .on_action(cx.listener(|this, _: &ClosePane, window, cx| {
-                    use plait_client::panes::*;
-                    this.pane_command(PaneCommand::Close, window, cx)
-                }))
+                .on_action(cx.listener(
+                    |this, _: &FocusPreviousPane, window, cx| this.cycle_panel_focus(window, cx),
+                ))
             })
             .on_action(
                 cx.listener(|this, _: &ToggleInspector, window, cx| this.toggle_panel(window, cx)),
@@ -1545,14 +1487,14 @@ impl Render for Plait {
             }))
             // Show Changes, where the result and any error appear.
             .on_action(cx.listener(|this, _: &StageAll, window, cx| {
-                if this.work_recorded() {
+                if this.panel_recorded() {
                     return;
                 }
                 this.show_tab(Workspace::Changes, window, cx);
                 this.git_write(plait_client::git::WriteOp::StageAll, cx)
             }))
             .on_action(cx.listener(|this, _: &UnstageAll, window, cx| {
-                if this.work_recorded() {
+                if this.panel_recorded() {
                     return;
                 }
                 this.show_tab(Workspace::Changes, window, cx);
@@ -1562,21 +1504,21 @@ impl Render for Plait {
                 cx.listener(|this, _: &CommitStaged, window, cx| this.focus_commit(window, cx)),
             )
             .on_action(cx.listener(|this, _: &Push, window, cx| {
-                if this.work_recorded() {
+                if this.panel_recorded() {
                     return;
                 }
                 this.show_tab(Workspace::Changes, window, cx);
                 this.push(cx)
             }))
             .on_action(cx.listener(|this, _: &Pull, window, cx| {
-                if this.work_recorded() {
+                if this.panel_recorded() {
                     return;
                 }
                 this.show_tab(Workspace::Changes, window, cx);
                 this.pull(cx)
             }))
             .on_action(cx.listener(|this, _: &Fetch, window, cx| {
-                if this.work_recorded() {
+                if this.panel_recorded() {
                     return;
                 }
                 this.show_tab(Workspace::Changes, window, cx);
@@ -1708,10 +1650,8 @@ impl Render for Plait {
                                     .relative()
                                     .flex_1()
                                     .min_h_0()
-                                    .child(self.work_area_probe(cx))
-                                    .child(if let Some(layout) = self.work_layout() {
-                                        self.work_view(layout, window, cx)
-                                    } else if self.worktrees_visible() {
+                                    .child(self.panel_area_probe(cx))
+                                    .child(if self.worktrees_visible() {
                                         self.worktrees_view(wide, cx)
                                     } else if self.issues_visible() {
                                         self.issues_tab(wide, cx)
@@ -1732,7 +1672,7 @@ impl Render for Plait {
                                             .into_any_element()
                                     } else if self.workspace.tab == Workspace::History {
                                         self.history_view(
-                                            self.workspace.work_area.size.width.into(),
+                                            self.workspace.sheet_body.size.width.into(),
                                             cx,
                                         )
                                         .into_any_element()

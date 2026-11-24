@@ -381,7 +381,7 @@ impl Plait {
             return true;
         }
         self.capture_session(cx);
-        let bookmark = self.durable_tab_bookmark(None, cx);
+        let bookmark = self.capture_tab_bookmark(None, cx);
         match plait_client::tabs::bookmark::BookmarkRecord::capture(&bookmark) {
             Ok(bookmark) => {
                 let result = self.tabs.model.save_bookmark(id, bookmark);
@@ -905,9 +905,7 @@ impl Plait {
             .aria_label("All open tabs")
             .audited()
             .absolute()
-            .top(px(
-                HEADER_HEIGHT + if self.visible_sidebar() { 9. } else { 0. }
-            ))
+            .top(px(HEADER_HEIGHT + if self.sidebar { 9. } else { 0. }))
             .right(px(48.))
             .w(px(320.))
             .max_h(px(336.))

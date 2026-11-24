@@ -64,14 +64,6 @@ Notes on application shortcuts:
 - **Approvals (`Cmd-Option-Y`, `Cmd-Option-period`) and Undo (`Cmd-Option-U`):** Act only in the visible conversation with no modal or palette open over it. Holding an approval key answers at most one card.
 - **Unbound menu actions:** Actions without a default shortcut (such as **Worktrees**, **Linear Issues**, **Project Settings…**, **Show in Finder**, **Files**, **Rename Thread…**, **Archive or Unarchive Thread**, **Stage All Changes**, **Push**, **Pull**, **Fetch**, and **New Branch…**) can still be assigned a shortcut in **Settings → Keyboard**.
 
-Work view also has these assignable pane actions.
-
-| Shortcut | Action | ID |
-| --- | --- | --- |
-| — | Split Pane Right | `pane.split_right` |
-| — | Split Pane Down | `pane.split_down` |
-| — | Close Pane | `pane.close` |
-
 ## Composer and text fields
 
 Control-local bindings defined in `crates/plait/src/ui/composer/mod.rs` and `crates/plait/src/ui/text_field.rs`:

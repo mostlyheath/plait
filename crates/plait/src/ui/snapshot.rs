@@ -75,8 +75,6 @@ mod tokens;
 mod turn_review;
 mod undo;
 mod ways_out;
-#[cfg(debug_assertions)]
-mod work_view;
 mod worktree_fixture;
 mod worktrees;
 mod worktrees_view;
@@ -2424,10 +2422,6 @@ fn walk(output: Option<&Path>) {
         code_size::walk(&mut harness, &repository, suffix);
         find::find_walk(&mut harness, &repository, suffix);
         folded_turns::walk(&mut harness, &repository, suffix);
-        #[cfg(debug_assertions)]
-        if suffix == "wide" {
-            work_view::scenes(&repository, output);
-        }
         panel::scenes(&mut harness, &repository, suffix);
         undo::undo_walk(&mut harness, &repository, suffix);
         turn_review::walk(&mut harness, &repository, suffix);

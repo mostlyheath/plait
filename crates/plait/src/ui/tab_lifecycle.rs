@@ -158,7 +158,7 @@ impl Plait {
             .cloned()
             .map(|c| c.update(cx, |c, _| c.park_editor()));
         self.capture_session(cx);
-        let bookmark = self.durable_tab_bookmark(Some(window), cx);
+        let bookmark = self.capture_tab_bookmark(Some(window), cx);
         let record = match BookmarkRecord::capture(&bookmark) {
             Ok(record) => record,
             Err(bookmark::BookmarkError::NeedsStorage) if self.session.journal.is_some() => {
@@ -234,7 +234,7 @@ impl Plait {
                         if this.tabs.model.active() != Some(active) {
                             return;
                         }
-                        if this.durable_tab_bookmark(Some(window), cx) != bookmark {
+                        if this.capture_tab_bookmark(Some(window), cx) != bookmark {
                             this.request_tab(intent, window, cx);
                             return;
                         }
@@ -281,32 +281,6 @@ impl Plait {
 
     fn perform_tab(&mut self, intent: Intent, window: &mut Window, cx: &mut Context<Self>) {
         let previous = self.tabs.model.active();
-        self.sync_work_locations(window, cx);
-        let fallback = self.work_fallback();
-        let locations = self
-            .tabs
-            .model
-            .work()
-            .filter(|w| w.chat_locations.is_some())
-            .map(|_| {
-                plait_client::panes::PaneLocations::capture(
-                    &self.capture_tab_bookmark(Some(window), cx),
-                )
-            });
-        if let Some(work) = self.tabs.model.work_mut() {
-            if locations.is_some() {
-                work.pane_locations = locations;
-            }
-            let find = &self.workspace.diff_find;
-            if let Some(field) = &find.field {
-                work.diff_find = plait_client::tabs::bookmark::FindBookmark {
-                    open: find.open,
-                    query: field.read(cx).text().into(),
-                    current: find.bookmark_match(),
-                };
-            }
-            work.kind_menu = None;
-        }
         let covered = self.settings_open;
         let connection = self
             .host
@@ -387,12 +361,6 @@ impl Plait {
         };
         if self.tab_error(result) {
             if previous != self.tabs.model.active() {
-                if fallback
-                    && self.tabs.model.work().is_none()
-                    && let Some(id) = previous
-                {
-                    self.tabs.model.leave_work(id);
-                }
                 self.park_workspace(cx);
                 self.tabs.lifecycle.presenting = true;
                 self.present_tab(window, cx);
