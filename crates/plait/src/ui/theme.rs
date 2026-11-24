@@ -644,27 +644,11 @@ pub fn thread_row_colors(
         Working => (c.blue, c.muted, c.blue),
         Approval | Interrupted => (c.amber, c.text, c.amber),
         Failed => (c.red, c.text, c.red),
-        Queued(_) | Other => (c.subtle, c.muted, c.subtle),
+        Queued(_) => (c.subtle, c.muted, c.subtle),
+        Other => (c.faint, c.muted, c.subtle),
         FinishedUnread => (c.mint, c.text, c.subtle),
     };
     (node, if selected { c.strong } else { title }, detail)
-}
-
-pub fn thread_mark(mark: impl IntoElement) -> Div {
-    // Interrupt the line so hover and selection show through the three-point gap.
-    let line = || {
-        div()
-            .w(px(1.))
-            .h(px((ROW_HEIGHT - 13.) / 2.))
-            .bg(rgb(colors().edge))
-    };
-    column()
-        .flex_shrink_0()
-        .items_center()
-        .gap(px(3.))
-        .child(line())
-        .child(row().size(px(7.)).justify_center().child(mark))
-        .child(line())
 }
 
 pub fn dot(color: u32) -> Div {
