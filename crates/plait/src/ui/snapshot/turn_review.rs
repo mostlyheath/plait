@@ -314,6 +314,35 @@ fn answer(request: &Value) -> Option<Value> {
     }
 }
 #[core::prelude::v1::test]
+fn hidden_recorded_patch_survives_info_refresh() {
+    if !isolated("turn_review::hidden_recorded_patch_survives_info_refresh") {
+        return;
+    }
+    let (scratch, _, mut h) = setup("panel-recorded-cache");
+    let host = Host::start(answer);
+    h.update(|p, w, cx| p.open_turn_review(target(p, "last", Some("README.md")), w, cx));
+    wait(&mut h, |p| p.workspace.turn_review.diff.is_some());
+    h.update(|p, w, cx| {
+        p.show_tab(Workspace::Files, w, cx);
+        p.refresh_turn_review(cx);
+        assert!(p.workspace.turn_review.running);
+    });
+    wait(&mut h, |p| !p.workspace.turn_review.running);
+    h.update(|p, w, cx| {
+        p.host.connection.connected = false;
+        p.show_tab(Workspace::Changes, w, cx);
+        assert_eq!(p.recorded_file().unwrap().path, Path::new("README.md"));
+        assert!(
+            p.workspace.turn_review.diff.is_some(),
+            "lost the cached recorded patch"
+        );
+    });
+    drop(host);
+    drop(h);
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
+#[core::prelude::v1::test]
 fn recorded_identity_survives_undo() {
     if !isolated("turn_review::recorded_identity_survives_undo") {
         return;

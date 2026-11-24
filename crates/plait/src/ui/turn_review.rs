@@ -197,11 +197,13 @@ impl Plait {
             if let Some(window) = window {
                 let _ = window.update(cx, |_, window, cx| {
                     this.update(cx, |this, cx| {
-                        this.review_loaded(stamp, result, Some(window), cx)
+                        this.review_loaded(stamp, read_record, result, Some(window), cx)
                     })
                 });
             } else {
-                let _ = this.update(cx, |this, cx| this.review_loaded(stamp, result, None, cx));
+                let _ = this.update(cx, |this, cx| {
+                    this.review_loaded(stamp, read_record, result, None, cx)
+                });
             }
         })
         .detach();
@@ -210,6 +212,7 @@ impl Plait {
     fn review_loaded(
         &mut self,
         stamp: Stamp,
+        read_record: bool,
         result: Result<Loaded, host::Error>,
         window: Option<&mut Window>,
         cx: &mut Context<Self>,
@@ -225,16 +228,19 @@ impl Plait {
         match result {
             Ok(result) => {
                 self.workspace.turn_review.info = Some(result.info);
-                let offline = result.error.as_ref().is_some_and(|e| e.0 == "Offline");
-                self.workspace.turn_review.error = result.error;
-                if let Some(record) = result.record {
-                    self.workspace.turn_review.record = Some(Arc::new(record));
-                    self.workspace.turn_review.selected = result.selected;
-                }
-                if !self.workspace.turn_review.current {
-                    self.workspace.turn_review.status = result.status;
-                    if !offline {
-                        self.workspace.turn_review.diff = result.diff.map(Arc::new);
+                // An info-only read cannot replace the previously loaded patch.
+                if read_record {
+                    let offline = result.error.as_ref().is_some_and(|e| e.0 == "Offline");
+                    self.workspace.turn_review.error = result.error;
+                    if let Some(record) = result.record {
+                        self.workspace.turn_review.record = Some(Arc::new(record));
+                        self.workspace.turn_review.selected = result.selected;
+                    }
+                    if !self.workspace.turn_review.current {
+                        self.workspace.turn_review.status = result.status;
+                        if !offline {
+                            self.workspace.turn_review.diff = result.diff.map(Arc::new);
+                        }
                     }
                 }
             }
