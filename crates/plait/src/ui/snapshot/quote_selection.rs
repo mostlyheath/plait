@@ -66,9 +66,9 @@ pub(super) fn scenes(
 ) {
     let mut h = this_turn::harness(repository, output, width, height);
     stage(&mut h, repository);
-    h.capture(&format!("quote-selection-button-{suffix}"));
+    capture_both(&mut h, &format!("quote-selection-button-{suffix}"));
     h.update(|p, window, cx| assert!(p.quote_reply_selection(None, window, cx)));
-    h.capture(&format!("quote-selection-in-draft-{suffix}"));
+    capture_both(&mut h, &format!("quote-selection-in-draft-{suffix}"));
 }
 
 #[cfg(debug_assertions)]
