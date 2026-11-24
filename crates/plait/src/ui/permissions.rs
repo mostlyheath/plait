@@ -107,7 +107,7 @@ impl Plait {
             aside: None,
             note: Some(permissions.note.clone()),
         };
-        let palette = cx.new(|cx| Palette::new(options, items, window, cx));
+        let palette = cx.new(|cx| Palette::new(options, items, window, cx).picker());
         self.present(palette, None, window, cx);
     }
 }

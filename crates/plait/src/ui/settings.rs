@@ -425,6 +425,7 @@ impl Plait {
                 window,
                 cx,
             )
+            .picker()
         });
         self.present(palette, None, window, cx);
     }

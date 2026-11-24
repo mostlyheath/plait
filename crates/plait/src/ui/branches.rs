@@ -189,7 +189,7 @@ impl Plait {
         let typed: Typed =
             Rc::new(move |text, items| create_item(text.trim(), items, enabled, create));
         let palette = cx.new(|cx| {
-            let mut palette = Palette::new(options, items, window, cx);
+            let mut palette = Palette::new(options, items, window, cx).picker();
             palette.set_typed(typed, cx);
             palette
         });

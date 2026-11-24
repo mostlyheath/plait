@@ -374,7 +374,7 @@ impl Plait {
             note: self.picker_note(Some(purpose)),
         };
         let items = self.picker_items(Some(purpose));
-        let palette = cx.new(|cx| Palette::new(options, items, window, cx));
+        let palette = cx.new(|cx| Palette::new(options, items, window, cx).picker());
         self.present(palette, Some(purpose), window, cx);
     }
 
