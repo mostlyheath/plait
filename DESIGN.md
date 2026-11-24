@@ -971,7 +971,8 @@ one changes only the step named.
   | Conversation | 19 → 20 → 23 | `ui/live_conversation.rs`, `tool_card.rs`, `turn_records.rs`, `markdown.rs`, `selection.rs`, `plait-client/src/folding.rs`, `tool_view.rs`, `transcript.rs` |
   | Message box | 21 | `ui/thread_controls.rs`, `thread_files.rs`, `composer/`, the `approval` function in `live_conversation.rs` |
 
-  Steps 12 and 13 follow 11 and touch only what they name. Step 25 follows
+  Steps 12 and 13 follow 11 and touch only what they name. Steps 20 and 21 can start in parallel with step 15. Before either merges,
+  rebase onto merged step 15 to wire and verify its panel controls. Step 25 follows
   every other step; step 26 follows 25.
 - **Shared files.** `ui/mod.rs`, `ui/theme.rs`, `ui/actions.rs`,
   `ui/snapshot.rs`, `ui/settings.rs`, `ui/appearance.rs`, and
