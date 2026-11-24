@@ -69,6 +69,7 @@ mod settings_modal;
 mod sheet;
 mod showcase;
 mod sidebar;
+mod step21;
 mod storage;
 mod tabs;
 mod test_host;
@@ -2446,6 +2447,7 @@ fn walk(output: Option<&Path>) {
         images::walk(&mut harness, &repository, suffix);
         composer_v3_walk(&mut harness, &repository, suffix);
         message_box::walk(&mut harness, &repository, suffix);
+        step21::walk(&mut harness, &repository, suffix);
         settings_modal::walk(&mut harness, &repository, suffix);
         settings_walk(&mut harness, &repository, suffix);
         settings_controls_walk(&mut harness, &repository, suffix);
@@ -4708,13 +4710,34 @@ fn composer_v3_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
                 count("assets/icon.png", None, None, false),
             ],
         );
+        plait.workspace.thread_files.collapsed = false;
         cx.notify();
     });
+    #[cfg(debug_assertions)]
+    if harness.output.is_none() {
+        assert!(
+            harness.draw_a11y().has_node(Role::Button, |node| {
+                node.label.as_deref()
+                    == Some("Added crates/plait-client/src/git/worktree.rs. Show in Changes")
+            }),
+            "the expanded legacy changed-files scene shows a file row"
+        );
+    }
     harness.capture(&format!("composer-v3-changed-files-{suffix}"));
     harness.update(|plait, _, cx| {
         plait.workspace.thread_files.collapsed = true;
         cx.notify();
     });
+    #[cfg(debug_assertions)]
+    if harness.output.is_none() {
+        assert!(
+            !harness.draw_a11y().has_node(Role::Button, |node| {
+                node.label.as_deref()
+                    == Some("Added crates/plait-client/src/git/worktree.rs. Show in Changes")
+            }),
+            "the collapsed legacy changed-files scene hides file rows"
+        );
+    }
     harness.capture(&format!("composer-v3-changed-files-collapsed-{suffix}"));
     harness.update(|plait, _, cx| {
         plait.workspace.thread_files = Default::default();
