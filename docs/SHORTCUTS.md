@@ -118,4 +118,4 @@ Bindings defined in `crates/plait/src/ui/selection.rs`, `crates/plait/src/ui/fil
 | End / Cmd-Down | Jump to latest messages in Conversation |
 | Enter / Shift-Enter | Find bar: jump to next / previous match |
 | Escape | Close Find bar, enlarged image overlay, or Settings modal |
-| Enter / Space | Activate focused control (including opening a folded earlier turn) or select a Worktrees lane |
+| Enter / Space | Activate focused control (including a folded turn, its work summary, or its recorded file list) or select a Worktrees lane |

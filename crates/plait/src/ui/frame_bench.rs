@@ -346,6 +346,76 @@ fn scroll_conversation(harness: &mut Harness, fraction: f32) {
     harness.draw();
 }
 
+fn conversation_cases(harness: &mut Harness, label: &str, rows: &mut Vec<Row>) {
+    let count = harness
+        .window
+        .update(&mut harness.cx, |plait, _, _| plait.workspace.live_count)
+        .unwrap();
+    scroll_conversation(harness, 1.0);
+    rows.push(harness.steady(&format!("c1 {label} conversation, {count} rows, at bottom")));
+    scroll_conversation(harness, 0.5);
+    rows.push(harness.steady(&format!("c2 {label} conversation, middle (steady)")));
+    rows.push(harness.scrolling(
+        &format!("c3 {label} conversation, wheel-scrolling in the middle"),
+        point(px(700.), px(400.)),
+        -60.,
+    ));
+    // Find in that conversation: every reply's code matches, so each row
+    // drawn carries highlights. Typing waits for the background search.
+    let set_query = |harness: &mut Harness, query: &'static str| {
+        harness.update(move |plait, _, cx| {
+            let field = plait.workspace.conversation_find.field.clone().unwrap();
+            field.update(cx, |field, cx| field.set_text(query, cx));
+        });
+    };
+    harness.update(|plait, window, cx| plait.open_conversation_find(window, cx));
+    set_query(harness, "sample code");
+    scroll_conversation(harness, 0.5);
+    rows.push(harness.steady(&format!(
+        "c4 {label} conversation, middle, find with matches highlighted"
+    )));
+    let queries = ["explain", "fixture", "sample code"];
+    rows.push(harness.switching(
+        &format!("c5 {label} find, a new query over every row, to its frame"),
+        9,
+        |h, round| set_query(h, queries[round % 3]),
+    ));
+    harness.update(|plait, window, cx| plait.close_conversation_find(window, cx));
+}
+
+/// Isolate the work-fold cases so tab and repository timings retain their fixtures.
+fn finished_work_cases(repository: &Path, rows: &mut Vec<Row>) {
+    let mut h = super::this_turn::harness(repository, None, 1380., 860.);
+    h.connect(repository, false);
+    let mut snapshot = long_thread(THREAD, repository, 1500);
+    let mut records = Vec::with_capacity(750);
+    let (turns, _) = snapshot.messages.as_chunks_mut::<2>();
+    let (runs, _) = snapshot.tools.as_chunks_mut::<3>();
+    for ([request, _], tools) in turns.iter_mut().zip(runs) {
+        let mut record = super::undo::record(&request.id, &[&request.id], "ready");
+        record["outcome"] = "finished".into();
+        records.push(record);
+        request.id = format!("request-{}", request.id);
+        for tool in tools {
+            tool.after = Some(Some(request.id.clone()));
+        }
+    }
+    records.reverse();
+    h.change_snapshot(move |s| *s = snapshot);
+    h.update(|p, _, _| {
+        p.host.connection.status.as_mut().unwrap().protocol_version = 7;
+        p.preferences.value.fold_earlier_turns = Some(false);
+        p.preferences.value.fold_finished_work = Some(true);
+        super::undo::inject(p, records);
+        p.workspace.turn_records.totals =
+            super::super::turn_records::TurnRecords::file_totals(&p.workspace.turn_records.data);
+        p.reconcile_live_folding();
+        assert_eq!(p.workspace.live_count, 3750);
+        assert_eq!(p.workspace.live_layout.work.len(), 750);
+    });
+    conversation_cases(&mut h, "folded work", rows);
+}
+
 fn show(harness: &mut Harness, tab: Workspace) {
     harness.update(move |plait, window, cx| plait.show_tab(tab, window, cx));
 }
@@ -448,10 +518,6 @@ pub fn run() -> Vec<Row> {
     // c. Long conversation, the open thread while the other tabs are measured.
     let long = long_thread(THREAD, &heavy, 1500);
     harness.change_snapshot(move |snapshot| *snapshot = long);
-    let count = harness
-        .window
-        .update(&mut harness.cx, |plait, _, _| plait.workspace.live_count)
-        .unwrap();
     super::tabs::install(&mut harness, 20);
     rows.push(harness.steady("tabs20 conversation, twenty tabs, five running summaries"));
     rows.push(harness.switching(
@@ -499,38 +565,11 @@ pub fn run() -> Vec<Row> {
             plait.preferences.value.turns = style;
             plait.workspace.live_scroll.remeasure();
         });
-        scroll_conversation(&mut harness, 1.0);
-        rows.push(harness.steady(&format!("c1 {label} conversation, {count} rows, at bottom")));
-        scroll_conversation(&mut harness, 0.5);
-        rows.push(harness.steady(&format!("c2 {label} conversation, middle (steady)")));
-        rows.push(harness.scrolling(
-            &format!("c3 {label} conversation, wheel-scrolling in the middle"),
-            point(px(700.), px(400.)),
-            -60.,
-        ));
-        // Find in that conversation: every reply's code matches, so each row
-        // drawn carries highlights. Typing waits for the background search.
-        let set_query = |harness: &mut Harness, query: &'static str| {
-            harness.update(move |plait, _, cx| {
-                let field = plait.workspace.conversation_find.field.clone().unwrap();
-                field.update(cx, |field, cx| field.set_text(query, cx));
-            });
-        };
-        harness.update(|plait, window, cx| plait.open_conversation_find(window, cx));
-        set_query(&mut harness, "sample code");
-        scroll_conversation(&mut harness, 0.5);
-        rows.push(harness.steady(&format!(
-            "c4 {label} conversation, middle, find with matches highlighted"
-        )));
-        let queries = ["explain", "fixture", "sample code"];
-        rows.push(harness.switching(
-            &format!("c5 {label} find, a new query over every row, to its frame"),
-            9,
-            |h, round| set_query(h, queries[round % 3]),
-        ));
-        harness.update(|plait, window, cx| plait.close_conversation_find(window, cx));
+        conversation_cases(&mut harness, label, &mut rows);
     }
     scroll_conversation(&mut harness, 1.0);
+
+    finished_work_cases(&heavy, &mut rows);
 
     // a. Changes: 2,000 files, an injected 20k-line diff.
     harness.update(|plait, _, cx| {

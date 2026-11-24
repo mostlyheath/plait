@@ -5,8 +5,10 @@
 //! diffs two display layouts into incremental list splices and remeasures.
 
 use std::{
+    cell::RefCell,
     collections::{HashMap, HashSet},
     ops::Range,
+    sync::Arc,
 };
 
 use crate::{
@@ -26,11 +28,21 @@ pub enum TurnState {
     WaitingForApproval,
 }
 
-/// Terminal outcomes seen while the live snapshot still identified the request.
+/// Folding history owned by the open tab, independent of its saved bookmark.
 #[derive(Default)]
-pub struct ObservedOutcomes(HashMap<String, TurnState>);
+pub struct ObservedOutcomes {
+    terminal: HashMap<String, TurnState>,
+    opened_work: RefCell<HashSet<String>>,
+}
 
 impl ObservedOutcomes {
+    pub fn toggle_work(&self, request: &str) {
+        let mut opened = self.opened_work.borrow_mut();
+        if !opened.remove(request) {
+            opened.insert(request.to_owned());
+        }
+    }
+
     pub fn observe(&mut self, live: &Snapshot) {
         let outcome = latest_turn_state(live);
         if matches!(outcome, TurnState::Failed | TurnState::Stopped)
@@ -40,7 +52,7 @@ impl ObservedOutcomes {
                 .rev()
                 .find(|m| m.role == MessageRole::User)
         {
-            self.0.insert(request.id.clone(), outcome);
+            self.terminal.insert(request.id.clone(), outcome);
         }
     }
 }
@@ -115,6 +127,8 @@ pub struct Turn {
     pub closing_slot: Option<Slot>,
     /// Execution state of this turn.
     pub state: TurnState,
+    /// This record's original request and the end of its turn are both loaded.
+    complete_finished_run: bool,
     /// Whether this is the thread's latest turn.
     pub is_latest: bool,
 }
@@ -146,14 +160,11 @@ pub fn segment_turns(
                     record
                         .request_ids
                         .iter()
-                        .find_map(|id| outcomes.0.get(&format!("request-{id}")))
+                        .find_map(|id| outcomes.terminal.get(&format!("request-{id}")))
                         .copied()
                 });
             for request_id in &record.request_ids {
-                run_of_request.insert(
-                    format!("request-{request_id}"),
-                    (record.id.as_str(), outcome),
-                );
+                run_of_request.insert(format!("request-{request_id}"), (record, outcome));
             }
         }
     }
@@ -163,8 +174,9 @@ pub fn segment_turns(
         request_message: usize,
         start: usize,
         closing_slot: Option<Slot>,
-        run: Option<&'a str>,
+        run: Option<&'a TurnRecord>,
         outcome: Option<TurnState>,
+        loaded_requests: usize,
         has_running_tool: bool,
         has_interrupted_tool: bool,
     }
@@ -176,13 +188,13 @@ pub fn segment_turns(
             && message.role == MessageRole::User
         {
             let record = run_of_request.get(&message.id);
-            let run = record.map(|(id, _)| *id);
-            let same_steered_run = run.is_some()
-                && drafts
-                    .last()
-                    .and_then(|draft| draft.run)
-                    .is_some_and(|prev| Some(prev) == run);
-            if !same_steered_run {
+            let run = record.map(|(run, _)| *run);
+            if let Some(previous) = drafts.last_mut()
+                && let Some(run) = run
+                && previous.run.is_some_and(|old| old.id == run.id)
+            {
+                previous.loaded_requests += 1;
+            } else {
                 drafts.push(Draft {
                     id: message.id.clone(),
                     request_message: msg_ix,
@@ -191,7 +203,8 @@ pub fn segment_turns(
                     run,
                     outcome: record
                         .and_then(|(_, outcome)| *outcome)
-                        .or_else(|| outcomes.0.get(&message.id).copied()),
+                        .or_else(|| outcomes.terminal.get(&message.id).copied()),
+                    loaded_requests: 1,
                     has_running_tool: false,
                     has_interrupted_tool: false,
                 });
@@ -237,6 +250,14 @@ pub fn segment_turns(
             closing_slot: draft.closing_slot,
             state,
             is_latest,
+            complete_finished_run: draft.run.is_some_and(|run| {
+                run.outcome == Some(TurnOutcome::Finished)
+                    && run.request_ids_total == draft.loaded_requests
+                    && run.request_ids.first().map(String::as_str)
+                        == draft.id.strip_prefix("request-")
+            }) && state == TurnState::Finished
+                && !draft.has_running_tool
+                && (end < slots.len() || live_end),
         });
     }
     turns
@@ -271,6 +292,61 @@ pub enum DisplayRow {
     },
 }
 
+/// The display rows strictly between the request and the final assistant reply.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorkFold {
+    pub request: String,
+    manually_open: bool,
+    pub rows: Range<usize>,
+    pub summary: String,
+    find_inside: bool,
+}
+
+impl WorkFold {
+    fn new(
+        snapshot: &Snapshot,
+        turn: &Turn,
+        slots: &[Slot],
+        first_row: usize,
+        find: Option<&str>,
+        opened: &HashSet<String>,
+    ) -> Option<Self> {
+        if !turn.complete_finished_run || slots.len() < 3 {
+            return None;
+        }
+        let Slot::Message(last) = *slots.last()? else {
+            return None;
+        };
+        if snapshot.messages[last].role != MessageRole::Assistant {
+            return None;
+        }
+        let work = &slots[1..slots.len() - 1];
+        let tools: Vec<_> = work
+            .iter()
+            .filter_map(|slot| match slot {
+                Slot::Tool(ix) => snapshot.tools.get(*ix),
+                _ => None,
+            })
+            .collect();
+        let find_inside = find.is_some_and(|id| {
+            work.iter()
+                .any(|slot| matches!(slot, Slot::Message(ix) if snapshot.messages[*ix].id == id))
+        });
+        Some(Self {
+            request: turn.id.clone(),
+            manually_open: opened.contains(&turn.id),
+            rows: first_row + 1..first_row + slots.len() - 1,
+            summary: crate::tool_view::summary(&tools, false),
+            find_inside,
+        })
+    }
+
+    /// None draws the original rows without a disclosure or indentation.
+    pub fn open(&self, enabled: bool) -> Option<bool> {
+        enabled.then_some(self.find_inside || self.manually_open)
+    }
+}
+
 /// Cached display layout for one snapshot and folding state.
 ///
 /// Built when the snapshot, opened turns, current Find match, or preference
@@ -278,6 +354,7 @@ pub enum DisplayRow {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Layout {
     pub rows: Vec<DisplayRow>,
+    pub work: Arc<[WorkFold]>,
     pub slots: Vec<Slot>,
     pub raw_index_by_key: HashMap<String, usize>,
     /// Maps every loaded message ID to the ID of the turn that owns it.
@@ -291,6 +368,11 @@ pub struct Layout {
 }
 
 impl Layout {
+    pub fn work_at(&self, row: usize) -> Option<&WorkFold> {
+        let index = self.work.partition_point(|fold| fold.rows.end <= row);
+        self.work.get(index).filter(|fold| fold.rows.contains(&row))
+    }
+
     pub fn len(&self) -> usize {
         self.rows.len()
     }
@@ -337,6 +419,7 @@ pub fn build_layout(
     let turns = segment_turns(snapshot, &slots, live_end, records, outcomes);
     let mut layout = Layout {
         slots: Vec::new(),
+        work: Default::default(),
         raw_index_by_key: slots
             .iter()
             .enumerate()
@@ -372,6 +455,8 @@ pub fn build_layout(
         push_slot(&mut layout, snapshot, raw_ix, slot);
     }
 
+    let mut work = Vec::new();
+    let opened_work = outcomes.opened_work.borrow();
     for turn in &turns {
         let input = TurnInput {
             id: &turn.id,
@@ -391,12 +476,24 @@ pub fn build_layout(
             });
             layout.raw_index_of_row.push(turn.slots.start);
         } else {
-            for (offset, &slot) in slots[turn.slots.clone()].iter().enumerate() {
+            let members = &slots[turn.slots.clone()];
+            if let Some(fold) = WorkFold::new(
+                snapshot,
+                turn,
+                members,
+                layout.rows.len(),
+                find_match_message,
+                &opened_work,
+            ) {
+                work.push(fold);
+            }
+            for (offset, &slot) in members.iter().enumerate() {
                 push_slot(&mut layout, snapshot, turn.slots.start + offset, slot);
             }
         }
     }
 
+    layout.work = work.into();
     layout.slots = slots;
     layout
 }
@@ -868,7 +965,9 @@ mod tests {
             created_at: 1000,
         };
         let mut observed = ObservedOutcomes::default();
-        observed.0.insert("request-r2".into(), TurnState::Stopped);
+        observed
+            .terminal
+            .insert("request-r2".into(), TurnState::Stopped);
         for (host, expected) in [
             (None, TurnState::Stopped),
             (Some(TurnOutcome::Finished), TurnState::Finished),
@@ -910,6 +1009,114 @@ mod tests {
             layout.turn_of_message.get("a2").map(String::as_str),
             Some("request-r1")
         );
+    }
+
+    #[test]
+    fn work_requires_a_recorded_finish_and_both_ends_of_the_turn() {
+        let mut snapshot = snapshot_with(
+            vec![
+                message("request-start", MessageRole::User, "Start."),
+                message("progress", MessageRole::Assistant, "Checking."),
+                message("request-steer", MessageRole::User, "Include the guide."),
+                message("answer", MessageRole::Assistant, "Done."),
+            ],
+            vec![tool("t", "request-start", ToolStatus::Done)],
+            ThreadStatus::Idle,
+        );
+        snapshot.messages[3].reasoning = "Final check".into();
+        let mut record: TurnRecord = serde_json::from_value(serde_json::json!({
+            "id":"turn", "request_ids":["start","steer"], "request_ids_offset":0,
+            "request_ids_total":2, "kind":"turn", "state":"ready", "head_moved":false,
+            "after_restart":false, "paths":[], "paths_offset":0, "paths_total":0,
+            "not_covered":[], "not_covered_offset":0, "not_covered_total":0, "created_at":1,
+        }))
+        .unwrap();
+        let layout = |s: &Snapshot, r: &TurnRecord, live_end, find| {
+            build_layout(
+                s,
+                live_end,
+                std::slice::from_ref(r),
+                &HashSet::new(),
+                find,
+                false,
+                &Default::default(),
+            )
+        };
+        for outcome in [
+            None,
+            Some(TurnOutcome::Failed),
+            Some(TurnOutcome::Stopped),
+            Some(TurnOutcome::Interrupted),
+        ] {
+            record.outcome = outcome;
+            assert!(layout(&snapshot, &record, true, None).work.is_empty());
+        }
+        record.outcome = Some(TurnOutcome::Finished);
+        for find in [
+            None,
+            Some("progress"),
+            Some("request-steer"),
+            Some("answer"),
+        ] {
+            let display = layout(&snapshot, &record, true, find);
+            let fold = display.work_at(1).unwrap();
+            assert_eq!(display.len(), 6);
+            assert_eq!(fold.rows, 1..5);
+            assert!(display.work_at(0).is_none() && display.work_at(5).is_none());
+            assert_eq!(
+                fold.open(true),
+                Some(matches!(find, Some("progress" | "request-steer")))
+            );
+            assert_eq!(fold.open(false), None);
+            assert_eq!(fold.summary, "1 step · 1 read");
+        }
+        let tab = ObservedOutcomes::default();
+        tab.toggle_work("request-start");
+        let reopened = build_layout(
+            &snapshot,
+            true,
+            std::slice::from_ref(&record),
+            &HashSet::new(),
+            None,
+            false,
+            &tab,
+        );
+        assert_eq!(reopened.work[0].open(true), Some(true));
+        assert_eq!(reopened.work[0].open(false), None);
+        assert_eq!(
+            layout(&snapshot, &record, true, None).work[0].open(true),
+            Some(false)
+        );
+        for status in [
+            ThreadStatus::Running,
+            ThreadStatus::AwaitingApproval,
+            ThreadStatus::Error,
+            ThreadStatus::Stopped,
+            ThreadStatus::Interrupted,
+        ] {
+            snapshot.status = status;
+            assert!(layout(&snapshot, &record, true, None).work.is_empty());
+        }
+        snapshot.status = ThreadStatus::Idle;
+        assert!(layout(&snapshot, &record, false, None).work.is_empty());
+        snapshot.messages.pop();
+        assert!(layout(&snapshot, &record, true, None).work.is_empty());
+        snapshot.messages.truncate(1);
+        snapshot.tools.clear();
+        snapshot
+            .messages
+            .push(message("answer", MessageRole::Assistant, "Direct reply."));
+        assert!(layout(&snapshot, &record, true, None).work.is_empty());
+        snapshot.messages[1].reasoning = "Check.".into();
+        assert!(layout(&snapshot, &record, true, None).work.is_empty());
+        record.request_ids.pop();
+        record.request_ids_total = 1;
+        assert_eq!(
+            layout(&snapshot, &record, true, None).work[0].summary,
+            "0 steps"
+        );
+        snapshot.messages[0].id = "request-steer".into();
+        assert!(layout(&snapshot, &record, true, None).work.is_empty());
     }
 
     #[test]

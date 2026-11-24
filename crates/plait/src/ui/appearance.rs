@@ -626,6 +626,35 @@ impl Plait {
         )
     }
 
+    fn finished_work_setting(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let enabled = self.preferences.value.fold_finished_work();
+        let mut choices = segmented();
+        for (index, (label, value)) in [("On", true), ("Off", false)].into_iter().enumerate() {
+            let selected = value == enabled;
+            choices = choices.child(
+                segment(("fold-finished-work", index), label, selected)
+                    .role(Role::RadioButton)
+                    .aria_toggled(if selected {
+                        Toggled::True
+                    } else {
+                        Toggled::False
+                    })
+                    .aria_label(format!("Fold finished work: {label}"))
+                    .on_activate(cx, move |this, _, cx| {
+                        let mut preferences = this.preferences.value.clone();
+                        preferences.fold_finished_work = Some(value);
+                        this.set_preferences(preferences, PreferenceGroup::View, cx);
+                        cx.notify();
+                    }),
+            );
+        }
+        super::settings::setting(
+            "Fold finished work",
+            "Show the steps before a finished turn’s final reply in one expandable row.",
+            choices,
+        )
+    }
+
     fn set_theme(&mut self, light: bool, name: String, cx: &mut Context<Self>) {
         let mut value = self.preferences.value.clone();
         // The default is stored as unset, so it follows future defaults.
@@ -741,6 +770,7 @@ impl Plait {
             .child(self.code_size_setting(cx))
             .child(self.turns_setting(cx))
             .child(self.fold_earlier_turns_setting(cx))
+            .child(self.finished_work_setting(cx))
     }
 
     fn theme_list(&self, light: bool, cx: &mut Context<Self>) -> impl IntoElement {

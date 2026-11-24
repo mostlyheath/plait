@@ -5,7 +5,7 @@ use super::{
 };
 use gpui::{prelude::*, *};
 use plait_client::preferences::Turns;
-use std::time::Instant;
+use std::{sync::Arc, time::Instant};
 
 pub(super) const LIST_TOP_PADDING: f32 = 8.;
 
@@ -121,9 +121,9 @@ const RING: f32 = 9.;
 const NODE: f32 = 7.;
 /// Clear space around a mark, so the line does not touch it.
 const MARK_GAP: f32 = 2.;
-/// Height of a turn's record line and of the state line, which centers
-/// their nodes.
+/// Height of the legacy record and live state lines.
 const RECORD_LINE: f32 = 22.;
+pub(super) const CLOSING_LINE: f32 = 30.;
 
 /// One row's piece of the turn line, from `from` points below the row's top
 /// to its bottom. Rows are drawn edge to edge, so the pieces read as one line.
@@ -256,6 +256,13 @@ fn checkout_relative(checkout: &std::path::Path, path: &str) -> std::path::PathB
 /// a reason, and may be empty.
 pub(super) fn approvable(approval: &Approval, harness: HarnessId) -> bool {
     approval.details.len() <= 16384 && (harness != HarnessId::Pi || !approval.details.is_empty())
+}
+
+/// Heights in the virtual list belong to the last work layout drawn.
+#[derive(Default)]
+pub(super) struct MeasuredWork {
+    folds: Arc<[folding::WorkFold]>,
+    enabled: bool,
 }
 
 impl Plait {
@@ -622,6 +629,10 @@ impl Plait {
                         .into()
                 }
             })
+            .when(self.preferences.value.turns == Turns::Bubbles, |el| {
+                el.border_t_1().border_color(rgb(colors().border))
+            })
+            .flex_wrap()
             .pt(px(2.))
             .min_h(px(2. + line))
             .text_size(px(12.))
@@ -1023,12 +1034,12 @@ impl Plait {
                                 .pt_1()
                                 .children(strand_mark(
                                     self.preferences.value.turns,
-                                    4. + RECORD_LINE / 2.,
+                                    4. + CLOSING_LINE / 2.,
                                     NODE,
                                     colors().subtle,
                                     false,
                                 ))
-                                .child(self.record_line(line, false, row_group(index), cx)),
+                                .child(self.record_line(line, false, cx)),
                         )
                     })
                     .when(recorded.is_none(), |el| {
@@ -1038,6 +1049,111 @@ impl Plait {
                     }),
             )
             .into_any_element()
+    }
+
+    pub(super) fn work_open_at(&self, row: usize) -> Option<bool> {
+        self.workspace
+            .live_layout
+            .work_at(row)?
+            .open(self.preferences.value.fold_finished_work())
+    }
+
+    fn reconcile_work_rows(&self) {
+        let layout = &self.workspace.live_layout;
+        let enabled = self.preferences.value.fold_finished_work();
+        let mut previous = self.workspace.turn_records.measured_work.borrow_mut();
+        if previous.enabled == enabled && Arc::ptr_eq(&previous.folds, &layout.work) {
+            return;
+        }
+        // Splices may have moved the turn since the last frame. Locate its
+        // request in the current list before invalidating old measurements.
+        for fold in previous.folds.iter().filter(|_| previous.enabled) {
+            if let Some(&request) = layout.row_of_message.get(&fold.request) {
+                let first = request + 1;
+                let current = layout.work_at(first);
+                if !enabled || current != Some(fold) {
+                    self.workspace
+                        .live_scroll
+                        .remeasure_items(first..(first + fold.rows.len()).min(layout.len()));
+                }
+            }
+        }
+        if enabled {
+            for fold in layout.work.iter() {
+                let ix = previous
+                    .folds
+                    .partition_point(|old| old.rows.end <= fold.rows.start);
+                if !previous.enabled || previous.folds.get(ix) != Some(fold) {
+                    self.workspace
+                        .live_scroll
+                        .remeasure_items(fold.rows.clone());
+                }
+            }
+        }
+        previous.folds = layout.work.clone();
+        previous.enabled = enabled;
+    }
+
+    pub(super) fn toggle_finished_work(&mut self, request: &str, cx: &mut Context<Self>) {
+        let layout = &self.workspace.live_layout;
+        let Some(fold) = layout
+            .row_of_message
+            .get(request)
+            .and_then(|row| layout.work_at(row + 1))
+            .filter(|fold| fold.request == request)
+        else {
+            return;
+        };
+        let Some(tab) = self
+            .tabs
+            .model
+            .active()
+            .and_then(|id| self.tabs.model.get(id))
+        else {
+            return;
+        };
+        tab.session().outcomes().toggle_work(&fold.request);
+        let scroll = &self.workspace.live_scroll;
+        // Bottom alignment may put a short transcript partway down the list.
+        // Preserve that space before taller rows replace the zero-height ones.
+        if scroll.logical_scroll_top().item_ix >= self.workspace.live_count {
+            scroll.scroll_to_end();
+            let top = -scroll.scroll_px_offset_for_scrollbar().y + px(LIST_TOP_PADDING)
+                - scroll.viewport_bounds().size.height;
+            scroll.scroll_to(ListOffset {
+                item_ix: 0,
+                offset_in_item: top.min(px(0.)),
+            });
+            if top > px(0.) {
+                scroll.scroll_by(top);
+            }
+        }
+        self.reconcile_live_folding();
+        cx.notify();
+    }
+
+    fn work_disclosure(
+        &self,
+        fold: &folding::WorkFold,
+        open: bool,
+        cx: &mut Context<Self>,
+    ) -> Control {
+        let request = SharedString::from(fold.request.clone());
+        button((ElementId::from("finished-work"), request.clone()), "")
+            .h(px(28.))
+            .min_w_0()
+            .max_w_full()
+            .px_1()
+            .gap(px(6.))
+            .text_size(px(12.))
+            .text_color(rgb(colors().subtle))
+            .aria_label(fold.summary.clone())
+            .aria_expanded(open)
+            .child(icon(if open { "down" } else { "right" }))
+            .child(div().min_w_0().truncate().child(fold.summary.clone()))
+            .on_activate(cx, move |this, _, cx| {
+                this.toggle_finished_work(&request, cx)
+            })
     }
 
     fn live_event(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
@@ -1062,6 +1178,15 @@ impl Plait {
             }
             None => return div().into_any_element(),
         };
+        let work = self.workspace.live_layout.work_at(index);
+        let open = work.and_then(|fold| fold.open(self.preferences.value.fold_finished_work()));
+        let disclosure = work
+            .zip(open)
+            .filter(|(fold, _)| fold.rows.start == index)
+            .map(|(fold, open)| self.work_disclosure(fold, open, cx));
+        if open == Some(false) && disclosure.is_none() {
+            return div().h(px(0.)).into_any_element();
+        }
         let Some(row) = transcript::resolve(snapshot, slot) else {
             return div().into_any_element();
         };
@@ -1071,19 +1196,26 @@ impl Plait {
         let recorded = history::records::closing_key(row)
             .and_then(|key| self.workspace.turn_records.lines.rows.get(&key))
             .filter(|_| self.host.protocol() >= 5);
-        let (content, top, bottom) = match row {
-            Row::Message(message) if request => (self.live_message(message, index, cx), 24., 8.),
-            Row::Message(message) => (self.live_message(message, index, cx), 16., 8.),
-            Row::Streaming(text) => (self.live_stream(text, index, cx), 16., 8.),
-            Row::Reasoning(message) => (self.reasoning(&message.id, index, false, cx), 6., 3.),
-            Row::LiveReasoning(_) => (self.reasoning("live", index, true, cx), 6., 3.),
-            Row::Tool(tool) => match self.tool_row(tool, index, cx) {
-                Some(content) => (content, 1., 1.),
-                // Folded into a closed group: the row stays, with no height.
-                None if recorded.is_some() => (div().into_any_element(), 1., 1.),
-                None => return div().into_any_element(),
-            },
+        let (content, top, bottom) = if open == Some(false) {
+            (div().into_any_element(), 6., 3.)
+        } else {
+            match row {
+                Row::Message(message) if request => {
+                    (self.live_message(message, index, cx), 24., 8.)
+                }
+                Row::Message(message) => (self.live_message(message, index, cx), 16., 8.),
+                Row::Streaming(text) => (self.live_stream(text, index, cx), 16., 8.),
+                Row::Reasoning(message) => (self.reasoning(&message.id, index, false, cx), 6., 3.),
+                Row::LiveReasoning(_) => (self.reasoning("live", index, true, cx), 6., 3.),
+                Row::Tool(tool) => match self.tool_row(tool, index, cx) {
+                    Some(content) => (content, 1., 1.),
+                    // Folded into a closed group: the row stays, with no height.
+                    None if recorded.is_some() => (div().into_any_element(), 1., 1.),
+                    None => return div().into_any_element(),
+                },
+            }
         };
+        let bubble = self.preferences.value.turns == Turns::Bubbles;
         let (top, bottom) = match self.preferences.value.turns {
             Turns::Line => (top, bottom),
             Turns::Bubbles if request => (22., 0.),
@@ -1103,6 +1235,36 @@ impl Plait {
                 (top + bottom, 0.)
             }
             Turns::Bubbles => (14., 0.),
+        };
+        let (content, top, bottom) = if let Some(open) = open {
+            let first = disclosure.is_some();
+            let group_top = if !first {
+                0.
+            } else if bubble {
+                14.
+            } else {
+                6.
+            };
+            let body = column()
+                .items_start()
+                .w_full()
+                .children(disclosure)
+                .when(open, |el| {
+                    el.child(
+                        div()
+                            .w_full()
+                            .min_w_0()
+                            .border_l_1()
+                            .border_color(rgb(colors().edge))
+                            .pl(px(18.))
+                            .pt(px(if bubble { 4. } else { top }))
+                            .pb(px(bottom))
+                            .child(content),
+                    )
+                });
+            (body.into_any_element(), group_top, 0.)
+        } else {
+            (content, top, bottom)
         };
         // The line starts with the first row: at the ring of a request, and
         // otherwise where the row's content begins, not in the space above it.
@@ -1137,12 +1299,12 @@ impl Plait {
                                 }))
                                 .children(strand_mark(
                                     self.preferences.value.turns,
-                                    4. + RECORD_LINE / 2.,
+                                    4. + CLOSING_LINE / 2.,
                                     NODE,
                                     colors().subtle,
                                     false,
                                 ))
-                                .child(self.record_line(line, false, row_group(index), cx)),
+                                .child(self.record_line(line, false, cx)),
                         )
                     }),
             )
@@ -1157,6 +1319,7 @@ impl Plait {
     }
 
     fn live_rows(&self, snapshot: &Snapshot, cx: &mut Context<Self>) -> AnyElement {
+        self.reconcile_work_rows();
         self.reconcile_tool_rows();
         self.resolve_selection();
         let away = self.reading_back();
@@ -1616,17 +1779,17 @@ Tone::Filled,
                             .when(joined, |el| {
                                 el.children(strand_end(
                                     self.preferences.value.turns,
-                                    8. + RECORD_LINE / 2.,
+                                    8. + CLOSING_LINE / 2.,
                                 ))
                             })
                             .children(strand_mark(
                                 self.preferences.value.turns,
-                                8. + RECORD_LINE / 2.,
+                                8. + CLOSING_LINE / 2.,
                                 NODE,
                                 colors().muted,
                                 false,
                             ))
-                            .child(self.record_line(line, true, "latest-run".into(), cx)),
+                            .child(self.record_line(line, true, cx)),
                     ),
                 );
             } else if let Some((state, failed)) = state {
@@ -1647,11 +1810,16 @@ Tone::Filled,
                         self.record_parts(id, summary, cx),
                     )
                 });
+                let legacy_line =
+                    record.is_some() && self.preferences.value.turns == Turns::Bubbles;
                 let (name, parts) = record.unwrap_or_else(|| (state.clone(), Vec::new()));
                 main = main.child(
                     div().px(px(self.conversation_padding())).child(
                         row()
                             .id("turn-state")
+                            .when(legacy_line, |el| {
+                                el.border_t_1().border_color(rgb(colors().border))
+                            })
                             .role(Role::Group)
                             .aria_label(name)
                             .audited()

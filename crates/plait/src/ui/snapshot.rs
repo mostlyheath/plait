@@ -49,6 +49,7 @@ mod branches;
 mod bubbles;
 mod code_size;
 mod find;
+mod finished_work;
 mod folded_turns;
 mod isolation;
 mod issues;
@@ -2416,6 +2417,7 @@ fn walk(output: Option<&Path>) {
         tool_states_walk(&mut harness, &repository, suffix);
         reading_walk(&mut harness, &repository, suffix);
         bubbles::walk(&repository, output, suffix, width, height);
+        finished_work::scenes(&repository, output, suffix, width, height);
         code_size::walk(&mut harness, &repository, suffix);
         find::find_walk(&mut harness, &repository, suffix);
         folded_turns::walk(&mut harness, &repository, suffix);
@@ -2835,7 +2837,7 @@ fn tool_cards_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
     harness.capture(&format!("tools-commands-{suffix}"));
 
     harness.connect(repository, false);
-    harness.change_snapshot(|snapshot| long_run(snapshot, false));
+    harness.change_snapshot(|snapshot| long_run(snapshot, true));
     harness.update(|plait, _, _| plait.workspace.live_scroll.scroll_to_end());
     harness.capture(&format!("tools-group-{suffix}"));
     // How the group's first two rows were last drawn: (hidden, leads the group).

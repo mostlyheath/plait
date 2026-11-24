@@ -12,8 +12,6 @@ use crate::{
 };
 use std::collections::HashMap;
 
-/// A finished run folds under one line once it has this many calls.
-pub const GROUP_MIN: usize = 5;
 /// A run still in progress keeps this many of its latest calls in view.
 pub const LIVE_VISIBLE: usize = 3;
 /// Lines of a file shown for `read`.
@@ -355,14 +353,16 @@ impl Runs {
             + self.members.capacity() * (size_of::<(String, (usize, usize))>() + 2)
             + self.members.keys().map(String::capacity).sum::<usize>()
     }
-    /// A finished run of [`GROUP_MIN`] or more calls folds completely. The run
-    /// a busy thread is still adding to keeps its latest [`LIVE_VISIBLE`]
-    /// calls in view and folds the earlier ones.
+    /// Within the active turn, earlier runs may group fully and the last
+    /// run keeps its newest calls visible. Closed turns own their disclosures.
     pub fn plan(snapshot: &Snapshot) -> Self {
         let layout = transcript::layout(snapshot);
         let last_message = layout
             .iter()
             .rposition(|slot| matches!(slot, Slot::Message(_)));
+        let last_request = layout.iter().rposition(|slot| {
+            matches!(slot, Slot::Message(ix) if snapshot.messages[*ix].role == crate::host::MessageRole::User)
+        });
         let mut spans: Vec<(usize, Vec<&Tool>)> = Vec::new();
         let mut open = false;
         for (row, slot) in layout.iter().enumerate() {
@@ -379,11 +379,14 @@ impl Runs {
         }
         let mut plan = Self::default();
         for (first_row, tools) in spans {
-            let live = snapshot.status.busy() && last_message.is_none_or(|row| first_row > row);
-            let grouped = match (live, tools.len()) {
-                (true, count) if count > LIVE_VISIBLE + 1 => count - LIVE_VISIBLE,
-                (false, count) if count >= GROUP_MIN => count,
-                _ => 0,
+            let active = snapshot.status.busy() && last_request.is_none_or(|row| first_row > row);
+            let live = active && last_message.is_none_or(|row| first_row > row);
+            let grouped = if live && tools.len() > LIVE_VISIBLE + 1 {
+                tools.len() - LIVE_VISIBLE
+            } else if active && tools.len() > LIVE_VISIBLE + 1 {
+                tools.len()
+            } else {
+                0
             };
             let run = plan.runs.len();
             for (position, tool) in tools.iter().enumerate() {
@@ -421,7 +424,10 @@ impl Runs {
 }
 
 /// The count and the kinds of call, in the order each kind first appears.
-fn summary(tools: &[&Tool], live: bool) -> String {
+pub(crate) fn summary(tools: &[&Tool], live: bool) -> String {
+    if tools.is_empty() {
+        return "0 steps".into();
+    }
     let mut kinds: Vec<(&str, usize)> = Vec::new();
     for tool in tools {
         match kinds.iter_mut().find(|(name, _)| *name == tool.name) {
@@ -701,37 +707,16 @@ mod tests {
     }
 
     #[test]
-    fn a_finished_long_run_folds_under_its_count_and_kinds() {
-        let snapshot = thread(
-            "u a read read edit command! read a read edit a",
+    fn closed_turns_never_group_tools_separately() {
+        for status in [
             ThreadStatus::Idle,
-        );
-        let runs = Runs::plan(&snapshot);
-        assert_eq!(
-            shape(&runs),
-            [
-                (2, 5, 5, "5 steps · 3 read, 1 edit, 1 command"),
-                (8, 2, 0, ""),
-            ]
-        );
-        let first = runs.iter().next().unwrap();
-        assert_eq!((first.key(), first.failed), ("t2", 1));
-        let lead = runs.place("t2").unwrap();
-        assert!(lead.leads() && lead.folded());
-        let member = runs.place("t5").unwrap();
-        assert_eq!(member.position, 3);
-        assert!(!member.leads() && member.folded());
-        let short = runs.place("t8").unwrap();
-        assert!(!short.leads() && !short.folded());
-        assert!(runs.place("m0").is_none());
-    }
-
-    #[test]
-    fn four_calls_stay_listed_and_five_fold() {
-        let runs = Runs::plan(&thread("u read read read read a", ThreadStatus::Idle));
-        assert_eq!(shape(&runs)[0].2, 0);
-        let runs = Runs::plan(&thread("u read read read read read a", ThreadStatus::Idle));
-        assert_eq!(shape(&runs), [(1, 5, 5, "5 steps · 5 read")]);
+            ThreadStatus::Stopped,
+            ThreadStatus::Interrupted,
+            ThreadStatus::Error,
+        ] {
+            let runs = Runs::plan(&thread("u read read edit command! read a", status));
+            assert_eq!(shape(&runs), [(1, 5, 0, "")]);
+        }
     }
 
     #[test]
@@ -745,6 +730,15 @@ mod tests {
                 (2, 5, 5, "5 steps · 5 read"),
                 (8, 6, 3, "3 earlier steps · 2 read, 1 edit"),
             ]
+        );
+        let previous = Runs::plan(&thread(
+            "u read read read read read a u read read read read read",
+            ThreadStatus::Running,
+        ));
+        assert_eq!(
+            shape(&previous)[0].2,
+            0,
+            "tools in the previous turn stay individual"
         );
         let latest = running.place("t13").unwrap();
         assert!(!latest.folded());
@@ -760,12 +754,9 @@ mod tests {
         ));
         assert_eq!(shape(&waiting)[0].2, 2);
 
-        // The same rows fold completely once the turn ends.
+        // The turn owns its work disclosure once it ends.
         let finished = Runs::plan(&thread(script, ThreadStatus::Idle));
-        assert_eq!(
-            shape(&finished)[1],
-            (8, 6, 6, "6 steps · 3 read, 2 edit, 1 command")
-        );
+        assert_eq!(shape(&finished)[1], (8, 6, 0, ""));
     }
 
     #[test]
@@ -777,7 +768,7 @@ mod tests {
         snapshot.live_text = "partial".into();
         let runs = Runs::plan(&snapshot);
         // Rows: two messages, the stream, then the tools.
-        assert_eq!(shape(&runs), [(3, 5, 5, "5 steps · 5 read")]);
+        assert_eq!(shape(&runs), [(3, 5, 0, "")]);
     }
 }
 

@@ -78,7 +78,14 @@ impl Plait {
             .runs
             .place(id)
             .is_some_and(|place| place.folded() && !self.group_open(place.run.key()));
-        self.workspace.expanded_live_tools.contains(id) && !hidden
+        let hidden_work = self
+            .workspace
+            .live_layout
+            .row_of_tool
+            .get(id)
+            .and_then(|&row| self.work_open_at(row))
+            == Some(false);
+        self.workspace.expanded_live_tools.contains(id) && !hidden && !hidden_work
     }
 
     pub(super) fn toggle_live_tool(&mut self, id: &str, cx: &mut Context<Self>) {

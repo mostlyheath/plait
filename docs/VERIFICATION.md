@@ -63,6 +63,8 @@ bash scripts/snapshots.sh /tmp/plait-snapshots
 
 The `bubbles` and `turns-line` scenes draw the same request and reply. Additional bubble scenes cover wrapping, narrow windows, attachments, streaming, folded turns, Find and selection. Headless tests check that both styles expose the authors and select the same text across their messages.
 
+The `work-*` conversation scenes cover finished and running work, failure, a direct answer, Find inside a fold, and the appearance preference. The `closing-line-*` scenes cover outcomes, file lists, Undo refusal, a narrow column, and the older-host fallback. Native checks include opening work from the bottom of the conversation, following a recorded file through Review, and moving through the controls with the keyboard.
+
 macOS uses the app's text shaping and renderer offscreen; Linux uses its own
 fonts and software rendering. Scenes do not validate the native window,
 input, accessibility bridge, or live provider. Build and inspect the native
