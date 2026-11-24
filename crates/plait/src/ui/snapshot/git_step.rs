@@ -53,7 +53,12 @@ pub(super) fn walk(output: Option<&Path>) {
                 }
                 assert_eq!(action.and_then(|n| n.label.as_deref()), expected, "{scene}");
             }
-            h.capture(&format!("git-step-{scene}-{suffix}"));
+            let name = format!("git-step-{scene}-{suffix}");
+            if scene == "commit" {
+                capture_both(&mut h, &name);
+            } else {
+                h.capture(&name);
+            }
         }
     }
 }
