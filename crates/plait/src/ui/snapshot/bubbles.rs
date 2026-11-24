@@ -5,6 +5,15 @@ use plait_client::{
     tabs::bookmark::{TextPosition, ViewDetails},
 };
 
+fn turn_scene(repository: &Path, output: Option<&Path>, width: f32, height: f32) -> Harness {
+    let mut harness = Harness::with_host(repository, output, width, height, None);
+    harness.update(|plait, _, _| {
+        plait.state.projects[0].machines[0].name = "Sample Mac".into();
+        plait.preferences.value.hide_inspector = true;
+    });
+    harness
+}
+
 pub(super) fn walk(
     repository: &Path,
     output: Option<&Path>,
@@ -12,7 +21,7 @@ pub(super) fn walk(
     width: f32,
     height: f32,
 ) {
-    let mut scene = Harness::new(repository, output, width, height);
+    let mut scene = turn_scene(repository, output, width, height);
     let harness = &mut scene;
     let narrow = suffix == "narrow";
     let capture = |harness: &mut Harness, name: &str| {
@@ -22,11 +31,8 @@ pub(super) fn walk(
             harness.capture(name);
         }
     };
+    messages::walk(harness, repository, suffix);
     messages::stage(harness, repository);
-    harness.update(|plait, _, _| {
-        plait.state.projects[0].machines[0].name = "Sample Mac".into();
-        plait.preferences.value.hide_inspector = true;
-    });
     capture(harness, "turns-line");
     harness.update(|plait, _, _| {
         plait.preferences.value.turns = Turns::Bubbles;
@@ -115,7 +121,7 @@ fn selecting_across_authors_copies_the_same_text_in_both_styles() {
     let repository = fixture_repository(
         &PathBuf::from(std::env::var_os("HOME").unwrap()).join("bubble-selection"),
     );
-    let mut harness = Harness::new(&repository, None, 900., 600.);
+    let mut harness = Harness::with_host(&repository, None, 900., 600., None);
     messages::stage(&mut harness, &repository);
     for style in [Turns::Line, Turns::Bubbles] {
         harness.update(|plait, _, _| {
@@ -166,7 +172,7 @@ fn changing_style_keeps_the_readers_row() {
     }
     let repository =
         fixture_repository(&PathBuf::from(std::env::var_os("HOME").unwrap()).join("bubble-scroll"));
-    let mut harness = Harness::new(&repository, None, 900., 600.);
+    let mut harness = Harness::with_host(&repository, None, 900., 600., None);
     harness.connect(&repository, false);
     harness.change_snapshot(|snapshot| {
         snapshot.status = ThreadStatus::Idle;
@@ -374,4 +380,26 @@ fn bubbles_keep_adjacent_work_rows_compact() {
         px(12.),
         "the first tool leads a work section by 14pt and its next tool by 2pt"
     );
+}
+
+#[core::prelude::v1::test]
+fn turn_scenes_use_portable_chrome_in_both_styles() {
+    if !isolated("bubbles::turn_scenes_use_portable_chrome_in_both_styles") {
+        return;
+    }
+    let repository = fixture_repository(
+        &PathBuf::from(std::env::var_os("HOME").unwrap()).join("turn-scene-chrome"),
+    );
+    let mut harness = turn_scene(&repository, None, 1380., 860.);
+    messages::stage(&mut harness, &repository);
+    for turns in [Turns::Line, Turns::Bubbles] {
+        harness.update(|plait, _, cx| {
+            plait.set_turns(turns, cx);
+            assert_eq!(plait.state.projects[0].machines[0].name, "Sample Mac");
+            assert!(
+                !plait.shows_inspector(true),
+                "the inspector shows the real fixture path"
+            );
+        });
+    }
 }

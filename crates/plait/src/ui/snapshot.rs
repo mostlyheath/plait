@@ -2415,11 +2415,7 @@ fn walk(output: Option<&Path>) {
         streaming_walk(&mut harness, &repository, suffix);
         tool_states_walk(&mut harness, &repository, suffix);
         reading_walk(&mut harness, &repository, suffix);
-        messages::walk(&mut harness, &repository, suffix);
         bubbles::walk(&repository, output, suffix, width, height);
-        harness.update(|plait, _, _| {
-            plait.preferences.value.turns = plait_client::preferences::Turns::Bubbles
-        });
         code_size::walk(&mut harness, &repository, suffix);
         find::find_walk(&mut harness, &repository, suffix);
         folded_turns::walk(&mut harness, &repository, suffix);
