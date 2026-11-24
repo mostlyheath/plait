@@ -8,6 +8,7 @@ use plait_client::{
     git::LineCount,
     host::{self, Request},
     model::{Change, DiffMode},
+    panel::Scope,
 };
 use std::path::PathBuf;
 
@@ -289,13 +290,18 @@ impl Plait {
                 };
                 Some((index, mode))
             });
-        match found {
-            Some((index, mode)) => self.select_file(index, mode, window, cx),
-            None => {
-                self.show_tab(Workspace::Changes, window, cx);
-                self.state.repository.refresh();
-                self.pump(cx);
+        if let Some((index, mode)) = found {
+            self.select_file(index, mode, window, cx);
+        } else {
+            if let Some(panel) = self.tabs.model.panel_mut() {
+                panel.select_scope(Scope::Uncommitted);
             }
+            self.workspace.restore_pending[1] = false;
+            self.state.repository.refresh();
+            // The strip's counts can arrive before status knows about the file.
+            self.state.repository.restore_path(path, DiffMode::Unstaged);
+            self.show_tab(Workspace::Changes, window, cx);
+            self.pump(cx);
         }
     }
 

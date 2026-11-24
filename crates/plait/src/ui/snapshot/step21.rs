@@ -703,3 +703,61 @@ fn review_approval_shortcuts_respect_panel_visibility() {
         "the call is visible again"
     );
 }
+
+#[cfg(debug_assertions)]
+fn checkout_strip(harness: &mut Harness, repository: &Path, status: plait_client::model::Snapshot) {
+    let counts = plait_engine::git::line_counts(repository, &["src/review.rs".into()]).unwrap();
+    assert_eq!((counts[0].added, counts[0].removed), (Some(2), Some(1)));
+    harness.update(|plait, _, _| {
+        plait.state.repository.data.snapshot = Load::Ready(Arc::new(status));
+        plait
+            .workspace
+            .thread_files
+            .inject(THREAD, repository.to_owned(), counts);
+        plait.workspace.thread_files.collapsed = false;
+    });
+}
+
+#[cfg(debug_assertions)]
+#[core::prelude::v1::test]
+fn review_strip_reselects_file_after_status_refresh() {
+    use plait_client::{
+        panel::{PanelKind, Scope},
+        state::{Job, Reply},
+    };
+    if !isolated("step21::review_strip_reselects_file_after_status_refresh") {
+        return;
+    }
+    let home = PathBuf::from(std::env::var_os(SCENE_HOME).unwrap());
+    let repository = fixture_repository(&home);
+    let mut harness = Harness::with_host(&repository, None, 900., 600., None);
+    setup_base_thread(&mut harness, &repository, "Sample model");
+    let status = plait_engine::git::status(&repository).unwrap();
+    let mut stale = plait_engine::git::status(&repository).unwrap();
+    stale
+        .changes
+        .retain(|change| change.path != Path::new("src/review.rs"));
+    checkout_strip(&mut harness, &repository, stale);
+    click(&mut harness, "Changed src/review.rs. Show in Changes");
+    harness
+        .window
+        .update(&mut harness.cx, |plait, _, _| {
+            let panel = plait.tabs.model.panel().unwrap();
+            assert_eq!(
+                (panel.open, panel.kind, panel.scope),
+                (true, PanelKind::Changes, Scope::Uncommitted)
+            );
+            assert!(plait.panel_fills(), "the panel covers the conversation");
+            let repo = &mut plait.state.repository;
+            // Deliver status and check the selection before the diff read.
+            let job = Job::Status {
+                epoch: repo.epoch(),
+                path: repository,
+            };
+            repo.complete(job, Reply::Status(Ok(Arc::new(status))));
+            let selected = repo.selected_diff().unwrap();
+            assert_eq!(selected.path, Path::new("src/review.rs"));
+            assert_eq!(selected.mode, DiffMode::Unstaged);
+        })
+        .unwrap();
+}
