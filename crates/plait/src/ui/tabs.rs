@@ -464,17 +464,17 @@ impl Plait {
                 self.restore_worktrees_bookmark();
                 self.refresh_worktrees_view(false, cx);
             }
-            Some((TabTarget::Existing { id, .. }, view)) => {
+            Some((TabTarget::Existing { id, .. }, _)) => {
                 self.select_host_thread_content(id, window, cx);
-                self.present_workspace(view, window, cx);
+                self.present_workspace(super::Workspace::Conversation, window, cx);
             }
-            Some((TabTarget::Draft { id, checkout }, view)) => {
+            Some((TabTarget::Draft { id, checkout }, _)) => {
                 if checkout.root != self.host.creation.checkout {
                     self.change_checkout(checkout.root, window, cx);
                 }
                 self.restore_draft_tab(id, cx);
                 self.open_draft_content(window, cx);
-                self.present_workspace(view, window, cx);
+                self.present_workspace(super::Workspace::Conversation, window, cx);
             }
             None => {
                 self.workspace.reset_for_thread_selection();
@@ -555,7 +555,11 @@ impl Plait {
             maximum_tab: 240.,
             overflow,
         };
-        let limit = if width > super::WIDE_WINDOW { 2 } else { 1 };
+        let limit = if width > super::EXPANDED_CHROME_WIDTH {
+            2
+        } else {
+            1
+        };
         let initial = model::layout(&self.tabs.rows, widths(44.), self.tabs.first_visible, limit);
         let overflow = (measure(&initial.overflow_label, window) + 16.)
             .clamp(44., if limit == 2 { 164. } else { 140. });
@@ -661,7 +665,7 @@ impl Plait {
                         .top(px(3.))
                         .ml_1()
                         .when_some(accent, |el, accent| el.text_color(rgb(accent)))
-                        .max_w(px(if self.panels.viewport > super::WIDE_WINDOW {
+                        .max_w(px(if self.panels.viewport > super::EXPANDED_CHROME_WIDTH {
                             164.
                         } else {
                             140.

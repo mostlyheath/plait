@@ -23,56 +23,6 @@ pub(super) fn harness(repo: &Path, output: Option<&Path>, width: f32, height: f3
     h
 }
 
-pub(super) fn scenes(h: &mut Harness, repo: &Path, suffix: &str) {
-    undo::prepare(h, repo);
-    for (name, status) in [
-        ("finished", ThreadStatus::Idle),
-        ("working", ThreadStatus::Running),
-        ("failed", ThreadStatus::Error),
-        ("undone", ThreadStatus::Idle),
-        ("earlier", ThreadStatus::Idle),
-        ("no-record", ThreadStatus::Idle),
-    ] {
-        h.change_snapshot(|s| s.status = status);
-        h.update(|p, _, _| {
-            p.preferences.value.hide_inspector = false;
-            p.workspace.turn_records.selection.latest();
-            let state = match name {
-                "undone" => "undone",
-                "working" => "recording",
-                _ => "ready",
-            };
-            let mut data = vec![
-                undo::record("last", &["last"], state),
-                undo::record("first", &["first"], "ready"),
-            ];
-            match name {
-                "undone" => {
-                    let mut child = undo::record("restored", &[], "ready");
-                    child["kind"] = "undo".into();
-                    child["undoes"] = "last".into();
-                    data.insert(0, child);
-                }
-                "earlier" => p.workspace.turn_records.selection.earlier("first"),
-                "no-record" => data.clear(),
-                _ => {}
-            }
-            let now = crate::ui::commits::now() as u64 * 1000;
-            for record in &mut data {
-                record["created_at"] = (now
-                    - if record["id"] == "first" {
-                        600_000
-                    } else {
-                        120_000
-                    })
-                .into();
-            }
-            undo::inject(p, data);
-        });
-        h.capture(&format!("this-turn-{name}-{suffix}"));
-    }
-}
-
 #[core::prelude::v1::test]
 fn the_panel_model_refuses_where_the_closing_line_does() {
     if !isolated("this_turn::the_panel_model_refuses_where_the_closing_line_does") {
@@ -110,23 +60,5 @@ fn the_panel_model_refuses_where_the_closing_line_does() {
         }
     });
     drop(h);
-    std::fs::remove_dir_all(scratch).unwrap();
-}
-
-#[core::prelude::v1::test]
-fn this_turn_scenes() {
-    if !isolated("this_turn::this_turn_scenes") {
-        return;
-    }
-    let scratch = std::env::temp_dir().join(format!("plait-turn-scenes-{}", std::process::id()));
-    let repo = fixture_repository(&scratch);
-    let output = std::env::var_os("PLAIT_SNAPSHOT_DIR").map(PathBuf::from);
-    if let Some(path) = &output {
-        std::fs::create_dir_all(path).unwrap();
-    }
-    for (suffix, width, height) in [("wide", 1380., 860.), ("narrow", 900., 600.)] {
-        let mut h = harness(&repo, output.as_deref(), width, height);
-        scenes(&mut h, &repo, suffix);
-    }
     std::fs::remove_dir_all(scratch).unwrap();
 }

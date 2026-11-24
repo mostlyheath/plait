@@ -547,8 +547,7 @@ impl Plait {
                     let Some(target) = &target else {
                         return;
                     };
-                    // A window too narrow for the panel still opens the recorded diff.
-                    if show_panel && (Self::wide(window) || !available) {
+                    if show_panel {
                         this.show_earlier_turn(&target.original, window, cx);
                     } else if available {
                         this.open_turn_review(target.clone(), window, cx);

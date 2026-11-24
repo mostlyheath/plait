@@ -61,6 +61,7 @@ mod message_box;
 mod messages;
 mod mixed_tabs;
 mod overview;
+mod panel;
 mod pickers;
 mod running_mark;
 mod settings_modal;
@@ -1334,7 +1335,7 @@ fn files_tab_reads_finds_and_reloads_a_real_file() {
     };
     harness.update(|plait, _, cx| plait.open_file("src/review.rs".into(), Some(2), cx));
     harness.update(|plait, _, _| {
-        assert_eq!(plait.workspace.tab, super::Workspace::Files);
+        assert_eq!(plait.selected_view(), super::Workspace::Files);
         assert!(text(plait).contains("notify_when_ready"));
     });
     harness.draw();
@@ -2033,7 +2034,7 @@ fn changed_files_count_with_git_hide_on_request_and_open_in_changes() {
         assert!(plait.thread_files_card(cx).is_none());
         plait.preferences.value.hide_changed_files = false;
         plait.open_thread_file("src/review.rs".into(), window, cx);
-        assert_eq!(plait.workspace.tab, super::Workspace::Changes);
+        assert_eq!(plait.selected_view(), super::Workspace::Changes);
         let repo = &plait.state.repository;
         let key = repo.selected_diff().unwrap();
         assert_eq!(
@@ -2432,7 +2433,7 @@ fn walk(output: Option<&Path>) {
         if suffix == "wide" {
             work_view::scenes(&repository, output);
         }
-        this_turn::scenes(&mut harness, &repository, suffix);
+        panel::scenes(&mut harness, &repository, suffix);
         undo::undo_walk(&mut harness, &repository, suffix);
         turn_review::walk(&mut harness, &repository, suffix);
         history_walk(&mut harness, &repository, suffix);
@@ -2456,7 +2457,7 @@ fn walk(output: Option<&Path>) {
         claude_walk(&mut harness, &repository, suffix);
         draft_scenes_walk(&mut harness, &repository, suffix);
         branches::branches_walk(&mut harness, &repository, suffix);
-        inspector_walk(&mut harness, &repository, suffix);
+
         sidebar::walk(&mut harness, &repository, suffix);
         cards::walk(&mut harness, &repository, suffix);
         if suffix == "narrow" {
@@ -2986,7 +2987,7 @@ fn composer_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
         let event =
             super::composer::ComposerEvent::Command(super::composer::CommandId::ShowChanges);
         plait.composer_event(&event, window, cx);
-        assert_eq!(plait.workspace.tab, super::Workspace::Changes);
+        assert_eq!(plait.selected_view(), super::Workspace::Changes);
         let event =
             super::composer::ComposerEvent::Command(super::composer::CommandId::ShowConversation);
         plait.composer_event(&event, window, cx);
@@ -4238,34 +4239,6 @@ fn a_mode_reply_lands_only_on_the_thread_it_was_sent_for() {
     harness.update(|plait, _, _| assert_eq!(shown(plait), ("ask".into(), true)));
     drop(harness);
     std::fs::remove_dir_all(scratch).unwrap();
-}
-
-/// The Git inspector hidden. A narrow window has no inspector, so the toggle
-/// explains where Git is instead.
-fn inspector_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
-    harness.connect(repository, false);
-    harness.update(|plait, window, cx| {
-        plait.toggle_inspector(window, cx);
-        let wide = Plait::wide(window);
-        assert_eq!(plait.preferences.value.hide_inspector, wide);
-        assert_eq!(plait.workspace.inspector_note, !wide);
-    });
-    harness.capture(&format!("inspector-hidden-{suffix}"));
-    harness.update(|plait, window, cx| {
-        plait.toggle_inspector(window, cx);
-        assert!(!plait.preferences.value.hide_inspector);
-        assert!(!plait.workspace.inspector_note);
-    });
-    // Widths saved by dragging, fitted so the conversation keeps its room.
-    harness.update(|plait, _, _| {
-        plait.preferences.value.sidebar_width = Some(380);
-        plait.preferences.value.inspector_width = Some(520);
-    });
-    harness.capture(&format!("panels-resized-{suffix}"));
-    harness.update(|plait, _, _| {
-        plait.preferences.value.sidebar_width = None;
-        plait.preferences.value.inspector_width = None;
-    });
 }
 
 // The glob import above brings in `gpui::test`; these are plain tests.

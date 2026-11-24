@@ -26,10 +26,10 @@ This table matches `ACTIONS` in `crates/plait/src/ui/actions.rs` (checked by aut
 | Cmd-K | Command Palette… | `palette.toggle` |
 | Cmd-B | Toggle Sidebar | `view.toggle_sidebar` |
 | Cmd-Shift-E | Every Thread | `view.overview` |
-| Cmd-Backslash | Toggle Work View | `view.toggle_work` |
+| Cmd-Backslash | Fill Panel | `view.toggle_work` |
 | Cmd-Option-Right | Focus Next Pane | `pane.next` |
 | Cmd-Option-Left | Focus Previous Pane | `pane.previous` |
-| Cmd-L | Toggle This Turn | `view.toggle_inspector` |
+| Cmd-L | Toggle Panel | `view.toggle_inspector` |
 | Cmd-Shift-D | Toggle Diagnostics | `view.toggle_diagnostics` |
 | Cmd-Shift-1 | Conversation | `view.conversation` |
 | Cmd-Shift-2 | Changes | `view.changes` |

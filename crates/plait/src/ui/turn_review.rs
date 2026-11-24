@@ -111,7 +111,8 @@ impl Plait {
         let snapshot = self.state.repository.snapshot().ready().cloned();
         let history = self.host.thread.snapshot.clone();
         let task_stamp = stamp.clone();
-        let read_record = self.workspace.tab == Workspace::Changes
+        let read_record = self.panel_kind() == Some(plait_client::panel::PanelKind::Changes)
+            || self.workspace.tab == Workspace::Changes
             || self
                 .tabs
                 .model
@@ -196,11 +197,13 @@ impl Plait {
             if let Some(window) = window {
                 let _ = window.update(cx, |_, window, cx| {
                     this.update(cx, |this, cx| {
-                        this.review_loaded(stamp, result, Some(window), cx)
+                        this.review_loaded(stamp, read_record, result, Some(window), cx)
                     })
                 });
             } else {
-                let _ = this.update(cx, |this, cx| this.review_loaded(stamp, result, None, cx));
+                let _ = this.update(cx, |this, cx| {
+                    this.review_loaded(stamp, read_record, result, None, cx)
+                });
             }
         })
         .detach();
@@ -209,6 +212,7 @@ impl Plait {
     fn review_loaded(
         &mut self,
         stamp: Stamp,
+        read_record: bool,
         result: Result<Loaded, host::Error>,
         window: Option<&mut Window>,
         cx: &mut Context<Self>,
@@ -224,16 +228,19 @@ impl Plait {
         match result {
             Ok(result) => {
                 self.workspace.turn_review.info = Some(result.info);
-                let offline = result.error.as_ref().is_some_and(|e| e.0 == "Offline");
-                self.workspace.turn_review.error = result.error;
-                if let Some(record) = result.record {
-                    self.workspace.turn_review.record = Some(Arc::new(record));
-                    self.workspace.turn_review.selected = result.selected;
-                }
-                if !self.workspace.turn_review.current {
-                    self.workspace.turn_review.status = result.status;
-                    if !offline {
-                        self.workspace.turn_review.diff = result.diff.map(Arc::new);
+                // An info-only read cannot replace the previously loaded patch.
+                if read_record {
+                    let offline = result.error.as_ref().is_some_and(|e| e.0 == "Offline");
+                    self.workspace.turn_review.error = result.error;
+                    if let Some(record) = result.record {
+                        self.workspace.turn_review.record = Some(Arc::new(record));
+                        self.workspace.turn_review.selected = result.selected;
+                    }
+                    if !self.workspace.turn_review.current {
+                        self.workspace.turn_review.status = result.status;
+                        if !offline {
+                            self.workspace.turn_review.diff = result.diff.map(Arc::new);
+                        }
                     }
                 }
             }
@@ -285,11 +292,13 @@ impl Plait {
             self.open_thread_file(path.clone(), window, cx);
             return;
         }
-        if self.draws_work() {
-            self.workspace
-                .turn_records
-                .selection
-                .earlier(&target.original);
+        self.workspace
+            .turn_records
+            .selection
+            .earlier(&target.original);
+        if let Some(panel) = self.tabs.model.panel_mut() {
+            panel.select_scope(plait_client::panel::Scope::ThisTurn);
+            panel.recorded = Some(target.clone());
         }
         self.clear_turn_review();
         self.workspace.turn_review.window = Some(window.window_handle());
@@ -301,9 +310,6 @@ impl Plait {
             self.refresh_turn_review(cx);
         }
         self.show_tab(Workspace::Changes, window, cx);
-        if !self.draws_work() {
-            window.focus(&self.focus, cx);
-        }
         if self.workspace.turn_review.older {
             self.workspace.turn_review.error = Some((
                 "Older host",
@@ -331,6 +337,9 @@ impl Plait {
         self.workspace.restore_pending[1] = false;
         if let Some(target) = self.workspace.turn_review.target.as_mut() {
             target.path = Some(path);
+            if let Some(panel) = self.tabs.model.panel_mut() {
+                panel.recorded = Some(target.clone());
+            }
         }
         self.workspace.turn_review.selected = Some(index);
         self.workspace.turn_review.diff = None;

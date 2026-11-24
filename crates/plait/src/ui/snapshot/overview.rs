@@ -5,7 +5,11 @@ use plait_client::{model::Machine, navigation};
 fn install(h: &mut Harness, paths: [&Path; 2]) {
     h.update(|p, _, _| {
         p.sidebar = true;
-        p.preferences.value.hide_inspector = true;
+        p.tabs
+            .model
+            .panel_mut()
+            .expect("active fixture thread")
+            .close();
         p.preferences.value.navigation = Default::default();
         let updated = super::super::navigation::now_ms();
         *p.host.connection.threads_mut() = [
@@ -66,10 +70,6 @@ fn projects(p: &mut Plait) {
 }
 
 pub(super) fn walk(h: &mut Harness, repository: &Path, suffix: &str) {
-    let hide_inspector = h
-        .window
-        .update(&mut h.cx, |p, _, _| p.preferences.value.hide_inspector)
-        .unwrap();
     h.connect(repository, false);
     install(h, [Path::new("/work/forecast"), Path::new("/work/ledger")]);
     h.update(|p, window, cx| p.toggle_overview(window, cx));
@@ -131,10 +131,7 @@ pub(super) fn walk(h: &mut Harness, repository: &Path, suffix: &str) {
     h.update(|p, window, cx| p.close_overview(window, cx));
     // Keep later scenes on their regular fixture state.
     h.connect(repository, false);
-    h.update(|p, _, cx| {
-        p.preferences.value.hide_inspector = hide_inspector;
-        p.rebuild_projects(cx);
-    });
+    h.update(|p, _, cx| p.rebuild_projects(cx));
 }
 
 #[cfg(debug_assertions)]

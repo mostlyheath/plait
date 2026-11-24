@@ -41,8 +41,10 @@ fn reset(p: &mut Plait) {
 
 fn rebuild_scene_projects(p: &mut Plait, cx: &mut Context<Plait>) {
     p.rebuild_projects(cx);
-    // The wide inspector prints the checkout path; keep the card fixtures portable.
-    p.preferences.value.hide_inspector = true;
+    // Keep the card fixtures portable if the active tab has a review panel.
+    if let Some(panel) = p.tabs.model.panel_mut() {
+        panel.close();
+    }
     // The workspace also draws these labels in sidebar captures.
     for project in &mut p.state.projects {
         project.machines[0].name = "studio".into();
@@ -211,10 +213,6 @@ fn assert_menu_actions(h: &mut Harness, labels: &[&str]) {
 }
 
 pub(super) fn walk(h: &mut Harness, repository: &Path, suffix: &str) {
-    let hide_inspector = h
-        .window
-        .update(&mut h.cx, |p, _, _| p.preferences.value.hide_inspector)
-        .unwrap();
     states(h, repository);
     capture_both(h, &format!("cards-states-{suffix}"));
     #[cfg(debug_assertions)]
@@ -355,10 +353,7 @@ pub(super) fn walk(h: &mut Harness, repository: &Path, suffix: &str) {
     h.capture(&format!("cards-many-scrolled-{suffix}"));
 
     // Restore the ordinary two-thread scene for the shared shortcut checks.
-    h.update(|p, _, _| {
-        reset(p);
-        p.preferences.value.hide_inspector = hide_inspector;
-    });
+    h.update(|p, _, _| reset(p));
     h.connect(repository, false);
     h.update(|p, _, cx| p.rebuild_projects(cx));
 }
@@ -383,8 +378,8 @@ fn card_evidence_keeps_fixture_paths_out_of_the_window() {
         harness.update(|plait, _, _| {
             assert_eq!(plait.active_project().machines[0].name, "studio");
             assert!(
-                !plait.shows_inspector(true),
-                "the wide inspector displays the fixture checkout path"
+                !plait.panel_is_open(),
+                "the review panel can display the fixture checkout path"
             );
         });
     }

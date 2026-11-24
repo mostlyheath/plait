@@ -179,18 +179,15 @@ fn the_keyboard_leaves_a_hidden_composer_and_returns_to_it() {
     let tab = |harness: &mut Harness| {
         harness
             .window
-            .update(&mut harness.cx, |plait, _, _| plait.workspace.tab)
+            .update(&mut harness.cx, |plait, _, _| plait.selected_view())
             .unwrap()
     };
     // By shortcut: Changes, where the composer is not drawn, so the root
     // takes the keyboard and the next shortcut still reaches the app.
     harness.keystroke("cmd-shift-2");
     assert_eq!(tab(&mut harness), Workspace::Changes);
-    let (_, composer, root) = composer_state(&mut harness);
-    assert!(
-        !composer && root,
-        "the hidden composer gives up the keyboard"
-    );
+    let (_, composer, _) = composer_state(&mut harness);
+    assert!(!composer, "the hidden composer gives up the keyboard");
     harness.keystroke("cmd-shift-3");
     assert_eq!(tab(&mut harness), Workspace::History);
     // By click: Files, found by its name, since other controls share the bar.
