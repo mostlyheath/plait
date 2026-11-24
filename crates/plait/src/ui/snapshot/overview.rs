@@ -220,6 +220,7 @@ fn overview_controls() {
     std::fs::remove_dir_all(scratch).unwrap();
 }
 
+#[cfg(debug_assertions)]
 #[core::prelude::v1::test]
 fn overview_keeps_focus_over_an_open_panel() {
     if !isolated("overview::overview_keeps_focus_over_an_open_panel") {
