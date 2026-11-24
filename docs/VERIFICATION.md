@@ -96,6 +96,9 @@ that the application's frame or latency goals are met.
 
 ## Known gaps
 
+- The message box, changed-files strip, and approval card have wide and narrow
+  test scenes. Native focus, input-method composition, VoiceOver, and the cost
+  of drawing the box shadow while typing and scrolling still need inspection.
 - The shared controls draw a hollow 1.5-point blue inset focus outline.
   An offscreen Metal test uses Tab and checks the outline and surface pixels on
   Panel, Raised, and Navigation in both defaults. It requires a Metal device.

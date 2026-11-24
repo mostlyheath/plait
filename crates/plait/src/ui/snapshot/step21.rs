@@ -32,6 +32,8 @@ fn configure_model(plait: &mut Plait, name: &str, context_window: Option<u64>) {
 fn setup_base_thread(harness: &mut Harness, repository: &Path, name: &str) {
     harness.fresh_composer(repository);
     harness.update(|plait, _, cx| {
+        plait.state.projects[0].machines[0].name = "studio".into();
+        plait.navigation.invalidate_projects();
         configure_model(plait, name, Some(200_000));
         let snapshot = Arc::make_mut(plait.host.thread.snapshot.as_mut().unwrap());
         snapshot.status = ThreadStatus::Idle;
@@ -161,16 +163,25 @@ pub(super) fn walk(harness: &mut Harness, repository: &Path, suffix: &str) {
     // Wrapping settings row with long model name, Full access in sand, and context usage.
     setup_base_thread(harness, repository, "Claude Sonnet");
     harness.update(|plait, _, cx| {
-        plait.inject_harnesses(Some(sample_harnesses("ready", Some(NEWER))));
+        let mut catalog = sample_harnesses("ready", None);
+        let model = catalog
+            .harnesses
+            .iter_mut()
+            .find(|harness| harness.id == HarnessId::Codex)
+            .unwrap()
+            .models
+            .as_mut()
+            .unwrap()
+            .first_mut()
+            .unwrap();
+        model.name = "Sample Codex model with a long display name".into();
+        plait.inject_harnesses(Some(catalog));
         let snapshot = Arc::make_mut(plait.host.thread.snapshot.as_mut().unwrap());
         snapshot.status = ThreadStatus::Idle;
-        snapshot.model = ModelChoice {
-            provider: "openai".into(),
-            model_id: "gpt-5.3-codex".into(),
-        };
+        snapshot.model = codex_choice();
         snapshot.harness = Some(ThreadHarness {
             id: HarnessId::Codex,
-            version: Some(NEWER.into()),
+            version: Some("0.170.0".into()),
             mode: Some("full_access".into()),
             reported: Some("full_access".into()),
         });
@@ -334,15 +345,39 @@ pub(super) fn walk(harness: &mut Harness, repository: &Path, suffix: &str) {
     });
 }
 
+#[cfg(debug_assertions)]
+fn click(harness: &mut Harness, label: &str) {
+    let position = harness
+        .draw_a11y()
+        .nodes
+        .iter()
+        .find(|n| n.label.as_deref() == Some(label))
+        .unwrap_or_else(|| panic!("missing control {label}"))
+        .bounds
+        .center();
+    harness.pointer(PlatformInput::MouseDown(MouseDownEvent {
+        button: MouseButton::Left,
+        position,
+        click_count: 1,
+        ..Default::default()
+    }));
+    harness.pointer(PlatformInput::MouseUp(MouseUpEvent {
+        button: MouseButton::Left,
+        position,
+        click_count: 1,
+        ..Default::default()
+    }));
+}
+
 #[core::prelude::v1::test]
-fn step21_draft_persistence_approval_keys_ime_and_strip_counts() {
-    if !isolated("step21::step21_draft_persistence_approval_keys_ime_and_strip_counts") {
+fn approval_and_draft() {
+    if !isolated("step21::approval_and_draft") {
         return;
     }
     let scratch = std::env::temp_dir().join(format!("plait-step21-{}", std::process::id()));
     let repository = fixture_repository(&scratch);
     for (suffix, width, height) in [("wide", 1380., 860.), ("narrow", 900., 600.)] {
-        let mut harness = Harness::new(&repository, None, width, height);
+        let mut harness = Harness::with_host(&repository, None, width, height, None);
         setup_base_thread(&mut harness, &repository, "Claude Sonnet");
 
         // 1. Draft typed before approval arrives survives hiding, Reply instead, and answering.
@@ -371,9 +406,19 @@ fn step21_draft_persistence_approval_keys_ime_and_strip_counts() {
             });
         });
 
+        harness.update(|plait, _, _| {
+            plait.set_thread_notice(THREAD.into(), "Review the previous request.".into(), true);
+        });
         #[cfg(debug_assertions)]
         {
             let frame = harness.draw_a11y();
+            assert!(
+                frame.has_node(Role::Label, |n| {
+                    n.value.as_deref().or(n.label.as_deref())
+                        == Some("Review the previous request.")
+                }),
+                "{suffix}: thread notices stay visible above an approval"
+            );
             frame.assert_no_duplicates(&format!("step21 approval hidden box ({suffix})"));
             assert!(
                 frame.has_node(Role::Button, |n| n.label.as_deref() == Some("Allow once")),
@@ -405,6 +450,18 @@ fn step21_draft_persistence_approval_keys_ime_and_strip_counts() {
         });
 
         // 2. Activating Reply instead draws the box below the approval card with the same draft.
+        #[cfg(debug_assertions)]
+        {
+            click(&mut harness, "Reply instead");
+            harness.update(|plait, window, cx| {
+                assert!(
+                    plait.workspace.composers[THREAD]
+                        .focus_handle(cx)
+                        .is_focused(window)
+                );
+            });
+        }
+        #[cfg(not(debug_assertions))]
         harness.update(|plait, window, cx| {
             plait
                 .workspace
@@ -484,30 +541,22 @@ fn step21_draft_persistence_approval_keys_ime_and_strip_counts() {
         });
 
         // 4. IME composition does not submit on Enter.
-        let mut submitted = false;
-        harness
-            .window
-            .update(&mut harness.cx, |plait, window, cx| {
-                let composer = plait.workspace.composers.get(THREAD).unwrap().clone();
-                composer.update(cx, |composer, cx| {
-                    composer.replace_and_mark_text_in_range(None, "nihon", None, window, cx);
-                    assert!(
-                        composer.marked_text_range(window, cx).is_some(),
-                        "{suffix}: IME marked range is active"
-                    );
-                    assert!(
-                        !composer.can_send(),
-                        "{suffix}: Send is disabled during IME composition"
-                    );
-                    composer.submit_from_button(cx);
-                    submitted = composer.saved_draft().2.is_some();
-                    composer.unmark_text(window, cx);
-                    assert!(composer.marked_text_range(window, cx).is_none());
-                    assert!(composer.can_send());
-                });
-            })
-            .unwrap();
-        assert!(!submitted, "{suffix}: IME composition never submits");
+        harness.update(|plait, window, cx| plait.focus_composer(window, cx));
+        harness.composer(|composer, window, cx| {
+            composer.replace_and_mark_text_in_range(None, "nihon", None, window, cx);
+            assert!(composer.marked_text_range(window, cx).is_some());
+            assert!(!composer.can_send());
+        });
+        harness.draw();
+        harness.keystroke("enter");
+        harness.composer(|composer, window, cx| {
+            assert!(
+                composer.saved_draft().2.is_none(),
+                "Enter submitted marked text"
+            );
+            composer.unmark_text(window, cx);
+            assert!(composer.can_send());
+        });
 
         // 5. Running thread: empty draft shows Stop; typing switches to Queue message.
         harness.composer(|composer, _, cx| {
@@ -537,72 +586,79 @@ fn step21_draft_persistence_approval_keys_ime_and_strip_counts() {
             }));
             assert!(!frame.has_node(Role::Button, |n| n.label.as_deref() == Some("Stop")));
         }
+    }
+    std::fs::remove_dir_all(scratch).unwrap();
+}
 
-        // 6. Strip counts match real Git Changes for the fixture repository.
-        harness.change_snapshot(|snapshot| {
-            snapshot.status = ThreadStatus::Idle;
-        });
-        harness.update(|plait, _, cx| {
-            plait.workspace.thread_files = Default::default();
-            assert!(plait.workspace.thread_files.collapsed);
-            let paths = plait
+#[core::prelude::v1::test]
+fn strip_counts_from_checkout() {
+    if !isolated("step21::strip_counts_from_checkout") {
+        return;
+    }
+    let scratch = std::env::temp_dir().join(format!("plait-strip-{}", std::process::id()));
+    let repository = fixture_repository(&scratch);
+    let mut harness = Harness::new(&repository, None, 900., 600.);
+    setup_base_thread(&mut harness, &repository, "Claude Sonnet");
+    // Only the source file belongs to this turn. README.md and notes.md also
+    // changed in the checkout and must stay out of its summary.
+    let mut record: plait_client::host::TurnRecord =
+        serde_json::from_value(undo::record("last", &["request"], "ready")).unwrap();
+    record.paths.truncate(1);
+    record.paths_total = 1;
+    harness.update(|plait, _, cx| plait.record_thread_files(&[record], cx));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        harness.settle();
+        let ready = harness
+            .window
+            .update(&mut harness.cx, |plait, _, _| {
+                plait.workspace.thread_files.counted().count() != 0
+            })
+            .unwrap();
+        if ready {
+            break;
+        }
+        assert!(Instant::now() < deadline, "strip counts did not arrive");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    harness.update(|plait, _, _| {
+        assert_eq!(
+            plait
                 .state
                 .repository
                 .snapshot()
                 .ready()
-                .expect("fixture repository status")
+                .unwrap()
                 .changes
-                .iter()
-                .map(|c| c.path.clone())
-                .collect::<Vec<_>>();
-            assert!(!paths.is_empty());
-            plait
-                .workspace
-                .thread_files
-                .inject(THREAD, repository.clone(), Vec::new());
-            plait.workspace.thread_files.set_paths(paths);
-            plait.thread_files_status(cx);
-        });
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            harness.settle();
-            let ready = harness
-                .window
-                .update(&mut harness.cx, |plait, _, _| {
-                    plait.workspace.thread_files.counted().count() > 0
-                })
-                .unwrap();
-            if ready {
-                break;
-            }
-            assert!(Instant::now() < deadline, "strip counts did not arrive");
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        #[cfg(debug_assertions)]
-        {
-            let (expected_files, expected_added, expected_removed) = harness
-                .window
-                .update(&mut harness.cx, |plait, _, _| {
-                    let counted: Vec<_> = plait.workspace.thread_files.counted().cloned().collect();
-                    let changes = &plait.state.repository.snapshot().ready().unwrap().changes;
-                    assert_eq!(counted.len(), changes.len());
-                    (
-                        counted.len(),
-                        counted.iter().filter_map(|c| c.added).sum::<usize>(),
-                        counted.iter().filter_map(|c| c.removed).sum::<usize>(),
-                    )
-                })
-                .unwrap();
-            let frame = harness.draw_a11y();
-            frame.assert_no_duplicates(&format!("step21 strip closed ({suffix})"));
-            let want = format!(
-                "{expected_files} files changed by this thread, {expected_added} lines added, {expected_removed} removed"
-            );
-            assert!(
-                frame.has_node(Role::Button, |n| n.label.as_deref() == Some(want.as_str())),
-                "{suffix}: strip summary label matches Changes counts: expected {want}"
-            );
-        }
-    }
+                .len(),
+            3
+        );
+        let counted = plait.workspace.thread_files.counted().collect::<Vec<_>>();
+        assert_eq!(counted.len(), 1);
+        assert_eq!(counted[0].path, Path::new("src/review.rs"));
+        assert_eq!((counted[0].added, counted[0].removed), (Some(2), Some(1)));
+        assert!(plait.workspace.thread_files.collapsed);
+    });
+    #[cfg(debug_assertions)]
+    inspect_strip(&mut harness);
+    drop(harness);
     std::fs::remove_dir_all(scratch).unwrap();
+}
+
+#[cfg(debug_assertions)]
+fn inspect_strip(harness: &mut Harness) {
+    click(
+        harness,
+        "1 file changed by this thread, 2 lines added, 1 removed",
+    );
+    click(harness, "Modified src/review.rs. Show in Changes");
+    harness.update(|plait, _, _| {
+        let repo = &plait.state.repository;
+        let selected = repo.selected_diff().expect("strip row selects its diff");
+        assert_eq!(
+            repo.snapshot().ready().unwrap().changes[selected.file].path,
+            Path::new("src/review.rs")
+        );
+        assert_eq!(selected.mode, DiffMode::Unstaged);
+    });
 }

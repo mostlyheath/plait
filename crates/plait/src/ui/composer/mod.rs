@@ -209,6 +209,7 @@ impl StopGesture {
 }
 
 pub struct Composer {
+    pub(super) box_focus: FocusHandle,
     focus: FocusHandle,
     draft: Draft,
     images: images::Attachments,
@@ -241,6 +242,7 @@ impl Composer {
     pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
         Self {
             // Tracked focus uses the handle's tab settings, not the div's.
+            box_focus: cx.focus_handle(),
             focus: cx.focus_handle().tab_stop(true),
             draft: Draft::default(),
             images: Default::default(),
@@ -1034,9 +1036,6 @@ impl Composer {
                 "Working · Draft your next message · Esc twice stops".into()
             }
         }
-    }
-    pub fn is_focused(&self, window: &Window) -> bool {
-        self.focus.is_focused(window)
     }
 
     pub fn can_send(&self) -> bool {

@@ -1178,14 +1178,6 @@ impl Plait {
                 "Changed before this run: {dirty}. {harness_name} is not stopped from writing them."
             ),
         };
-        let call_text = if !approval.details.is_empty() {
-            Some(approval.details.clone())
-        } else if !approval.summary.is_empty() {
-            Some(approval.summary.clone())
-        } else {
-            None
-        };
-        let show_summary_fact = !approval.details.is_empty() && !approval.summary.is_empty();
         let allow_hint = self.shortcut_hint("approval.allow_once").map(|hint| {
             hint.bg(rgba(if colors().light {
                 0xffffff24
@@ -1230,14 +1222,14 @@ impl Plait {
                             .child(waiting),
                     ),
             )
-            .when_some(call_text, |el, call| {
+            .when(!approval.details.is_empty(), |el| {
                 el.child(
                     div()
                         .id("approval-details")
                         .role(Role::Group)
                         .aria_label(format!(
-                            "Exact tool arguments: {call}. Risk: {}. {dirty_note}",
-                            approval.risk
+                            "Exact tool arguments: {}. Risk: {}. {dirty_note}",
+                            approval.details, approval.risk
                         ))
                         .audited()
                         .max_h(px(140.))
@@ -1252,11 +1244,11 @@ impl Plait {
                         .text_size(px(code_size()))
                         .line_height(px(code_line_height()))
                         .text_color(rgb(colors().text))
-                        .child(call),
+                        .child(approval.details.clone()),
                 )
             })
             .when(
-                show_summary_fact
+                !approval.summary.is_empty()
                     || !approval.risk.is_empty()
                     || !approval.dirty_paths.is_empty()
                     || !exact,
@@ -1265,7 +1257,7 @@ impl Plait {
                         column()
                             .gap_1()
                             .text_size(px(12.))
-                            .when(show_summary_fact, |el| {
+                            .when(!approval.summary.is_empty(), |el| {
                                 el.child(
                                     div()
                                         .text_color(rgb(colors().muted))
@@ -1603,6 +1595,22 @@ Tone::Filled,
             .selected
             .as_ref()
             .and_then(|id| self.workspace.composers.get(id));
+        let mut parts = if self.host.protocol() >= 3 {
+            self.thread_message_box_parts(cx)
+        } else {
+            self.older_host_message_box_parts()
+        };
+        let approval_notices = pending_approval.and_then(|_| {
+            let notices = std::mem::take(&mut parts.notices);
+            (!notices.is_empty()).then(|| {
+                column()
+                    .w_full()
+                    .max_w(px(CONTENT_WIDTH))
+                    .mx_auto()
+                    .gap_1()
+                    .children(notices)
+            })
+        });
         main = main.child(
             column()
                 .flex_shrink_0()
@@ -1612,6 +1620,7 @@ Tone::Filled,
                 .gap_2()
                 .children(self.checkout_wait_control(cx))
                 .children(self.queued_inputs(cx))
+                .children(approval_notices)
                 .when_some(pending_approval, |el, approval| {
                     let reply_id = approval.id.clone();
                     el.child(self.approval(approval, cx))
@@ -1642,11 +1651,6 @@ Tone::Filled,
                 })
                 .when(draw_composer, |el| {
                     el.when_some(composer.cloned(), |el, composer| {
-                        let parts = if self.host.protocol() >= 3 {
-                            self.thread_message_box_parts(cx)
-                        } else {
-                            self.older_host_message_box_parts()
-                        };
                         // Keep the changed-files strip joined directly to the top of the box.
                         el.child(
                             column()

@@ -430,15 +430,18 @@ fn change_badge(count: &LineCount, changes: &[Change]) -> (&'static str, &'stati
     if count.untracked {
         return ("A", "Added", colors().mint);
     }
-    if let Some(change) = changes.iter().find(|change| change.path == count.path) {
-        if change.index == b'?' || change.index == b'A' {
-            return ("A", "Added", colors().mint);
-        }
-        if change.index == b'D' || change.worktree == b'D' {
-            return ("D", "Deleted", colors().red);
-        }
+    match changes
+        .iter()
+        .find(|change| change.path == count.path)
+        .map(Change::label)
+    {
+        Some("New" | "Added") => ("A", "Added", colors().mint),
+        Some("Deleted") => ("D", "Deleted", colors().red),
+        Some("Renamed") => ("R", "Renamed", colors().blue),
+        Some("Conflict") => ("U", "Conflict", colors().amber),
+        Some("Modified") => ("M", "Modified", colors().blue),
+        _ => ("", "Changed", colors().muted),
     }
-    ("M", "Modified", colors().blue)
 }
 
 fn file_row(
@@ -458,7 +461,7 @@ fn file_row(
         .map(|parent| parent.to_string_lossy().into_owned())
         .unwrap_or_default();
     let path = count.path.clone();
-    let binary = count.added.is_none();
+    let uncounted = count.added.is_none();
     button(("thread-file", index), "")
         .w_full()
         .min_w_0()
@@ -498,8 +501,13 @@ fn file_row(
                 .text_color(rgb(colors().subtle))
                 .child(directory),
         )
-        .when(binary, |el| {
-            el.child(tag("thread-file-binary", "Binary", colors().subtle).flex_shrink_0())
+        .when(uncounted, |el| {
+            let label = if count.untracked {
+                "Counts unavailable"
+            } else {
+                "Binary"
+            };
+            el.child(tag("thread-file-counts-unavailable", label, colors().subtle).flex_shrink_0())
         })
         .child(counts(count.added, count.removed))
         .on_activate(cx, move |this, window, cx| {

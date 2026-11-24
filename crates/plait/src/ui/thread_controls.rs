@@ -302,11 +302,11 @@ impl Plait {
         parts: MessageBoxParts,
         window: &Window,
         cx: &mut Context<Self>,
-    ) -> Div {
-        let (focused, can_send, busy, queue_enabled, can_stop, is_blank, hint) = {
+    ) -> Stateful<Div> {
+        let (box_focus, can_send, busy, queue_enabled, can_stop, is_blank, hint) = {
             let state = composer.read(cx);
             (
-                state.is_focused(window),
+                state.box_focus.clone(),
                 state.can_send(),
                 state.busy(),
                 state.queue_enabled(),
@@ -315,6 +315,7 @@ impl Plait {
                 state.hint(),
             )
         };
+        let focused = box_focus.contains_focused(window, cx);
         let drop_composer = composer.clone();
         let stop_composer = composer.clone();
         let send_composer = composer.clone();
@@ -412,6 +413,8 @@ impl Plait {
         }
         notices.extend(parts.notices);
         column()
+            .id("message-box")
+            .track_focus(&box_focus)
             .w_full()
             .max_w(px(CONTENT_WIDTH))
             .mx_auto()
