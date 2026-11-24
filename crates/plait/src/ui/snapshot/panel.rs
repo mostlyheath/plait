@@ -175,6 +175,37 @@ fn keys_focus_fill_and_tab_memory() {
     h.update(|p, _, _| assert!(!p.panel_is_open()));
 }
 
+#[core::prelude::v1::test]
+fn filling_from_conversation_moves_find_into_panel() {
+    if !isolated("panel::filling_from_conversation_moves_find_into_panel") {
+        return;
+    }
+    use crate::ui::file_view::FindIn;
+    let home = PathBuf::from(std::env::var_os("HOME").unwrap());
+    let repo = fixture_repository(&home.join("panel-focus"));
+    let mut h = Harness::new(&repo, None, 1380., 860.);
+    h.connect(&repo, false);
+    h.draw();
+    h.keystroke("cmd-l");
+    h.draw();
+    h.update(|p, _, _| assert_eq!(p.find_target(), Some(FindIn::Changes)));
+    h.update(|p, w, cx| {
+        assert!(!p.panel_fills());
+        w.focus(&p.focus, cx);
+        assert!(p.focus.is_focused(w));
+    });
+    h.draw();
+    h.keystroke("cmd-\\");
+    h.draw();
+    h.update(|p, w, cx| {
+        assert!(p.panel_fills());
+        assert!(
+            p.work_focus[plait_client::panes::PaneKind::Changes as usize].contains_focused(w, cx)
+        );
+        assert_eq!(p.find_target(), Some(FindIn::Changes));
+    });
+}
+
 #[cfg(debug_assertions)]
 #[core::prelude::v1::test]
 fn panel_changes_handoff_stays_on_the_scope_row() {

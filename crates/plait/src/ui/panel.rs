@@ -78,6 +78,15 @@ impl Plait {
         if let Some(p) = self.tabs.model.panel_mut() {
             p.set_fill(!p.fill);
         }
+        if self.panel_fills() {
+            let kind = self.panel_focus_kind();
+            let focus = self.work_focus[kind as usize].clone();
+            if !focus.contains_focused(window, cx) {
+                self.leave_conversation_focus(window, cx);
+                self.panels.focused = Some(kind);
+                window.focus(&focus, cx);
+            }
+        }
         cx.notify();
     }
 
