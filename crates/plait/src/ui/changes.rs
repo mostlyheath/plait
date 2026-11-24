@@ -107,7 +107,7 @@ fn hunk_button(target: &HunkTarget, hunk: usize, header: &str, cx: &mut Context<
         "diff-hunk",
     )
     .h(px(diff_line_height() - 2.))
-    .font_family(".SystemUIFont")
+    .font_family(ui_font())
     .text_size(px(11.))
     .disabled(target.busy)
     .on_activate(cx, move |this, _, cx| {
@@ -137,7 +137,7 @@ fn discard_hunk_button(
     );
     quiet_button(("hunk-discard", hunk), "Discard hunk…", "diff-hunk")
         .h(px(diff_line_height() - 2.))
-        .font_family(".SystemUIFont")
+        .font_family(ui_font())
         .text_size(px(11.))
         .disabled(target.busy)
         .on_activate(cx, move |this, window, cx| {
@@ -1328,6 +1328,35 @@ impl Plait {
                 },
             ))
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+pub(super) fn assert_hunk_action_font(plait: &Plait, cx: &mut Context<Plait>, expected: &str) {
+    for mode in [DiffMode::Unstaged, DiffMode::Staged] {
+        let target = HunkTarget {
+            checkout: plait.state.checkout_id(),
+            epoch: plait.state.repository.epoch(),
+            path: "src/main.rs".into(),
+            mode,
+            busy: false,
+        };
+        assert_eq!(
+            hunk_button(&target, 0, "@@", cx)
+                .text_style()
+                .font_family
+                .as_deref(),
+            Some(expected)
+        );
+        if mode == DiffMode::Unstaged {
+            assert_eq!(
+                discard_hunk_button(&target, 0, "@@", cx)
+                    .text_style()
+                    .font_family
+                    .as_deref(),
+                Some(expected)
+            );
+        }
     }
 }
 

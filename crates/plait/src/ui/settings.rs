@@ -85,9 +85,10 @@ pub(super) fn page(id: &'static str) -> Stateful<Div> {
 
 pub(super) fn heading(text: impl Into<SharedString>) -> Div {
     div()
-        .text_size(px(15.))
+        .text_size(px(TYPE_HEADER_SIZE))
+        .line_height(px(TYPE_HEADER_LINE))
         .text_color(rgb(colors().strong))
-        .font_weight(FontWeight::MEDIUM)
+        .font_weight(TYPE_HEADER_WEIGHT)
         .child(text.into())
 }
 
@@ -104,8 +105,8 @@ pub(super) fn framed(column: Div) -> Div {
 
 fn note(text: impl Into<SharedString>) -> Div {
     div()
-        .text_size(px(12.))
-        .line_height(px(19.))
+        .text_size(px(TYPE_CONTROL_SIZE))
+        .line_height(px(TYPE_CONTROL_LINE))
         .text_color(rgb(colors().muted))
         .child(text.into())
 }
@@ -120,8 +121,9 @@ pub(super) fn section(title: &'static str) -> Div {
         .border_color(rgb(colors().border))
         .child(
             div()
-                .text_size(px(13.))
-                .font_weight(FontWeight::MEDIUM)
+                .text_size(px(TYPE_ROW_SIZE))
+                .line_height(px(TYPE_ROW_LINE))
+                .font_weight(TYPE_MEDIUM)
                 // Several section headings can appear in one accessibility tree.
                 .child(a11y_text(
                     (
@@ -150,14 +152,14 @@ pub(super) fn setting(
                 .gap(px(2.))
                 .child(
                     div()
-                        .text_size(px(12.))
+                        .text_size(px(TYPE_CONTROL_SIZE))
                         .text_color(rgb(colors().muted))
                         .child(label),
                 )
                 .child(
                     div()
-                        .text_size(px(11.))
-                        .line_height(px(17.))
+                        .text_size(px(TYPE_META_SIZE))
+                        .line_height(px(TYPE_META_LINE))
                         .text_color(rgb(colors().subtle))
                         .child(detail.into()),
                 ),
