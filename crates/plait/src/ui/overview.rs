@@ -367,7 +367,7 @@ impl Plait {
                     .font_family(mono())
                     .text_size(px(11.))
                     .text_color(rgb(colors().subtle))
-                    .child(a11y_text("path", full.clone()))
+                    .child(a11y_text("path", home_relative(path)))
                     .tooltip(move |_, cx| cx.new(|_| TextTooltip(full.clone())).into()),
             )
             .child(

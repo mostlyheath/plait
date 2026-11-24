@@ -223,6 +223,38 @@ fn overview_controls() {
     std::fs::remove_dir_all(scratch).unwrap();
 }
 
+/// A project's path reads from the home directory, as elsewhere in Plait;
+/// the full path stays in its hover text.
+#[cfg(debug_assertions)]
+#[core::prelude::v1::test]
+fn overview_project_paths_read_from_home() {
+    if !isolated("overview::overview_project_paths_read_from_home") {
+        return;
+    }
+    let home = PathBuf::from(std::env::var_os("HOME").unwrap());
+    let (first, second) = (home.join("code/forecast"), home.join("code/ledger"));
+    let mut h = Harness::with_host(&home, None, 1380., 860., None);
+    h.connect(&home, false);
+    install(&mut h, [&first, &second]);
+    h.keystroke("cmd-shift-e");
+    let frame = h.draw_a11y();
+    // Text nodes carry what they draw as their value.
+    let labels = frame
+        .nodes
+        .iter()
+        .filter(|n| n.path.contains("overview-project-path"))
+        .filter_map(|n| n.value.as_deref())
+        .collect::<Vec<_>>();
+    for shown in ["~/code/forecast", "~/code/ledger"] {
+        assert!(labels.contains(&shown), "{shown} not in {labels:?}");
+    }
+    let home = home.display().to_string();
+    assert!(
+        !labels.iter().any(|label| label.starts_with(&home)),
+        "a path names the home directory: {labels:?}"
+    );
+}
+
 #[cfg(debug_assertions)]
 fn assert_cards(h: &mut Harness, title: &str, count: &str) {
     let frame = h.draw_a11y();
