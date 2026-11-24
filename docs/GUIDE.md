@@ -111,6 +111,8 @@ Drag the divider to resize the panel. Its width is saved on this device. Double-
 
 `Cmd-N`, `Cmd-T`, and **+** each open a new independent draft tab without creating anything on the host until you send. A draft takes its title from its first nonblank line (up to 120 characters; empty or image-only drafts read **New thread**). Choose its project and harness in the row above the message box, and its model, effort, and permissions inside the message box. **Discard** deletes the draft and closes its tab; `Escape` only closes an empty draft tab.
 
+Requests appear in bubbles on the right. Replies use the full conversation width. Choose **Settings → Appearance → Turns → Line** for author labels and a line connecting each turn.
+
 During a run:
 
 - Press `Enter` (or `Cmd-Enter`) to queue a **Follow-up** for after the run finishes, or `Option-Enter` to **Steer** the running agent at its next step. Queued items appear above the message box with **Cancel** and **Edit**.

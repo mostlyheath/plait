@@ -614,6 +614,45 @@ impl Plait {
         cx.notify();
     }
 
+    pub(super) fn set_turns(
+        &mut self,
+        style: plait_client::preferences::Turns,
+        cx: &mut Context<Self>,
+    ) {
+        let mut value = self.preferences.value.clone();
+        value.turns = style;
+        self.set_preferences(value, PreferenceGroup::View, cx);
+        self.workspace.live_scroll.remeasure();
+        cx.notify();
+    }
+
+    fn turns_setting(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        use plait_client::preferences::Turns;
+        let mut choices = segmented();
+        for (index, (label, style)) in [("Bubbles", Turns::Bubbles), ("Line", Turns::Line)]
+            .into_iter()
+            .enumerate()
+        {
+            let selected = self.preferences.value.turns == style;
+            choices = choices.child(
+                segment(("turns", index), label, selected)
+                    .role(Role::RadioButton)
+                    .aria_toggled(if selected {
+                        Toggled::True
+                    } else {
+                        Toggled::False
+                    })
+                    .aria_label(format!("Turns: {label}"))
+                    .on_activate(cx, move |this, _, cx| this.set_turns(style, cx)),
+            );
+        }
+        super::settings::setting(
+            "Turns",
+            "Show requests in bubbles or connect turns with a line.",
+            choices,
+        )
+    }
+
     pub(super) fn thread_tabs_setting(&self, cx: &mut Context<Self>) -> impl IntoElement {
         use plait_client::preferences::ThreadTabs;
         let mut choices = segmented()
@@ -789,6 +828,7 @@ impl Plait {
             .child(self.interface_font_setting(cx))
             .child(self.code_font_setting(cx))
             .child(self.code_size_setting(cx))
+            .child(self.turns_setting(cx))
             .child(self.fold_earlier_turns_setting(cx))
     }
 

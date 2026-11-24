@@ -46,6 +46,7 @@ use std::{
 mod a11y;
 mod admission;
 mod branches;
+mod bubbles;
 mod cards;
 mod code_size;
 mod find;
@@ -2429,7 +2430,7 @@ fn walk(output: Option<&Path>) {
         streaming_walk(&mut harness, &repository, suffix);
         tool_states_walk(&mut harness, &repository, suffix);
         reading_walk(&mut harness, &repository, suffix);
-        messages::walk(&mut harness, &repository, suffix);
+        bubbles::walk(&repository, output, suffix, width, height);
         code_size::walk(&mut harness, &repository, suffix);
         interface_font::walk(&mut harness, &repository, suffix);
         find::find_walk(&mut harness, &repository, suffix);

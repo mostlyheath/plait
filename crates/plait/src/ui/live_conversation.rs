@@ -4,6 +4,7 @@ use super::{
     theme::*,
 };
 use gpui::{prelude::*, *};
+use plait_client::preferences::Turns;
 use std::time::Instant;
 
 pub(super) const LIST_TOP_PADDING: f32 = 8.;
@@ -94,15 +95,20 @@ fn banner(tint: u32) -> Div {
 /// The author and copy control share one line, clear of selectable text.
 const AUTHOR_LINE: f32 = 22.;
 
-fn message_author(author: &'static str) -> Div {
-    div()
-        .h(px(AUTHOR_LINE))
-        .flex()
-        .items_center()
-        .text_size(px(12.))
-        .font_weight(FontWeight::MEDIUM)
-        .text_color(rgb(colors().muted))
-        .child(author)
+fn message_author(style: Turns, author: &'static str) -> Option<Div> {
+    if style == Turns::Bubbles {
+        return None;
+    }
+    Some(
+        div()
+            .h(px(AUTHOR_LINE))
+            .flex()
+            .items_center()
+            .text_size(px(12.))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(rgb(colors().muted))
+            .child(author),
+    )
 }
 
 /// The turn line hangs in the middle of the conversation's 24-point left
@@ -121,27 +127,37 @@ const RECORD_LINE: f32 = 22.;
 
 /// One row's piece of the turn line, from `from` points below the row's top
 /// to its bottom. Rows are drawn edge to edge, so the pieces read as one line.
-fn strand_line(from: f32) -> Div {
-    div()
-        .absolute()
-        .left(px(-STRAND_LEFT))
-        .top(px(from))
-        .bottom_0()
-        .w(px(1.))
-        // The outline color, not the hairline: the line has to read as a
-        // line beside dense text.
-        .bg(rgb(colors().edge))
+fn strand_line(style: Turns, from: f32) -> Option<Div> {
+    if style == Turns::Bubbles {
+        return None;
+    }
+    Some(
+        div()
+            .absolute()
+            .left(px(-STRAND_LEFT))
+            .top(px(from))
+            .bottom_0()
+            .w(px(1.))
+            // The outline color, not the hairline: the line has to read as a
+            // line beside dense text.
+            .bg(rgb(colors().edge)),
+    )
 }
 
 /// The line's last piece, down to the live state's node.
-fn strand_end(to: f32) -> Div {
-    div()
-        .absolute()
-        .left(px(-STRAND_LEFT))
-        .top_0()
-        .h(px(to))
-        .w(px(1.))
-        .bg(rgb(colors().edge))
+fn strand_end(style: Turns, to: f32) -> Option<Div> {
+    if style == Turns::Bubbles {
+        return None;
+    }
+    Some(
+        div()
+            .absolute()
+            .left(px(-STRAND_LEFT))
+            .top_0()
+            .h(px(to))
+            .w(px(1.))
+            .bg(rgb(colors().edge)),
+    )
 }
 
 /// A clear ground centered on the turn line, `center` points below its parent's top edge.
@@ -159,24 +175,75 @@ fn strand_mark_ground(center: f32, size: f32) -> Div {
         .justify_center()
 }
 
-fn strand_mark(center: f32, size: f32, color: u32, hollow: bool) -> Div {
-    strand_mark_ground(center, size).child(
-        div()
-            .size(px(size))
-            .rounded_full()
-            .bg(rgb(color))
-            .flex()
-            .items_center()
-            .justify_center()
-            .when(hollow, |el| {
-                el.child(
-                    div()
-                        .size(px(size - 3.))
-                        .rounded_full()
-                        .bg(rgb(colors().bg)),
-                )
-            }),
+fn strand_mark(style: Turns, center: f32, size: f32, color: u32, hollow: bool) -> Option<Div> {
+    if style == Turns::Bubbles {
+        return None;
+    }
+    Some(
+        strand_mark_ground(center, size).child(
+            div()
+                .size(px(size))
+                .rounded_full()
+                .bg(rgb(color))
+                .flex()
+                .items_center()
+                .justify_center()
+                .when(hollow, |el| {
+                    el.child(
+                        div()
+                            .size(px(size - 3.))
+                            .rounded_full()
+                            .bg(rgb(colors().bg)),
+                    )
+                }),
+        ),
     )
+}
+
+/// Honest file and line totals for a folded earlier turn in Bubbles mode,
+/// using only counts the host reported and never inventing missing values.
+fn folded_turn_summary(
+    recorded: Option<&plait_client::history::records::Line>,
+    records: &[plait_client::host::TurnRecord],
+    legacy: Option<&history::TurnSummary>,
+) -> Option<String> {
+    if let Some(line) = recorded {
+        if line.undone {
+            return Some("Undone".into());
+        }
+        if line.paths_total == 0 {
+            return None;
+        }
+        let files = if line.paths_total == 1 {
+            "1 file".to_owned()
+        } else {
+            format!("{} files", line.paths_total)
+        };
+        let totals = records
+            .iter()
+            .find(|record| record.id == line.displayed)
+            .filter(|record| record.paths.len() == line.paths_total)
+            .and_then(|record| {
+                record
+                    .paths
+                    .iter()
+                    .try_fold((0u64, 0u64), |(added, removed), path| {
+                        Some((
+                            added.checked_add(path.added?)?,
+                            removed.checked_add(path.removed?)?,
+                        ))
+                    })
+            });
+        return Some(match totals {
+            Some((added, removed)) => format!("{files} +{added} −{removed}"),
+            None => files,
+        });
+    }
+    legacy.and_then(|summary| match summary.files.len() {
+        0 => None,
+        1 => Some("1 file".into()),
+        count => Some(format!("{count} files")),
+    })
 }
 
 /// A tool's path as Changes lists it: relative to the checkout.
@@ -276,8 +343,24 @@ impl Plait {
                 None => prose().child(message.text.clone()).into_any_element(),
             }
         });
+        let bubble = user && self.preferences.value.turns == Turns::Bubbles;
         let body = column()
-            .w_full()
+            .when(!bubble, |el| el.w_full())
+            .when(bubble, |el| {
+                el.max_w(relative(0.84))
+                    .ml_auto()
+                    .bg(rgb(colors().raised))
+                    .text_color(rgb(colors().strong))
+                    .border_1()
+                    .border_color(rgb(colors().edge))
+                    .rounded(px(12.))
+                    .rounded_br(px(4.))
+                    .py(px(10.))
+                    .px(px(14.))
+            })
+            .when(bubble && !message.images.is_empty(), |el| {
+                el.child(self.image_row(&message.images, cx))
+            })
             .min_w_0()
             .gap_2()
             .children(self.history_parts(
@@ -286,10 +369,12 @@ impl Plait {
                 cx,
             ))
             .children(body)
-            .when(!message.images.is_empty(), |el| {
+            .when(!bubble && !message.images.is_empty(), |el| {
                 el.child(self.image_row(&message.images, cx))
             })
-            .when(user, |el| el.p_3().rounded_md().bg(rgb(colors().panel)));
+            .when(user && !bubble, |el| {
+                el.p_3().rounded_md().bg(rgb(colors().panel))
+            });
         let part = self
             .workspace
             .history
@@ -333,7 +418,6 @@ impl Plait {
                 }
             }
         });
-        // The author stays visible even when the copy action is hidden.
         let id = (
             ElementId::from("live-message"),
             SharedString::from(message.id.clone()),
@@ -369,17 +453,36 @@ impl Plait {
             .min_w_0()
             .gap_1()
             .when(user, |el| {
-                el.child(strand_mark(AUTHOR_LINE / 2., RING, colors().muted, true))
+                el.children(strand_mark(
+                    self.preferences.value.turns,
+                    AUTHOR_LINE / 2.,
+                    RING,
+                    colors().muted,
+                    true,
+                ))
             })
-            .child(
-                row()
-                    .w_full()
-                    .justify_between()
-                    .gap_2()
-                    .child(message_author(if user { "You" } else { "Plait" }))
-                    .child(copy.h(px(AUTHOR_LINE))),
-            )
-            .child(body)
+            .map(|el| match self.preferences.value.turns {
+                Turns::Line => el
+                    .child(
+                        row()
+                            .w_full()
+                            .justify_between()
+                            .gap_2()
+                            .children(message_author(
+                                Turns::Line,
+                                if user { "You" } else { "Plait" },
+                            ))
+                            .child(copy.h(px(AUTHOR_LINE))),
+                    )
+                    .child(body),
+                Turns::Bubbles => el.child(body).child(
+                    div()
+                        .absolute()
+                        .top(px(-14.))
+                        .right_0()
+                        .child(copy.h(px(AUTHOR_LINE))),
+                ),
+            })
             // A record stays on the open surface, never inside a request panel.
             .when_some(
                 self.conversation_snapshot().and_then(|shown| {
@@ -524,7 +627,13 @@ impl Plait {
             .pt(px(2.))
             .min_h(px(2. + line))
             .text_size(px(12.))
-            .child(strand_mark(2. + line / 2., NODE, colors().subtle, false))
+            .children(strand_mark(
+                self.preferences.value.turns,
+                2. + line / 2.,
+                NODE,
+                colors().subtle,
+                false,
+            ))
             .children(parts)
             .into_any_element()
     }
@@ -590,7 +699,7 @@ impl Plait {
             .w_full()
             .min_w_0()
             .gap_1()
-            .child(message_author("Plait"))
+            .children(message_author(self.preferences.value.turns, "Plait"))
             .child(body)
             .into_any_element()
     }
@@ -751,6 +860,76 @@ impl Plait {
             _ => None,
         });
         let preview = folding::first_request_line(&request.text, request.images.len());
+        let open_id = turn_id.to_owned();
+        if self.preferences.value.turns == Turns::Bubbles {
+            let summary = folded_turn_summary(
+                recorded,
+                &self.workspace.turn_records.data,
+                legacy.map(|(_, summary)| summary),
+            );
+            let accessible_name = match (&preview[..], &summary) {
+                ("", Some(summary)) => format!("Turn hidden, {summary}. Show turn"),
+                ("", None) => "Turn hidden. Show turn".into(),
+                (text, Some(summary)) => format!("Turn hidden: {text}, {summary}. Show turn"),
+                (text, None) => format!("Turn hidden: {text}. Show turn"),
+            };
+            let disclosure = button(
+                (
+                    ElementId::from("folded-turn"),
+                    SharedString::from(turn_id.to_owned()),
+                ),
+                "",
+            )
+            .w_full()
+            .min_w_0()
+            .h(px(32.))
+            .px(px(10.))
+            .rounded(px(CONTROL_CORNER))
+            .text_size(px(12.))
+            .text_color(rgb(colors().subtle))
+            .justify_between()
+            .gap(px(9.))
+            .when(cfg!(test), |el| {
+                let mut context = KeyContext::default();
+                context.set("folded-turn", turn_id.to_owned());
+                el.key_context(context)
+            })
+            .aria_label(accessible_name)
+            .aria_expanded(false)
+            .child(
+                row()
+                    .min_w_0()
+                    .flex_1()
+                    .gap(px(9.))
+                    .child(icon("right"))
+                    .child(div().min_w_0().truncate().text_size(px(12.)).child(preview)),
+            )
+            .when_some(summary, |el, summary| {
+                el.child(
+                    div()
+                        .flex_shrink_0()
+                        .text_size(px(12.))
+                        .text_color(rgb(colors().subtle))
+                        .child(summary),
+                )
+            })
+            .on_activate(cx, move |this, _, cx| this.open_folded_turn(&open_id, cx));
+            return div()
+                .group(row_group(index))
+                .w_full()
+                .px(px(self.conversation_padding()))
+                .child(
+                    div()
+                        .relative()
+                        .w_full()
+                        .max_w(px(CONTENT_WIDTH))
+                        .mx_auto()
+                        .pt(px(8.))
+                        .child(disclosure)
+                        .when_some(recorded, |el, line| el.children(self.undo_panel(line, cx))),
+                )
+                .into_any_element();
+        }
         let age = recorded
             .filter(|line| line.created_at > 0)
             .map(|line| {
@@ -768,12 +947,17 @@ impl Plait {
             (text, Some(age)) => format!("Turn hidden: {text}, {age}. Show turn"),
             (text, None) => format!("Turn hidden: {text}. Show turn"),
         };
-        let open_id = turn_id.to_owned();
         let disclosure = div()
             .relative()
             .w_full()
             .min_w_0()
-            .child(strand_mark(ROW_HEIGHT / 2., RING, colors().muted, true))
+            .children(strand_mark(
+                self.preferences.value.turns,
+                ROW_HEIGHT / 2.,
+                RING,
+                colors().muted,
+                true,
+            ))
             .child(
                 button(
                     (
@@ -832,14 +1016,15 @@ impl Plait {
                     .mx_auto()
                     .pt(px(TOP))
                     .pb(px(BOTTOM))
-                    .child(strand_line(from))
+                    .children(strand_line(self.preferences.value.turns, from))
                     .child(disclosure)
                     .when_some(recorded, |el, line| {
                         el.child(
                             div()
                                 .relative()
                                 .pt_1()
-                                .child(strand_mark(
+                                .children(strand_mark(
+                                    self.preferences.value.turns,
                                     4. + RECORD_LINE / 2.,
                                     NODE,
                                     colors().subtle,
@@ -901,6 +1086,26 @@ impl Plait {
                 None => return div().into_any_element(),
             },
         };
+        let (top, bottom) = match self.preferences.value.turns {
+            Turns::Line => (top, bottom),
+            Turns::Bubbles if request => (22., 0.),
+            Turns::Bubbles
+                if matches!(
+                    slot,
+                    Slot::Tool(_) | Slot::Reasoning(_) | Slot::LiveReasoning
+                ) && index > 0
+                    && matches!(
+                        self.workspace.live_layout.rows.get(index - 1),
+                        Some(DisplayRow::Slot(
+                            Slot::Tool(_) | Slot::Reasoning(_) | Slot::LiveReasoning
+                        ))
+                    ) =>
+            {
+                // The section has 14 points above it; its own rows stay compact.
+                (top + bottom, 0.)
+            }
+            Turns::Bubbles => (14., 0.),
+        };
         // The line starts with the first row: at the ring of a request, and
         // otherwise where the row's content begins, not in the space above it.
         let from = match (index, request) {
@@ -921,14 +1126,19 @@ impl Plait {
                     .mx_auto()
                     .pt(px(top))
                     .pb(px(bottom))
-                    .child(strand_line(from))
+                    .children(strand_line(self.preferences.value.turns, from))
                     .child(content)
                     .when_some(recorded, |el, line| {
                         el.child(
                             div()
                                 .relative()
-                                .pt_1()
-                                .child(strand_mark(
+                                .pt(px(if self.preferences.value.turns == Turns::Line {
+                                    4.
+                                } else {
+                                    14.
+                                }))
+                                .children(strand_mark(
+                                    self.preferences.value.turns,
                                     4. + RECORD_LINE / 2.,
                                     NODE,
                                     colors().subtle,
@@ -1459,7 +1669,7 @@ Tone::Filled,
                             .max_w(px(CONTENT_WIDTH))
                             .mx_auto()
                             .py_1()
-                            .when(joined, |el| el.child(strand_line(0.)))
+                            .when(joined, |el| el.children(strand_line(self.preferences.value.turns, 0.)))
                             .child(tag(
                                 "conversation-truncated",
                                 "Bounded preview · older messages or tool output have been clipped by the host.",
@@ -1485,8 +1695,14 @@ Tone::Filled,
                             .mx_auto()
                             .pt_2()
                             .pb(px(6.))
-                            .when(joined, |el| el.child(strand_end(8. + RECORD_LINE / 2.)))
-                            .child(strand_mark(
+                            .when(joined, |el| {
+                                el.children(strand_end(
+                                    self.preferences.value.turns,
+                                    8. + RECORD_LINE / 2.,
+                                ))
+                            })
+                            .children(strand_mark(
+                                self.preferences.value.turns,
                                 8. + RECORD_LINE / 2.,
                                 NODE,
                                 colors().muted,
@@ -1540,16 +1756,27 @@ Tone::Filled,
                             .pt(px(LEAD))
                             .pb(px(6.))
                             .text_size(px(12.))
-                            .when(joined, |el| el.child(strand_end(center)))
-                            .child(
+                            .when(joined, |el| {
+                                el.children(strand_end(self.preferences.value.turns, center))
+                            })
+                            .map(|el| {
+                                let style = self.preferences.value.turns;
                                 if self.host.connection.connected
                                     && snapshot.status == ThreadStatus::Running
                                 {
-                                    strand_mark_ground(center, 13.).child(running_mark(px(13.)))
+                                    let mark = running_mark(px(13.));
+                                    match style {
+                                        Turns::Line => {
+                                            el.child(strand_mark_ground(center, 13.).child(mark))
+                                        }
+                                        Turns::Bubbles => el.child(
+                                            div().pt(px((RECORD_LINE - 13.) / 2.)).child(mark),
+                                        ),
+                                    }
                                 } else {
-                                    strand_mark(center, NODE, tint, false)
-                                },
-                            )
+                                    el.children(strand_mark(style, center, NODE, tint, false))
+                                }
+                            })
                             .child(
                                 div()
                                     .min_w_0()
@@ -1716,7 +1943,141 @@ fn approval_shadows() -> Vec<BoxShadow> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Approval, HarnessId, approvable};
+    use super::{Approval, HarnessId, approvable, folded_turn_summary};
+    use plait_client::{
+        history::{
+            TurnSummary,
+            records::{Availability, Line},
+        },
+        host::{RecordChange, RecordKind, RecordPath, RecordState, TurnRecord},
+    };
+
+    #[test]
+    fn folded_turn_summary_uses_only_reported_counts() {
+        let make_line = |displayed: &str, paths_total: usize, undone: bool| Line {
+            created_at: 0,
+            paths_total,
+            run: displayed.into(),
+            displayed: displayed.into(),
+            target: None,
+            availability: Availability::Ready,
+            undone,
+            steps: Some(1),
+            files: Vec::new(),
+            not_covered: Vec::new(),
+            detail: String::new(),
+            review_detail: String::new(),
+            more_label: String::new(),
+            more_detail: String::new(),
+            outcome: None,
+            after_restart: false,
+            head_moved: false,
+        };
+        let make_record = |id: &str, paths: Vec<RecordPath>| TurnRecord {
+            id: id.into(),
+            request_ids: vec!["r1".into()],
+            request_ids_offset: 0,
+            request_ids_total: 1,
+            kind: RecordKind::Turn,
+            undoes: None,
+            state: RecordState::Ready,
+            head_moved: false,
+            outcome: None,
+            after_restart: false,
+            paths_offset: 0,
+            paths_total: paths.len(),
+            paths,
+            not_covered: Vec::new(),
+            not_covered_offset: 0,
+            not_covered_total: 0,
+            created_at: 0,
+        };
+        let counted = make_record(
+            "rec-1",
+            vec![
+                RecordPath {
+                    path: "a.rs".into(),
+                    change: RecordChange::Modified,
+                    added: Some(12),
+                    removed: Some(4),
+                },
+                RecordPath {
+                    path: "b.rs".into(),
+                    change: RecordChange::Added,
+                    added: Some(3),
+                    removed: Some(0),
+                },
+            ],
+        );
+        let uncounted = make_record(
+            "rec-2",
+            vec![RecordPath {
+                path: "bin.dat".into(),
+                change: RecordChange::Modified,
+                added: None,
+                removed: None,
+            }],
+        );
+        let mixed = make_record(
+            "rec-3",
+            vec![
+                RecordPath {
+                    path: "code.rs".into(),
+                    change: RecordChange::Modified,
+                    added: Some(1),
+                    removed: Some(1),
+                },
+                RecordPath {
+                    path: "data.bin".into(),
+                    change: RecordChange::Modified,
+                    added: None,
+                    removed: None,
+                },
+            ],
+        );
+        let records = vec![counted, uncounted, mixed];
+        assert_eq!(
+            folded_turn_summary(Some(&make_line("rec-1", 2, false)), &records, None).as_deref(),
+            Some("2 files +15 −4")
+        );
+        // Binary/uncounted changes must not invent +0 −0.
+        assert_eq!(
+            folded_turn_summary(Some(&make_line("rec-2", 1, false)), &records, None).as_deref(),
+            Some("1 file")
+        );
+        assert_eq!(
+            folded_turn_summary(Some(&make_line("rec-3", 2, false)), &records, None).as_deref(),
+            Some("2 files")
+        );
+        // Zero changed files or absent records emit nothing rather than "0 files".
+        assert_eq!(
+            folded_turn_summary(Some(&make_line("rec-0", 0, false)), &records, None),
+            None
+        );
+        assert_eq!(
+            folded_turn_summary(Some(&make_line("rec-1", 2, true)), &records, None).as_deref(),
+            Some("Undone")
+        );
+        let legacy = TurnSummary {
+            steps: 2,
+            files: vec!["a.rs".into()],
+        };
+        assert_eq!(
+            folded_turn_summary(None, &[], Some(&legacy)).as_deref(),
+            Some("1 file")
+        );
+        assert_eq!(
+            folded_turn_summary(
+                None,
+                &[],
+                Some(&TurnSummary {
+                    steps: 1,
+                    files: Vec::new()
+                })
+            ),
+            None
+        );
+    }
 
     #[test]
     fn only_pi_needs_the_full_arguments_to_approve() {
