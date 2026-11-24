@@ -6,7 +6,6 @@ pub(super) fn walk(h: &mut Harness, repository: &Path, suffix: &str) {
     h.update(|p, _, cx| {
         p.sidebar = true;
         p.host.connection.status.as_mut().unwrap().protocol_version = 3;
-        p.navigation.attention = false;
         p.navigation.collapsed.clear();
         p.preferences.value.navigation = Default::default();
         let now = std::time::SystemTime::now()
@@ -47,10 +46,7 @@ pub(super) fn walk(h: &mut Harness, repository: &Path, suffix: &str) {
         p.rebuild_projects(cx);
     });
     super::sheet::walk(h, suffix);
-    h.update(|p, _, _| p.navigation.attention = true);
-    h.capture(&format!("sidebar-needs-me-{suffix}"));
     h.update(|p, _, cx| {
-        p.navigation.attention = false;
         p.host.connection.threads_mut().truncate(1);
         p.navigation.collapsed.clear();
         // Whichever list the window reads, nothing in it is unread.

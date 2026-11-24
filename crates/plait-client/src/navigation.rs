@@ -544,6 +544,167 @@ pub fn needs_me_count(threads: &[ThreadSummary], unread: &BTreeSet<String>) -> u
         .count()
 }
 
+#[derive(Default)]
+pub struct OverviewCounts {
+    pub need_you: usize,
+    pub working: usize,
+    pub to_review: usize,
+}
+
+pub struct OverviewRow {
+    pub heading: Option<PathBuf>,
+    /// Indices into the thread list used to build the grid.
+    pub threads: Vec<usize>,
+}
+
+pub struct OverviewGrid {
+    pub counts: OverviewCounts,
+    pub rows: Vec<OverviewRow>,
+}
+
+impl OverviewGrid {
+    pub fn new(
+        threads: &[ThreadSummary],
+        projects: &[Project],
+        lists: &Preferences,
+        columns: usize,
+    ) -> Self {
+        use ThreadRowState::*;
+        let mut counts = OverviewCounts::default();
+        let mut grouped = HashMap::<&Path, Vec<usize>>::new();
+        for (index, thread) in threads.iter().enumerate() {
+            if thread.archived == Some(true) {
+                continue;
+            }
+            match card_state(thread, &lists.unread) {
+                Approval | Failed | Interrupted if needs_attention(thread, &lists.unread) => {
+                    counts.need_you += 1;
+                }
+                Working => counts.working += 1,
+                FinishedUnread => counts.to_review += 1,
+                _ => {}
+            }
+            grouped
+                .entry(lists.project_of(&thread.checkout))
+                .or_default()
+                .push(index);
+        }
+        let mut rows = Vec::new();
+        if !grouped.is_empty() {
+            let mut ordered = projects
+                .iter()
+                .filter(|project| !project.checkout.as_os_str().is_empty())
+                .map(|project| {
+                    let path = project.checkout.as_path();
+                    (path, grouped.remove(path).unwrap_or_default())
+                })
+                .collect::<Vec<_>>();
+            // Projects removed from the sidebar still have threads on this machine.
+            let mut hidden = grouped.into_iter().collect::<Vec<_>>();
+            hidden.sort_unstable_by_key(|(path, indices)| {
+                (
+                    Reverse(indices.iter().filter_map(|&i| threads[i].updated_at).max()),
+                    *path,
+                )
+            });
+            ordered.extend(hidden);
+            for (path, mut indices) in ordered {
+                sort_cards(&mut indices, threads, &lists.unread);
+                let mut heading = Some(path.to_owned());
+                for chunk in indices.chunks(columns.max(1)) {
+                    rows.push(OverviewRow {
+                        heading: heading.take(),
+                        threads: chunk.to_vec(),
+                    });
+                }
+                if heading.is_some() {
+                    rows.push(OverviewRow {
+                        heading,
+                        threads: Vec::new(),
+                    });
+                }
+            }
+        }
+        Self { counts, rows }
+    }
+
+    fn edge(&self, last: bool) -> Option<(usize, usize)> {
+        let mut rows = self
+            .rows
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| !row.threads.is_empty());
+        if last {
+            rows.next_back()
+                .map(|(index, row)| (index, row.threads.len() - 1))
+        } else {
+            rows.next().map(|(index, _)| (index, 0))
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum OverviewDirection {
+    Left,
+    Right,
+    Up,
+    Down,
+    First,
+    Last,
+}
+
+#[derive(Default)]
+pub struct Overview {
+    pub focus: Option<String>,
+}
+
+impl Overview {
+    pub fn focused(
+        &self,
+        grid: &OverviewGrid,
+        threads: &[ThreadSummary],
+    ) -> Option<(usize, usize)> {
+        let focus = self.focus.as_deref();
+        if let Some(id) = focus {
+            for (row, item) in grid.rows.iter().enumerate() {
+                if let Some(column) = item
+                    .threads
+                    .iter()
+                    .position(|&index| threads[index].id == id)
+                {
+                    return Some((row, column));
+                }
+            }
+        }
+        grid.edge(false)
+    }
+
+    pub fn move_focus(
+        &mut self,
+        direction: OverviewDirection,
+        grid: &OverviewGrid,
+        threads: &[ThreadSummary],
+    ) -> Option<(usize, usize)> {
+        use OverviewDirection::*;
+        let (row, column) = self.focused(grid, threads)?;
+        let next = match direction {
+            First | Last => grid.edge(matches!(direction, Last)),
+            Left => column.checked_sub(1).map(|column| (row, column)),
+            Right => (column + 1 < grid.rows[row].threads.len()).then_some((row, column + 1)),
+            Up => (0..row)
+                .rev()
+                .find(|&r| !grid.rows[r].threads.is_empty())
+                .map(|r| (r, column.min(grid.rows[r].threads.len() - 1))),
+            Down => (row + 1..grid.rows.len())
+                .find(|&r| !grid.rows[r].threads.is_empty())
+                .map(|r| (r, column.min(grid.rows[r].threads.len() - 1))),
+        };
+        let (row, column) = next.unwrap_or((row, column));
+        self.focus = Some(threads[grid.rows[row].threads[column]].id.clone());
+        Some((row, column))
+    }
+}
+
 pub fn jump(
     preferences: &Preferences,
     projects: &[Project],
@@ -602,6 +763,121 @@ mod tests {
             updated_at: Some(updated),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn overview_groups_in_sidebar_order_and_counts_only_drawn_states() {
+        use ThreadStatus::*;
+        let mut threads = vec![
+            thread("idle", "/first", Idle, 20),
+            thread("working", "/first", Running, 4),
+            thread("approval", "/worktree", Running, 5),
+            thread("failed", "/first", Error, 3),
+            thread("interrupted", "/second", Interrupted, 5),
+            thread("unread", "/first", Idle, 8),
+            thread("stopped", "/second", Stopped, 3),
+            thread("archived", "/first", AwaitingApproval, 20),
+            thread("hidden", "/hidden", Running, 30),
+        ];
+        threads[2].pending_approval = Some(true);
+        threads[7].archived = Some(true);
+        let mut lists = Preferences::default();
+        lists.remember_worktree("/worktree".into(), "/first".into(), "retry".into());
+        lists.unread.extend(["unread".into(), "stopped".into()]);
+        let projects = ["/first", "/second"].map(|path| Project {
+            checkout: path.into(),
+            name: path.into(),
+            machines: Vec::new(),
+        });
+        let grid = OverviewGrid::new(&threads, &projects, &lists, 3);
+        let order = grid
+            .rows
+            .iter()
+            .flat_map(|row| row.threads.iter().map(|&i| threads[i].id.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            order,
+            [
+                "approval",
+                "failed",
+                "unread",
+                "working",
+                "idle",
+                "interrupted",
+                "stopped",
+                "hidden"
+            ]
+        );
+        assert_eq!(
+            (
+                grid.counts.need_you,
+                grid.counts.working,
+                grid.counts.to_review
+            ),
+            (3, 2, 1),
+        );
+        let headings = grid
+            .rows
+            .iter()
+            .filter_map(|row| row.heading.as_deref())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            headings,
+            [
+                Path::new("/first"),
+                Path::new("/second"),
+                Path::new("/hidden")
+            ]
+        );
+        threads[1].status = Error;
+        let updated = OverviewGrid::new(&threads, &projects, &lists, 3);
+        assert_eq!((updated.counts.need_you, updated.counts.working), (4, 1));
+    }
+
+    #[test]
+    fn overview_moves_focus_by_visual_row_and_keeps_thread_identity_on_resize() {
+        use OverviewDirection::*;
+        let mut threads = ["a", "b", "c", "d", "e"].map(|id| {
+            thread(
+                id,
+                if id == "e" { "/last" } else { "/first" },
+                ThreadStatus::Idle,
+                1,
+            )
+        });
+        let projects = ["/first", "/empty", "/last"].map(|path| Project {
+            checkout: path.into(),
+            name: path.into(),
+            machines: Vec::new(),
+        });
+        let lists = Preferences::default();
+        let grid = OverviewGrid::new(&threads, &projects, &lists, 3);
+        let mut overview = Overview {
+            focus: Some("b".into()),
+        };
+        assert_eq!(overview.focused(&grid, &threads), Some((0, 1)));
+        for (direction, id) in [
+            (Right, "c"),
+            (Right, "c"),
+            (Down, "d"),
+            (Down, "e"),
+            (Up, "d"),
+            (First, "a"),
+            (Left, "a"),
+            (Last, "e"),
+        ] {
+            overview.move_focus(direction, &grid, &threads).unwrap();
+            assert_eq!(overview.focus.as_deref(), Some(id));
+        }
+        let narrow = OverviewGrid::new(&threads, &projects, &lists, 1);
+        assert_eq!(overview.focused(&narrow, &threads), Some((5, 0)));
+        overview.move_focus(Up, &narrow, &threads).unwrap();
+        assert_eq!(overview.focus.as_deref(), Some("d"));
+        threads[3].archived = Some(true);
+        let narrow = OverviewGrid::new(&threads, &projects, &lists, 1);
+        assert_eq!(overview.focused(&narrow, &threads), Some((0, 0)));
+        let empty = OverviewGrid::new(&[], &projects, &lists, 3);
+        assert!(overview.move_focus(Last, &empty, &[]).is_none());
     }
     #[test]
     fn machine_activity_counts_and_visits_in_attention_order() {

@@ -33,6 +33,7 @@ mod navigation;
 mod navigation_host;
 mod new_thread;
 mod new_thread_view;
+mod overview;
 mod palette;
 mod panel;
 mod panels;
@@ -98,6 +99,7 @@ actions!(
         CheckForUpdates,
         Refresh,
         ToggleSidebar,
+        ToggleOverview,
         ToggleDiagnostics,
         Conversation,
         Changes,
@@ -161,6 +163,7 @@ pub struct Plait {
     host_client: plait_client::host::Client,
     host_local: bool,
     navigation: navigation::Navigation,
+    overview: Option<overview::OverviewView>,
     host_workspace: host_workspace::HostWorkspace,
     /// What a window on a machine with no projects yet shows as its project.
     no_project: plait_client::model::Project,
@@ -325,6 +328,7 @@ impl Plait {
             host_client,
             host_local: true,
             navigation: navigation::Navigation::new(),
+            overview: None,
             host_workspace: Default::default(),
             no_project: plait_client::model::Project {
                 checkout: PathBuf::new(),
@@ -808,7 +812,7 @@ impl Plait {
 
     fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // Keep the shortcut context alive when its focused child is removed.
-        window.focus(&self.focus, cx);
+        window.focus(self.overview_focus().unwrap_or(&self.focus), cx);
         let visible = self.draws_work();
         if let Some(work) = self.tabs.model.work_mut() {
             work.toggle_sidebar(&mut self.sidebar, visible);
@@ -853,6 +857,7 @@ impl Plait {
 
     // Restoring a tab presents its content without moving its remembered pane focus.
     fn present_workspace(&mut self, tab: Workspace, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_overview(window, cx);
         if self.worktrees_visible() {
             return;
         }
@@ -1387,6 +1392,7 @@ impl Render for Plait {
         let real = self.host.thread.selected.is_some();
         let drafting = !real && self.draft.open;
         let sidebar = self.visible_sidebar();
+        let show_overview = self.overview.is_some();
         let root = column()
             .id("plait")
             .role(Role::Application)
@@ -1418,10 +1424,17 @@ impl Render for Plait {
                 cx.listener(|this, _: &ToggleSidebar, window, cx| this.toggle_sidebar(window, cx)),
             )
             .on_action(
+                cx.listener(|this, _: &ToggleOverview, window, cx| {
+                    this.toggle_overview(window, cx)
+                }),
+            )
+            .on_action(
                 cx.listener(|this, _: &ToggleWorkView, window, cx| this.fill_panel(window, cx)),
             )
             .when(
-                !self.settings_open && (self.panel_is_open() || self.draws_work()),
+                !show_overview
+                    && !self.settings_open
+                    && (self.panel_is_open() || self.draws_work()),
                 |el| {
                     el.on_action(cx.listener(|this, _: &FocusNextPane, window, cx| {
                         use plait_client::panes::*;
@@ -1501,9 +1514,26 @@ impl Render for Plait {
                     this.focus_composer(window, cx);
                     cx.stop_propagation();
                     cx.notify();
+                } else if event.keystroke.key == "escape"
+                    && event.keystroke.modifiers == Modifiers::default()
+                    && !this.settings_open
+                    && this.overlay.is_none()
+                    && this.overview.is_some()
+                    // The rename field leaves Escape to an input method mid-composition.
+                    && !this
+                        .navigation
+                        .rename
+                        .as_ref()
+                        .is_some_and(|(_, field)| field.read(cx).is_composing())
+                {
+                    this.close_overview(window, cx);
+                    cx.stop_propagation();
                 }
             }))
-            .on_action(cx.listener(|this, _: &NewThread, window, cx| this.open_draft(window, cx)))
+            .on_action(cx.listener(|this, _: &NewThread, window, cx| {
+                this.close_overview(window, cx);
+                this.open_draft(window, cx)
+            }))
             .on_action(cx.listener(|this, _: &ToggleChangedFiles, _, cx| {
                 let hidden = !this.preferences.value.hide_changed_files;
                 this.set_changed_files_hidden(hidden, cx)
@@ -1625,16 +1655,27 @@ impl Render for Plait {
             .on_action(cx.listener(|_, _: &Minimize, window, _| window.minimize_window()))
             .map(|root| self.on_jump_actions(root, cx))
             .map(|root| self.on_tab_actions(root, cx))
-            .capture_key_up(cx.listener(|this, _, _, cx| this.queue_tab_save(cx)))
-            .capture_any_mouse_up(cx.listener(|this, _, _, cx| this.queue_tab_save(cx)))
+            .capture_key_up(cx.listener(|this, _, _, cx| {
+                if this.overview.is_none() {
+                    this.queue_tab_save(cx);
+                }
+            }))
+            .capture_any_mouse_up(cx.listener(|_, _, window, cx| {
+                // The Needs you button activates after capture.
+                cx.defer_in(window, |this, _, cx| {
+                    if this.overview.is_none() {
+                        this.queue_tab_save(cx);
+                    }
+                });
+            }))
             .map(|root| self.on_ways_out_actions(root, cx))
             .on_action(cx.listener(|this, action: &UndoLastTurn, window, cx| {
-                if !this.defer_key_action(action, cx) {
+                if this.overview.is_none() && !this.defer_key_action(action, cx) {
                     this.undo_last_turn(window, cx);
                 }
             }))
-            .map(|root| self.on_approval_actions(root, cx))
-            .map(|root| self.on_selection_actions(root, cx))
+            .when(!show_overview, |root| self.on_approval_actions(root, cx))
+            .when(!show_overview, |root| self.on_selection_actions(root, cx))
             .map(|root| self.on_keyboard_controls(root, cx))
             .map(|root| self.on_panel_resize(root, cx))
             .size_full()
@@ -1643,7 +1684,7 @@ impl Render for Plait {
             .text_color(rgb(colors().text))
             .text_size(px(TYPE_ROW_SIZE))
             .font_family(ui_font())
-            .child(self.tab_save_input(cx))
+            .when(!show_overview, |root| root.child(self.tab_save_input(cx)))
             .child(
                 row()
                     .gap_0()
@@ -1669,54 +1710,72 @@ impl Render for Plait {
                                     // GPUI clips children to a rectangle. Keep opaque views inside the arc.
                                     .p(px(4.))
                             })
-                            .child(self.header(window, cx))
-                            .when_some(self.session.note.clone(), |el, note| {
-                                el.child(
-                                    div()
-                                        .px_4()
-                                        .py_2()
-                                        .text_size(px(12.))
-                                        .text_color(rgb(colors().amber))
-                                        .child(note),
-                                )
-                            })
-                            .when_some(self.machine_restore_notice.clone(), |el, notice| {
-                                el.child(
-                                    row().px_4().py_2().gap_2().child(notice).child(
-                                        button(
-                                            "restore-machine-settings",
-                                            "Open Machines settings…",
-                                        )
-                                        .on_activate(
-                                            cx,
-                                            |this, window, cx| {
+                            .when(!show_overview, |sheet| sheet.child(self.header(window, cx)))
+                            .when_some(
+                                self.session.note.clone().filter(|_| !show_overview),
+                                |el, note| {
+                                    el.child(
+                                        div()
+                                            .px_4()
+                                            .py_2()
+                                            .text_size(px(12.))
+                                            .text_color(rgb(colors().amber))
+                                            .child(note),
+                                    )
+                                },
+                            )
+                            .when_some(
+                                self.machine_restore_notice
+                                    .clone()
+                                    .filter(|_| !show_overview),
+                                |el, notice| {
+                                    el.child(
+                                        row().px_4().py_2().gap_2().child(notice).child(
+                                            button(
+                                                "restore-machine-settings",
+                                                "Open Machines settings…",
+                                            )
+                                            .on_activate(cx, |this, window, cx| {
                                                 this.machine_restore_notice = None;
                                                 this.settings_tab = settings::SettingsTab::Machines;
                                                 this.show_settings(true, window, cx);
-                                            },
+                                            }),
                                         ),
-                                    ),
-                                )
-                            })
-                            .when_some(self.notice.clone(), |el, notice| {
-                                el.child(
-                                    div()
-                                        .px_4()
-                                        .py_2()
-                                        .text_size(px(12.))
-                                        .text_color(rgb(colors().red))
-                                        .child(notice),
-                                )
-                            })
-                            .when_some(self.build_progress_bar(cx), |el, bar| el.child(bar))
-                            .when_some(self.creation_bar(cx), |el, bar| el.child(bar))
+                                    )
+                                },
+                            )
+                            .when_some(
+                                self.notice.clone().filter(|_| !show_overview),
+                                |el, notice| {
+                                    el.child(
+                                        div()
+                                            .px_4()
+                                            .py_2()
+                                            .text_size(px(12.))
+                                            .text_color(rgb(colors().red))
+                                            .child(notice),
+                                    )
+                                },
+                            )
+                            .when_some(
+                                (!show_overview)
+                                    .then(|| self.build_progress_bar(cx))
+                                    .flatten(),
+                                |el, bar| el.child(bar),
+                            )
+                            .when_some(
+                                (!show_overview).then(|| self.creation_bar(cx)).flatten(),
+                                |el, bar| el.child(bar),
+                            )
                             .child(
                                 column()
                                     .relative()
                                     .flex_1()
                                     .min_h_0()
-                                    .child(self.work_area_probe(cx))
-                                    .child(if let Some(layout) = self.work_layout() {
+                                    .when(!show_overview, |el| el.child(self.work_area_probe(cx)))
+                                    .child(if show_overview {
+                                        self.overview_view(cx).into_any_element()
+                                    } else if let Some(layout) = self.work_layout() {
                                         self.work_view(layout, window, cx)
                                     } else if self.worktrees_visible() {
                                         self.worktrees_view(wide, cx)
