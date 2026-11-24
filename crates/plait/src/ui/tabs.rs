@@ -419,6 +419,8 @@ impl Plait {
     }
 
     pub(super) fn present_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Worktrees and Linear issues tabs never reach `present_workspace`.
+        self.close_overview(window, cx);
         self.tabs.list_open = false;
         let target = self
             .tabs
