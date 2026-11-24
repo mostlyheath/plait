@@ -1028,7 +1028,7 @@ impl Plait {
             .children(self.cleanup_control(cx))
             .when_some(
                 self.header_state().filter(|_| current_thread),
-                |el, (word, tint)| {
+                |el, (word, tint, mark)| {
                     el.child(
                         row()
                             .id("header-state")
@@ -1040,7 +1040,7 @@ impl Plait {
                             .bg(rgba((tint << 8) | 36))
                             .font_weight(FontWeight::MEDIUM)
                             .whitespace_nowrap()
-                            .child(dot(tint))
+                            .child(mark)
                             .child(tag("state-word", word, tint)),
                     )
                 },
@@ -1074,14 +1074,20 @@ impl Plait {
             })
     }
 
-    fn header_state(&self) -> Option<(&'static str, u32)> {
+    fn header_state(&self) -> Option<(&'static str, u32, AnyElement)> {
         use plait_client::navigation::{ThreadRowState::*, thread_row_state};
         let id = self.host.thread.selected.as_deref()?;
         let summary = self.host.connection.threads().get(self.thread_index(id)?)?;
         let state = thread_row_state(summary, &self.lists().unread);
         match state {
             Working | Approval | Failed | Interrupted => {
-                Some((state.spoken(summary), thread_row_colors(state, true).0))
+                let tint = thread_row_colors(state, true).0;
+                let mark = if state == Working && self.host.connection.connected {
+                    running_mark(px(13.)).into_any_element()
+                } else {
+                    dot(tint).into_any_element()
+                };
+                Some((state.spoken(summary), tint, mark))
             }
             _ => None,
         }
