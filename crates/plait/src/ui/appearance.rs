@@ -614,6 +614,42 @@ impl Plait {
         cx.notify();
     }
 
+    pub(super) fn thread_tabs_setting(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        use plait_client::preferences::ThreadTabs;
+        let mut choices = segmented()
+            .id("thread-tabs-setting")
+            .role(Role::RadioGroup)
+            .aria_label("Thread tabs")
+            .audited();
+        for (label, choice) in [("Hide", ThreadTabs::Hide), ("Show", ThreadTabs::Show)] {
+            let selected = self.preferences.value.thread_tabs.unwrap_or_default() == choice;
+            choices = choices.child(
+                segment(
+                    SharedString::from(format!("thread-tabs-{label}")),
+                    label,
+                    selected,
+                )
+                .role(Role::RadioButton)
+                .aria_label(format!("Thread tabs: {label}"))
+                .aria_toggled(if selected {
+                    Toggled::True
+                } else {
+                    Toggled::False
+                })
+                .on_activate(cx, move |this, _, cx| {
+                    let mut value = this.preferences.value.clone();
+                    value.thread_tabs = Some(choice);
+                    this.set_preferences(value, PreferenceGroup::View, cx);
+                }),
+            );
+        }
+        super::settings::setting(
+            "Thread tabs",
+            "Show open tabs in the header. Tab shortcuts work in either setting.",
+            choices,
+        )
+    }
+
     fn fold_earlier_turns_setting(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let fold = self.preferences.value.fold_earlier_turns();
         let mut choices = segmented();
