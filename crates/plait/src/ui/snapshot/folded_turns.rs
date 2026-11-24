@@ -173,7 +173,7 @@ fn long_thread(checkout: &Path) -> (Snapshot, Vec<TurnRecord>) {
     (snapshot, records)
 }
 
-fn install_long_thread(harness: &mut Harness, repository: &Path) {
+pub(super) fn install_long_thread(harness: &mut Harness, repository: &Path) {
     let (snapshot, records) = long_thread(repository);
     harness.connect(repository, false);
     harness.update(move |plait, _, cx| {

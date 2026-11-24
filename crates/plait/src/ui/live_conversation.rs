@@ -302,6 +302,7 @@ impl Plait {
                 el.max_w(relative(0.84))
                     .ml_auto()
                     .bg(rgb(colors().raised))
+                    .text_color(rgb(colors().strong))
                     .border_1()
                     .border_color(rgb(colors().edge))
                     .rounded(px(12.))
@@ -369,7 +370,6 @@ impl Plait {
                 }
             }
         });
-        // The author stays visible even when the copy action is hidden.
         let id = (
             ElementId::from("live-message"),
             SharedString::from(message.id.clone()),
@@ -413,22 +413,28 @@ impl Plait {
                     true,
                 ))
             })
-            .child(
-                row()
-                    .when(self.preferences.value.turns == Turns::Line, |el| {
-                        el.w_full().justify_between()
-                    })
-                    .when(self.preferences.value.turns == Turns::Bubbles, |el| {
-                        el.absolute().top_0().right_0()
-                    })
-                    .gap_2()
-                    .children(message_author(
-                        self.preferences.value.turns,
-                        if user { "You" } else { "Plait" },
-                    ))
-                    .child(copy.h(px(AUTHOR_LINE))),
-            )
-            .child(body)
+            .map(|el| match self.preferences.value.turns {
+                Turns::Line => el
+                    .child(
+                        row()
+                            .w_full()
+                            .justify_between()
+                            .gap_2()
+                            .children(message_author(
+                                Turns::Line,
+                                if user { "You" } else { "Plait" },
+                            ))
+                            .child(copy.h(px(AUTHOR_LINE))),
+                    )
+                    .child(body),
+                Turns::Bubbles => el.child(body).child(
+                    div()
+                        .absolute()
+                        .top(px(-14.))
+                        .right_0()
+                        .child(copy.h(px(AUTHOR_LINE))),
+                ),
+            })
             // A record stays on the open surface, never inside a request panel.
             .when_some(
                 self.conversation_snapshot().and_then(|shown| {
@@ -824,9 +830,11 @@ impl Plait {
             (text, None) => format!("Turn hidden: {text}. Show turn"),
         };
         let open_id = turn_id.to_owned();
+        let bubble = self.preferences.value.turns == Turns::Bubbles;
         let disclosure = div()
             .relative()
-            .w_full()
+            .when(!bubble, |el| el.w_full())
+            .when(bubble, |el| el.ml_auto().max_w(relative(0.84)))
             .min_w_0()
             .children(strand_mark(
                 self.preferences.value.turns,
@@ -847,7 +855,14 @@ impl Plait {
                 .min_w_0()
                 .h(px(ROW_HEIGHT))
                 .px_2()
-                .ml(px(-8.))
+                .when(!bubble, |el| el.ml(px(-8.)))
+                .when(bubble, |el| {
+                    el.bg(rgb(colors().raised))
+                        .border_1()
+                        .border_color(rgb(colors().edge))
+                        .rounded(px(12.))
+                        .rounded_br(px(4.))
+                })
                 .justify_between()
                 .gap_2()
                 .when(cfg!(test), |el| {
@@ -891,15 +906,19 @@ impl Plait {
                     .w_full()
                     .max_w(px(CONTENT_WIDTH))
                     .mx_auto()
-                    .pt(px(TOP))
-                    .pb(px(BOTTOM))
+                    .pt(px(if bubble { 22. } else { TOP }))
+                    .pb(px(if bubble { 0. } else { BOTTOM }))
                     .children(strand_line(self.preferences.value.turns, from))
                     .child(disclosure)
                     .when_some(recorded, |el, line| {
                         el.child(
                             div()
                                 .relative()
-                                .pt_1()
+                                .pt(px(if self.preferences.value.turns == Turns::Line {
+                                    4.
+                                } else {
+                                    14.
+                                }))
                                 .children(strand_mark(
                                     self.preferences.value.turns,
                                     4. + RECORD_LINE / 2.,
@@ -994,7 +1013,11 @@ impl Plait {
                         el.child(
                             div()
                                 .relative()
-                                .pt_1()
+                                .pt(px(if self.preferences.value.turns == Turns::Line {
+                                    4.
+                                } else {
+                                    14.
+                                }))
                                 .children(strand_mark(
                                     self.preferences.value.turns,
                                     4. + RECORD_LINE / 2.,

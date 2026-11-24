@@ -61,6 +61,8 @@ in wide and narrow layouts. Export them with:
 bash scripts/snapshots.sh /tmp/plait-snapshots
 ```
 
+The `bubbles` and `turns-line` scenes draw the same request and reply. Additional bubble scenes cover wrapping, narrow windows, attachments, streaming, folded turns, Find and selection. Headless tests check that both styles expose the authors and select the same text across their messages.
+
 macOS uses the app's text shaping and renderer offscreen; Linux uses its own
 fonts and software rendering. Scenes do not validate the native window,
 input, accessibility bridge, or live provider. Build and inspect the native

@@ -11,6 +11,7 @@ use crate::ui::Workspace;
 use plait_client::{
     git::{Commit, History as CommitHistory},
     model::{Diff, DiffKind, DiffLine},
+    preferences::Turns,
     state::DiffKey,
 };
 
@@ -377,22 +378,31 @@ fn install_thread(harness: &mut Harness, id: &'static str, snapshot: Snapshot) {
 
 fn baseline(scratch: &Path, rows: &mut Vec<Row>) {
     let small = fixture_repository(&scratch.join("small"));
-    let mut harness = Harness::new(&small, None, 1380., 860.);
-    rows.push(harness.steady("e1 idle redraw, default view (disconnected home)"));
-    harness.connect(&small, false);
-    rows.push(harness.steady("e2 idle redraw, small live conversation (3 msgs, 2 tools)"));
-    // A burst has landed and the reveal is drawing it in, one display frame at a time.
-    harness.change_snapshot(|snapshot| {
-        snapshot
-            .live_text
-            // Paragraphs of about 400 bytes, as replies are usually written.
-            .push_str(
-                &"\n\nThe streamed reply keeps arriving in bursts. "
-                    .repeat(8)
-                    .repeat(25),
-            )
-    });
-    rows.push(harness.revealing("e3 streaming reveal frame, 120 Hz pacing (small conversation)"));
+    for (style, label) in [(Turns::Bubbles, "bubbles"), (Turns::Line, "line")] {
+        let mut harness = Harness::new(&small, None, 1380., 860.);
+        harness.update(|plait, _, _| plait.preferences.value.turns = style);
+        rows.push(harness.steady(&format!(
+            "e1 {label} idle redraw, default view (disconnected home)"
+        )));
+        harness.connect(&small, false);
+        rows.push(harness.steady(&format!(
+            "e2 {label} idle redraw, small live conversation (3 msgs, 2 tools)"
+        )));
+        // A burst has landed and the reveal is drawing it in, one display frame at a time.
+        harness.change_snapshot(|snapshot| {
+            snapshot
+                .live_text
+                // Paragraphs of about 400 bytes, as replies are usually written.
+                .push_str(
+                    &"\n\nThe streamed reply keeps arriving in bursts. "
+                        .repeat(8)
+                        .repeat(25),
+                )
+        });
+        rows.push(harness.revealing(&format!(
+            "e3 {label} streaming reveal frame, 120 Hz pacing (small conversation)"
+        )));
+    }
 }
 
 pub fn run() -> Vec<Row> {
@@ -442,8 +452,6 @@ pub fn run() -> Vec<Row> {
         .window
         .update(&mut harness.cx, |plait, _, _| plait.workspace.live_count)
         .unwrap();
-    scroll_conversation(&mut harness, 1.0);
-    rows.push(harness.steady(&format!("c1 conversation, {count} rows, at bottom")));
     super::tabs::install(&mut harness, 20);
     rows.push(harness.steady("tabs20 conversation, twenty tabs, five running summaries"));
     rows.push(harness.switching(
@@ -486,32 +494,42 @@ pub fn run() -> Vec<Row> {
     rows.push(harness.steady("tabs300 virtual overflow, visible rows only"));
     harness.update(|p, _, _| p.tabs.list_open = false);
     super::tabs::install(&mut harness, 1);
-    scroll_conversation(&mut harness, 0.5);
-    rows.push(harness.steady("c2 conversation, middle (steady)"));
-    rows.push(harness.scrolling(
-        "c3 conversation, wheel-scrolling in the middle",
-        point(px(700.), px(400.)),
-        -60.,
-    ));
-    // Find in that conversation: every reply's code matches, so each row
-    // drawn carries highlights. Typing waits for the background search.
-    let set_query = |harness: &mut Harness, query: &'static str| {
-        harness.update(move |plait, _, cx| {
-            let field = plait.workspace.conversation_find.field.clone().unwrap();
-            field.update(cx, |field, cx| field.set_text(query, cx));
+    for (style, label) in [(Turns::Line, "line"), (Turns::Bubbles, "bubbles")] {
+        harness.update(|plait, _, _| {
+            plait.preferences.value.turns = style;
+            plait.workspace.live_scroll.remeasure();
         });
-    };
-    harness.update(|plait, window, cx| plait.open_conversation_find(window, cx));
-    set_query(&mut harness, "sample code");
-    scroll_conversation(&mut harness, 0.5);
-    rows.push(harness.steady("c4 conversation, middle, find with matches highlighted"));
-    let queries = ["explain", "fixture", "sample code"];
-    rows.push(harness.switching(
-        "c5 find, a new query over every row, to its frame",
-        9,
-        |h, round| set_query(h, queries[round % 3]),
-    ));
-    harness.update(|plait, window, cx| plait.close_conversation_find(window, cx));
+        scroll_conversation(&mut harness, 1.0);
+        rows.push(harness.steady(&format!("c1 {label} conversation, {count} rows, at bottom")));
+        scroll_conversation(&mut harness, 0.5);
+        rows.push(harness.steady(&format!("c2 {label} conversation, middle (steady)")));
+        rows.push(harness.scrolling(
+            &format!("c3 {label} conversation, wheel-scrolling in the middle"),
+            point(px(700.), px(400.)),
+            -60.,
+        ));
+        // Find in that conversation: every reply's code matches, so each row
+        // drawn carries highlights. Typing waits for the background search.
+        let set_query = |harness: &mut Harness, query: &'static str| {
+            harness.update(move |plait, _, cx| {
+                let field = plait.workspace.conversation_find.field.clone().unwrap();
+                field.update(cx, |field, cx| field.set_text(query, cx));
+            });
+        };
+        harness.update(|plait, window, cx| plait.open_conversation_find(window, cx));
+        set_query(&mut harness, "sample code");
+        scroll_conversation(&mut harness, 0.5);
+        rows.push(harness.steady(&format!(
+            "c4 {label} conversation, middle, find with matches highlighted"
+        )));
+        let queries = ["explain", "fixture", "sample code"];
+        rows.push(harness.switching(
+            &format!("c5 {label} find, a new query over every row, to its frame"),
+            9,
+            |h, round| set_query(h, queries[round % 3]),
+        ));
+        harness.update(|plait, window, cx| plait.close_conversation_find(window, cx));
+    }
     scroll_conversation(&mut harness, 1.0);
 
     // a. Changes: 2,000 files, an injected 20k-line diff.

@@ -46,6 +46,7 @@ use std::{
 mod a11y;
 mod admission;
 mod branches;
+mod bubbles;
 mod code_size;
 mod find;
 mod folded_turns;
@@ -2415,6 +2416,7 @@ fn walk(output: Option<&Path>) {
         tool_states_walk(&mut harness, &repository, suffix);
         reading_walk(&mut harness, &repository, suffix);
         messages::walk(&mut harness, &repository, suffix);
+        bubbles::walk(&mut harness, &repository, suffix);
         code_size::walk(&mut harness, &repository, suffix);
         find::find_walk(&mut harness, &repository, suffix);
         folded_turns::walk(&mut harness, &repository, suffix);

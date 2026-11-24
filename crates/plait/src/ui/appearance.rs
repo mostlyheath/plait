@@ -562,6 +562,18 @@ impl Plait {
         cx.notify();
     }
 
+    pub(super) fn set_turns(
+        &mut self,
+        style: plait_client::preferences::Turns,
+        cx: &mut Context<Self>,
+    ) {
+        let mut value = self.preferences.value.clone();
+        value.turns = style;
+        self.set_preferences(value, PreferenceGroup::View, cx);
+        self.workspace.live_scroll.remeasure();
+        cx.notify();
+    }
+
     fn turns_setting(&self, cx: &mut Context<Self>) -> impl IntoElement {
         use plait_client::preferences::Turns;
         let mut choices = segmented();
@@ -579,13 +591,7 @@ impl Plait {
                         Toggled::False
                     })
                     .aria_label(format!("Turns: {label}"))
-                    .on_activate(cx, move |this, _, cx| {
-                        let mut value = this.preferences.value.clone();
-                        value.turns = style;
-                        this.set_preferences(value, PreferenceGroup::View, cx);
-                        this.workspace.live_scroll.remeasure();
-                        cx.notify();
-                    }),
+                    .on_activate(cx, move |this, _, cx| this.set_turns(style, cx)),
             );
         }
         super::settings::setting(
