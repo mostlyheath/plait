@@ -269,8 +269,16 @@ impl Plait {
     /// Scroll the current match into view, using where it was last drawn.
     /// A row not drawn yet is scrolled to first and placed after it is.
     fn reveal_match(&mut self) {
-        self.reconcile_live_folding();
-        let Some(hit) = self.current_hit() else {
+        let hit = self.current_hit();
+        if self.preferences.value.fold_earlier_turns()
+            || self
+                .workspace
+                .live_layout
+                .work_find_changed(hit.as_ref().map(|h| h.message.as_str()))
+        {
+            self.reconcile_live_folding();
+        }
+        let Some(hit) = hit else {
             return;
         };
         if self.place_match(&hit) {

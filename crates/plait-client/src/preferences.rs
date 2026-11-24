@@ -194,6 +194,8 @@ pub struct Preferences {
     /// through `fold_earlier_turns`.
     #[serde(deserialize_with = "lenient_bool")]
     pub fold_earlier_turns: Option<bool>,
+    #[serde(deserialize_with = "lenient_bool")]
+    pub fold_finished_work: Option<bool>,
     /// The harness a new thread's draft starts in, when it is ready. Never `Other`:
     /// one this client does not know reads, and is written, as Pi.
     #[serde(deserialize_with = "lenient_harness", serialize_with = "known_harness")]
@@ -317,6 +319,10 @@ impl Preferences {
     /// for files saved before the preference existed.
     pub fn fold_earlier_turns(&self) -> bool {
         self.fold_earlier_turns.unwrap_or(true)
+    }
+
+    pub fn fold_finished_work(&self) -> bool {
+        self.fold_finished_work.unwrap_or(true)
     }
 
     pub fn is_favorite(&self, choice: &ModelChoice) -> bool {
@@ -833,6 +839,21 @@ mod tests {
         let merged = merge_startup(off, &untouched).unwrap();
         assert!(!merged.fold_earlier_turns());
         assert!(merged.hide_changed_files);
+    }
+
+    #[test]
+    fn finished_work_preference_is_optional_and_lenient() {
+        for json in ["{}", r#"{"fold_finished_work":"unknown"}"#] {
+            assert!(
+                serde_json::from_str::<Preferences>(json)
+                    .unwrap()
+                    .fold_finished_work()
+            );
+        }
+        let saved: Preferences = serde_json::from_str(r#"{"fold_finished_work":false}"#).unwrap();
+        let restored: Preferences =
+            serde_json::from_str(&serde_json::to_string(&saved).unwrap()).unwrap();
+        assert!(!restored.fold_finished_work());
     }
 
     #[test]
