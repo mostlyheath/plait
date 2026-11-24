@@ -869,6 +869,7 @@ impl Plait {
                     .flex_1()
                     .min_w_0()
                     .truncate()
+                    .when(meta.active, |el| el.text_color(rgb(colors().strong)))
                     .child(meta.title.clone()),
             )
             .when(!meta.word.is_empty(), |el| {
@@ -957,10 +958,11 @@ impl Plait {
             .overflow_y_scroll()
             .track_scroll(&self.tabs.list_scroll)
             .p_1()
-            .bg(rgb(colors().panel))
+            .bg(rgb(colors().raised))
             .border_1()
-            .border_color(rgb(colors().border))
-            .rounded_md()
+            .border_color(rgb(colors().edge))
+            .rounded(px(SURFACE_CORNER))
+            .shadow(floating_shadow())
             .on_mouse_down_out(cx.listener(|this, _, _, cx| {
                 this.tabs.list_open = false;
                 cx.notify();
@@ -1039,6 +1041,7 @@ impl Plait {
                     .min_w_0()
                     .flex_1()
                     .truncate()
+                    .when(meta.active, |el| el.text_color(rgb(colors().strong)))
                     .child(meta.title.clone()),
             )
             .child(
@@ -1055,7 +1058,7 @@ impl Plait {
                 .text_size(px(11.)),
             )
             .when_some(meta.shortcut, |el, n| {
-                el.child(tag("tab-list-shortcut", format!("⌘{n}"), colors().subtle))
+                el.child(key_hint("tab-list-shortcut", format!("⌘{n}")))
             })
             .child(self.tab_close_control(id, &meta.title, meta.close_hover, false, group, cx))
             .on_activate(cx, move |this, window, cx| {

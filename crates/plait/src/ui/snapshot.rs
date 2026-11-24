@@ -67,6 +67,7 @@ mod tabs;
 mod test_host;
 mod this_turn;
 mod toasts;
+mod tokens;
 mod turn_review;
 mod undo;
 mod ways_out;
@@ -2296,6 +2297,7 @@ fn walk(output: Option<&Path>) {
     let repository = fixture_repository(&scratch);
 
     for (suffix, width, height) in [("wide", 1380., 860.), ("narrow", 900., 600.)] {
+        tokens::walk(output, suffix, width, height);
         tabs::walk(&repository, output, suffix, width, height);
         let mut harness = Harness::new(&repository, output, width, height);
         // No socket in tests, so the host starts disconnected.
@@ -3105,6 +3107,24 @@ fn theme_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
     };
     harness.connect(repository, true);
     force(harness, true);
+    harness.update(|p, _, _| p.navigation.menu = Some("machines".into()));
+    harness.capture(&format!("light-machine-menu-{suffix}"));
+    harness.update(|p, window, cx| {
+        p.navigation.menu = None;
+        p.toggle_command_palette(window, cx);
+    });
+    harness.capture(&format!("light-palette-{suffix}"));
+    harness.update(|p, window, cx| {
+        p.toggle_command_palette(window, cx);
+        p.toasts.push(
+            THREAD,
+            "Add retries to the client".into(),
+            "forecast · Done".into(),
+            Instant::now(),
+        );
+    });
+    harness.capture(&format!("light-toast-{suffix}"));
+    harness.update(|p, _, cx| p.dismiss_toast(THREAD, cx));
     harness.capture(&format!("light-conversation-{suffix}"));
     harness.update(|plait, window, cx| plait.select_file(1, DiffMode::Unstaged, window, cx));
     harness.capture(&format!("light-changes-{suffix}"));

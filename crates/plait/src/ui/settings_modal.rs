@@ -145,10 +145,11 @@ impl Plait {
             .w(px(820.).min(viewport.width - px(48.)))
             .h(px(720.).min(viewport.height - px(64.)))
             .overflow_hidden()
-            .rounded_lg()
+            .rounded(px(SURFACE_CORNER))
+            .shadow(floating_shadow())
             .border_1()
             .border_color(rgb(colors().edge))
-            .bg(rgb(colors().bg))
+            .bg(rgb(colors().raised))
             .on_mouse_down_out(cx.listener(|this, _, window, cx| {
                 if this.overlay.is_none() && this.keyboard.recording.is_none() {
                     this.show_settings(false, window, cx);

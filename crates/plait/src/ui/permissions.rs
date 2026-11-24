@@ -107,7 +107,7 @@ impl Plait {
             aside: None,
             note: Some(permissions.note.clone()),
         };
-        let palette = cx.new(|cx| Palette::new(options, items, window, cx));
+        let palette = cx.new(|cx| Palette::new(options, items, window, cx).picker());
         self.present(palette, None, window, cx);
     }
 }
@@ -128,6 +128,7 @@ pub(super) fn menu_chip(
     };
     let hover = blocked.map_or_else(|| tip.clone(), SharedString::from);
     button(id, "")
+        .rounded(px(ITEM_CORNER))
         .min_w_0()
         .flex_shrink_1()
         .gap_1()
@@ -146,4 +147,17 @@ pub(super) fn menu_chip(
         .when_some(lead, |el, lead| el.child(lead))
         .child(div().min_w_0().truncate().child(value))
         .child(icon("down").size(px(12.)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ITEM_CORNER, menu_chip};
+    use gpui::{Styled, div, px};
+
+    #[test]
+    fn menu_chip_uses_the_chip_corner_token() {
+        let mut chip = menu_chip("mode", None, None, "Default".into(), "".into(), None);
+        let mut expected = div().rounded(px(ITEM_CORNER));
+        assert_eq!(chip.style().corner_radii, expected.style().corner_radii);
+    }
 }

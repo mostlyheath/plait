@@ -464,7 +464,7 @@ impl Plait {
             aside: None,
             note: Some("The thread starts in the project you choose.".into()),
         };
-        let palette = cx.new(|cx| Palette::new(options, items, window, cx));
+        let palette = cx.new(|cx| Palette::new(options, items, window, cx).picker());
         self.present(palette, None, window, cx);
     }
 
@@ -528,7 +528,7 @@ impl Plait {
             aside: None,
             note: Some(note.into()),
         };
-        let palette = cx.new(|cx| Palette::new(options, items, window, cx));
+        let palette = cx.new(|cx| Palette::new(options, items, window, cx).picker());
         self.present(palette, None, window, cx);
     }
 
@@ -583,7 +583,7 @@ impl Plait {
             aside: None,
             note: Some("Pi asks before actions, or not, as Plait's approvals say. Change it any time after.".into()),
         };
-        let palette = cx.new(|cx| Palette::new(options, items, window, cx));
+        let palette = cx.new(|cx| Palette::new(options, items, window, cx).picker());
         self.present(palette, None, window, cx);
     }
 }

@@ -384,6 +384,7 @@ pub(super) enum PaletteEvent {
 
 pub(super) struct Palette {
     options: Options,
+    corner: f32,
     field: Entity<TextField>,
     /// The caller's items, then the typed item when there is one.
     items: Vec<Item>,
@@ -431,6 +432,7 @@ impl Palette {
         let this = Self {
             selected: start(&rows, &entries, options.initial.as_deref()),
             options,
+            corner: PALETTE_CORNER,
             field,
             base: items.len(),
             items,
@@ -446,6 +448,11 @@ impl Palette {
         };
         this.reveal();
         this
+    }
+
+    pub fn picker(mut self) -> Self {
+        self.corner = SURFACE_CORNER;
+        self
     }
 
     /// Whether the caller supplied no items; a typed item does not count.
@@ -673,28 +680,9 @@ impl Palette {
     /// A quiet text button for the row's second action.
     fn aside_button(&self, row: usize, label: SharedString, cx: &mut Context<Self>) -> Control {
         let entity = cx.weak_entity();
-        div()
-            .id(("palette-aside", row))
-            .role(Role::Button)
-            .aria_label(label.clone())
-            .audited()
-            .flex_shrink_0()
-            .px(px(6.))
-            .h(px(20.))
-            .flex()
-            .items_center()
-            .rounded_md()
-            .border_1()
-            .border_color(rgb(colors().edge))
-            .cursor_pointer()
-            .text_size(px(11.))
-            .text_color(rgb(colors().muted))
-            .hover(|style| {
-                style
-                    .bg(rgba(colors().hover))
-                    .text_color(rgb(colors().text))
-            })
-            .child(label)
+        button(("palette-aside", row), label)
+            .h(px(24.))
+            .tab_stop(false)
             .on_click(cx.listener(move |this, _, _, cx| {
                 // The row underneath would otherwise run the item.
                 cx.stop_propagation();
@@ -774,7 +762,9 @@ impl Palette {
                     .flex_shrink_0()
                     .max_w(relative(0.7))
                     .truncate()
-                    .text_color(rgb(if item.enabled {
+                    .text_color(rgb(if selected && item.enabled {
+                        colors().strong
+                    } else if item.enabled {
                         colors().text
                     } else {
                         colors().muted
@@ -800,9 +790,7 @@ impl Palette {
                 el.child(self.toggle(row, item, on, cx))
             })
             .when(!item.hint.is_empty(), |el| {
-                el.child(
-                    tag("palette-row-hint", item.hint.clone(), colors().subtle).flex_shrink_0(),
-                )
+                el.child(key_hint("palette-row-hint", item.hint.clone()).flex_shrink_0())
             })
             .when(item.enabled, |el| {
                 el.cursor_pointer()
@@ -997,15 +985,15 @@ impl Render for Palette {
             .w_full()
             .max_w(px(620.))
             .overflow_hidden()
-            .rounded_xl()
+            .rounded(px(self.corner))
+            .shadow(floating_shadow())
             .border_1()
             .border_color(rgb(colors().edge))
-            .bg(rgb(colors().rail))
+            .bg(rgb(colors().raised))
             .child(div().p_2().child(self.field.clone()))
             .child(self.list(list_height, cx))
             .child(self.footer(searching));
-        // A full-window layer: it blocks the workspace behind and dims it,
-        // because the panel has no shadow to lift it.
+        // A full-window layer blocks and dims the workspace behind the panel.
         let layer = div()
             .absolute()
             .top_0()
@@ -1083,6 +1071,33 @@ mod tests {
     // Named imports: a glob would bring in GPUI's own `test` attribute.
     use super::{Entry, Row, anchored_place, arrange, nearest, runs, start, step};
     use gpui::{Bounds, point, px, size};
+
+    #[gpui::test]
+    fn command_palette_and_picker_use_distinct_corners(cx: &mut gpui::TestAppContext) {
+        use super::{Options, PALETTE_CORNER, Palette, SURFACE_CORNER};
+        let options = || Options {
+            name: "Search".into(),
+            placeholder: "".into(),
+            empty: "".into(),
+            initial: None,
+            mark: None,
+            aside: None,
+            note: None,
+        };
+        let palette = cx.add_window(|window, cx| Palette::new(options(), Vec::new(), window, cx));
+        let picker =
+            cx.add_window(|window, cx| Palette::new(options(), Vec::new(), window, cx).picker());
+        cx.update(|cx| {
+            palette
+                .update(cx, |palette, _, _| {
+                    assert_eq!(palette.corner, PALETTE_CORNER)
+                })
+                .unwrap();
+            picker
+                .update(cx, |picker, _, _| assert_eq!(picker.corner, SURFACE_CORNER))
+                .unwrap();
+        });
+    }
 
     #[core::prelude::v1::test]
     fn a_picker_opens_beside_its_control_and_stays_in_the_window() {

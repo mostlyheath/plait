@@ -146,7 +146,7 @@ impl Plait {
                 .font_weight(FontWeight::MEDIUM)
                 .child(branch.to_owned()),
         )
-        .child(icon("down").size(px(12.)).text_color(rgb(colors().subtle)))
+        .child(icon("down").size(px(12.)))
         .on_activate(cx, |this, window, cx| this.open_branches(false, window, cx));
         match blocker {
             Some(_) => locked(control, blocker),
@@ -189,7 +189,7 @@ impl Plait {
         let typed: Typed =
             Rc::new(move |text, items| create_item(text.trim(), items, enabled, create));
         let palette = cx.new(|cx| {
-            let mut palette = Palette::new(options, items, window, cx);
+            let mut palette = Palette::new(options, items, window, cx).picker();
             palette.set_typed(typed, cx);
             palette
         });

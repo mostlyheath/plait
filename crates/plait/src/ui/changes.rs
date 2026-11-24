@@ -577,6 +577,7 @@ impl Plait {
                                 "Discard…"
                             },
                         )
+                        .text_color(rgb(colors().red))
                         .disabled(repo.write().busy())
                         .on_activate(cx, move |this, window, cx| {
                             this.discard_file(index, window, cx)

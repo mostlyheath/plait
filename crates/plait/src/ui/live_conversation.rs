@@ -1135,13 +1135,8 @@ impl Plait {
     /// A control's shortcut as the keymap binds it now. Nothing when unbound.
     fn shortcut_hint(&self, id: &str) -> Option<Div> {
         let label = self.shortcut_label(id);
-        (!label.is_empty()).then(|| {
-            tag(
-                SharedString::from(format!("shortcut-hint-{id}")),
-                label,
-                colors().subtle,
-            )
-        })
+        (!label.is_empty())
+            .then(|| key_hint(SharedString::from(format!("shortcut-hint-{id}")), label))
     }
 
     /// Exact arguments and a one-call decision. Nothing runs without it.
@@ -1248,8 +1243,7 @@ impl Plait {
                                     }),
                             )
                             .child(
-                                toned_button("allow-tool", "Allow once", Tone::Filled)
-                                    .text_color(rgb(colors().amber))
+                                toned_button("allow-tool", "Allow once", Tone::Primary)
                                     .aria_keyshortcuts(self.shortcut_aria("approval.allow_once"))
                                     .children(self.shortcut_hint("approval.allow_once"))
                                     .disabled(!enabled)

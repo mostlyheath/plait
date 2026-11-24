@@ -1,4 +1,4 @@
-//! Color themes. Plait draws from one `Palette` of named roles; two are tuned
+//! Color themes. Plait draws from one `Palette` of named roles; four are tuned
 //! by hand, and the rest are derived from Base16 schemes, a plain 16-color
 //! format with hundreds of published schemes. A few ship with the app, and
 //! scheme files placed in the themes folder are read too.
@@ -20,6 +20,9 @@ pub struct Palette {
     pub rail: u32,
     /// Raised surfaces: the composer, cards, inline code.
     pub panel: u32,
+    pub raised: u32,
+    pub strong: u32,
+    pub faint: u32,
     pub border: u32,
     pub text: u32,
     pub muted: u32,
@@ -45,9 +48,8 @@ pub struct Palette {
     pub added_fill: u32,
     pub removed_fill: u32,
     pub failed_edge: u32,
-    /// Hover on a filled control, and on the one primary control.
+    /// Hover on a raised surface.
     pub raised_hover: u32,
-    pub primary_hover: u32,
     /// Dims the window behind a modal.
     pub scrim: u32,
     /// Outline and fill of a caution card, such as a pending approval.
@@ -55,13 +57,16 @@ pub struct Palette {
     pub warn_fill: u32,
 }
 
-/// The default dark theme. Text is a soft off-white rather than near white,
+/// Plait Dark. Text is a soft off-white rather than near white,
 /// which is easier on the eyes over long reading.
 pub const PLAIT_DARK: Palette = Palette {
     light: false,
     bg: 0x1c1d20,
-    rail: 0x202124,
+    rail: 0x151618,
     panel: 0x292b2f,
+    raised: 0x323439,
+    strong: 0xeceef2,
+    faint: 0x595e69,
     border: 0x33353b,
     text: 0xd9dce3,
     muted: 0x9ba2af,
@@ -81,7 +86,6 @@ pub const PLAIT_DARK: Palette = Palette {
     removed_fill: 0xe59ea51c,
     failed_edge: 0xe59ea566,
     raised_hover: 0x323439,
-    primary_hover: 0xeceef2,
     scrim: 0x00000066,
     warn_edge: 0x5c4f38,
     warn_fill: 0x3b3224,
@@ -93,6 +97,9 @@ pub const PLAIT_LIGHT: Palette = Palette {
     bg: 0xf7f7f5,
     rail: 0xefefec,
     panel: 0xffffff,
+    raised: 0xffffff,
+    strong: 0x16181c,
+    faint: 0xa4a8b0,
     border: 0xe3e3df,
     text: 0x2b2e33,
     muted: 0x5d636e,
@@ -112,7 +119,6 @@ pub const PLAIT_LIGHT: Palette = Palette {
     removed_fill: 0xb53a4c1a,
     failed_edge: 0xb53a4c66,
     raised_hover: 0xf2f2ef,
-    primary_hover: 0x44484f,
     scrim: 0x00000040,
     warn_edge: 0xd9c39a,
     warn_fill: 0xf6ecd8,
@@ -124,12 +130,15 @@ pub const PLAIT_LIGHT: Palette = Palette {
 pub const STILLWATER: Palette = Palette {
     light: false,
     bg: 0x1f222e,
-    rail: 0x242835,
+    rail: 0x191c26,
     panel: 0x2b303f,
+    raised: 0x313647,
+    strong: 0xeef0f6,
+    faint: 0x5f667a,
     border: 0x313547,
     text: 0xdfe3ed,
-    muted: 0xb0b7cb,
-    subtle: 0x9da5bf,
+    muted: 0x9da5bf,
+    subtle: 0x7f879f,
     mint: 0x70d689,
     blue: 0x74cde2,
     violet: 0xec8ac7,
@@ -145,17 +154,32 @@ pub const STILLWATER: Palette = Palette {
     removed_fill: 0xec73681c,
     failed_edge: 0xec736866,
     raised_hover: 0x32384a,
-    primary_hover: 0xeef0f6,
     scrim: 0x00000066,
     warn_edge: 0x675c44,
     warn_fill: 0x3c3937,
 };
 
+pub const STILLWATER_DEEP: Palette = Palette {
+    rail: 0x11131b,
+    bg: 0x171a24,
+    panel: 0x1f2330,
+    raised: 0x272c3b,
+    border: 0x252a38,
+    edge: 0x363d52,
+    selected: 0x262b3a,
+    strong: 0xe9ecf4,
+    text: 0xcdd2df,
+    muted: 0x9aa2b8,
+    subtle: 0x767f97,
+    faint: 0x545c73,
+    ..STILLWATER
+};
+
 pub const PLAIT_DARK_NAME: &str = "Plait Dark";
 pub const STILLWATER_NAME: &str = "Stillwater";
-/// What unset preferences draw with: Stillwater in the dark, Plait Light by day.
-pub const DEFAULT_DARK: Palette = STILLWATER;
-pub const DEFAULT_DARK_NAME: &str = STILLWATER_NAME;
+/// What unset preferences draw with: Stillwater Deep in the dark, Plait Light by day.
+pub const DEFAULT_DARK: Palette = STILLWATER_DEEP;
+pub const DEFAULT_DARK_NAME: &str = "Stillwater Deep";
 pub const DEFAULT_LIGHT: Palette = PLAIT_LIGHT;
 pub const DEFAULT_LIGHT_NAME: &str = PLAIT_LIGHT_NAME;
 pub const PLAIT_LIGHT_NAME: &str = "Plait Light";
@@ -225,10 +249,17 @@ pub struct Scheme {
     pub base: [u32; 16],
 }
 
-/// The two hand-tuned themes, then the bundled schemes by name.
+/// The hand-tuned themes, then the bundled schemes by name.
 pub fn built_in() -> Vec<Theme> {
     // Each list starts with its default.
     let mut themes = vec![
+        Theme {
+            name: DEFAULT_DARK_NAME.into(),
+            palette: STILLWATER_DEEP,
+            source: Source::Included {
+                credit: "Adapted from Stillwater by heath0xFF (MIT)",
+            },
+        },
         Theme {
             name: STILLWATER_NAME.into(),
             palette: STILLWATER,
@@ -398,18 +429,26 @@ fn hex(value: &str) -> Option<u32> {
 /// as accents. Grays come from mixing background toward text, not from the
 /// scheme's own grays, whose roles vary from scheme to scheme.
 pub fn derive(scheme: &Scheme) -> Palette {
-    let [bg, rail, ..] = scheme.base;
-    // Body text at least 7:1 (WCAG AAA) on both the main surface and request
-    // panels, moving toward the scheme's strongest foreground.
-    let mut text = floor(scheme.base[5], &[bg], scheme.base[7], 7.0);
-    let mut panel = mix(bg, text, 0.06);
-    if contrast(text, panel) < 7.0 {
-        text = floor(text, &[bg, panel], scheme.base[7], 7.0);
-        panel = mix(bg, text, 0.06);
-        text = floor(text, &[bg, panel], scheme.base[7], 7.0);
-    }
+    let bg = scheme.base[0];
+    let extreme = if scheme.light { 0 } else { 0xffffff };
+    let text = floor(scheme.base[5], &[bg], extreme, 9.5);
+    let text = if !scheme.light && contrast(text, bg) > 13.5 {
+        floor(bg, &[bg], text, 12.)
+    } else {
+        text
+    };
     let shade = |amount| mix(bg, text, amount);
-    let accent = |index: usize| floor(scheme.base[index], &[bg, panel], text, 3.0);
+    let rail = mix(bg, if scheme.light { text } else { 0 }, 0.06);
+    let panel = shade(0.04);
+    let raised = shade(0.08);
+    let subtle = floor(bg, &[bg], text, 4.1);
+    let muted = floor(bg, &[bg], text, 6.);
+    let strong_target = if contrast(scheme.base[7], bg) > contrast(text, bg) {
+        scheme.base[7]
+    } else {
+        extreme
+    };
+    let accent = |index: usize| floor(scheme.base[index], &[bg, panel, raised], text, 3.0);
     let (mint, blue, violet, red, amber) = (
         accent(0xB),
         accent(0xD),
@@ -425,8 +464,11 @@ pub fn derive(scheme: &Scheme) -> Palette {
         panel,
         border: shade(0.12),
         text,
-        muted: floor(shade(0.68), &[bg, panel], text, 4.5),
-        subtle: floor(shade(0.52), &[bg, panel], text, 3.2),
+        strong: mix(text, strong_target, 0.55),
+        raised,
+        faint: shade(0.30),
+        muted,
+        subtle,
         mint,
         blue,
         violet,
@@ -442,7 +484,6 @@ pub fn derive(scheme: &Scheme) -> Palette {
         removed_fill: alpha(red, 0x1c),
         failed_edge: alpha(red, 0x66),
         raised_hover: shade(0.10),
-        primary_hover: mix(text, bg, 0.12),
         scrim: if light { 0x00000040 } else { 0x00000066 },
         warn_edge: mix(bg, amber, 0.35),
         warn_fill: mix(bg, amber, 0.14),
@@ -462,13 +503,23 @@ fn floor(color: u32, surfaces: &[u32], toward: u32, ratio: f64) -> u32 {
     } else {
         extreme
     };
-    let mut amount = 0.;
-    let mut result = color;
-    while surfaces.iter().any(|&bg| contrast(result, bg) < ratio) && amount < 1. {
-        amount += 0.05;
-        result = mix(color, toward, amount);
+    let readable = |color| surfaces.iter().all(|&bg| contrast(color, bg) >= ratio);
+    if readable(color) {
+        return color;
     }
-    result
+    if !readable(toward) {
+        return toward;
+    }
+    let (mut low, mut high) = (0., 1.);
+    for _ in 0..12 {
+        let middle = (low + high) / 2.;
+        if readable(mix(color, toward, middle)) {
+            high = middle;
+        } else {
+            low = middle;
+        }
+    }
+    mix(color, toward, high)
 }
 
 /// `a` mixed with `b` by `amount` (0 is `a`, 1 is `b`), per channel.
@@ -547,41 +598,53 @@ mod tests {
     }
 
     #[test]
-    fn every_shipped_theme_keeps_text_readable() {
+    fn every_shipped_theme_meets_contrast_bands() {
         let themes = built_in();
-        assert_eq!(
-            themes.len(),
-            3 + BUNDLED.len(),
-            "every bundled scheme parses"
-        );
-        for theme in themes {
-            let p = theme.palette;
-            let name = &theme.name;
-            for (surface_name, surface) in [("bg", p.bg), ("panel", p.panel)] {
-                assert!(
-                    contrast(p.text, surface) >= 7.,
-                    "{name} text on {surface_name}"
-                );
-                assert!(
-                    contrast(p.muted, surface) >= 4.5,
-                    "{name} muted on {surface_name}"
-                );
-                assert!(
-                    contrast(p.subtle, surface) >= 3.,
-                    "{name} subtle on {surface_name}"
-                );
-                for accent in [p.mint, p.blue, p.violet, p.red, p.amber] {
-                    assert!(
-                        contrast(accent, surface) >= 3.,
-                        "{name} accent {accent:06x} on {surface_name}"
-                    );
-                }
-            }
+        assert_eq!(themes.len(), 4 + BUNDLED.len());
+        for Theme {
+            name, palette: p, ..
+        } in themes
+        {
             assert_eq!(
                 p.light,
                 luminance(p.bg) > luminance(p.text),
-                "{name} variant"
+                "{name}: polarity"
             );
+            let text = contrast(p.text, p.bg);
+            let secondary = contrast(p.muted, p.bg);
+            let hint = contrast(p.subtle, p.bg);
+            assert!(
+                text >= 9.5 && (p.light || text <= 13.5),
+                "{name}: text {text}"
+            );
+            assert!(
+                (5.0..=7.5).contains(&secondary),
+                "{name}: secondary {secondary}"
+            );
+            assert!((3.5..=4.7).contains(&hint), "{name}: hint {hint}");
+            assert!(
+                text >= 1.35 * secondary && secondary >= 1.35 * hint,
+                "{name}: hierarchy"
+            );
+            assert!(
+                contrast(p.strong, p.bg) > text && contrast(p.faint, p.bg) < hint,
+                "{name}: extremes"
+            );
+            assert!(luminance(p.rail) < luminance(p.bg), "{name}: navigation");
+            for surface in [p.rail, p.panel, p.raised] {
+                assert!(
+                    contrast(p.subtle, surface) >= 3.,
+                    "{name}: hint on {surface:06x}"
+                );
+            }
+            for surface in [p.bg, p.panel, p.raised] {
+                for accent in [p.mint, p.blue, p.violet, p.red, p.amber] {
+                    assert!(
+                        contrast(accent, surface) >= 3.,
+                        "{name}: {accent:06x} on {surface:06x}"
+                    );
+                }
+            }
         }
     }
 

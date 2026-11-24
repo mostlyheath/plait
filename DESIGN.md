@@ -755,6 +755,10 @@ the floors do today.
 | Dots | 7; 9 where a card or bar names the state |
 | Spacing | a 4-point base |
 
+The shared control currently draws a hollow 1.5-point blue inset outline on
+keyboard focus. The specified 1-point exterior gap awaits native review
+and support for drawing the outline outside the control.
+
 Shadows are written as x, y, blur, spread, as GPUI's box shadow takes them.
 
 **Buttons.** Three kinds, all from `theme::control`:

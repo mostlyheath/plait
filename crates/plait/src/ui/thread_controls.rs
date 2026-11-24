@@ -289,6 +289,7 @@ impl Plait {
                 window,
                 cx,
             )
+            .picker()
         });
         self.present(palette, None, window, cx);
     }
@@ -396,14 +397,15 @@ impl Plait {
             .w_full()
             .max_w(px(CONTENT_WIDTH))
             .mx_auto()
-            .rounded(px(12.))
+            .rounded(px(SURFACE_CORNER))
+            .shadow(box_shadow())
             .border_1()
             .border_color(rgb(if focused {
                 colors().focus_edge
             } else {
                 colors().edge
             }))
-            .bg(rgb(colors().rail))
+            .bg(rgb(colors().panel))
             .on_drop(cx.listener(move |_, paths: &ExternalPaths, _, cx| {
                 drop_composer.update(cx, |composer, cx| {
                     composer.drop_images(paths.paths().to_vec(), cx)
@@ -996,6 +998,7 @@ impl Plait {
                 window,
                 cx,
             )
+            .picker()
         });
         self.present(palette, None, window, cx);
     }
