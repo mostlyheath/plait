@@ -134,11 +134,9 @@ fn every_new_route_opens_independent_drafts_and_three_hundred_stay_cold() {
     });
     #[cfg(debug_assertions)]
     {
-        let a = h.draw_a11y();
-        let b = h.draw_a11y();
-        a.assert_no_duplicates("300 drafts first");
-        b.assert_no_duplicates("300 drafts steady");
-        let tab_nodes = |frame: &crate::ui::a11y::A11yFrame| {
+        use crate::ui::a11y::A11yFrame;
+        use plait_client::preferences::ThreadTabs;
+        let tab_nodes = |frame: &A11yFrame| {
             frame
                 .nodes
                 .iter()
@@ -146,20 +144,34 @@ fn every_new_route_opens_independent_drafts_and_three_hundred_stay_cold() {
                 .map(|node| (node.path.clone(), node.node_id))
                 .collect::<Vec<_>>()
         };
-        assert_eq!(
-            tab_nodes(&a),
-            tab_nodes(&b),
-            "steady tab IDs must not change"
-        );
-        assert!(b.nodes.iter().filter(|node| node.role == Role::Tab).count() < 20);
-        assert!(b.has_node(Role::Button, |n| n.label.as_deref()
+        let header_title = |frame: &A11yFrame| {
+            frame
+                .nodes
+                .iter()
+                .find(|n| n.path.contains("header-title"))
+                .and_then(|n| n.value.clone().or(n.label.clone()))
+        };
+        let mut active_title = String::new();
+        h.update(|p, _, _| {
+            p.preferences.value.thread_tabs = Some(ThreadTabs::Show);
+            active_title = p.tabs.rows.iter().find(|r| r.active).unwrap().title.clone();
+        });
+        // Tabs are shown, but the open draft keeps its own title.
+        let a = h.draw_a11y();
+        let b = h.draw_a11y();
+        a.assert_no_duplicates("300 drafts first");
+        b.assert_no_duplicates("300 drafts steady");
+        assert_eq!(header_title(&b), Some(active_title));
+        assert!(tab_nodes(&b).is_empty());
+        assert!(!b.has_node(Role::Button, |n| n.label.as_deref()
             == Some("New thread tab")));
-        h.update(|p, _, _| p.tabs.list_open = true);
+        // Show All Tabs reaches every tab, drawing only the rows in view.
+        h.keystroke("cmd-shift-\\");
         let a = h.draw_a11y();
         let b = h.draw_a11y();
         a.assert_no_duplicates("300 drafts overflow first");
         b.assert_no_duplicates("300 drafts overflow steady");
-        let entries = |frame: &crate::ui::a11y::A11yFrame| {
+        let entries = |frame: &A11yFrame| {
             frame
                 .nodes
                 .iter()
@@ -169,6 +181,36 @@ fn every_new_route_opens_independent_drafts_and_three_hundred_stay_cold() {
         };
         assert_eq!(entries(&a), entries(&b));
         assert!(!entries(&b).is_empty() && entries(&b).len() < 20);
+        // Its first entry is the thread; on a thread the header draws pills.
+        h.keystroke("home");
+        h.keystroke("enter");
+        h.update(|p, _, _| {
+            assert!(
+                p.host.thread.selected.is_some(),
+                "the list opened the thread"
+            );
+            p.tabs.list_open = false;
+        });
+        let a = h.draw_a11y();
+        let b = h.draw_a11y();
+        a.assert_no_duplicates("300 tabs on a thread first");
+        b.assert_no_duplicates("300 tabs on a thread steady");
+        assert!(!tab_nodes(&b).is_empty(), "the tab strip is drawn");
+        assert_eq!(
+            tab_nodes(&a),
+            tab_nodes(&b),
+            "steady tab IDs must not change"
+        );
+        assert!(b.nodes.iter().filter(|node| node.role == Role::Tab).count() < 20);
+        assert!(b.has_node(Role::Button, |n| n.label.as_deref()
+            == Some("New thread tab")));
+        assert_eq!(header_title(&b), None);
+        // Tabs hidden: the thread's own title and no strip.
+        h.update(|p, _, _| p.preferences.value.thread_tabs = Some(ThreadTabs::Hide));
+        let hidden = h.draw_a11y();
+        hidden.assert_no_duplicates("300 tabs, tabs hidden");
+        assert!(tab_nodes(&hidden).is_empty());
+        assert!(header_title(&hidden).is_some());
     }
     drop(h);
     std::fs::remove_dir_all(scratch).unwrap();

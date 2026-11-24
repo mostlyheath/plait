@@ -230,9 +230,25 @@ fn the_keyboard_leaves_a_hidden_composer_and_returns_to_it() {
     harness.keystroke("cmd-shift-1");
     assert_eq!(tab(&mut harness), Workspace::Conversation);
     assert_eq!(composer_state(&mut harness), (draft.clone(), true, false));
-    // A click on Files straight from the composer leaves Find working too.
-    click(&mut harness, files_tab);
+    // The header has no view switcher. Its panel toggle, clicked straight
+    // from the composer, reopens the panel on Files and leaves Find working.
+    #[cfg(debug_assertions)]
+    let toggle = harness
+        .draw_a11y()
+        .nodes
+        .iter()
+        .find(|node| node.label.as_deref() == Some("Toggle Panel"))
+        .expect("the header's panel toggle")
+        .bounds
+        .center();
+    #[cfg(not(debug_assertions))]
+    let toggle = point(px(0.), px(0.));
+    click(&mut harness, toggle);
     assert_eq!(tab(&mut harness), Workspace::Files);
+    assert!(
+        !composer_state(&mut harness).1,
+        "the panel takes the keyboard"
+    );
     harness.keystroke("cmd-f");
     assert!(find_open(&mut harness));
     harness.keystroke("escape");
