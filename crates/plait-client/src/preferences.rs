@@ -127,6 +127,15 @@ impl PartialEq<ModelChoice> for ModelKey {
     }
 }
 
+/// The form of the sheet header on this device.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThreadTabs {
+    #[default]
+    Hide,
+    Show,
+}
+
 /// Unknown fields are ignored so a newer client's file still loads.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -163,6 +172,9 @@ pub struct Preferences {
     /// Follow macOS, or keep one appearance.
     #[serde(deserialize_with = "lenient")]
     pub appearance: crate::theme::Appearance,
+    /// An explicit choice survives an edit made while preferences are loading.
+    #[serde(deserialize_with = "lenient", skip_serializing_if = "Option::is_none")]
+    pub thread_tabs: Option<ThreadTabs>,
     /// Theme names for each appearance; `None` is the default (Plait Light, Stillwater).
     pub light_theme: Option<String>,
     pub dark_theme: Option<String>,
@@ -270,6 +282,10 @@ fn known_harness<S: serde::Serializer>(id: &HarnessId, serializer: S) -> Result<
 }
 
 impl Preferences {
+    pub fn shows_thread_tabs(&self) -> bool {
+        self.thread_tabs == Some(ThreadTabs::Show)
+    }
+
     /// Unset means Medium: with thinking off, reasoning models answer worse,
     /// and that should not be what a new thread gets without asking.
     pub fn default_thinking(&self) -> ThinkingLevel {
@@ -599,6 +615,26 @@ mod tests {
         assert_eq!(old.panel_width, None);
         let new: Preferences = serde_json::from_str(r#"{"panel_width":440}"#).unwrap();
         assert_eq!(new.panel_width, Some(440));
+    }
+
+    #[test]
+    fn thread_tabs_are_optional_lenient_and_device_local() {
+        for json in [
+            r#"{}"#,
+            r#"{"thread_tabs":"future"}"#,
+            r#"{"thread_tabs":true}"#,
+        ] {
+            let saved: Preferences = serde_json::from_str(json).unwrap();
+            assert!(!saved.shows_thread_tabs());
+        }
+        let shown: Preferences = serde_json::from_str(r#"{"thread_tabs":"show"}"#).unwrap();
+        assert!(shown.shows_thread_tabs());
+        let edited = Preferences {
+            thread_tabs: Some(ThreadTabs::Hide),
+            ..Default::default()
+        };
+        let merged = merge_startup(shown, &edited).unwrap();
+        assert_eq!(serde_json::to_value(merged).unwrap()["thread_tabs"], "hide");
     }
 
     #[test]

@@ -65,6 +65,8 @@ The `bubbles` and `turns-line` scenes draw the same request and reply. Additiona
 
 The `work-*` conversation scenes cover finished and running work, failure, a direct answer, Find inside a fold, and the appearance preference. The `closing-line-*` scenes cover outcomes, file lists, Undo refusal, a narrow column, and the older-host fallback. Native checks include opening work from the bottom of the conversation, following a recorded file through Review, and moving through the controls with the keyboard.
 
+The `header-*` scenes cover the title and tabs settings, tab overflow, thread states, project views, drafts, and both traffic-light insets. Pixel inspection, native interaction and frame timings for the header are pending. Exercise tab shortcuts in both settings, reorder and close a tab with the pointer, and check truncation with a long title and branch. Check window dragging, the system double-click action and both transitions into and out of full screen with the sidebar shown and hidden.
+
 macOS uses the app's text shaping and renderer offscreen; Linux uses its own
 fonts and software rendering. Scenes do not validate the native window,
 input, accessibility bridge, or live provider. Build and inspect the native
