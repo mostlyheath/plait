@@ -89,19 +89,19 @@ Use **Show or Hide Archived Threads** in the menu or palette. Rename or archive 
 
 ### Tabs
 
-The 44-point top bar holds the window buttons, sidebar toggle, open tabs (threads, drafts, Worktrees, and Linear Issues), and **+**. When the sidebar is open, its toggle sits at the right edge and the tabs start above the workspace sheet. Drag empty bar space to move the window. Hiding the sidebar expands the sheet to the edges below the tabs. The 36-point second row shows the active checkout context, view switcher (**Conversation**, **Changes**, **History**, **Files**), the **Chat │ Work** switch on thread tabs, and the This turn toggle.
+The 44-point top bar holds the window buttons, sidebar toggle, open tabs (threads, drafts, Worktrees, and Linear Issues), and **+**. When the sidebar is open, its toggle sits at the right edge and the tabs start above the workspace sheet. Drag empty bar space to move the window. Hiding the sidebar expands the sheet to the edges below the tabs. The 36-point second row shows the active checkout context, view switcher (**Conversation**, **Changes**, **History**, **Files**).
 
 - Switch tabs with `Cmd-1`–`Cmd-8` (`Cmd-9` selects the last), `Cmd-Shift-[` / `Cmd-Shift-]`, or the overflow menu (`Cmd-Shift-Backslash`). Reorder tabs by dragging or with `Control-Shift-Left` / `Control-Shift-Right`.
 - Close a tab with `Cmd-W` or middle-click; closing never stops a running thread. Reopen closed tabs (and older nonempty drafts) with `Cmd-Shift-T`. Closing the last tab leaves an empty workspace; pressing `Cmd-W` again (or `Cmd-Shift-W`) closes the window.
 - Tab order and per-view bookmarks are stored in `~/Library/Application Support/Plait/tabs.json` (moving per-device tabs to the host is planned under [Host-first Plait](HOST-FIRST.md)).
 
-### Work view
+### Review panel
 
-On a thread tab, select **Work**, press **Cmd-Backslash**, or choose **Open in Work view** in the This turn panel. The conversation and message box sit beside Changes. **This turn** shows the selected turn’s recorded diff. **Uncommitted** shows the checkout’s current changes and commit controls.
+**Cmd-L** opens or closes the panel for the current tab. Choose **Changes**, **Files**, or **History** from the view switcher. **Conversation** closes the panel and returns focus to the thread. New and restored tabs start with the panel closed.
 
-Drag the divider to resize the panes or double-click it to give them equal space. Toggle Sidebar can show the sidebar while you work. Select **Chat** to restore the previous sidebar setting. Choose a pane’s name to switch it to an unopened kind. **Split right** and **Split down** add the next available kind, up to four panes. Hover over a disabled split to see its reason. **Close pane** returns to Chat when only the thread would remain.
+**This turn** shows the selected turn’s recorded diff. **Uncommitted** shows the checkout’s current changes and commit controls. A thread without a recorded turn opens on **Uncommitted**. Use **Cmd-Option-Right** or **Cmd-Option-Left** to move focus between the conversation and panel. Find searches the focused conversation, diff, or file.
 
-Conversation, Changes, History, and Files focus their pane. If that kind is missing, it replaces the last focused side pane. **Cmd-Option-Right** and **Cmd-Option-Left** focus the next and previous panes. Find searches the focused conversation, diff, or file. Each open tab remembers its layout, selections, scroll positions, and searches. Restored tabs start in Chat after relaunch. Work view needs a window at least 800 points wide and enough room for its panes.
+Drag the divider to resize the panel. Its width is saved on this device. Double-click the divider to return to half the sheet. **Cmd-Backslash** toggles fill. On sheets narrower than 1020 points the panel fills the sheet automatically.
 
 ### Drafts, messaging, and search
 
@@ -185,9 +185,7 @@ Host-owned worktrees are created on `plait/<uuid-prefix>` branches under `<main-
 
 With a protocol 5+ host, the host snapshots your checkout before and after every run—across all harnesses and permission modes, including files written by commands—into a private Git store kept for 30 days. If the before-record fails, the run does not start.
 
-In a wide Conversation window, **This turn** shows the latest run and its recorded file changes. Select a file for its recorded diff, or use Undo or Redo with the same safeguards as the conversation. An earlier turn’s steps show that record. **Latest** returns to the newest turn. The footer opens Switch Branch or current Changes. With no turn record, the panel shows the working tree.
-
-- **Review a run:** Click any recorded filename or the latest finished run’s step count to open **Changes** scoped to that turn's saved before/after diff (**Recorded**), even for files later committed, edited, or deleted. Switch between **Recorded** and **Current** to compare against your live working tree, or open the scope picker to choose **All changes**, **Original** (the run's changes), or **Restored** (what an undo put back). Staging by turn and "since last reviewed" baselines are planned.
+Select a recorded filename or **Review** on a closing line to open that turn in **Changes**. Its recorded diff remains available even if the file was later committed, edited, or deleted. **Latest** returns to the newest turn. Undo and Redo use the same safeguards as the closing line.
 
 ### Undo a run
 

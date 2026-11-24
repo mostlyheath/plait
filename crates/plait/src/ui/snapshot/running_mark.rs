@@ -7,22 +7,30 @@ pub(super) fn walk(harness: &mut Harness, repository: &Path, suffix: &str) {
     harness.cx.update(|cx| cx.set_reduce_motion(true));
     install(harness, repository);
     // Keep this scene portable and focused on the four marks.
-    let (machine, hide_inspector) = harness
+    let (machine, panel_was_open) = harness
         .window
         .update(&mut harness.cx, |plait, _, _| {
+            let panel = plait.tabs.model.panel_mut().expect("active fixture thread");
+            let panel_was_open = panel.open;
+            panel.close();
             (
                 std::mem::replace(
                     &mut plait.state.projects[0].machines[0].name,
                     "studio".into(),
                 ),
-                std::mem::replace(&mut plait.preferences.value.hide_inspector, true),
+                panel_was_open,
             )
         })
         .expect("window update");
     capture_both(harness, &format!("running-mark-{suffix}"));
     harness.update(move |plait, _, _| {
         plait.state.projects[0].machines[0].name = machine;
-        plait.preferences.value.hide_inspector = hide_inspector;
+        plait
+            .tabs
+            .model
+            .panel_mut()
+            .expect("active fixture thread")
+            .open = panel_was_open;
     });
     harness.cx.update(|cx| cx.set_reduce_motion(false));
 }
