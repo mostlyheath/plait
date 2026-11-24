@@ -352,6 +352,55 @@ fn overview_closes_when_the_open_thread_is_selected_again() {
     std::fs::remove_dir_all(scratch).unwrap();
 }
 
+/// The attention chip agrees with its count; the other two read the same
+/// for any count, and a chip at zero is not drawn.
+#[cfg(debug_assertions)]
+#[core::prelude::v1::test]
+fn overview_attention_chip_agrees_with_its_count() {
+    if !isolated("overview::overview_attention_chip_agrees_with_its_count") {
+        return;
+    }
+    let scratch = std::env::temp_dir().join(format!("plait-overview-chip-{}", std::process::id()));
+    std::fs::create_dir_all(&scratch).unwrap();
+    let repository = scratch.canonicalize().unwrap();
+    let mut h = Harness::with_host(&repository, None, 1380., 860., None);
+    h.connect(&repository, false);
+    install(&mut h, [&repository, &repository]);
+    h.keystroke("cmd-shift-e");
+    let chips = |h: &mut Harness| {
+        h.draw_a11y()
+            .nodes
+            .iter()
+            .filter(|n| {
+                ["overview-need", "overview-working", "overview-review"]
+                    .iter()
+                    .any(|id| n.path.contains(id))
+            })
+            .filter_map(|n| n.value.clone())
+            .collect::<Vec<_>>()
+    };
+    // Approval, failed and interrupted; one working; one finished and unread.
+    assert_eq!(chips(&mut h), ["3 need you", "1 working", "1 to review"]);
+    let settle = |h: &mut Harness, needing: &[&str]| {
+        let needing = needing.iter().map(|id| id.to_string()).collect::<Vec<_>>();
+        h.update(move |p, _, _| {
+            for thread in p.host.connection.threads_mut() {
+                if !needing.contains(&thread.id) {
+                    thread.status = ThreadStatus::Idle;
+                }
+            }
+        });
+    };
+    settle(&mut h, &["approval", "failed"]);
+    assert_eq!(chips(&mut h), ["2 need you", "1 to review"]);
+    settle(&mut h, &["approval"]);
+    assert_eq!(chips(&mut h), ["1 needs you", "1 to review"]);
+    settle(&mut h, &[]);
+    assert_eq!(chips(&mut h), ["1 to review"]);
+    drop(h);
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
 #[cfg(debug_assertions)]
 fn assert_cards(h: &mut Harness, title: &str, count: &str) {
     let frame = h.draw_a11y();

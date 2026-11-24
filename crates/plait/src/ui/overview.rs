@@ -290,7 +290,17 @@ impl Plait {
                 )
                 .children(
                     [
-                        ("overview-need", counts.need_you, "need you", colors().amber),
+                        (
+                            "overview-need",
+                            counts.need_you,
+                            // "1 needs you", "2 need you".
+                            if counts.need_you == 1 {
+                                "needs you"
+                            } else {
+                                "need you"
+                            },
+                            colors().amber,
+                        ),
                         ("overview-working", counts.working, "working", colors().blue),
                         (
                             "overview-review",
