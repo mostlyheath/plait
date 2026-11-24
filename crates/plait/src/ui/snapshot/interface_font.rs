@@ -7,6 +7,8 @@ use plait_client::preferences::InterfaceFont;
 
 const REQUEST: &str =
     "Summarize the retry backoff changes and list the three affected modules with counts.";
+const MACHINE: &str = "studio";
+const THREAD_TITLE: &str = "Review retry backoff";
 
 const ANSWER: &str = r#"The retry pass is ready across **3 modules** (`14` added lines, `4` removed):
 
@@ -43,9 +45,26 @@ fn stage_conversation(harness: &mut Harness, repository: &Path) {
         snapshot.live_reasoning.clear();
     });
     harness.update(|plait, _, _| {
+        let threads = plait.host.connection.threads_mut();
+        threads[0].title = Some(THREAD_TITLE.into());
+        threads[0].status = ThreadStatus::Idle;
+        threads[1].title = Some("Check queue status".into());
+        for project in &mut plait.state.projects {
+            project.machines[0].name = MACHINE.into();
+        }
         plait.sidebar = true;
         plait.workspace.live_scroll.scroll_to(ListOffset::default());
     });
+}
+
+fn show_appearance(harness: &mut Harness) {
+    harness.update(|plait, window, cx| {
+        plait.show_settings(true, window, cx);
+        plait.settings_tab = SettingsTab::Appearance;
+    });
+    // Scroll after layout so both font rows are visible at the narrow size.
+    harness.draw();
+    harness.update(|plait, _, _| plait.settings_scroll.scroll_to_bottom());
 }
 
 fn capture_choice(harness: &mut Harness, choice: InterfaceFont, name: &str, suffix: &str) {
@@ -56,18 +75,7 @@ fn capture_choice(harness: &mut Harness, choice: InterfaceFont, name: &str, suff
     });
     harness.capture(&format!("interface-font-{name}-{suffix}"));
 
-    harness.update(|plait, _, cx| {
-        plait.settings_open = true;
-        plait.settings_tab = SettingsTab::Appearance;
-        cx.notify();
-    });
-    // Draw once so Settings measures its scroll height, then scroll to show
-    // Interface font beside Code font.
-    harness.draw();
-    harness.update(|plait, _, cx| {
-        plait.settings_scroll.scroll_to_bottom();
-        cx.notify();
-    });
+    show_appearance(harness);
     harness.capture(&format!("interface-font-{name}-appearance-{suffix}"));
 }
 
@@ -91,11 +99,56 @@ pub(super) fn walk(harness: &mut Harness, repository: &Path, suffix: &str) {
 
     capture_choice(harness, InterfaceFont::System, "system", suffix);
 
-    // Restore the default interface font so later scenes in the walk match it.
     harness.update(|plait, _, cx| {
         plait.settings_open = false;
         plait.preferences.value.interface_font = InterfaceFont::Plex;
         plait.apply_interface_font(cx);
+        plait.rebuild_projects(cx);
+    });
+}
+
+#[cfg(debug_assertions)]
+fn assert_font_controls_fit(harness: &mut Harness, scene: &str) {
+    use crate::ui::theme::{TYPE_CONTROL_SIZE, TYPE_CONTROL_WEIGHT};
+
+    let frame = harness.draw_a11y();
+    frame.assert_no_duplicates(scene);
+    harness.update(|plait, window, _| {
+        let clip = plait.settings_scroll.bounds();
+        for choice in InterfaceFont::ALL {
+            let label = choice.label();
+            let name = format!("Interface font: {label}");
+            let bounds = frame
+                .nodes
+                .iter()
+                .find(|node| {
+                    node.role == Role::RadioButton && node.label.as_deref() == Some(name.as_str())
+                })
+                .unwrap_or_else(|| panic!("{scene}: missing {name}"))
+                .bounds;
+            assert!(
+                clip.contains(&bounds.origin) && clip.contains(&bounds.bottom_right()),
+                "{scene}: {name} is clipped by the scroll view ({bounds:?} outside {clip:?})"
+            );
+            let text = window.text_system().shape_line(
+                label.into(),
+                px(TYPE_CONTROL_SIZE),
+                &[TextRun {
+                    len: label.len(),
+                    font: Font {
+                        weight: TYPE_CONTROL_WEIGHT,
+                        ..font(ui_font())
+                    },
+                    ..Default::default()
+                }],
+                None,
+            );
+            // The shared segment reserves 11 points of padding and a 1-point border per side.
+            assert!(
+                text.width <= bounds.size.width - px(24.) + px(1.),
+                "{scene}: {name} has insufficient label width"
+            );
+        }
     });
 }
 
@@ -114,7 +167,7 @@ fn interface_font_switches_and_loads_older_preferences_as_plex() {
     std::fs::write(&prefs_path, r#"{"hide_inspector":false}"#).unwrap();
 
     for (suffix, width, height) in [("wide", 1380., 860.), ("narrow", 900., 600.)] {
-        let mut harness = Harness::new(&repository, None, width, height);
+        let mut harness = Harness::with_host(&repository, None, width, height, None);
         stage_conversation(&mut harness, &repository);
         assert!(bundled_ui_font_loaded(), "bundled IBM Plex Sans must load");
         assert_eq!(ui_font().as_ref(), PLEX_UI_FONT);
@@ -122,29 +175,23 @@ fn interface_font_switches_and_loads_older_preferences_as_plex() {
             assert_eq!(plait.preferences.value.interface_font, InterfaceFont::Plex);
         });
 
-        // Open Settings → Appearance and check accessible radio buttons.
-        harness.update(|plait, _, _| {
-            plait.settings_open = true;
-            plait.settings_tab = SettingsTab::Appearance;
-        });
+        show_appearance(&mut harness);
         #[cfg(debug_assertions)]
-        {
-            let frame = harness.draw_a11y();
-            frame.assert_no_duplicates(&format!("interface-font-plex-appearance-{suffix}"));
-            for label in ["Interface font: Plex Sans", "Interface font: System"] {
-                assert!(
-                    frame.has_node(Role::RadioButton, |n| n.label.as_deref() == Some(label)),
-                    "{suffix}: missing radio button {label:?}"
-                );
-            }
-        }
-        harness.draw();
+        assert_font_controls_fit(
+            &mut harness,
+            &format!("interface-font-plex-appearance-{suffix}"),
+        );
 
         // Switch to System font: applies immediately and updates preference.
         harness.update(|plait, _, cx| {
             plait.set_interface_font(InterfaceFont::System, cx);
         });
         assert_eq!(ui_font().as_ref(), SYSTEM_UI_FONT);
+        #[cfg(debug_assertions)]
+        assert_font_controls_fit(
+            &mut harness,
+            &format!("interface-font-system-appearance-{suffix}"),
+        );
         harness.update(|plait, _, _| {
             assert_eq!(
                 plait.preferences.value.interface_font,

@@ -173,6 +173,7 @@ fn measure(text: &str, window: &Window) -> f32 {
     let run = TextRun {
         len: text.len(),
         font: Font {
+            weight: TYPE_CONTROL_WEIGHT,
             features: tabular_nums(),
             ..font(ui_font())
         },
@@ -802,11 +803,12 @@ impl Plait {
             }))
             .hover(|s| s.bg(rgba(colors().hover)))
             .focus_visible(|s| s.border_color(rgb(colors().blue)))
-            .text_size(px(12.5))
+            .text_size(px(TYPE_CONTROL_SIZE))
+            .line_height(px(TYPE_CONTROL_LINE))
             .font_weight(if meta.active || meta.unread || attention {
-                FontWeight::MEDIUM
+                TYPE_CONTROL_WEIGHT
             } else {
-                FontWeight::NORMAL
+                TYPE_REGULAR
             })
             .tooltip(move |_, cx| tooltip(hover.clone(), cx))
             .on_mouse_down(
