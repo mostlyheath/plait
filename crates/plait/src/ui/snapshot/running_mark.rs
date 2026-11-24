@@ -6,7 +6,24 @@ use std::{cell::Cell, path::Path, rc::Rc, sync::Arc, time::Duration};
 pub(super) fn walk(harness: &mut Harness, repository: &Path, suffix: &str) {
     harness.cx.update(|cx| cx.set_reduce_motion(true));
     install(harness, repository);
+    // Keep this scene portable and focused on the four marks.
+    let (machine, hide_inspector) = harness
+        .window
+        .update(&mut harness.cx, |plait, _, _| {
+            (
+                std::mem::replace(
+                    &mut plait.state.projects[0].machines[0].name,
+                    "studio".into(),
+                ),
+                std::mem::replace(&mut plait.preferences.value.hide_inspector, true),
+            )
+        })
+        .expect("window update");
     capture_both(harness, &format!("running-mark-{suffix}"));
+    harness.update(move |plait, _, _| {
+        plait.state.projects[0].machines[0].name = machine;
+        plait.preferences.value.hide_inspector = hide_inspector;
+    });
     harness.cx.update(|cx| cx.set_reduce_motion(false));
 }
 
