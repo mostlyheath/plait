@@ -370,6 +370,10 @@ fn opening_a_folded_turn_keeps_the_activated_row_where_it_is_on_screen() {
     let mut harness = Harness::with_host(&repository, None, 900., 600., None);
     install_long_thread(&mut harness, &repository);
 
+    // Leave enough content after r4 to scroll away from the bottom even
+    // when the compact folded rows would otherwise fit in one viewport.
+    harness.update(|plait, _, cx| plait.open_folded_turn("request-r5", cx));
+
     // Case 1: scrolled up, opening a folded turn below the viewport top.
     harness.update(|plait, _, _| {
         plait.workspace.live_scroll.scroll_to(ListOffset {
@@ -386,12 +390,11 @@ fn opening_a_folded_turn_keeps_the_activated_row_where_it_is_on_screen() {
                 .live_layout
                 .folded_row_index("request-r4")
                 .expect("r4 folded");
-            plait
-                .workspace
-                .live_scroll
-                .bounds_for_item(ix)
-                .expect("r4 visible")
-                .top()
+            let scroll = &plait.workspace.live_scroll;
+            assert!(scroll.logical_scroll_top().item_ix < ix);
+            let bounds = scroll.bounds_for_item(ix).expect("r4 visible");
+            assert!(scroll.viewport_bounds().contains(&bounds.center()));
+            bounds.top()
         })
         .unwrap();
 
