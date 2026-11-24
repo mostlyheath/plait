@@ -24,7 +24,6 @@ pub(super) struct Navigation {
     pub collapsed: HashSet<PathBuf>,
     pub available: HashMap<PathBuf, bool>,
     pub archived: bool,
-    pub attention: bool,
     pub rename: Option<(String, Entity<TextField>)>,
     pub menu: Option<String>,
     pub managing: Option<ThreadManagement>,
@@ -46,7 +45,6 @@ impl Navigation {
             collapsed: HashSet::new(),
             available: HashMap::new(),
             archived: false,
-            attention: false,
             rename: None,
             menu: None,
             managing: None,
@@ -77,7 +75,6 @@ struct RowCache {
 struct RowCacheKey {
     threads_revision: u64,
     archived: bool,
-    attention: bool,
     draft: bool,
     checkout: PathBuf,
 }
@@ -191,7 +188,7 @@ fn card_detail_line() -> Div {
         .text_color(rgb(colors().subtle))
 }
 
-fn card_mark(state: nav::ThreadRowState, color: u32) -> AnyElement {
+pub(super) fn card_mark(state: nav::ThreadRowState, color: u32, dot_size: Pixels) -> AnyElement {
     use nav::ThreadRowState::*;
     match state {
         Working => svg()
@@ -203,9 +200,16 @@ fn card_mark(state: nav::ThreadRowState, color: u32) -> AnyElement {
                     .with_max_fps(30.),
             )
             .into_any_element(),
-        Queued(_) | Other => div().size(px(7.)).rounded_full().border_1().border_color(rgb(color)).into_any_element(),
-        Approval | Failed | Interrupted | FinishedUnread => dot(color).into_any_element(),
+        Queued(_) | Other => div().size(dot_size).rounded_full().border_1().border_color(rgb(color)).into_any_element(),
+        Approval | Failed | Interrupted | FinishedUnread => dot(color).size(dot_size).into_any_element(),
     }
+}
+
+pub(super) fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 impl Plait {
@@ -267,7 +271,6 @@ impl Plait {
         let key = RowCacheKey {
             threads_revision: self.host.connection.threads_revision(),
             archived: self.navigation.archived,
-            attention: self.navigation.attention,
             draft: self.draft.open,
             checkout: self.host.creation.checkout.clone(),
         };
@@ -280,9 +283,7 @@ impl Plait {
         cache.needs_me = nav::needs_me_count(self.host.connection.threads(), &self.lists().unread);
         let mut grouped = HashMap::<&std::path::Path, Vec<usize>>::new();
         for (index, thread) in self.host.connection.threads().iter().enumerate() {
-            if (!key.archived && thread.archived == Some(true))
-                || (key.attention && !nav::needs_attention(thread, &self.lists().unread))
-            {
+            if !key.archived && thread.archived == Some(true) {
                 continue;
             }
             grouped
@@ -296,9 +297,6 @@ impl Plait {
         for (pi, project) in self.state.projects.iter().enumerate() {
             let matching = grouped.get(project.checkout.as_path());
             let draft = drafted == Some(project.checkout.as_path());
-            if matching.is_none() && !draft && key.attention {
-                continue;
-            }
             let open = !self.navigation.collapsed.contains(&project.checkout);
             rows.push(Row::Project {
                 index: pi,
@@ -416,6 +414,7 @@ impl Plait {
                         .focus_visible(|s| s.border_color(rgb(colors().blue)).opacity(1.))
                         .tooltip(|_, cx| cx.new(|_| TextTooltip("New thread here".into())).into())
                         .on_activate(cx, move |this, window, cx| {
+                            this.close_overview(window, cx);
                             this.open_draft_in(start.clone(), window, cx)
                         }),
                     )
@@ -534,16 +533,12 @@ impl Plait {
         let menu_id = id.to_owned();
         let context_id = menu_id.clone();
         let id = menu_id.clone();
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
         let card = nav::Card::new(
             thread,
             self.lists(),
             self.summary_title(thread),
             self.card_model_name(thread),
-            now,
+            now_ms(),
         );
         let palette = colors();
         use nav::ThreadRowState::*;
@@ -610,7 +605,7 @@ impl Plait {
                                     .w(px(13.))
                                     .justify_center()
                                     .flex_shrink_0()
-                                    .child(card_mark(card.state, state_color)),
+                                    .child(card_mark(card.state, state_color, px(7.))),
                             )
                             .child(
                                 title(card.title)
@@ -663,6 +658,7 @@ impl Plait {
                         )
                     })
                     .on_activate(cx, move |this, window, cx| {
+                        this.close_overview(window, cx);
                         this.select_host_thread(id.clone(), window, cx)
                     }),
             )
@@ -690,7 +686,7 @@ impl Plait {
             .into_any_element()
     }
 
-    fn card_model_name(&self, thread: &ThreadSummary) -> Option<&str> {
+    pub(super) fn card_model_name(&self, thread: &ThreadSummary) -> Option<&str> {
         // A card can belong to a different harness from the selected thread.
         thread
             .harness
@@ -1025,7 +1021,6 @@ impl Plait {
         if !self.visible_sidebar() {
             self.toggle_sidebar(window, cx);
         }
-        self.navigation.attention = false;
         if let Some(thread) = self
             .host
             .connection
@@ -1259,11 +1254,12 @@ impl Plait {
         nav_row(
             "needs-me",
             format!("Needs you, {count}"),
-            self.navigation.attention,
+            self.overview.is_some(),
         )
         .h(px(30.))
         .text_size(px(13.5))
-        .aria_toggled(if self.navigation.attention {
+        .aria_keyshortcuts(self.shortcut_aria("view.overview"))
+        .aria_toggled(if self.overview.is_some() {
             Toggled::True
         } else {
             Toggled::False
@@ -1271,10 +1267,7 @@ impl Plait {
         .child(row().w(px(16.)).justify_center().child(dot(tint)))
         .child(title("Needs you"))
         .child(tag("needs-me-count", count.to_string(), tint).font_weight(FontWeight::MEDIUM))
-        .on_activate(cx, |this, _, cx| {
-            this.navigation.attention = !this.navigation.attention;
-            cx.notify();
-        })
+        .on_activate(cx, Self::toggle_overview)
     }
 
     fn actions(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1291,7 +1284,10 @@ impl Plait {
                     colors().mint,
                     "thread.new",
                 )
-                .on_activate(cx, |this, window, cx| this.open_draft(window, cx)),
+                .on_activate(cx, |this, window, cx| {
+                    this.close_overview(window, cx);
+                    this.open_draft(window, cx)
+                }),
             )
             .child(self.needs_me_row(cx))
             .child(

@@ -25,6 +25,7 @@ This table matches `ACTIONS` in `crates/plait/src/ui/actions.rs` (checked by aut
 | Cmd-Shift-W | Close Window | `window.close` |
 | Cmd-K | Command Palette… | `palette.toggle` |
 | Cmd-B | Toggle Sidebar | `view.toggle_sidebar` |
+| Cmd-Shift-E | Every Thread | `view.overview` |
 | Cmd-Backslash | Toggle Work View | `view.toggle_work` |
 | Cmd-Option-Right | Focus Next Pane | `pane.next` |
 | Cmd-Option-Left | Focus Previous Pane | `pane.previous` |
@@ -70,6 +71,15 @@ Work view also has these assignable pane actions.
 | — | Split Pane Right | `pane.split_right` |
 | — | Split Pane Down | `pane.split_down` |
 | — | Close Pane | `pane.close` |
+
+## Every thread
+
+| Key | Action |
+| --- | --- |
+| Arrow keys | Move focus by row or column |
+| Home / End | Focus the first or last card |
+| Enter | Open the focused thread |
+| Escape | Return to the workspace |
 
 ## Composer and text fields
 

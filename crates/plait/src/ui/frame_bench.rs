@@ -722,6 +722,12 @@ pub fn run() -> Vec<Row> {
         -85.,
     ));
 
+    rows.push(harness.switching(
+        "d9 Every thread, open and close with 300 threads",
+        12,
+        |h, _| h.update(|plait, window, cx| plait.toggle_overview(window, cx)),
+    ));
+
     drop(harness);
     let _ = std::fs::remove_dir_all(&scratch);
     rows

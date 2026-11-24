@@ -33,7 +33,6 @@ fn reset(p: &mut Plait) {
     p.host.connection.status.as_mut().unwrap().protocol_version = 4;
     p.navigation.collapsed.clear();
     p.navigation.archived = false;
-    p.navigation.attention = false;
     p.navigation.menu = None;
     p.navigation.available.clear();
     p.preferences.value.navigation = Default::default();

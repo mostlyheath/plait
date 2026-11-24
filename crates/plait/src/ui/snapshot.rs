@@ -59,6 +59,7 @@ mod mcp;
 mod message_box;
 mod messages;
 mod mixed_tabs;
+mod overview;
 mod pickers;
 mod settings_modal;
 mod sheet;
@@ -2454,6 +2455,7 @@ fn walk(output: Option<&Path>) {
         if suffix == "narrow" {
             cards::compact(&repository, output);
         }
+        overview::walk(&mut harness, &repository, suffix);
         // Threads exist, but none is open.
         harness.update(|plait, _, _| {
             plait.workspace.host_watch = None;
@@ -7270,9 +7272,6 @@ fn navigation_rows_are_cached_and_invalidated() {
         .window
         .update(&mut harness.cx, |p, _, cx| {
             assert_eq!(p.navigation.row_recomputations(), count);
-            p.navigation.attention = true;
-            assert!(p.filtered_threads(cx).is_empty());
-            assert_eq!(p.navigation.row_recomputations(), count + 1);
             p.host.connection.threads_mut().push(ThreadSummary {
                 id: "new".into(),
                 checkout: repository.clone(),
@@ -7281,14 +7280,11 @@ fn navigation_rows_are_cached_and_invalidated() {
                 archived: Some(true),
                 ..Default::default()
             });
-            assert!(p.filtered_threads(cx).is_empty());
-            assert_eq!(p.navigation.row_recomputations(), count + 2);
-            p.navigation.attention = false;
             assert_eq!(p.filtered_threads(cx).len(), 1);
-            assert_eq!(p.navigation.row_recomputations(), count + 3);
+            assert_eq!(p.navigation.row_recomputations(), count + 1);
             p.navigation.archived = true;
             assert_eq!(p.filtered_threads(cx).len(), 2);
-            assert_eq!(p.navigation.row_recomputations(), count + 4);
+            assert_eq!(p.navigation.row_recomputations(), count + 2);
             p.navigation.collapsed.insert(repository.clone());
             p.navigation.invalidate_rows();
             let rows = p.navigation_rows(cx);
@@ -7297,7 +7293,7 @@ fn navigation_rows_are_cached_and_invalidated() {
                     .iter()
                     .any(|row| matches!(row, super::navigation::Row::Thread(_)))
             );
-            assert_eq!(p.navigation.row_recomputations(), count + 5);
+            assert_eq!(p.navigation.row_recomputations(), count + 3);
         })
         .unwrap();
     drop(harness);
