@@ -156,6 +156,13 @@ def verify_macho(binary):
     run("codesign", "--verify", "--strict", binary)
 
 
+def stage_font_notices(resources):
+    destination = resources / "fonts"
+    destination.mkdir()
+    for name in ("OFL.txt", "README.md"):
+        shutil.copy2(ROOT / "assets/fonts" / name, destination / name)
+
+
 def stage_node(destination):
     config = json.loads((ROOT / "packaging/macos/node.json").read_text())
     archive_name = f"node-v{config['version']}-darwin-arm64.tar.xz"

@@ -14,6 +14,7 @@ fn main() {
     gpui_platform::application()
         .with_assets(ui::theme::Assets)
         .run(move |cx| {
+            ui::theme::load_bundled_fonts(cx.text_system());
             #[cfg(target_os = "macos")]
             reduce_motion::observe(cx);
             ui::menus(cx);
