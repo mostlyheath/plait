@@ -293,6 +293,65 @@ fn overview_escape_leaves_an_input_method_composition_alone() {
     std::fs::remove_dir_all(scratch).unwrap();
 }
 
+/// Jumping to the sidebar's item for the thread already open is still a
+/// selection: Every thread closes on it, as when the tab changes.
+#[cfg(debug_assertions)]
+#[core::prelude::v1::test]
+fn overview_closes_when_the_open_thread_is_selected_again() {
+    if !isolated("overview::overview_closes_when_the_open_thread_is_selected_again") {
+        return;
+    }
+    let scratch = std::env::temp_dir().join(format!("plait-overview-same-{}", std::process::id()));
+    std::fs::create_dir_all(&scratch).unwrap();
+    let repository = scratch.canonicalize().unwrap();
+    let mut h = Harness::with_host(&repository, None, 1380., 860., None);
+    h.connect(&repository, false);
+    install(&mut h, [&repository, &repository]);
+    h.draw();
+    let item = h
+        .window
+        .update(&mut h.cx, |p, _, cx| {
+            let threads = p.filtered_threads(cx);
+            let all = p.host.connection.threads();
+            threads.iter().position(|&i| all[i].id == THREAD).unwrap()
+        })
+        .unwrap();
+    let keys = [
+        "cmd-alt-1",
+        "cmd-alt-2",
+        "cmd-alt-3",
+        "cmd-alt-4",
+        "cmd-alt-5",
+        "cmd-alt-6",
+    ];
+    h.keystroke("cmd-shift-e");
+    h.keystroke(keys[item]);
+    undo::wait(&mut h, |p| !p.tabs.lifecycle.busy);
+    h.update(|p, _, _| {
+        assert_eq!(p.host.thread.selected.as_deref(), Some(THREAD));
+        assert!(p.overview.is_none(), "Every thread stayed open");
+    });
+    // Another thread's item: the keys land in its message box, not the old one.
+    h.keystroke("cmd-shift-e");
+    h.keystroke(keys[usize::from(item == 0)]);
+    undo::wait(&mut h, |p| !p.tabs.lifecycle.busy);
+    h.update(|p, window, cx| {
+        let selected = p.host.thread.selected.clone().unwrap();
+        assert_ne!(selected, THREAD);
+        assert!(p.overview.is_none());
+        let focused = |id: &str| {
+            p.workspace
+                .composers
+                .get(id)
+                .is_some_and(|c| c.focus_handle(cx).is_focused(window))
+        };
+        assert!(!focused(THREAD), "focus went back to the previous thread");
+        assert!(focused(&selected), "the new thread's message box has focus");
+    });
+    drop(h);
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
 #[cfg(debug_assertions)]
 fn assert_cards(h: &mut Harness, title: &str, count: &str) {
     let frame = h.draw_a11y();
