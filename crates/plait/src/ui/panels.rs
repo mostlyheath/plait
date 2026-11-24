@@ -33,8 +33,8 @@ impl Panel {
 
     fn default_width(self, viewport: f32) -> f32 {
         match self {
-            Self::Sidebar if viewport > WIDE_WINDOW => 272.,
-            Self::Sidebar => 240.,
+            Self::Sidebar if viewport < 760. => 236.,
+            Self::Sidebar => 288.,
             Self::Inspector => 280.,
         }
     }
@@ -183,6 +183,12 @@ impl Plait {
 #[cfg(test)]
 mod tests {
     use super::{Panel, fit};
+
+    #[test]
+    fn sidebar_default_changes_below_760_points() {
+        assert_eq!(Panel::Sidebar.default_width(759.), 236.);
+        assert_eq!(Panel::Sidebar.default_width(760.), 288.);
+    }
 
     #[test]
     fn widths_stay_within_limits_and_leave_the_conversation_room() {

@@ -53,7 +53,6 @@ mod settings_project;
 mod settings_providers;
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 mod snapshot;
-mod status_line;
 mod tab_bookmark;
 mod tab_identity;
 mod tab_lifecycle;
@@ -1292,6 +1291,7 @@ impl Render for Plait {
         } else {
             Some(machine.name.clone())
         };
+        let sidebar = self.visible_sidebar();
         let root = column()
             .id("plait")
             .role(Role::Application)
@@ -1537,7 +1537,7 @@ impl Render for Plait {
             .map(|root| self.on_panel_resize(root, cx))
             .size_full()
             .overflow_hidden()
-            .bg(rgb(colors().bg))
+            .bg(rgb(colors().rail))
             .text_color(rgb(colors().text))
             .text_size(px(13.))
             .font_family(".SystemUIFont")
@@ -1549,12 +1549,25 @@ impl Render for Plait {
                     .flex_1()
                     .min_h_0()
                     .items_stretch()
-                    .when(self.visible_sidebar(), |el| el.child(self.navigation(cx)))
+                    .when(sidebar, |el| el.child(self.navigation(cx)))
                     .child(
                         column()
                             .flex_1()
                             .min_w_0()
                             .min_h_0()
+                            .bg(rgb(colors().bg))
+                            .overflow_hidden()
+                            .when(sidebar, |sheet| {
+                                sheet
+                                    .mt(px(8.))
+                                    .mr(px(8.))
+                                    .mb(px(8.))
+                                    .rounded(px(SURFACE_CORNER))
+                                    .border_1()
+                                    .border_color(rgb(colors().border))
+                                    // GPUI clips children to a rectangle. Keep opaque views inside the arc.
+                                    .p(px(4.))
+                            })
                             .child(self.header(title, location, status, wide, fullscreen, cx))
                             .when_some(self.session.note.clone(), |el, note| {
                                 el.child(
@@ -1644,12 +1657,12 @@ impl Render for Plait {
                                     } else {
                                         self.idle(wide, cx).into_any_element()
                                     }),
-                            ),
+                            )
+                            .when(self.diagnostics, |sheet| {
+                                sheet.child(self.diagnostics_bar())
+                            }),
                     ),
             )
-            // Timings stay available without spending a permanent chrome row on them.
-            .when(self.diagnostics, |el| el.child(self.diagnostics_bar()))
-            .child(self.status_line(wide, cx))
             .when_some(self.tab_list(cx), |el, list| el.child(list))
             // Above the workspace, beneath images, Settings, and pickers.
             .when_some(self.toast_stack(cx), |el, toasts| el.child(toasts))

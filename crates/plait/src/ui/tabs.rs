@@ -10,6 +10,8 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
+const STRIP_HEIGHT: f32 = 44.;
+
 /// Room the traffic lights take at the bar's left, and the inset that is left
 /// in full screen, where macOS hides them.
 const LIGHTS_INSET: f32 = 84.;
@@ -608,12 +610,10 @@ impl Plait {
         let bar = self
             .window_drag(row(), cx)
             .id("window-tab-bar")
-            .h(px(CHROME_HEIGHT))
+            .h(px(STRIP_HEIGHT))
             .flex_shrink_0()
             .gap_0()
             .bg(rgb(colors().rail))
-            .border_b_1()
-            .border_color(rgb(colors().border))
             // The lead holds the lights and the toggle; its empty rest is bar,
             // so it moves the window like the right end does.
             .child(
@@ -622,6 +622,7 @@ impl Plait {
                     .h_full()
                     .flex_shrink_0()
                     .pl(px(inset))
+                    .when(self.visible_sidebar(), |lead| lead.justify_end().pr(px(8.)))
                     .child(
                         icon_button("toggle-sidebar", "panel", "Toggle sidebar")
                             .map(|el| self.covered_tab_control(el))
@@ -951,7 +952,7 @@ impl Plait {
             .aria_label("All open tabs")
             .audited()
             .absolute()
-            .top(px(CHROME_HEIGHT))
+            .top(px(STRIP_HEIGHT))
             .right(px(48.))
             .w(px(320.))
             .max_h(px(336.))

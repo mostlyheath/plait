@@ -60,6 +60,7 @@ mod messages;
 mod mixed_tabs;
 mod pickers;
 mod settings_modal;
+mod sheet;
 mod showcase;
 mod sidebar;
 mod storage;
@@ -5797,7 +5798,7 @@ fn the_window_bar_moves_the_window_only_from_empty_space() {
     let scratch = std::env::temp_dir().join(format!("plait-window-bar-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&scratch);
     let repository = fixture_repository(&scratch);
-    let mut harness = Harness::new(&repository, None, 1380., 860.);
+    let mut harness = Harness::with_host(&repository, None, 1380., 860., None);
     let rail = harness
         .window
         .update(&mut harness.cx, |plait, _, _| {
@@ -5846,7 +5847,7 @@ fn the_window_bar_moves_the_window_only_from_empty_space() {
     );
     assert!(arms(&mut harness, rail + 400.), "the header's empty middle");
     // A control in the bar keeps its click: this one hides the rail.
-    assert!(!arms(&mut harness, 98.), "the sidebar toggle");
+    assert!(!arms(&mut harness, rail - 22.), "the sidebar toggle");
     assert!(!sidebar(&mut harness));
     // With the rail hidden the header starts under the lights, so its toggle
     // moves clear of them and the space it leaves still moves the window.

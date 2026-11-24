@@ -100,7 +100,11 @@ that the application's frame or latency goals are met.
   An offscreen Metal test uses Tab and checks the outline and surface pixels on
   Panel, Raised, and Navigation in both defaults. It requires a Metal device.
   Native visual review and the specified 1-point exterior gap remain open.
-- The rebuilt desktop layout (sidebar, status line, message box, This turn,
+- The sheet and sidebar foot have headless scenes for both sidebar positions and for
+  connected, connecting, offline, and update-available states. Native checks cover
+  the sheet corners, window dragging, and the foot controls by pointer and keyboard.
+  Those checks and frame measurements are pending.
+- The earlier desktop layout (sidebar, status line, message box, This turn,
   folded turns, Work view) was released without inspection in the native app.
   Its scenes were rendered and looked at on Linux only. See
   [#130](https://github.com/mostlyheath/plait/issues/130).
