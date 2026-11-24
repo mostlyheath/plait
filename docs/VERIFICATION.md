@@ -115,6 +115,9 @@ that the application's frame or latency goals are met.
 
 ## Known gaps
 
+- The message box, changed-files strip, and approval card have wide and narrow
+  test scenes. Native focus, input-method composition, VoiceOver, and the cost
+  of drawing the box shadow while typing and scrolling still need inspection.
 - Headless tests cover all three bundled IBM Plex Sans weights, tabular
   figures, and switching between Plex Sans and System. They check that both
   font choices fit the Appearance controls at 1380 × 860 and 900 × 600.

@@ -68,8 +68,8 @@ use plait_client::{
     folding::{self, DisplayRow},
     history::{self, Key},
     host::{
-        Approval, ApprovalMode, HistoryField, Message, MessageRole, Snapshot, ThreadStatus,
-        harness::HarnessId,
+        Approval, ApprovalKind, ApprovalMode, HistoryField, Message, MessageRole, Snapshot,
+        ThreadStatus, harness::HarnessId,
     },
     markdown::Block,
     reveal::Reveal,
@@ -1448,6 +1448,7 @@ impl Plait {
         // runs after the palette has closed.
         let shown = !self.settings_open
             && self.workspace.tab == super::Workspace::Conversation
+            && !self.panel_fills()
             && self.overlay.is_none();
         let snapshot = self.host.thread.snapshot.as_ref().filter(|snapshot| {
             shown && self.host.thread.selected.as_deref() == Some(snapshot.id.as_str())
@@ -1460,6 +1461,7 @@ impl Plait {
     /// Deny Once or Allow Once from the keyboard, the menu, or the palette.
     fn answer_by_shortcut(&mut self, allow: bool, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(answer) = self.shortcut_answer(allow) {
+            self.workspace.clear_approval_reply();
             self.control_thread(Some(answer), window, cx);
         }
     }
@@ -1535,124 +1537,202 @@ impl Plait {
             .then(|| key_hint(SharedString::from(format!("shortcut-hint-{id}")), label))
     }
 
-    /// Exact arguments and a one-call decision. Nothing runs without it.
-    fn approval(&self, approval: &Approval, cx: &mut Context<Self>) -> impl IntoElement {
-        let exact = approvable(approval, self.thread_harness());
+    /// Why an approval's buttons cannot act right now, for disabled hover text.
+    fn approval_disabled_reason(&self, approval: &Approval) -> &'static str {
+        if !approvable(approval, self.thread_harness()) {
+            "Exact arguments are unavailable. Stop this run instead."
+        } else if !self.host.connection.connected {
+            "Reconnect to answer this approval."
+        } else if self.host.thread.decided_approvals.contains(&approval.id) {
+            "Decision already sent."
+        } else if self.host.thread.controlling {
+            "Sending decision…"
+        } else {
+            "Cannot answer this approval now."
+        }
+    }
+
+    /// Exact arguments and a one-call decision. Drawn in the message box's
+    /// place while the thread waits for approval.
+    fn approval(&self, approval: &Approval, cx: &mut Context<Self>) -> Div {
+        let harness = self.thread_harness();
+        let exact = approvable(approval, harness);
         let enabled = self.can_answer(approval);
+        let disabled_reason = self.approval_disabled_reason(approval);
         let allow_id = approval.id.clone();
         let deny_id = approval.id.clone();
+        let harness_name = self
+            .harness_row(harness)
+            .map_or_else(|| harness.label().into(), |row| row.name.clone());
+        let waiting = format!("{harness_name} is waiting");
         let dirty = approval.dirty_paths.join(", ");
         // Pi refuses to write files that had changes before the run; another
         // harness only lists them, and nothing stops it writing them.
-        let dirty_note = match self.thread_harness() {
+        let dirty_note = match harness {
             _ if dirty.is_empty() => String::new(),
             HarnessId::Pi => format!("Protected dirty paths: {dirty}"),
-            id => format!(
-                "Changed before this run: {dirty}. {} is not stopped from writing them.",
-                self.harness_row(id)
-                    .map_or_else(|| id.label().into(), |row| row.name.clone())
+            _ => format!(
+                "Changed before this run: {dirty}. {harness_name} is not stopped from writing them."
             ),
         };
-        div()
-            .flex_shrink_0()
-            .px(px(self.conversation_padding()))
-            .pt_2()
+        let allow_hint = self.shortcut_hint("approval.allow_once").map(|hint| {
+            hint.bg(rgba(if colors().light {
+                0xffffff24
+            } else {
+                0x00000024
+            }))
+            .text_color(rgb(colors().bg))
+        });
+        let deny_hint = self.shortcut_hint("approval.deny_once");
+        column()
+            .w_full()
+            .max_w(px(CONTENT_WIDTH))
+            .mx_auto()
+            .p(px(14.))
+            .gap(px(10.))
+            .rounded(px(SURFACE_CORNER))
+            .shadow(approval_shadows())
+            .border_1()
+            .border_color(rgba((colors().amber << 8) | 0x8c))
+            .bg(rgb(colors().panel))
+            .text_size(px(12.))
             .child(
-                column()
+                row()
                     .w_full()
-                    .max_w(px(CONTENT_WIDTH))
-                    .mx_auto()
-                    .p_3()
+                    .min_w_0()
                     .gap_2()
-                    .rounded_xl()
-                    .border_1()
-                    .border_color(rgb(colors().warn_edge))
-                    .bg(rgb(colors().rail))
-                    .text_size(px(12.))
-                    .child(
-                        row().child(dot(colors().amber)).child(
-                            div()
-                                .text_size(px(13.))
-                                .font_weight(FontWeight::MEDIUM)
-                                .child(format!("Approval required: {}", approval.summary)),
-                        ),
-                    )
-                    .when(!approval.details.is_empty(), |el| {
-                        el.child(
-                            div()
-                                .id("approval-details")
-                                .role(Role::Group)
-                                .aria_label(format!(
-                                    "Exact tool arguments: {}. Risk: {}. {}",
-                                    approval.details, approval.risk, dirty_note
-                                ))
-                                .audited()
-                                .max_h(px(140.))
-                                .overflow_y_scroll()
-                                .px_3()
-                                .py_2()
-                                .rounded_md()
-                                .bg(rgb(colors().bg))
-                                .border_1()
-                                .border_color(rgb(colors().border))
-                                .font_family(mono())
-                                .text_size(px(code_size()))
-                                .line_height(px(code_line_height()))
-                                .child(approval.details.clone()),
-                        )
-                    })
-                    // The dot, title, and edge already ask for attention; the
-                    // risk is read, so it is set as secondary text.
+                    .child(dot(colors().amber).size(px(9.)))
                     .child(
                         div()
-                            .text_color(rgb(colors().muted))
-                            .child(approval.risk.clone()),
+                            .flex_1()
+                            .min_w_0()
+                            .text_size(px(13.5))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(rgb(colors().strong))
+                            .child(approval_question(approval.kind)),
                     )
-                    .when(!approval.dirty_paths.is_empty(), |el| {
-                        el.child(
-                            div()
-                                .text_color(rgb(colors().muted))
-                                .child(dirty_note.clone()),
-                        )
-                    })
-                    .when(!exact, |el| {
-                        el.child(div().text_color(rgb(colors().red)).child(
-                            "Exact arguments are unavailable. Approval is disabled; Stop this run.",
-                        ))
-                    })
                     .child(
-                        row()
-                            .justify_end()
-                            .child(
-                                toned_button("deny-tool", "Deny once", Tone::Filled)
-                                    .aria_keyshortcuts(self.shortcut_aria("approval.deny_once"))
-                                    .children(self.shortcut_hint("approval.deny_once"))
-                                    .disabled(!enabled)
-                                    .when(enabled, |el| {
-                                        el.on_activate(cx, move |this, window, cx| {
-                                            this.control_thread(
-                                                Some((deny_id.clone(), false)),
-                                                window,
-                                                cx,
-                                            )
-                                        })
-                                    }),
-                            )
-                            .child(
-                                toned_button("allow-tool", "Allow once", Tone::Primary)
-                                    .aria_keyshortcuts(self.shortcut_aria("approval.allow_once"))
-                                    .children(self.shortcut_hint("approval.allow_once"))
-                                    .disabled(!enabled)
-                                    .when(enabled, |el| {
-                                        el.on_activate(cx, move |this, window, cx| {
-                                            this.control_thread(
-                                                Some((allow_id.clone(), true)),
-                                                window,
-                                                cx,
-                                            )
-                                        })
-                                    }),
-                            ),
+                        div()
+                            .flex_shrink_0()
+                            .text_size(px(12.))
+                            .text_color(rgb(colors().subtle))
+                            .child(waiting),
+                    ),
+            )
+            .when(!approval.details.is_empty(), |el| {
+                el.child(
+                    div()
+                        .id("approval-details")
+                        .role(Role::Group)
+                        .aria_label(format!(
+                            "Exact tool arguments: {}. Risk: {}. {dirty_note}",
+                            approval.details, approval.risk
+                        ))
+                        .audited()
+                        .max_h(px(140.))
+                        .overflow_y_scroll()
+                        .px(px(11.))
+                        .py(px(9.))
+                        .rounded(px(CONTROL_CORNER))
+                        .bg(rgb(colors().rail))
+                        .border_1()
+                        .border_color(rgb(colors().border))
+                        .font_family(mono())
+                        .text_size(px(code_size()))
+                        .line_height(px(code_line_height()))
+                        .text_color(rgb(colors().text))
+                        .child(approval.details.clone()),
+                )
+            })
+            .when(
+                !approval.summary.is_empty()
+                    || !approval.risk.is_empty()
+                    || !approval.dirty_paths.is_empty()
+                    || !exact,
+                |el| {
+                    el.child(
+                        column()
+                            .gap_1()
+                            .text_size(px(12.))
+                            .when(!approval.summary.is_empty(), |el| {
+                                el.child(
+                                    div()
+                                        .text_color(rgb(colors().muted))
+                                        .child(approval.summary.clone()),
+                                )
+                            })
+                            .when(!approval.risk.is_empty(), |el| {
+                                el.child(
+                                    div()
+                                        .text_color(rgb(colors().amber))
+                                        .child(approval.risk.clone()),
+                                )
+                            })
+                            .when(!approval.dirty_paths.is_empty(), |el| {
+                                el.child(
+                                    div()
+                                        .text_color(rgb(colors().muted))
+                                        .child(dirty_note.clone()),
+                                )
+                            })
+                            .when(!exact, |el| {
+                                el.child(div().text_color(rgb(colors().red)).child(
+                                    "Exact arguments are unavailable. Approval is disabled; Stop this run.",
+                                ))
+                            }),
+                    )
+                },
+            )
+            .child(
+                row()
+                    .w_full()
+                    .flex_wrap()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        toned_button("allow-tool", "Allow once", Tone::Primary)
+                            .aria_keyshortcuts(self.shortcut_aria("approval.allow_once"))
+                            .children(allow_hint)
+                            .disabled(!enabled)
+                            .when(!enabled, |el| {
+                                el.tooltip(move |_, cx| {
+                                    cx.new(|_| {
+                                        super::thread_controls::TextTooltip(
+                                            disabled_reason.to_owned(),
+                                        )
+                                    })
+                                    .into()
+                                })
+                            })
+                            .when(enabled, |el| {
+                                el.on_activate(cx, move |this, window, cx| {
+                                    this.workspace.clear_approval_reply();
+                                    this.control_thread(Some((allow_id.clone(), true)), window, cx)
+                                })
+                            }),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        toned_button("deny-tool", "Deny once", Tone::Ghost)
+                            .aria_keyshortcuts(self.shortcut_aria("approval.deny_once"))
+                            .children(deny_hint)
+                            .disabled(!enabled)
+                            .when(!enabled, |el| {
+                                el.tooltip(move |_, cx| {
+                                    cx.new(|_| {
+                                        super::thread_controls::TextTooltip(
+                                            disabled_reason.to_owned(),
+                                        )
+                                    })
+                                    .into()
+                                })
+                            })
+                            .when(enabled, |el| {
+                                el.on_activate(cx, move |this, window, cx| {
+                                    this.workspace.clear_approval_reply();
+                                    this.control_thread(Some((deny_id.clone(), false)), window, cx)
+                                })
+                            }),
                     ),
             )
     }
@@ -1929,33 +2009,85 @@ Tone::Filled,
                     ),
                 );
             }
-            if let Some(approval) = &snapshot.pending_approval {
-                main = main.child(self.approval(approval, cx));
-            }
         }
+        let pending_approval = snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.pending_approval.as_ref());
+        let reply_open = pending_approval
+            .is_some_and(|approval| self.workspace.showing_composer_for_approval(&approval.id));
+        let draw_composer = pending_approval.is_none() || reply_open;
         let composer = self
             .host
             .thread
             .selected
             .as_ref()
             .and_then(|id| self.workspace.composers.get(id));
+        let mut parts = if self.host.protocol() >= 3 {
+            self.thread_message_box_parts(cx)
+        } else {
+            self.older_host_message_box_parts()
+        };
+        let approval_notices = pending_approval.and_then(|_| {
+            let notices = std::mem::take(&mut parts.notices);
+            (!notices.is_empty()).then(|| {
+                column()
+                    .w_full()
+                    .max_w(px(CONTENT_WIDTH))
+                    .mx_auto()
+                    .gap_1()
+                    .children(notices)
+            })
+        });
         main = main.child(
             column()
                 .flex_shrink_0()
                 .px(px(self.conversation_padding()))
-                .pt_2()
-                .pb_3()
+                .pt(px(6.))
+                .pb(px(18.))
                 .gap_2()
                 .children(self.checkout_wait_control(cx))
                 .children(self.queued_inputs(cx))
-                .children(self.thread_files_card(cx))
-                .when_some(composer.cloned(), |el, composer| {
-                    let parts = if self.host.protocol() >= 3 {
-                        self.thread_message_box_parts(cx)
-                    } else {
-                        self.older_host_message_box_parts()
-                    };
-                    el.child(self.message_box(composer, parts, window, cx))
+                .children(approval_notices)
+                .when_some(pending_approval, |el, approval| {
+                    let reply_id = approval.id.clone();
+                    el.child(self.approval(approval, cx))
+                        .when(!reply_open, |el| {
+                            el.child(
+                                div()
+                                    .w_full()
+                                    .max_w(px(CONTENT_WIDTH))
+                                    .mx_auto()
+                                    .flex()
+                                    .child(
+                                        button("approval-reply-instead", "Reply instead")
+                                            .h(px(24.))
+                                            .rounded(px(ITEM_CORNER))
+                                            .px(px(8.))
+                                            .aria_description(
+                                                "Show the message box below this approval card.",
+                                            )
+                                            .on_activate(cx, move |this, window, cx| {
+                                                this.workspace
+                                                    .show_composer_for_approval(reply_id.clone());
+                                                this.focus_composer(window, cx);
+                                                cx.notify();
+                                            }),
+                                    ),
+                            )
+                        })
+                })
+                .when(draw_composer, |el| {
+                    el.when_some(composer.cloned(), |el, composer| {
+                        // Keep the changed-files strip joined directly to the top of the box.
+                        el.child(
+                            column()
+                                .w_full()
+                                .max_w(px(CONTENT_WIDTH))
+                                .mx_auto()
+                                .children(self.thread_files_card(cx))
+                                .child(self.message_box(composer, parts, window, cx)),
+                        )
+                    })
                 })
                 // The source issue shows whatever the host's protocol.
                 .children(self.issue_link_line(cx).map(|line| {
@@ -1979,6 +2111,23 @@ Tone::Filled,
 /// Hover group for one conversation row, so its quiet controls appear together.
 fn row_group(row: usize) -> SharedString {
     format!("conversation-row-{row}").into()
+}
+
+fn approval_question(kind: ApprovalKind) -> &'static str {
+    match kind {
+        ApprovalKind::Command => "Run this command?",
+        ApprovalKind::Edit => "Make this edit?",
+    }
+}
+
+/// Floating shadow plus the 4-point sand ring at 12% opacity (0x1f).
+fn approval_shadows() -> Vec<BoxShadow> {
+    let mut shadows = floating_shadow();
+    shadows.push(
+        BoxShadow::new(px(0.), px(0.), rgba((colors().amber << 8) | 0x1f).into())
+            .spread_radius(px(4.)),
+    );
+    shadows
 }
 
 #[cfg(test)]

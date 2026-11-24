@@ -16,6 +16,9 @@ use plait_client::{
 };
 
 const WARMUP: usize = 5;
+const COMPOSER_KEYS: &[&str] = &["r", "e", "v", "i", "e", "w", "space"];
+const COMPOSER_STREAM_START: &str = "The edit is applied.";
+const COMPOSER_SCROLL_STEP: f32 = -60.;
 
 pub struct Row {
     pub name: String,
@@ -98,6 +101,35 @@ impl Harness {
         self.cx
             .update_window(window, |_, window, cx| window.dispatch_event(event, cx))
             .expect("scroll");
+    }
+
+    fn composer_key(&mut self, round: usize) {
+        let key = Keystroke::parse(COMPOSER_KEYS[round % COMPOSER_KEYS.len()]).unwrap();
+        // Like wheel(), dispatch against the last frame without draining the
+        // harness executor before the next explicit draw.
+        let handled = self
+            .cx
+            .update_window(self.window.into(), |_, window, cx| {
+                window.dispatch_keystroke(key, cx)
+            })
+            .expect("composer keystroke");
+        assert!(handled, "the composer must receive the keystroke");
+    }
+
+    /// One key through the focused input handler to the end of the next frame.
+    fn typing(&mut self, name: &str, streaming: bool) -> Row {
+        let (mut samples, mut renders) = (Vec::new(), Vec::new());
+        for round in 0..frames() {
+            if streaming {
+                std::thread::sleep(Duration::from_millis(8));
+            }
+            let start = Instant::now();
+            self.composer_key(round);
+            self.draw();
+            samples.push(start.elapsed());
+            renders.push(self.render_us());
+        }
+        row(name, samples, renders)
     }
 
     /// Steady state: the same frame redrawn, as after a plain `notify`.
@@ -475,10 +507,133 @@ fn baseline(scratch: &Path, rows: &mut Vec<Row>) {
     }
 }
 
+fn composer_harness(checkout: &Path) -> Harness {
+    std::fs::create_dir_all(checkout).expect("composer checkout");
+    let mut harness = Harness::with_host(checkout, None, 1380., 860., None);
+    harness.connect(checkout, false);
+    harness.change_snapshot(|snapshot| {
+        snapshot.status = ThreadStatus::Idle;
+        snapshot.live_text.clear();
+        snapshot.tools.last_mut().unwrap().status = ToolStatus::Done;
+    });
+    harness.update(|plait, window, cx| plait.focus_composer(window, cx));
+    harness.draw();
+    harness
+}
+
+fn start_composer_stream(harness: &mut Harness) {
+    // Restore the same empty starting draft as the idle typing case.
+    harness.update(|plait, _, cx| {
+        plait.workspace.composers[THREAD].update(cx, |composer, cx| {
+            let revision = composer.saved_draft().1 + 1;
+            composer.restore_draft(String::new(), revision, None, cx);
+        });
+    });
+    harness.change_snapshot(|snapshot| {
+        snapshot.status = ThreadStatus::Running;
+        snapshot.live_text = COMPOSER_STREAM_START.into();
+    });
+    // The initial text establishes a reveal. The remaining text arrives as a burst.
+    harness.draw();
+    harness.change_snapshot(|snapshot| {
+        snapshot.live_text.push_str(
+            &"\n\nThe streamed reply keeps arriving in bursts. "
+                .repeat(8)
+                .repeat(25),
+        );
+    });
+}
+
+fn composer_scroll_target(harness: &mut Harness, checkout: &Path) -> Point<Pixels> {
+    harness.change_snapshot(|snapshot| *snapshot = long_thread(THREAD, checkout, 120));
+    scroll_conversation(harness, 0.5);
+    harness
+        .window
+        .update(&mut harness.cx, |plait, _, _| {
+            let bounds = plait.workspace.live_scroll.viewport_bounds();
+            // Stay inside the transcript, just above the composer.
+            point(bounds.center().x, bounds.bottom() - px(40.))
+        })
+        .unwrap()
+}
+
+fn composer_cases(checkout: &Path, rows: &mut Vec<Row>) {
+    let mut harness = composer_harness(checkout);
+    rows.push(harness.steady("composer-idle: focused composer in an idle thread"));
+    rows.push(harness.typing(
+        "composer-typing: keystroke to frame in an idle thread",
+        false,
+    ));
+    start_composer_stream(&mut harness);
+    rows.push(harness.typing(
+        "composer-streaming: keystroke to frame during 120 Hz reveal",
+        true,
+    ));
+    let target = composer_scroll_target(&mut harness, checkout);
+    rows.push(harness.scrolling(
+        "composer-scrolling: wheel to frame with the composer visible",
+        target,
+        COMPOSER_SCROLL_STEP,
+    ));
+}
+
+#[core::prelude::v1::test]
+fn composer_driver_smoke() {
+    if !isolated("frame_bench::composer_driver_smoke") {
+        return;
+    }
+    let checkout = PathBuf::from(std::env::var_os(SCENE_HOME).unwrap()).join("checkout");
+    let mut harness = composer_harness(&checkout);
+    let draft = |h: &mut Harness| {
+        h.window
+            .update(&mut h.cx, |plait, _, cx| {
+                plait.workspace.composers[THREAD].read(cx).text().to_owned()
+            })
+            .unwrap()
+    };
+    harness.composer_key(0);
+    harness.draw();
+    assert_eq!(draft(&mut harness), "r");
+
+    start_composer_stream(&mut harness);
+    harness.composer_key(0);
+    harness.draw();
+    assert_eq!(draft(&mut harness), "r");
+    harness
+        .window
+        .update(&mut harness.cx, |plait, _, _| {
+            let blocks = &plait.workspace.formatted.live.as_ref().unwrap().blocks;
+            let reveal = &plait.workspace.reveal;
+            assert!(!reveal.pending_text(COMPOSER_STREAM_START.len() + 1));
+            assert!(reveal.pending_text(plait_client::reveal::total(blocks)));
+        })
+        .unwrap();
+
+    let target = composer_scroll_target(&mut harness, &checkout);
+    let scroll_top = |h: &mut Harness| {
+        h.window
+            .update(&mut h.cx, |plait, _, _| {
+                plait.workspace.live_scroll.logical_scroll_top()
+            })
+            .unwrap()
+    };
+    let before = scroll_top(&mut harness);
+    harness.wheel(target, COMPOSER_SCROLL_STEP);
+    harness.draw();
+    assert_ne!(scroll_top(&mut harness), before);
+    harness.composer_key(1);
+    assert_eq!(draft(&mut harness), "re");
+}
+
 pub fn run() -> Vec<Row> {
     let scratch = std::env::temp_dir().join(format!("plait-bench-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&scratch);
     let mut rows = Vec::new();
+    if std::env::var_os("PLAIT_BENCH_COMPOSER_ONLY").as_deref() == Some("1".as_ref()) {
+        composer_cases(&scratch.join("composer"), &mut rows);
+        let _ = std::fs::remove_dir_all(&scratch);
+        return rows;
+    }
     baseline(&scratch, &mut rows);
     {
         let repo = fixture_repository(&scratch.join("worktrees"));
