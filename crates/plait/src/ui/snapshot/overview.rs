@@ -255,6 +255,29 @@ fn overview_keeps_focus_over_an_open_panel() {
     });
 }
 
+#[core::prelude::v1::test]
+fn filling_the_panel_leaves_overview() {
+    if !isolated("overview::filling_the_panel_leaves_overview") {
+        return;
+    }
+    let home = PathBuf::from(std::env::var_os("HOME").unwrap());
+    let repository = fixture_repository(&home.join("overview-fill-panel"));
+    let mut h = Harness::with_host(&repository, None, 1380., 860., None);
+    h.connect(&repository, false);
+    h.update(|p, window, cx| p.show_tab(super::super::Workspace::Changes, window, cx));
+    h.draw();
+    h.update(|p, _, _| assert!(p.panel_is_open() && !p.panel_fills()));
+    h.keystroke("cmd-shift-e");
+    h.update(|p, _, _| assert!(p.overview.is_some()));
+    h.keystroke("cmd-\\");
+    h.draw();
+    h.update(|p, window, cx| {
+        assert!(p.overview.is_none());
+        assert!(p.panel_fills());
+        assert!(p.work_focus[p.panel_focus_kind() as usize].contains_focused(window, cx));
+    });
+}
+
 /// A project's path reads from the home directory, as elsewhere in Plait;
 /// the full path stays in its hover text.
 #[cfg(debug_assertions)]
