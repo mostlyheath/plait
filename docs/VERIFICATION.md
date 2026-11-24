@@ -98,6 +98,12 @@ that the application's frame or latency goals are met.
 
 ## Known gaps
 
+- Headless tests cover all three bundled IBM Plex Sans weights, tabular
+  figures, and switching between Plex Sans and System. They check that both
+  font choices fit the Appearance controls at 1380 × 860 and 900 × 600.
+  The `interface-font-*` scenes also show the conversation and sidebar at
+  both sizes. Pixel review, native window inspection on a Mac without a
+  separate Plex Sans installation, and frame benchmarks remain open.
 - The shared controls draw a hollow 1.5-point blue inset focus outline.
   An offscreen Metal test uses Tab and checks the outline and surface pixels on
   Panel, Raised, and Navigation in both defaults. It requires a Metal device.

@@ -1273,7 +1273,8 @@ impl Plait {
             .bg(rgb(colors().rail))
             .border_t_1()
             .border_color(rgb(colors().border))
-            .text_size(px(11.))
+            .text_size(px(TYPE_META_SIZE))
+            .font_features(tabular_nums())
             .text_color(rgb(colors().subtle))
             .child(a11y_text(
                 "diagnostics-summary",
@@ -1561,8 +1562,8 @@ impl Render for Plait {
             .overflow_hidden()
             .bg(rgb(colors().rail))
             .text_color(rgb(colors().text))
-            .text_size(px(13.))
-            .font_family(".SystemUIFont")
+            .text_size(px(TYPE_ROW_SIZE))
+            .font_family(ui_font())
             .child(self.tab_save_input(cx))
             .child(
                 row()
