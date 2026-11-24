@@ -686,7 +686,7 @@ keeps:
 
 | Tone | Band | Dark default | Light default |
 | --- | --- | --- | --- |
-| Emphasis | above Text | 14.7 | 16.7 |
+| Emphasis | above Text | 14.7 | 16.6 |
 | Text | 9.5 or more, and in a dark theme no more than 13.5 | 11.5 | 12.7 |
 | Secondary | 5 to 7.5 | 6.8 | 5.6 |
 | Hint | 3.5 to 4.7 on the background, and 3 or more on Panel, Raised, and Navigation | 4.3 | 4.1 |
