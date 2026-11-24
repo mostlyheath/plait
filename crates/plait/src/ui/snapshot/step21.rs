@@ -826,3 +826,62 @@ fn review_strip_opens_changes_with_fresh_counts() {
         );
     });
 }
+
+#[core::prelude::v1::test]
+fn changed_file_strip_recounts_when_leaving_this_turn() {
+    use plait_client::{
+        panel::{PanelKind, Scope},
+        review::recorded::Target,
+    };
+    if !isolated("step21::changed_file_strip_recounts_when_leaving_this_turn") {
+        return;
+    }
+    let home = PathBuf::from(std::env::var_os(SCENE_HOME).unwrap());
+    let repository = fixture_repository(&home);
+    for older_host in [false, true] {
+        let mut harness = Harness::with_host(&repository, None, 1380., 860., None);
+        setup_base_thread(&mut harness, &repository, "Sample model");
+        checkout_strip(
+            &mut harness,
+            &repository,
+            plait_engine::git::status(&repository).unwrap(),
+        );
+        harness.update(|plait, window, cx| {
+            plait
+                .host
+                .connection
+                .status
+                .as_mut()
+                .unwrap()
+                .protocol_version = if older_host { 4 } else { 5 };
+            let panel = plait.tabs.model.panel_mut().unwrap();
+            panel.open_on(PanelKind::Changes);
+            panel.select_scope(Scope::ThisTurn);
+            plait.workspace.turn_records.lines = Default::default();
+            plait.workspace.turn_review.target = Some(Target {
+                thread: THREAD.into(),
+                checkout: repository.clone(),
+                record: "turn".into(),
+                original: "turn".into(),
+                path: None,
+            });
+            assert_eq!(plait.panel_recorded(), !older_host);
+            let path = PathBuf::from("src/review.rs");
+            plait
+                .workspace
+                .work_counts
+                .insert(path.clone(), "+1 −1".into());
+            plait.workspace.work_total = Some("+1 −1".into());
+            plait.open_thread_file(path, window, cx);
+            assert_eq!(plait.tabs.model.panel().unwrap().scope, Scope::Uncommitted);
+            assert!(
+                plait.workspace.work_total.is_none(),
+                "stale panel total survived the scope change"
+            );
+            assert!(
+                plait.workspace.work_counts.is_empty(),
+                "stale file counts survived the scope change"
+            );
+        });
+    }
+}
