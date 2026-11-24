@@ -16,9 +16,10 @@ use std::{
 };
 
 pub(super) struct Navigation {
-    cached_rows: HashMap<String, (ThreadRowKey, Entity<ThreadRow>)>,
+    cached_rows: HashMap<String, (ThreadRowFlags, Entity<ThreadCard>)>,
     row_cache: RefCell<RowCache>,
-    pub scroll: UniformListScrollHandle,
+    layout: RefCell<TreeLayout>,
+    pub scroll: ListState,
     pub collapsed: HashSet<PathBuf>,
     pub available: HashMap<PathBuf, bool>,
     pub archived: bool,
@@ -38,7 +39,8 @@ impl Navigation {
         Self {
             cached_rows: HashMap::new(),
             row_cache: RefCell::new(RowCache::default()),
-            scroll: UniformListScrollHandle::new(),
+            layout: RefCell::new(TreeLayout::default()),
+            scroll: ListState::new(0, ListAlignment::Top, px(120.)),
             collapsed: HashSet::new(),
             available: HashMap::new(),
             archived: false,
@@ -106,9 +108,10 @@ impl Navigation {
         lists: &nav::Preferences,
         cx: &mut Context<Plait>,
     ) {
+        self.invalidate_rows();
         for (id, (key, view)) in &mut self.cached_rows {
             let unread = lists.unread.contains(id);
-            let worktree = lists.worktree(&key.summary.checkout).is_some();
+            let worktree = lists.worktree(&key.checkout).is_some();
             if key.unread != unread || key.worktree != worktree {
                 key.unread = unread;
                 key.worktree = worktree;
@@ -118,28 +121,37 @@ impl Navigation {
     }
 }
 
-#[derive(PartialEq, Eq)]
-struct ThreadRowKey {
-    summary: ThreadSummary,
-    title: String,
-    selected: bool,
+#[derive(Clone)]
+struct ThreadRowFlags {
+    checkout: PathBuf,
     unread: bool,
     worktree: bool,
-    protocol: u32,
-    theme: u32,
-    age: String,
-    index: usize,
 }
-struct ThreadRow {
+struct ThreadCard {
     owner: WeakEntity<Plait>,
-    index: usize,
+    id: String,
+    focus: FocusHandle,
 }
-impl Render for ThreadRow {
+impl Render for ThreadCard {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.owner
-            .update(cx, |p, cx| p.host_thread_row(self.index, cx))
+            .update(cx, |p, cx| p.thread_card(&self.id, &self.focus, cx))
             .unwrap_or_else(|_| div().into_any_element())
     }
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum RowId {
+    Project(PathBuf),
+    Thread(String),
+    Draft,
+}
+
+#[derive(Default)]
+struct TreeLayout {
+    rows: Rc<Vec<Row>>,
+    items: Rc<Vec<(RowId, FocusHandle)>>,
+    editing: Option<String>,
 }
 
 #[derive(Clone)]
@@ -163,12 +175,35 @@ pub(super) enum Row {
     Draft,
 }
 
-/// Left edge of the rail that joins a project's threads, under its chevron.
-const RAIL_X: f32 = 15.;
-
 /// One-line title that gives way to the trailing state.
 fn title(text: impl Into<SharedString>) -> Div {
     div().flex_1().min_w_0().truncate().child(text.into())
+}
+
+fn card_detail_line() -> Div {
+    row()
+        .pl(px(15.))
+        .gap(px(5.))
+        .line_height(px(14.))
+        .text_size(px(11.))
+        .text_color(rgb(colors().subtle))
+}
+
+fn card_mark(state: nav::ThreadRowState, color: u32) -> AnyElement {
+    use nav::ThreadRowState::*;
+    match state {
+        Working => svg()
+            .data(br#"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><path d="M13.7 8A5.7 5.7 0 1 1 8 2.3" fill="none" stroke="black" stroke-width="2.5" stroke-linecap="round"/></svg>"#)
+            .size(px(13.))
+            .text_color(rgb(color))
+            .with_timed_transformation(
+                TimedTransformation::rotation(std::time::Duration::from_millis(900), Transformation::default())
+                    .with_max_fps(30.),
+            )
+            .into_any_element(),
+        Queued(_) | Other => div().size(px(7.)).rounded_full().border_1().border_color(rgb(color)).into_any_element(),
+        Approval | Failed | Interrupted | FinishedUnread => dot(color).into_any_element(),
+    }
 }
 
 impl Plait {
@@ -273,7 +308,12 @@ impl Plait {
             if draft {
                 rows.push(Row::Draft);
             }
-            if let Some(indices) = matching {
+            if let Some(indices) = grouped.get_mut(project.checkout.as_path()) {
+                nav::sort_cards(
+                    indices,
+                    self.host.connection.threads(),
+                    &self.lists().unread,
+                );
                 filtered.extend_from_slice(indices);
                 if open {
                     rows.extend(indices.iter().copied().map(Row::Thread));
@@ -294,6 +334,7 @@ impl Plait {
         pi: usize,
         after: bool,
         folded: Option<usize>,
+        focus: &FocusHandle,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let project = &self.state.projects[pi];
@@ -303,158 +344,143 @@ impl Plait {
         let group = SharedString::from(format!("project-row-{pi}"));
         let expanded = !self.navigation.collapsed.contains(&checkout);
         let unavailable = self.navigation.available.get(&checkout) == Some(&false);
-        row()
-            .group(group.clone())
+        column()
             .w_full()
-            .h(px(ROW_HEIGHT))
-            .gap_0()
-            // A hairline between groups; uniform rows leave no room for a gap.
-            .when(after, |el| {
-                el.border_t_1().border_color(rgb(colors().border))
-            })
+            .when(after, |el| el.pt(px(12.)))
             .child(
-                nav_row(
-                    ("project", pi),
-                    format!(
-                        "{} project, {}{}",
-                        project.name,
-                        checkout.display(),
-                        if unavailable {
-                            ", folder unavailable"
-                        } else {
-                            ""
-                        }
-                    ),
-                    false,
-                )
-                .w_auto()
-                .flex_1()
-                .min_w_0()
-                .role(Role::TreeItem)
-                .aria_level(1)
-                .aria_expanded(expanded)
-                .child(icon(if expanded { "down" } else { "right" }))
-                .child(icon("folder").text_color(rgb(if unavailable {
-                    colors().amber
-                } else {
-                    colors().mint
-                })))
-                .child(
-                    title(project.name.clone())
-                        .text_color(rgb(colors().strong))
-                        .font_weight(FontWeight::MEDIUM),
-                )
-                .when(unavailable, |el| {
-                    el.child(tag("project-missing", "Missing", colors().amber))
-                })
-                .when_some(folded, |el, count| {
-                    el.child(
-                        tag("project-folded-count", count.to_string(), colors().subtle)
-                            .flex_shrink_0(),
+                row()
+                    .group(group.clone())
+                    .h(px(26.))
+                    .gap_0()
+                    .child(
+                        nav_row(
+                            ("project", pi),
+                            format!(
+                                "{} project, {}{}",
+                                project.name,
+                                checkout.display(),
+                                if unavailable {
+                                    ", folder unavailable"
+                                } else {
+                                    ""
+                                }
+                            ),
+                            false,
+                        )
+                        .w_auto()
+                        .flex_1()
+                        .min_w_0()
+                        .h_full()
+                        .px(px(9.))
+                        .track_focus(focus)
+                        .role(Role::TreeItem)
+                        .aria_level(1)
+                        .aria_expanded(expanded)
+                        .child(icon(if expanded { "down" } else { "right" }).size(px(9.)))
+                        .child(
+                            title(project.name.clone())
+                                .text_size(px(11.))
+                                .text_color(rgb(colors().subtle))
+                                .font_weight(FontWeight::MEDIUM),
+                        )
+                        .when(unavailable, |el| {
+                            el.child(tag("project-missing", "Missing", colors().amber))
+                        })
+                        .when_some(folded, |el, count| {
+                            el.child(
+                                tag("project-folded-count", count.to_string(), colors().subtle)
+                                    .flex_shrink_0(),
+                            )
+                        })
+                        .on_activate(cx, move |this, _, cx| {
+                            if !this.navigation.collapsed.remove(&checkout) {
+                                this.navigation.collapsed.insert(checkout.clone());
+                            }
+                            this.navigation.invalidate_rows();
+                            cx.notify();
+                        }),
                     )
-                })
-                .on_activate(cx, move |this, _, cx| {
-                    if !this.navigation.collapsed.remove(&checkout) {
-                        this.navigation.collapsed.insert(checkout.clone());
-                    }
-                    this.navigation.invalidate_rows();
-                    cx.notify();
-                }),
-            )
-            // Out of the way until the row is hovered or the button has focus.
-            .child(
-                icon_button(
-                    ("project-new-thread", pi),
-                    "plus",
-                    format!("New thread in {}", project.name),
-                )
-                .opacity(0.)
-                .group_hover(group, |s| s.opacity(1.))
-                .focus_visible(|s| s.border_color(rgb(colors().blue)).opacity(1.))
-                .tooltip(|_, cx| cx.new(|_| TextTooltip("New thread here".into())).into())
-                .on_activate(cx, move |this, window, cx| {
-                    this.open_draft_in(start.clone(), window, cx)
-                }),
-            )
-            .child(
-                icon_button(
-                    ("project-actions", pi),
-                    "more",
-                    format!("Actions for {} project", project.name),
-                )
-                .on_activate(cx, move |this, _, cx| {
-                    this.navigation.menu = Some(format!("project:{}", hide.display()));
-                    cx.notify();
-                }),
+                    // Out of the way until the row is hovered or the button has focus.
+                    .child(
+                        icon_button(
+                            ("project-new-thread", pi),
+                            "plus",
+                            format!("New thread in {}", project.name),
+                        )
+                        .size(px(22.))
+                        .opacity(0.)
+                        .group_hover(group.clone(), |s| s.opacity(1.))
+                        .focus_visible(|s| s.border_color(rgb(colors().blue)).opacity(1.))
+                        .tooltip(|_, cx| cx.new(|_| TextTooltip("New thread here".into())).into())
+                        .on_activate(cx, move |this, window, cx| {
+                            this.open_draft_in(start.clone(), window, cx)
+                        }),
+                    )
+                    .child(
+                        icon_button(
+                            ("project-actions", pi),
+                            "more",
+                            format!("Actions for {} project", project.name),
+                        )
+                        .size(px(22.))
+                        .opacity(0.)
+                        .group_hover(group, |s| s.opacity(1.))
+                        .focus_visible(|s| s.border_color(rgb(colors().blue)).opacity(1.))
+                        .on_activate(cx, move |this, _, cx| {
+                            this.navigation.menu = Some(format!("project:{}", hide.display()));
+                            cx.notify();
+                        }),
+                    ),
             )
             .into_any_element()
     }
 
-    fn cached_thread_row(&mut self, index: usize, cx: &mut Context<Self>) -> AnyElement {
+    fn thread_card_entity(
+        &mut self,
+        index: usize,
+        focus: &FocusHandle,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let thread = &self.host.connection.threads()[index];
-        if self
-            .navigation
-            .rename
-            .as_ref()
-            .is_some_and(|(id, _)| id == &thread.id)
-        {
-            return self.host_thread_row(index, cx);
-        }
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
-        let key = ThreadRowKey {
-            summary: thread.clone(),
-            title: self.summary_title(thread),
-            selected: self.host.thread.selected.as_ref() == Some(&thread.id),
+        let flags = ThreadRowFlags {
+            checkout: thread.checkout.clone(),
             unread: self.lists().unread.contains(&thread.id),
             worktree: self.lists().worktree(&thread.checkout).is_some(),
-            protocol: self.host.protocol(),
-            theme: colors().bg,
-            age: nav::age(thread.updated_at, now),
-            index,
         };
         let id = thread.id.clone();
-        if self.navigation.cached_rows.len() >= 128
-            && !self.navigation.cached_rows.contains_key(&id)
-        {
-            self.navigation.cached_rows.clear();
+        let (old, view) = self
+            .navigation
+            .cached_rows
+            .entry(id.clone())
+            .or_insert_with(|| {
+                let owner = cx.weak_entity();
+                let focus = focus.clone();
+                let view = cx.new(|_| ThreadCard { owner, id, focus });
+                (flags.clone(), view)
+            });
+        *old = flags;
+        if view.read(cx).focus != *focus {
+            view.update(cx, |card, _| card.focus = focus.clone());
         }
-        let view = if let Some((old, view)) = self.navigation.cached_rows.get_mut(&id) {
-            if old != &key {
-                *old = key;
-                view.update(cx, |row, cx| {
-                    row.index = index;
-                    cx.notify();
-                });
-            }
-            view.clone()
-        } else {
-            let owner = cx.weak_entity();
-            let view = cx.new(|_| ThreadRow { owner, index });
-            self.navigation.cached_rows.insert(id, (key, view.clone()));
-            view
-        };
-        // Not `cached`: a view reused from the last frame contributes no
-        // accessibility nodes, so every thread row would vanish from them.
-        div()
-            .w_full()
-            .h(px(ROW_HEIGHT))
-            .child(view)
-            .into_any_element()
+        // Keep the entity's accessibility IDs through reorder and scrolling.
+        // The view itself must render every frame to contribute its nodes.
+        view.clone().into_any_element()
     }
 
-    fn host_thread_row(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
+    fn thread_card(&self, id: &str, focus: &FocusHandle, cx: &mut Context<Self>) -> AnyElement {
+        let Some(index) = self.thread_index(id) else {
+            return div().into_any_element();
+        };
         let thread = &self.host.connection.threads()[index];
-        let id = thread.id.clone();
-        let selected = self.host.thread.selected.as_ref() == Some(&id);
+        let selected = self.host.thread.selected.as_deref() == Some(id);
         if let Some((editing, field)) = &self.navigation.rename
-            && editing == &id
+            && editing == id
         {
             return row()
+                .id("rename-card")
+                .track_focus(focus)
                 .w_full()
-                .h(px(ROW_HEIGHT))
+                .h(px(ROW_HEIGHT + 2.))
                 .gap_1()
                 .pl_2()
                 .child(div().flex_1().min_w_0().child(field.clone()))
@@ -493,23 +519,51 @@ impl Plait {
                 }))
                 .into_any_element();
         }
-        let menu_id = id.clone();
-        let context_id = id.clone();
-        let unread = self.lists().unread.contains(&id);
-        let state = nav::thread_row_state(thread, &self.lists().unread);
-        let (node, title_color, detail_color) = thread_row_colors(state, selected);
+        let menu_id = id.to_owned();
+        let context_id = menu_id.clone();
+        let id = menu_id.clone();
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as u64;
-        let age = nav::age(thread.updated_at, now);
-        let label = self.summary_title(thread);
-        let worktree = self.lists().worktree(&thread.checkout).is_some();
-        row()
-            .w_full()
-            .h(px(ROW_HEIGHT))
-            .gap_0()
+        let card = nav::Card::new(
+            thread,
+            self.lists(),
+            self.summary_title(thread),
+            self.card_model_name(thread),
+            now,
+        );
+        let palette = colors();
+        use nav::ThreadRowState::*;
+        let state_color = match card.state {
+            Working => palette.blue,
+            Approval | Interrupted => palette.amber,
+            Failed => palette.red,
+            FinishedUnread => palette.mint,
+            Queued(_) => palette.subtle,
+            Other => palette.faint,
+        };
+        let emphasis = !matches!(card.state, Queued(_) | Other);
+        let actions = self.host.protocol() >= 3;
+        let tooltip = thread.checkout_queue.as_ref().map_or_else(
+            || card.title.clone(),
+            |queue| format!("{} · {}", card.title, queue.detail()),
+        );
+        let name = format!(
+            "Thread {id} · {}. {}{}{}",
+            card.spoken_state,
+            card.title,
+            if card.branch.is_some() {
+                ". In its own worktree"
+            } else {
+                ""
+            },
+            if card.unread { ". Unread activity" } else { "" },
+        );
+        column()
+            .pb(px(2.))
             .relative()
+            .group("thread-card")
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(move |this, _, _, cx| {
@@ -521,84 +575,105 @@ impl Plait {
                 }),
             )
             .child(
-                // Each row is its own view, keyed by thread, so these ids are
-                // already unique; an index would change as the list moves.
-                nav_row(
-                    "host-thread",
-                    format!(
-                        "Thread {} · {} · {} / {}. {}{}{}",
-                        id,
-                        state.spoken(thread),
-                        thread.model.provider,
-                        thread.model.model_id,
-                        label,
-                        if worktree {
-                            ". In its own worktree"
-                        } else {
-                            ""
-                        },
-                        if unread { ". Unread activity" } else { "" }
-                    ),
-                    selected,
-                )
-                .w_auto()
-                .flex_1()
-                .min_w_0()
-                .when_some(
-                    thread
-                        .checkout_queue
-                        .as_ref()
-                        .map(|q| q.detail().to_owned()),
-                    |el, detail| {
-                        el.tooltip(move |_, cx| cx.new(|_| TextTooltip(detail.clone())).into())
-                    },
-                )
-                .role(Role::TreeItem)
-                .aria_level(2)
-                .aria_selected(selected)
-                .pl(px(RAIL_X - 4.))
-                .child(thread_mark(node))
-                .child(
-                    title(label)
-                        .text_color(rgb(title_color))
-                        .when(state == nav::ThreadRowState::FinishedUnread, |el| {
-                            el.font_weight(FontWeight::MEDIUM)
-                        }),
-                )
-                // Pi needs no mark; another harness's logo says where the thread runs.
-                .when_some(
-                    thread
-                        .harness
-                        .filter(|harness| *harness != plait_client::host::harness::HarnessId::Pi)
-                        .and_then(harness_logo),
-                    |el, logo| el.child(logo.size(px(12.)).text_color(rgb(colors().subtle))),
-                )
-                // A glyph, not a word: the title needs the width more.
-                .when(worktree, |el| {
-                    el.child(
-                        icon("branch")
-                            .size(px(12.))
-                            .text_color(rgb(colors().subtle)),
+                nav_row("host-thread", name, selected)
+                    .role(Role::TreeItem)
+                    .aria_level(2)
+                    .aria_selected(selected)
+                    .track_focus(focus)
+                    .h_auto()
+                    .flex_col()
+                    .items_stretch()
+                    // Include the one-point outline in the specified padding.
+                    .px(px(8.))
+                    .pt(px(6.))
+                    .pb(px(7.))
+                    .gap(px(3.))
+                    .when(selected, |el| {
+                        el.border_color(rgb(palette.edge))
+                            .hover(|s| s.bg(rgba(colors().hover)))
+                            .active(|s| s.opacity(0.6))
+                    })
+                    .tooltip(move |_, cx| cx.new(|_| TextTooltip(tooltip.clone().into())).into())
+                    .child(
+                        row()
+                            .line_height(px(16.))
+                            .gap(px(2.))
+                            .when(actions, |el| el.pr(px(19.)))
+                            .child(
+                                row()
+                                    .w(px(13.))
+                                    .justify_center()
+                                    .flex_shrink_0()
+                                    .child(card_mark(card.state, state_color)),
+                            )
+                            .child(
+                                title(card.title)
+                                    .text_size(px(12.))
+                                    .when(emphasis, |el| {
+                                        el.text_color(rgb(palette.strong))
+                                            .font_weight(FontWeight::MEDIUM)
+                                    })
+                                    .when(!emphasis, |el| el.text_color(rgb(palette.muted))),
+                            )
+                            .when(card.archived, |el| {
+                                el.child(
+                                    tag("thread-archived", "Archived", palette.subtle)
+                                        .flex_shrink_0(),
+                                )
+                            })
+                            .when_some(card.word, |el, word| {
+                                el.child(
+                                    tag("thread-status", word, state_color)
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .flex_shrink_0(),
+                                )
+                            }),
                     )
-                })
-                .when(thread.archived == Some(true), |el| {
-                    el.child(tag("thread-archived", "Archived", colors().subtle))
-                })
-                .child(
-                    tag("thread-status", state.label(&age).to_owned(), detail_color)
-                        .flex_shrink_0(),
-                )
-                .on_activate(cx, move |this, window, cx| {
-                    this.select_host_thread(id.clone(), window, cx)
-                }),
+                    .when_some(card.branch, |el, branch| {
+                        el.child(
+                            card_detail_line()
+                                .font_family(mono())
+                                .child(icon("branch").size(px(11.)).text_color(rgb(palette.subtle)))
+                                .child(title(branch.to_owned())),
+                        )
+                    })
+                    .when_some(card.details, |el, details| {
+                        el.child(
+                            card_detail_line()
+                                .when_some(details.harness, |el, harness| {
+                                    if let Some(logo) = harness_logo(harness) {
+                                        el.child(logo.size(px(11.)).text_color(rgb(palette.subtle)))
+                                    } else {
+                                        el.child(div().child(harness.label()))
+                                    }
+                                })
+                                .when_some(details.model, |el, model| {
+                                    el.child(title(model.to_owned()))
+                                })
+                                .when(details.model.is_none(), |el| el.child(div().flex_1()))
+                                .when_some(details.age, |el, age| {
+                                    el.child(div().flex_shrink_0().font_family(mono()).child(age))
+                                }),
+                        )
+                    })
+                    .on_activate(cx, move |this, window, cx| {
+                        this.select_host_thread(id.clone(), window, cx)
+                    }),
             )
-            .when(self.host.protocol() >= 3, |el| {
+            .when(actions, |el| {
                 el.child(
                     icon_button(
                         "thread-actions",
                         "more",
                         format!("Actions for {}", self.thread_name(&menu_id)),
                     )
+                    .absolute()
+                    .top(px(5.))
+                    .right(px(4.))
+                    .size(px(20.))
+                    .opacity(0.)
+                    .group_hover("thread-card", |s| s.opacity(1.))
+                    .focus_visible(|s| focused_control(s).opacity(1.))
                     .on_activate(cx, move |this, _, cx| {
                         this.navigation.menu = Some(menu_id.clone());
                         cx.notify();
@@ -608,9 +683,111 @@ impl Plait {
             .into_any_element()
     }
 
+    fn card_model_name(&self, thread: &ThreadSummary) -> Option<&str> {
+        // A card can belong to a different harness from the selected thread.
+        thread
+            .harness
+            .and_then(|harness| self.harness_model(harness, &thread.model))
+            .or_else(|| {
+                self.host
+                    .connection
+                    .status
+                    .as_ref()?
+                    .models
+                    .iter()
+                    .find(|model| {
+                        model.provider == thread.model.provider
+                            && model.model_id == thread.model.model_id
+                    })
+            })
+            .map(|model| model.name.as_str())
+    }
+
+    fn tree_items(&self, rows: &Rc<Vec<Row>>, cx: &App) -> Rc<Vec<(RowId, FocusHandle)>> {
+        let scroll = &self.navigation.scroll;
+        let mut layout = self.navigation.layout.borrow_mut();
+        if !Rc::ptr_eq(&layout.rows, rows) {
+            let top = scroll.logical_scroll_top();
+            let anchor = layout.items.get(top.item_ix).map(|(id, _)| id);
+            let handles: HashMap<_, _> =
+                layout.items.iter().map(|(id, focus)| (id, focus)).collect();
+            let items: Vec<_> = rows
+                .iter()
+                .map(|row| {
+                    let id = match *row {
+                        Row::Project { index, .. } => {
+                            RowId::Project(self.state.projects[index].checkout.clone())
+                        }
+                        Row::Thread(index) => {
+                            RowId::Thread(self.host.connection.threads()[index].id.clone())
+                        }
+                        Row::Draft => RowId::Draft,
+                    };
+                    let focus = handles.get(&id).map_or_else(
+                        || cx.focus_handle().tab_stop(true),
+                        |focus| (*focus).clone(),
+                    );
+                    (id, focus)
+                })
+                .collect();
+            if items
+                .iter()
+                .map(|(id, _)| id)
+                .eq(layout.items.iter().map(|(id, _)| id))
+            {
+                scroll.remeasure();
+            } else {
+                scroll.splice_focusable(
+                    0..scroll.item_count(),
+                    items.iter().map(|(_, handle)| Some(handle.clone())),
+                );
+                if top != ListOffset::default() && !items.is_empty() {
+                    let index =
+                        anchor.and_then(|anchor| items.iter().position(|(id, _)| id == anchor));
+                    scroll.scroll_to(index.map_or(
+                        ListOffset {
+                            item_ix: top.item_ix.min(items.len() - 1),
+                            offset_in_item: px(0.),
+                        },
+                        |item_ix| ListOffset { item_ix, ..top },
+                    ));
+                }
+            }
+            layout.rows = rows.clone();
+            layout.items = Rc::new(items);
+        }
+        let editing = self.navigation.rename.as_ref().map(|(id, _)| id);
+        if editing != layout.editing.as_ref() {
+            for (index, (id, _)) in layout.items.iter().enumerate() {
+                if let RowId::Thread(id) = id
+                    && (Some(id) == editing || Some(id) == layout.editing.as_ref())
+                {
+                    scroll.remeasure_items(index..index + 1);
+                }
+            }
+            layout.editing = editing.cloned();
+        }
+        layout.items.clone()
+    }
+
+    fn reveal_tree_item(&self, index: usize) {
+        let scroll = &self.navigation.scroll;
+        if scroll.bounds_for_item(index).is_some() {
+            scroll.scroll_to_reveal_item(index);
+        } else {
+            // A distant card may have no measured position yet.
+            scroll.scroll_to(ListOffset {
+                item_ix: index,
+                offset_in_item: px(0.),
+            });
+        }
+    }
+
     fn tree(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let rows = self.navigation_rows(cx);
+        let items = self.tree_items(&rows, cx);
         let empty = rows.is_empty();
+        let keyboard = items.clone();
         column()
             .id("project-tree")
             .role(Role::Tree)
@@ -620,29 +797,49 @@ impl Plait {
             .min_h_0()
             .px_2()
             .py_2()
+            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
+                let step = match event.keystroke.key.as_str() {
+                    "up" => -1,
+                    "down" => 1,
+                    _ => return,
+                };
+                if event.keystroke.modifiers != Modifiers::default() {
+                    return;
+                }
+                if let Some(index) = keyboard
+                    .iter()
+                    .position(|(_, focus)| focus.is_focused(window))
+                {
+                    cx.stop_propagation();
+                    if let Some(next) = index.checked_add_signed(step)
+                        && let Some((_, focus)) = keyboard.get(next)
+                    {
+                        this.reveal_tree_item(next);
+                        window.focus(focus, cx);
+                        cx.notify();
+                    }
+                }
+            }))
             .when(empty, |el| {
                 el.child(tag("navigation-empty", "No matching threads.", colors().muted).p_2())
             })
             .when(!empty, |el| {
                 el.child(
-                    uniform_list(
-                        "navigation-list",
-                        rows.len(),
-                        cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
-                            range
-                                .map(|index| match rows[index] {
-                                    Row::Project {
-                                        index,
-                                        after,
-                                        folded,
-                                    } => this.project_row(index, after, folded, cx),
-                                    Row::Thread(ti) => this.cached_thread_row(ti, cx),
-                                    Row::Draft => this.draft_row(cx),
-                                })
-                                .collect::<Vec<_>>()
+                    list(
+                        self.navigation.scroll.clone(),
+                        cx.processor(move |this, position, _, cx| {
+                            let (_, focus) = &items[position];
+                            match rows[position] {
+                                Row::Project {
+                                    index,
+                                    after,
+                                    folded,
+                                } => this.project_row(index, after, folded, focus, cx),
+                                Row::Thread(index) => this.thread_card_entity(index, focus, cx),
+                                Row::Draft => this.draft_row(focus, cx),
+                            }
                         }),
                     )
-                    .track_scroll(&self.navigation.scroll)
                     .size_full(),
                 )
             })
@@ -829,15 +1026,6 @@ impl Plait {
             }
         }
         self.navigation.invalidate_rows();
-        if let Some(index) = self
-            .navigation_rows(cx)
-            .iter()
-            .position(|row| matches!(row, Row::Thread(index) if self.host.connection.threads()[*index].id == id))
-        {
-            self.navigation
-                .scroll
-                .scroll_to_item(index, ScrollStrategy::Nearest);
-        }
         let title = self.rename_text(&id);
         let field = cx.new(|cx| {
             let mut field = TextField::new("Thread name", "Name this thread", cx);
@@ -845,7 +1033,15 @@ impl Plait {
             field
         });
         window.focus(&field.focus_handle(cx), cx);
-        self.navigation.rename = Some((id, field));
+        self.navigation.rename = Some((id.clone(), field));
+        let rows = self.navigation_rows(cx);
+        let items = self.tree_items(&rows, cx);
+        if let Some(index) = items
+            .iter()
+            .position(|(item, _)| matches!(item, RowId::Thread(thread) if thread == &id))
+        {
+            self.reveal_tree_item(index);
+        }
         self.navigation.menu = None;
         self.navigation.error = None;
         cx.notify();
@@ -970,22 +1166,13 @@ impl Plait {
     }
 
     /// The draft under its project: selected while on screen, and discardable here.
-    fn draft_row(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn draft_row(&self, focus: &FocusHandle, cx: &mut Context<Self>) -> AnyElement {
         let selected = self.draft_visible();
         row()
             .w_full()
             .h(px(ROW_HEIGHT))
             .gap_0()
             .relative()
-            .child(
-                div()
-                    .absolute()
-                    .left(px(RAIL_X))
-                    .top_0()
-                    .bottom_0()
-                    .w(px(1.))
-                    .bg(rgb(colors().edge)),
-            )
             .child(
                 nav_row(
                     "draft-thread",
@@ -1001,7 +1188,8 @@ impl Plait {
                 .role(Role::TreeItem)
                 .aria_level(2)
                 .aria_selected(selected)
-                .pl(px(RAIL_X + 5.))
+                .track_focus(focus)
+                .pl(px(9.))
                 .child(icon("plus").size(px(12.)).text_color(rgb(colors().mint)))
                 .child(
                     title(self.current_draft_title().to_owned()).text_color(rgb(colors().strong)),
