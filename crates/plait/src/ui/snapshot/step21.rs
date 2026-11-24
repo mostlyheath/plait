@@ -718,7 +718,6 @@ fn review_approval_shortcuts_respect_panel_visibility() {
     );
 }
 
-#[cfg(debug_assertions)]
 fn checkout_strip(harness: &mut Harness, repository: &Path, status: plait_client::model::Snapshot) {
     let counts = plait_engine::git::line_counts(repository, &["src/review.rs".into()]).unwrap();
     assert_eq!((counts[0].added, counts[0].removed), (Some(2), Some(1)));
