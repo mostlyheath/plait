@@ -782,7 +782,8 @@ system monospaced font unless the person names one, at the code size (12 to
 | 12 | 17 | Buttons, tabs, sidebar card titles (medium), work rows, the closing line, menu items |
 | 11 | 15 | Metadata: ages, counts, chips, state words, group labels |
 
-No size under 11. No letter-spacing: the pinned GPUI has none. Conversation,
+Except for the 10.5-point key hints, the minimum is 11 points. No
+letter-spacing: the pinned GPUI has none. Conversation,
 message box, and settings content are capped at 760. Render timings are an
 optional diagnostic, not permanent chrome.
 
