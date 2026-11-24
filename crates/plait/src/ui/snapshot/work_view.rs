@@ -46,14 +46,9 @@ pub(super) fn scenes(repo: &Path, output: Option<&Path>) {
         turn_review::scene(&mut h, repo, "ready", None);
         h.update(|p, _, _| {
             p.workspace.tab = crate::ui::Workspace::Conversation;
-            p.preferences.value.hide_inspector = false;
         });
         h.draw();
-        if width > 1150. {
-            click(&mut h, "Open in Work view");
-        } else {
-            click(&mut h, "Work");
-        }
+        h.update(|p, w, cx| p.toggle_work(w, cx));
 
         h.draw();
         h.update(|p, _, _| {
@@ -65,9 +60,9 @@ pub(super) fn scenes(repo: &Path, output: Option<&Path>) {
             !h.draw_a11y()
                 .has_node(Role::Group, |n| n.label.as_deref() == Some("Commit"))
         );
-        click(&mut h, "Chat");
+        h.update(|p, w, cx| p.toggle_work(w, cx));
         h.update(|p, _, _| assert!(p.visible_sidebar()));
-        h.keystroke("cmd-\\");
+        h.update(|p, w, cx| p.toggle_work(w, cx));
         h.keystroke("cmd-shift-2");
         h.capture(&format!("work-changes-focused-{suffix}"));
         h.keystroke("cmd-f");
@@ -145,12 +140,12 @@ pub(super) fn scenes(repo: &Path, output: Option<&Path>) {
         h.capture(&format!("work-divider-dragged-{suffix}"));
         pane_controls(&mut h, repo, suffix);
         h.keystroke("cmd-b");
-        h.keystroke("cmd-\\");
+        h.update(|p, w, cx| p.toggle_work(w, cx));
         h.update(|p, _, _| assert!(p.visible_sidebar()));
         h.keystroke("cmd-b");
-        h.keystroke("cmd-\\");
+        h.update(|p, w, cx| p.toggle_work(w, cx));
         h.keystroke("cmd-b");
-        h.keystroke("cmd-\\");
+        h.update(|p, w, cx| p.toggle_work(w, cx));
         h.update(|p, _, _| assert!(!p.visible_sidebar()));
         h.update(|p, _, cx| {
             let a = p.tabs.model.active().unwrap();
@@ -198,16 +193,9 @@ pub(super) fn scenes(repo: &Path, output: Option<&Path>) {
         h.capture(&format!("work-no-record-{suffix}"));
         let mut small = this_turn::harness(repo, output, 780., height);
         small.connect(repo, false);
-        small.keystroke("cmd-\\");
+        small.update(|p, w, cx| p.toggle_work(w, cx));
         small.update(|p, _, _| assert!(!p.tabs.model.work().unwrap().open));
         small.capture(&format!("work-disabled-{suffix}"));
-        assert!(
-            small
-                .draw_a11y()
-                .has_node(Role::Tab, |n| n.label.as_deref() == Some("Work")
-                    && n.description.as_deref()
-                        == Some("Work view needs a window at least 800 points wide."))
-        );
     }
 }
 
@@ -294,7 +282,7 @@ fn pane_controls(h: &mut Harness, repo: &Path, suffix: &str) {
         assert!(!p.draws_work());
         assert!(!w.is_action_available(&FocusNextPane, cx));
     });
-    click(h, "Work");
+    h.update(|p, w, cx| p.toggle_work(w, cx));
 }
 
 fn select_fixture_file(h: &mut Harness, repo: &Path) {
@@ -325,7 +313,7 @@ fn work_view_tab_memory() {
     tabs::install(&mut h, 2);
     h.update(|p, _, _| p.host.connection.connected = false);
     h.draw();
-    h.keystroke("cmd-\\");
+    h.update(|p, w, cx| p.toggle_work(w, cx));
     h.keystroke("cmd-shift-2");
     h.keystroke("cmd-f");
     h.update(|p, _, cx| {
@@ -418,7 +406,7 @@ fn work_scope_and_focus_round_trip() {
         p.focus_composer(w, cx);
         assert!(p.visible_composer().unwrap().focus_handle(cx).is_focused(w));
     });
-    click(&mut h, "Work");
+    h.update(|p, w, cx| p.toggle_work(w, cx));
     h.update(|p, w, _| {
         assert!(p.work_focus[PaneKind::Thread as usize].is_focused(w));
     });
@@ -482,7 +470,7 @@ fn fallback_routes_only_chat_actions() {
         p.show_tab(Workspace::History, w, cx);
         p.panels.viewport = 1200.;
         assert!(p.work_layout().is_none());
-        assert_eq!(p.workspace.tab, Workspace::History);
+        assert_eq!(p.selected_view(), Workspace::History);
         p.toggle_work(w, cx);
         p.workspace.work_area.size.height = px(120.);
         let thread = p.tabs.model.active().unwrap();

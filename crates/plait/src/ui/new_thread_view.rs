@@ -27,7 +27,7 @@ impl Plait {
     /// The conversation area while the draft is open. Nothing here runs an agent.
     pub(super) fn draft_view(
         &self,
-        wide: bool,
+        _wide: bool,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -73,10 +73,8 @@ impl Plait {
             .flex_1()
             .min_h_0()
             .items_stretch()
-            .child(main)
-            .when(self.shows_inspector(wide), |el| {
-                el.child(self.inspector(cx))
-            })
+            .when(!self.panel_fills(), |el| el.child(main))
+            .when(self.panel_is_open(), |el| el.child(self.review_panel(cx)))
     }
 
     /// Project and harness above the message box, with Discard at the right.

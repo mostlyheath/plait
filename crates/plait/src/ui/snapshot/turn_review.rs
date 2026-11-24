@@ -314,6 +314,35 @@ fn answer(request: &Value) -> Option<Value> {
     }
 }
 #[core::prelude::v1::test]
+fn hidden_recorded_patch_survives_info_refresh() {
+    if !isolated("turn_review::hidden_recorded_patch_survives_info_refresh") {
+        return;
+    }
+    let (scratch, _, mut h) = setup("panel-recorded-cache");
+    let host = Host::start(answer);
+    h.update(|p, w, cx| p.open_turn_review(target(p, "last", Some("README.md")), w, cx));
+    wait(&mut h, |p| p.workspace.turn_review.diff.is_some());
+    h.update(|p, w, cx| {
+        p.show_tab(Workspace::Files, w, cx);
+        p.refresh_turn_review(cx);
+        assert!(p.workspace.turn_review.running);
+    });
+    wait(&mut h, |p| !p.workspace.turn_review.running);
+    h.update(|p, w, cx| {
+        p.host.connection.connected = false;
+        p.show_tab(Workspace::Changes, w, cx);
+        assert_eq!(p.recorded_file().unwrap().path, Path::new("README.md"));
+        assert!(
+            p.workspace.turn_review.diff.is_some(),
+            "lost the cached recorded patch"
+        );
+    });
+    drop(host);
+    drop(h);
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
+#[core::prelude::v1::test]
 fn recorded_identity_survives_undo() {
     if !isolated("turn_review::recorded_identity_survives_undo") {
         return;
@@ -507,7 +536,7 @@ fn scope_keys_and_clean_files() {
             p.workspace.turn_review.record.as_ref().unwrap().files.len(),
             1
         );
-        assert!(p.focus.is_focused(w));
+        assert!(p.work_focus[plait_client::panes::PaneKind::Changes as usize].is_focused(w));
         p.open_review_scopes(w, cx);
     });
     wait(&mut h, |p| p.overlay.is_some());
@@ -515,7 +544,7 @@ fn scope_keys_and_clean_files() {
     press(&mut h, "escape");
     h.update(|p, w, _| {
         assert!(p.overlay.is_none());
-        assert!(p.focus.is_focused(w));
+        assert!(p.work_focus[plait_client::panes::PaneKind::Changes as usize].is_focused(w));
     });
     h.update(|p, w, cx| p.open_review_scopes(w, cx));
     wait(&mut h, |p| p.overlay.is_some());
@@ -813,7 +842,7 @@ fn first_old_host_file_click_opens_current() {
         let detail = p.closing_file_detail(&line.files[0], line);
         assert!(detail.contains("current Changes"));
         assert!(!detail.contains("recorded"));
-        assert_eq!(p.workspace.tab, Workspace::Changes);
+        assert_eq!(p.selected_view(), Workspace::Changes);
     });
     // A second click uses the known capability and performs no further probe.
     let probes = host.requests.lock().unwrap().len();

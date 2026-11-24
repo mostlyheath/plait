@@ -96,7 +96,7 @@ fn the_branch_palette_lists_creates_and_switches() {
     });
     harness.update(|plait, _, _| {
         assert_eq!(
-            plait.workspace.tab,
+            plait.selected_view(),
             Workspace::Changes,
             "where the result is shown"
         );

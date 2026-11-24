@@ -23,7 +23,7 @@ pub fn backoff_ms(attempt: u32) -> u64 {
 ```"#;
 
 fn stage_conversation(harness: &mut Harness, repository: &Path) -> bool {
-    let mut previous_hide_inspector = false;
+    let mut panel_was_open = false;
     harness.connect(repository, false);
     harness.change_snapshot(|snapshot| {
         snapshot.status = ThreadStatus::Idle;
@@ -46,8 +46,9 @@ fn stage_conversation(harness: &mut Harness, repository: &Path) -> bool {
         snapshot.live_reasoning.clear();
     });
     harness.update(|plait, _, _| {
-        previous_hide_inspector =
-            std::mem::replace(&mut plait.preferences.value.hide_inspector, true);
+        let panel = plait.tabs.model.panel_mut().expect("active fixture thread");
+        panel_was_open = panel.open;
+        panel.close();
         let threads = plait.host.connection.threads_mut();
         threads[0].title = Some(THREAD_TITLE.into());
         threads[0].status = ThreadStatus::Idle;
@@ -58,7 +59,7 @@ fn stage_conversation(harness: &mut Harness, repository: &Path) -> bool {
         plait.sidebar = true;
         plait.workspace.live_scroll.scroll_to(ListOffset::default());
     });
-    previous_hide_inspector
+    panel_was_open
 }
 
 fn show_appearance(harness: &mut Harness) {
@@ -86,7 +87,7 @@ fn capture_choice(harness: &mut Harness, choice: InterfaceFont, name: &str, suff
 /// Conversation, sidebar, and Settings → Appearance in both bundled Plex Sans
 /// (dark and light defaults) and System UI font.
 pub(super) fn walk(harness: &mut Harness, repository: &Path, suffix: &str) {
-    let previous_hide_inspector = stage_conversation(harness, repository);
+    let panel_was_open = stage_conversation(harness, repository);
     capture_choice(harness, InterfaceFont::Plex, "plex", suffix);
 
     // Also inspect the bundled font in the light default theme.
@@ -105,7 +106,12 @@ pub(super) fn walk(harness: &mut Harness, repository: &Path, suffix: &str) {
 
     harness.update(|plait, _, cx| {
         plait.settings_open = false;
-        plait.preferences.value.hide_inspector = previous_hide_inspector;
+        plait
+            .tabs
+            .model
+            .panel_mut()
+            .expect("active fixture thread")
+            .open = panel_was_open;
         plait.preferences.value.interface_font = InterfaceFont::Plex;
         plait.apply_interface_font(cx);
         plait.rebuild_projects(cx);
@@ -182,9 +188,9 @@ fn interface_font_switches_and_loads_older_preferences_as_plex() {
     for (suffix, width, height) in [("wide", 1380., 860.), ("narrow", 900., 600.)] {
         let mut harness = Harness::with_host(&repository, None, width, height, None);
         stage_conversation(&mut harness, &repository);
-        harness.update(|plait, window, _| {
+        harness.update(|plait, _, _| {
             assert!(
-                !plait.shows_inspector(Plait::wide(window)),
+                !plait.panel_is_open(),
                 "font fixture exposes the repository path"
             );
         });
