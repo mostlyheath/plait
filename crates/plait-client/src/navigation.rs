@@ -1,13 +1,15 @@
 //! Local project navigation and activity tracking. No filesystem access or UI types.
 
 use crate::{
-    host::{ThreadStatus, ThreadSummary},
+    host::{ThreadStatus, ThreadSummary, harness::HarnessId},
     model::{Machine, Project},
     preferences::{Jump, JumpTarget},
     state::project_name,
 };
 use serde::{Deserialize, Serialize};
 use std::{
+    borrow::Cow,
+    cmp::Reverse,
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     path::{Path, PathBuf},
 };
@@ -287,7 +289,7 @@ pub fn adopt(current: &Path, preferences: &Preferences, projects: &[Project]) ->
     }
 }
 
-/// Host list order is authoritative within a project; projects follow newest activity.
+/// Projects follow newest activity.
 pub fn projects(
     threads: &[ThreadSummary],
     preferences: &Preferences,
@@ -434,6 +436,105 @@ impl ThreadRowState {
             Self::FinishedUnread | Self::Other => age,
         }
     }
+}
+
+/// The content of one sidebar card. Absent branch or details lines take no space.
+pub struct Card<'a> {
+    pub title: String,
+    pub state: ThreadRowState,
+    pub word: Option<&'static str>,
+    pub spoken_state: &'static str,
+    pub unread: bool,
+    pub archived: bool,
+    pub branch: Option<&'a str>,
+    pub details: Option<CardDetails<'a>>,
+}
+
+pub struct CardDetails<'a> {
+    pub harness: Option<HarnessId>,
+    pub model: Option<Cow<'a, str>>,
+    pub age: Option<String>,
+}
+
+fn card_state(thread: &ThreadSummary, unread: &BTreeSet<String>) -> ThreadRowState {
+    match thread_row_state(thread, unread) {
+        ThreadRowState::FinishedUnread if state_label(thread) != "Done" => ThreadRowState::Other,
+        state => state,
+    }
+}
+
+impl<'a> Card<'a> {
+    pub fn new(
+        thread: &'a ThreadSummary,
+        lists: &'a Preferences,
+        title: String,
+        model_name: Option<&'a str>,
+        now: u64,
+    ) -> Self {
+        use ThreadRowState::*;
+        let state = card_state(thread, &lists.unread);
+        let word = match state {
+            Approval => Some("Approve"),
+            Failed => Some("Failed"),
+            Interrupted => Some("Interrupted"),
+            Queued(label) => Some(label),
+            FinishedUnread => Some("Done"),
+            Working | Other => None,
+        };
+        let branch = lists
+            .worktree(&thread.checkout)
+            .map(|tree| tree.branch.as_str())
+            .filter(|branch| !branch.trim().is_empty());
+        let harness = thread.harness;
+        let model = model_name
+            .filter(|name| !name.trim().is_empty())
+            .map(Cow::Borrowed)
+            .or_else(|| {
+                let id = thread.model.model_id.trim();
+                if id.is_empty() {
+                    return None;
+                }
+                let provider = thread.model.provider.trim();
+                Some(if provider.is_empty() {
+                    Cow::Borrowed(id)
+                } else {
+                    Cow::Owned(format!("{provider}/{id}"))
+                })
+            });
+        let age = thread.updated_at.map(|updated| age(Some(updated), now));
+        Self {
+            title,
+            state,
+            word,
+            spoken_state: state.spoken(thread),
+            unread: lists.unread.contains(&thread.id),
+            archived: thread.archived == Some(true),
+            branch,
+            details: (harness.is_some() || model.is_some() || age.is_some()).then_some(
+                CardDetails {
+                    harness,
+                    model,
+                    age,
+                },
+            ),
+        }
+    }
+}
+
+/// Sort one project's cards, including the order used by sidebar shortcuts.
+pub fn sort_cards(indices: &mut [usize], threads: &[ThreadSummary], unread: &BTreeSet<String>) {
+    use ThreadRowState::*;
+    indices.sort_unstable_by_key(|&index| {
+        let thread = &threads[index];
+        let priority = match card_state(thread, unread) {
+            Approval => 0,
+            Failed | Interrupted => 1,
+            FinishedUnread => 2,
+            Working => 3,
+            Queued(_) | Other => 4,
+        };
+        (priority, Reverse(thread.updated_at), thread.id.as_str())
+    });
 }
 
 pub fn needs_me_count(threads: &[ThreadSummary], unread: &BTreeSet<String>) -> usize {
@@ -773,7 +874,7 @@ mod tests {
         use ThreadRowState::*;
         let unread = BTreeSet::from(["unread".to_owned()]);
         let mut threads = Vec::new();
-        for (status, id, pending, queued, expected, label) in [
+        for (status, id, pending, queued, expected, label, word) in [
             (
                 ThreadStatus::Running,
                 "unread",
@@ -781,6 +882,7 @@ mod tests {
                 true,
                 Working,
                 "Working",
+                None,
             ),
             (
                 ThreadStatus::Running,
@@ -789,6 +891,7 @@ mod tests {
                 false,
                 Approval,
                 "Approve",
+                Some("Approve"),
             ),
             (
                 ThreadStatus::AwaitingApproval,
@@ -797,8 +900,17 @@ mod tests {
                 false,
                 Approval,
                 "Approve",
+                Some("Approve"),
             ),
-            (ThreadStatus::Error, "unread", false, true, Failed, "Failed"),
+            (
+                ThreadStatus::Error,
+                "unread",
+                false,
+                true,
+                Failed,
+                "Failed",
+                Some("Failed"),
+            ),
             (
                 ThreadStatus::Interrupted,
                 "unread",
@@ -806,6 +918,7 @@ mod tests {
                 false,
                 Interrupted,
                 "Interrupted",
+                Some("Interrupted"),
             ),
             (
                 ThreadStatus::Idle,
@@ -814,6 +927,7 @@ mod tests {
                 true,
                 Queued("Held"),
                 "Held",
+                Some("Held"),
             ),
             (
                 ThreadStatus::Idle,
@@ -822,8 +936,9 @@ mod tests {
                 false,
                 FinishedUnread,
                 "3m",
+                Some("Done"),
             ),
-            (ThreadStatus::Idle, "b", false, false, Other, "3m"),
+            (ThreadStatus::Idle, "b", false, false, Other, "3m", None),
         ] {
             let mut t = thread(id, "/repo", status, 2);
             t.pending_approval = Some(pending);
@@ -831,6 +946,16 @@ mod tests {
             let state = thread_row_state(&t, &unread);
             assert_eq!(state, expected);
             assert_eq!(state.label("3m"), label);
+            let lists = Preferences {
+                unread: unread.clone(),
+                ..Default::default()
+            };
+            let card = Card::new(&t, &lists, "Card title".into(), None, 180_002);
+            assert_eq!(card.state, expected);
+            assert_eq!(card.word, word);
+            assert_eq!(card.unread, id == "unread");
+            assert_eq!(card.title, "Card title");
+            assert_eq!(card.details.unwrap().age.as_deref(), Some("3m"));
             // The spoken state never contradicts the visible word.
             let spoken = state.spoken(&t);
             match state {
@@ -848,6 +973,78 @@ mod tests {
                 t.archived != Some(true) && needs_attention(&t, &unread)
             );
         }
+    }
+
+    #[test]
+    fn cards_omit_missing_data_and_use_only_the_threads_own_worktree_branch() {
+        let mut lists = Preferences::default();
+        lists.remember_worktree("/worktree".into(), "/repo".into(), "plait/retry".into());
+        let mut t = ThreadSummary {
+            checkout: "/repo".into(),
+            ..Default::default()
+        };
+        let card = Card::new(&t, &lists, "Old thread".into(), None, 120_000);
+        assert_eq!(card.branch, None);
+        assert!(card.details.is_none());
+        assert_eq!(card.word, None);
+        t.checkout = "/worktree".into();
+        t.harness = Some(HarnessId::Codex);
+        t.model.model_id = "codex-model".into();
+        t.archived = Some(true);
+        let card = Card::new(&t, &lists, "Retry".into(), Some("Codex Model"), 120_000);
+        assert_eq!(card.branch, Some("plait/retry"));
+        assert!(card.archived);
+        let details = card.details.unwrap();
+        assert_eq!(details.model.as_deref(), Some("Codex Model"));
+        assert_eq!(details.harness, Some(HarnessId::Codex));
+        assert_eq!(details.age, None);
+        let card = Card::new(&t, &lists, "Retry".into(), None, 120_000);
+        assert_eq!(card.details.unwrap().model.as_deref(), Some("codex-model"));
+
+        t.status = ThreadStatus::Stopped;
+        lists.unread.insert(t.id.clone());
+        let card = Card::new(&t, &lists, "Stopped".into(), None, 120_000);
+        assert_eq!(card.state, ThreadRowState::Other);
+        assert_eq!(card.spoken_state, "Stopped");
+        assert!(card.unread);
+    }
+
+    #[test]
+    fn uncatalogued_models_identify_the_provider_as_in_the_picker() {
+        let lists = Preferences::default();
+        let mut thread = ThreadSummary::default();
+        thread.model.provider = "provider-a".into();
+        thread.model.model_id = "shared-model".into();
+        let card = Card::new(&thread, &lists, "Thread".into(), None, 0);
+        assert_eq!(
+            card.details.unwrap().model.as_deref(),
+            Some("provider-a/shared-model")
+        );
+    }
+
+    #[test]
+    fn cards_sort_by_state_then_last_update_with_stable_ties() {
+        use crate::host::checkout_queue::{State, Summary};
+        use ThreadStatus::*;
+        let mut threads = [
+            thread("working", "/repo", Running, 500),
+            thread("failed", "/repo", Error, 100),
+            thread("approval", "/repo", AwaitingApproval, 2),
+            thread("idle-z", "/repo", Idle, 800),
+            thread("interrupted", "/repo", Interrupted, 101),
+            thread("finished", "/repo", Idle, 3),
+            thread("idle-a", "/repo", Idle, 800),
+            thread("queued", "/repo", Idle, 900),
+            ThreadSummary::default(),
+        ];
+        threads[7].checkout_queue = Some(Summary::new("request".into(), State::Waiting, 1, 1));
+        let unread = BTreeSet::from(["finished".to_owned()]);
+        let mut indices = (0..threads.len()).collect::<Vec<_>>();
+        sort_cards(&mut indices, &threads, &unread);
+        assert_eq!(indices, [2, 4, 1, 5, 0, 7, 6, 3, 8]);
+        indices.reverse();
+        sort_cards(&mut indices, &threads, &unread);
+        assert_eq!(indices, [2, 4, 1, 5, 0, 7, 6, 3, 8]);
     }
     #[test]
     fn worktree_threads_list_under_the_project_they_were_made_from() {
