@@ -185,36 +185,59 @@ fn plait_uses_animated_sprites_until_motion_is_reduced() {
         }
     }
 
+    harness.update(|plait, _, _| {
+        let mut wrong_checkout = (**plait.host.thread.snapshot.as_ref().unwrap()).clone();
+        wrong_checkout.checkout = repository.join("replaced");
+        assert!(!plait.host.apply_snapshot(
+            plait.host.connection.epoch,
+            plait.host.thread.watch_epoch,
+            wrong_checkout,
+        ));
+        assert!(!plait.host.connection.connected);
+    });
+    let lost_identity = animated_marks(&mut harness, &animated);
+    harness.update(|plait, _, _| plait.tabs.model.disconnected(&plait.tabs.host));
+    let lost_watch = animated_marks(&mut harness, &animated);
+    assert_eq!(
+        [lost_identity, lost_watch],
+        [0, 0],
+        "cached work is offline"
+    );
+    install(&mut harness, &repository);
+    assert_eq!(animated_marks(&mut harness, &animated), 4, "work resumed");
+
     check_tool_states(&mut harness, &repository, &animated);
+}
+
+#[cfg(target_os = "macos")]
+fn animated_marks(harness: &mut Harness, animated: &Cell<usize>) -> usize {
+    harness.draw();
+    harness
+        .cx
+        .capture_screenshot(harness.window.into())
+        .unwrap();
+    animated.get()
 }
 
 #[cfg(target_os = "macos")]
 fn check_tool_states(harness: &mut Harness, repository: &Path, animated: &Cell<usize>) {
     use plait_client::host::{ThreadStatus, checkout_queue};
-    let capture = |harness: &mut Harness| {
-        harness.draw();
-        harness
-            .cx
-            .capture_screenshot(harness.window.into())
-            .unwrap();
-        animated.get()
-    };
     // A call awaiting authorization can already be in the tool list as Running.
     let approval = super::thread_snapshot(repository, true).pending_approval;
     harness.change_snapshot(|s| {
         s.status = ThreadStatus::AwaitingApproval;
         s.pending_approval = approval;
     });
-    let waiting = capture(harness);
+    let waiting = animated_marks(harness, animated);
     // Other calls in the same turn can still be working.
     harness.change_snapshot(|s| s.pending_approval.as_mut().unwrap().tool_id = "other".into());
-    let parallel = capture(harness);
+    let parallel = animated_marks(harness, animated);
     // A terminal snapshot can retain a tool for which no result arrived.
     harness.change_snapshot(|s| {
         s.status = ThreadStatus::Idle;
         s.pending_approval = None;
     });
-    let idle = capture(harness);
+    let idle = animated_marks(harness, animated);
     harness.update(|plait, _, _| {
         plait.host.connection.threads_mut()[0].checkout_queue = Some(checkout_queue::Summary::new(
             "later".into(),
@@ -223,7 +246,7 @@ fn check_tool_states(harness: &mut Harness, repository: &Path, animated: &Cell<u
             1,
         ));
     });
-    let queued = capture(harness);
+    let queued = animated_marks(harness, animated);
     assert_eq!(
         [waiting, parallel, idle, queued],
         [0, 1, 0, 0],

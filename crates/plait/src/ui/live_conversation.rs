@@ -1461,11 +1461,15 @@ Tone::Filled,
                             .pb(px(6.))
                             .text_size(px(12.))
                             .when(joined, |el| el.child(strand_end(center)))
-                            .child(if snapshot.status == ThreadStatus::Running {
-                                strand_mark_ground(center, 13.).child(running_mark(px(13.)))
-                            } else {
-                                strand_mark(center, NODE, tint, false)
-                            })
+                            .child(
+                                if self.host.connection.connected
+                                    && snapshot.status == ThreadStatus::Running
+                                {
+                                    strand_mark_ground(center, 13.).child(running_mark(px(13.)))
+                                } else {
+                                    strand_mark(center, NODE, tint, false)
+                                },
+                            )
                             .child(
                                 div()
                                     .min_w_0()

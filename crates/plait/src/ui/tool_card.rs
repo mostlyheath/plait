@@ -279,7 +279,7 @@ impl Plait {
                         status
                     ))
                     .aria_expanded(expanded)
-                    .child(line_icon(if running {
+                    .child(line_icon(if self.host.connection.connected && running {
                         running_mark(px(13.))
                     } else {
                         icon(if expanded { "down" } else { "right" })
