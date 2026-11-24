@@ -86,6 +86,7 @@ fn running_mark_does_not_schedule_view_renders() {
 fn plait_uses_animated_sprites_until_motion_is_reduced() {
     use super::{fixture_repository, isolated};
     use crate::ui::Plait;
+    use plait_client::preferences::ThreadTabs;
     use std::time::Instant;
 
     if !isolated("running_mark::plait_uses_animated_sprites_until_motion_is_reduced") {
@@ -215,6 +216,12 @@ fn plait_uses_animated_sprites_until_motion_is_reduced() {
     assert_eq!(animated_marks(&mut harness, &animated), 4, "work resumed");
 
     check_tool_states(&mut harness, &repository, &animated);
+
+    install(&mut harness, &repository);
+    harness.update(|plait, _, _| plait.preferences.value.thread_tabs = Some(ThreadTabs::Show));
+    assert_eq!(animated_marks(&mut harness, &animated), 5, "tabs shown");
+    harness.cx.update(|cx| cx.set_reduce_motion(true));
+    assert_eq!(animated_marks(&mut harness, &animated), 0, "tabs reduced");
 }
 
 #[cfg(target_os = "macos")]
