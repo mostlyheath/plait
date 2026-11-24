@@ -272,8 +272,10 @@ impl Draft {
             "\n\n"
         };
         self.replace(end..end, &format!("{gap}{quote}"), false);
-        self.value.anchor = anchor;
-        self.value.head = head;
+        if end != 0 {
+            self.value.anchor = anchor;
+            self.value.head = head;
+        }
     }
 
     pub fn delete(&mut self, forward: bool) {
@@ -541,6 +543,14 @@ mod tests {
         draft.insert("!");
         draft.undo(true);
         assert_eq!(draft.value.text, "first!\ntwo");
+    }
+
+    #[test]
+    fn typing_after_quoting_into_an_empty_draft_starts_on_the_blank_line() {
+        let mut draft = Draft::default();
+        draft.append_quote("> a reply\n\n");
+        draft.insert("My response");
+        assert_eq!(draft.value.text, "> a reply\n\nMy response");
     }
 
     #[test]
