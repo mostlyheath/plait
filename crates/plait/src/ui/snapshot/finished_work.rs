@@ -408,3 +408,47 @@ fn closing_line_opens_recorded_panel() {
         });
     }
 }
+
+#[core::prelude::v1::test]
+fn find_reuses_work_when_the_match_stays_outside() {
+    if !isolated("finished_work::find_reuses_work_when_the_match_stays_outside") {
+        return;
+    }
+    let repo =
+        fixture_repository(&PathBuf::from(std::env::var_os("HOME").unwrap()).join("find-work"));
+    let mut h = this_turn::harness(&repo, None, 1024., 740.);
+    stage(&mut h, &repo);
+    h.update(|p, window, cx| {
+        p.preferences.value.fold_earlier_turns = Some(false);
+        p.reconcile_live_folding();
+        p.open_conversation_find(window, cx);
+    });
+    let previous = h
+        .window
+        .update(&mut h.cx, |p, _, _| p.workspace.live_layout.work.clone())
+        .unwrap();
+    for (text, open) in [
+        ("Move the refresh", false),
+        ("polling loop", true),
+        ("runs in the background", false),
+    ] {
+        h.update(|p, _, cx| {
+            p.workspace
+                .conversation_find
+                .field
+                .clone()
+                .unwrap()
+                .update(cx, |f, cx| f.set_text(text, cx));
+        });
+        h.update(|p, _, _| {
+            assert!(p.current_hit().is_some());
+            assert_eq!(p.work_open_at(1), Some(open));
+            if text == "Move the refresh" {
+                assert!(
+                    Arc::ptr_eq(&previous, &p.workspace.live_layout.work),
+                    "an outside match rebuilt unchanged work"
+                );
+            }
+        });
+    }
+}

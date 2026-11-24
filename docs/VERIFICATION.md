@@ -129,6 +129,11 @@ that the application's frame or latency goals are met.
   connected, connecting, offline, and update-available states. Native checks cover
   the sheet corners, window dragging, and the foot controls by pointer and keyboard.
   Those checks and frame measurements are pending.
+- Sidebar card scenes cover the state words, the worktree branch, missing
+  metadata, selection and hover, inline rename, both menus, archived threads,
+  folded and missing projects, and scrolling 300 threads across six projects.
+  Native inspection in both themes and widths, VoiceOver announcements, and
+  comparison of the d1–d8 frame cases are pending.
 - The earlier desktop layout (sidebar, status line, message box, This turn,
   folded turns, Work view) was released without inspection in the native app.
   Its scenes were rendered and looked at on Linux only. See

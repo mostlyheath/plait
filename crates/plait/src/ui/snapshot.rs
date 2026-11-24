@@ -47,10 +47,12 @@ mod a11y;
 mod admission;
 mod branches;
 mod bubbles;
+mod cards;
 mod code_size;
 mod find;
 mod finished_work;
 mod folded_turns;
+mod git_step;
 mod header;
 mod interface_font;
 mod isolation;
@@ -2308,6 +2310,7 @@ fn walk(output: Option<&Path>) {
     let repository = fixture_repository(&scratch);
 
     header::walk(output);
+    git_step::walk(output);
     for (suffix, width, height) in [("wide", 1380., 860.), ("narrow", 900., 600.)] {
         tokens::walk(output, suffix, width, height);
         tabs::walk(&repository, output, suffix, width, height);
@@ -2464,7 +2467,10 @@ fn walk(output: Option<&Path>) {
         branches::branches_walk(&mut harness, &repository, suffix);
 
         sidebar::walk(&mut harness, &repository, suffix);
-        navigation_walk(&mut harness, &repository, suffix);
+        cards::walk(&mut harness, &repository, suffix);
+        if suffix == "narrow" {
+            cards::compact(&repository, output);
+        }
         // Threads exist, but none is open.
         harness.update(|plait, _, _| {
             plait.workspace.host_watch = None;
@@ -5220,149 +5226,6 @@ fn delayed_history_cannot_land_after_a_thread_switch() {
     drop(harness);
     std::fs::remove_file(socket).unwrap();
     std::fs::remove_dir_all(scratch).unwrap();
-}
-
-fn navigation_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
-    harness.connect(repository, false);
-    let root = repository.to_owned();
-    harness.update(move |plait, _, cx| {
-        plait.sidebar = true;
-        plait
-            .host
-            .connection
-            .status
-            .as_mut()
-            .unwrap()
-            .protocol_version = 3;
-        plait.preferences.value.navigation = Default::default();
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
-        *plait.host.connection.threads_mut() = (0..28)
-            .map(|index| {
-                let checkout = match index % 3 {
-                    0 => root.clone(),
-                    1 => root.join("sample-api"),
-                    _ => root.join("sample-long-project-name-that-must-truncate"),
-                };
-                ThreadSummary {
-                    checkout_queue: None,
-                    id: if index == 0 {
-                        THREAD.into()
-                    } else {
-                        format!("sample-navigation-{index}")
-                    },
-                    checkout,
-                    model: choice(),
-                    title: Some(
-                        [
-                            "Review parser recovery and Unicode boundaries",
-                            "Repair the failing tests",
-                            "Explain deployment configuration",
-                            "Update documentation",
-                        ][index % 4]
-                            .into(),
-                    ),
-                    status: [
-                        ThreadStatus::Running,
-                        ThreadStatus::Idle,
-                        ThreadStatus::AwaitingApproval,
-                        ThreadStatus::Error,
-                        ThreadStatus::Stopped,
-                        ThreadStatus::Interrupted,
-                    ][index % 6],
-                    created_at: Some(now - 86_400_000),
-                    updated_at: Some(now - index as u64 * 180_000),
-                    archived: Some(index == 3),
-                    pending_approval: Some(index % 6 == 2),
-                    harness: None,
-                }
-            })
-            .collect();
-        plait
-            .preferences
-            .value
-            .navigation
-            .observe(plait.host.connection.threads(), None, true);
-        plait
-            .preferences
-            .value
-            .navigation
-            .unread
-            .insert("sample-navigation-1".into());
-        plait
-            .preferences
-            .value
-            .navigation
-            .unread
-            .insert("sample-navigation-3".into());
-        plait.rebuild_projects(cx);
-        for project in &plait.state.projects {
-            plait
-                .navigation
-                .available
-                .insert(project.checkout.clone(), project.checkout == root);
-        }
-    });
-    harness.capture(&format!("navigation-projects-{suffix}"));
-    harness.update(|plait, _, cx| {
-        plait.navigation.attention = true;
-        cx.notify();
-    });
-    harness.capture(&format!("navigation-attention-{suffix}"));
-    harness.update(|plait, _, cx| {
-        plait.navigation.attention = false;
-        plait.navigation.archived = true;
-        cx.notify();
-    });
-    harness.capture(&format!("navigation-archived-{suffix}"));
-    harness.update(|plait, window, cx| plait.begin_rename(THREAD.into(), window, cx));
-    harness.capture(&format!("navigation-rename-{suffix}"));
-    harness.update(|plait, _, _| {
-        plait.navigation.rename = None;
-        plait.navigation.menu = Some(THREAD.into());
-    });
-    harness.capture(&format!("navigation-actions-{suffix}"));
-    let project = format!("project:{}", repository.display());
-    harness.update(move |plait, _, _| plait.navigation.menu = Some(project));
-    harness.capture(&format!("navigation-project-actions-{suffix}"));
-    // Threads in a Plait worktree list under the project it was made from.
-    let main = repository.to_owned();
-    harness.update(move |plait, _, cx| {
-        plait.preferences.value.navigation.remember_worktree(
-            main.join("sample-api"),
-            main.clone(),
-            "plait/3f9a2c".into(),
-        );
-        plait.rebuild_projects(cx);
-        plait.navigation.menu = Some("sample-navigation-1".into());
-    });
-    harness.capture(&format!("navigation-worktree-{suffix}"));
-    harness.update(|plait, _, cx| {
-        plait.preferences.value.navigation.worktrees.clear();
-        plait.rebuild_projects(cx);
-    });
-    harness.update(|plait, _, _| {
-        plait.navigation.menu = None;
-        plait.navigation.error = Some(
-            "Thread updates paused: the host disconnected. Refresh to load current states.".into(),
-        );
-    });
-    harness.capture(&format!("navigation-paused-{suffix}"));
-    harness.update(|plait, _, _| plait.navigation.error = None);
-
-    harness.update(|plait, _, cx| {
-        plait.navigation.menu = None;
-        plait.navigation.archived = false;
-        plait.preferences.value.navigation = Default::default();
-        plait.navigation.available.clear();
-        plait.navigation.collapsed.clear();
-        cx.notify();
-    });
-    harness.connect(repository, false);
-    harness.update(|plait, _, cx| plait.rebuild_projects(cx));
-    harness.capture(&format!("navigation-v2-{suffix}"));
 }
 
 #[core::prelude::v1::test]

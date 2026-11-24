@@ -381,6 +381,14 @@ impl Layout {
         self.work.get(index).filter(|fold| fold.rows.contains(&row))
     }
 
+    /// Whether a new Find match changes which finished work must stay open.
+    pub fn work_find_changed(&self, message: Option<&str>) -> bool {
+        let row = message.and_then(|id| self.row_of_message.get(id));
+        self.work
+            .iter()
+            .any(|fold| fold.find_inside != row.is_some_and(|row| fold.rows.contains(row)))
+    }
+
     pub fn len(&self) -> usize {
         self.rows.len()
     }

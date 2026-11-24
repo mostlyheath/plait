@@ -1028,7 +1028,7 @@ impl Plait {
             .children(self.cleanup_control(cx))
             .when_some(
                 self.header_state().filter(|_| current_thread),
-                |el, (word, tint)| {
+                |el, (word, tint, mark)| {
                     el.child(
                         row()
                             .id("header-state")
@@ -1040,12 +1040,85 @@ impl Plait {
                             .bg(rgba((tint << 8) | 36))
                             .font_weight(FontWeight::MEDIUM)
                             .whitespace_nowrap()
-                            .child(dot(tint))
+                            .child(mark)
                             .child(tag("state-word", word, tint)),
                     )
                 },
             )
-            .when(current_thread, |el| el.child(self.header_panel_toggle(cx)))
+            .when(current_thread, |el| {
+                el.child(self.header_panel_toggle(cx))
+                    .children(self.header_git_step(cx))
+            })
+    }
+
+    fn current_git_step(&self) -> Option<(plait_client::git_step::GitStep, Option<&'static str>)> {
+        use plait_client::git_step::{GitStep, next_git_step, sync};
+        let repository = &self.state.repository;
+        let snapshot = repository.snapshot().ready()?;
+        if snapshot.plain || snapshot.root != *self.visible_project_checkout() {
+            return None;
+        }
+        let (step, blocker) = next_git_step(
+            snapshot.changes.len(),
+            repository.staged(),
+            &sync(snapshot.named, snapshot.tracking.as_ref()),
+        )?;
+        let blocker = if step != GitStep::Commit && repository.write().busy() {
+            Some("Git is still working.")
+        } else {
+            blocker
+        };
+        Some((step, blocker))
+    }
+
+    fn header_git_step(&self, cx: &mut Context<Self>) -> Option<Control> {
+        use plait_client::git_step::GitStep;
+        let (step, blocker) = self.current_git_step()?;
+        let tab = self.tabs.model.active();
+        let owner = self.state.checkout_id();
+        let epoch = self.state.repository.epoch();
+        let label = match step {
+            GitStep::Commit => "Commit…",
+            GitStep::Publish => "Publish",
+            GitStep::Push => "Push",
+            GitStep::Pull => "Pull",
+        };
+        Some(
+            toned_button("header-git-step", label, Tone::Primary)
+                .h(px(24.))
+                .flex_shrink_0()
+                .when_some(blocker, |el, reason| {
+                    el.aria_description(reason).tooltip(move |_, cx| {
+                        cx.new(|_| thread_controls::TextTooltip(reason.into()))
+                            .into()
+                    })
+                })
+                .disabled(blocker.is_some())
+                .on_activate(cx, move |this, window, cx| {
+                    if this.tabs.model.active() != tab
+                        || this.state.checkout_id() != owner
+                        || this.state.repository.epoch() != epoch
+                        || this.current_git_step() != Some((step, None))
+                    {
+                        return;
+                    }
+                    if step == GitStep::Commit {
+                        if this.tabs.model.work().is_some_and(|work| work.open) {
+                            this.toggle_work(window, cx);
+                        }
+                        if let Some(panel) = this.tabs.model.panel_mut() {
+                            panel.select_scope(plait_client::panel::Scope::Uncommitted);
+                        }
+                        this.show_tab(Workspace::Changes, window, cx);
+                        if this.workspace.turn_review.target.is_some() {
+                            this.choose_work_scope(false, window, cx);
+                        }
+                        window.focus(&this.workspace.commit_message.focus_handle(cx), cx);
+                    } else {
+                        this.push(cx);
+                    }
+                }),
+        )
     }
 
     fn header_title(&self) -> impl IntoElement {
@@ -1074,14 +1147,20 @@ impl Plait {
             })
     }
 
-    fn header_state(&self) -> Option<(&'static str, u32)> {
+    fn header_state(&self) -> Option<(&'static str, u32, AnyElement)> {
         use plait_client::navigation::{ThreadRowState::*, thread_row_state};
         let id = self.host.thread.selected.as_deref()?;
         let summary = self.host.connection.threads().get(self.thread_index(id)?)?;
         let state = thread_row_state(summary, &self.lists().unread);
         match state {
             Working | Approval | Failed | Interrupted => {
-                Some((state.spoken(summary), thread_row_colors(state, true).0))
+                let tint = thread_row_colors(state, true).0;
+                let mark = if state == Working && self.host.connection.connected {
+                    running_mark(px(13.)).into_any_element()
+                } else {
+                    dot(tint).into_any_element()
+                };
+                Some((state.spoken(summary), tint, mark))
             }
             _ => None,
         }
