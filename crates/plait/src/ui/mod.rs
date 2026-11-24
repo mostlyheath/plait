@@ -1074,6 +1074,7 @@ impl Plait {
     fn header_git_step(&self, cx: &mut Context<Self>) -> Option<Control> {
         use plait_client::git_step::GitStep;
         let (step, blocker) = self.current_git_step()?;
+        let tab = self.tabs.model.active();
         let owner = self.state.checkout_id();
         let epoch = self.state.repository.epoch();
         let label = match step {
@@ -1094,7 +1095,8 @@ impl Plait {
                 })
                 .disabled(blocker.is_some())
                 .on_activate(cx, move |this, window, cx| {
-                    if this.state.checkout_id() != owner
+                    if this.tabs.model.active() != tab
+                        || this.state.checkout_id() != owner
                         || this.state.repository.epoch() != epoch
                         || this.current_git_step() != Some((step, None))
                     {

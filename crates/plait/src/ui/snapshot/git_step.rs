@@ -111,3 +111,48 @@ fn commit_step_opens_uncommitted_without_writing() {
         assert!(!p.state.repository.write().busy());
     });
 }
+
+#[cfg(debug_assertions)]
+#[core::prelude::v1::test]
+fn stale_commit_step_does_not_open_a_different_tab() {
+    if !isolated("git_step::stale_commit_step_does_not_open_a_different_tab") {
+        return;
+    }
+    let mut h = header::fixture(None, 1380., 860.);
+    let position = h
+        .draw_a11y()
+        .nodes
+        .into_iter()
+        .find(|n| n.label.as_deref() == Some("Commit…"))
+        .unwrap()
+        .bounds
+        .center();
+    h.pointer(PlatformInput::MouseDown(MouseDownEvent {
+        button: MouseButton::Left,
+        position,
+        click_count: 1,
+        ..Default::default()
+    }));
+    let handle = h.window.into();
+    h.window
+        .update(&mut h.cx, |p, _, _| {
+            let next = p.tabs.model.tabs()[1].id();
+            p.tabs.model.activate(next).unwrap();
+            p.tabs.model.panel_mut().unwrap().close();
+        })
+        .unwrap();
+    // Dispatch to the old frame before any redraw of the newly active tab.
+    h.cx.update_window(handle, |_, window, cx| {
+        window.dispatch_event(
+            PlatformInput::MouseUp(MouseUpEvent {
+                button: MouseButton::Left,
+                position,
+                click_count: 1,
+                ..Default::default()
+            }),
+            cx,
+        );
+    })
+    .unwrap();
+    h.update(|p, _, _| assert!(!p.tabs.model.panel().unwrap().open));
+}
