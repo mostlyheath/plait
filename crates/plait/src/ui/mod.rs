@@ -1297,7 +1297,9 @@ impl Render for Plait {
                 cx.listener(|this, _: &ToggleWorkView, window, cx| this.fill_panel(window, cx)),
             )
             .when(
-                !self.settings_open && (self.panel_is_open() || self.draws_work()),
+                !show_overview
+                    && !self.settings_open
+                    && (self.panel_is_open() || self.draws_work()),
                 |el| {
                     el.on_action(cx.listener(|this, _: &FocusNextPane, window, cx| {
                         use plait_client::panes::*;

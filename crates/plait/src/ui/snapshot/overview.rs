@@ -220,6 +220,40 @@ fn overview_controls() {
     std::fs::remove_dir_all(scratch).unwrap();
 }
 
+#[core::prelude::v1::test]
+fn overview_keeps_focus_over_an_open_panel() {
+    if !isolated("overview::overview_keeps_focus_over_an_open_panel") {
+        return;
+    }
+    let home = PathBuf::from(std::env::var_os("HOME").unwrap());
+    let repository = fixture_repository(&home.join("overview-panel-focus"));
+    let mut h = Harness::with_host(&repository, None, 1380., 860., None);
+    h.connect(&repository, false);
+    install(&mut h, [&repository, &repository]);
+    h.update(|p, window, cx| {
+        p.show_tab(super::super::Workspace::Changes, window, cx);
+        window.focus(&p.focus, cx);
+        assert!(p.panel_is_open());
+    });
+    h.keystroke("cmd-shift-e");
+    for key in ["cmd-alt-right", "cmd-alt-left"] {
+        h.keystroke(key);
+        h.update(|p, window, _| {
+            assert!(p.overview_focus().unwrap().is_focused(window), "{key}");
+        });
+    }
+    h.keystroke("end");
+    h.update(|p, _, _| {
+        assert_eq!(p.overview.as_ref().unwrap().focused_thread(), Some("last"));
+    });
+    h.keystroke("escape");
+    h.keystroke("cmd-alt-right");
+    h.update(|p, window, cx| {
+        assert!(p.overview.is_none() && p.panel_is_open());
+        assert!(p.work_focus[p.panel_focus_kind() as usize].contains_focused(window, cx));
+    });
+}
+
 /// A project's path reads from the home directory, as elsewhere in Plait;
 /// the full path stays in its hover text.
 #[cfg(debug_assertions)]
