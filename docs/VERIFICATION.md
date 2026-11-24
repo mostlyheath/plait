@@ -72,6 +72,17 @@ app after UI changes. With Accessibility permission already granted,
 `bash scripts/smoke-macos.sh` exercises accessible controls in disposable
 repositories. See [UI checks](../CONTRIBUTING.md#required-checks).
 
+The `running-mark` scenes show the same resting ring in the sidebar, tab,
+turn state, and running tool. Tests check that all four marks switch between
+animated and still sprites when Reduce Motion changes and queue no view
+redraw callbacks. On Macs with a Metal device, the test also compares the
+visible starting poses pixel for pixel. The pinned GPUI rotation
+test checks that a sprite advances while its owning view’s render count
+stays constant. In a native
+build, observe an active turn and toggle macOS Reduce Motion while it is
+working. The ring should stand still with Reduce Motion on and resume
+turning with it off.
+
 `scripts/acceptance-macos.sh` drives a native window and collects observations.
 It takes over the pointer and keyboard: do not run it while someone is using
 the Mac. Its `--self-test` checks acceptance logic without driving a window.

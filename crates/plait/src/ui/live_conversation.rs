@@ -160,41 +160,43 @@ fn strand_end(style: Turns, to: f32) -> Option<Div> {
     )
 }
 
-/// A round mark centered on the turn line, `center` points below its
-/// parent's top edge, on a little clear ground.
+/// A clear ground centered on the turn line, `center` points below its parent's top edge.
+fn strand_mark_ground(center: f32, size: f32) -> Div {
+    let ground = size + MARK_GAP * 2.;
+    div()
+        .absolute()
+        .left(px(-STRAND_LEFT + 0.5 - ground / 2.))
+        .top(px(center - ground / 2.))
+        .size(px(ground))
+        .rounded_full()
+        .bg(rgb(colors().bg))
+        .flex()
+        .items_center()
+        .justify_center()
+}
+
 fn strand_mark(style: Turns, center: f32, size: f32, color: u32, hollow: bool) -> Option<Div> {
     if style == Turns::Bubbles {
         return None;
     }
-    let ground = size + MARK_GAP * 2.;
     Some(
-        div()
-            .absolute()
-            .left(px(-STRAND_LEFT + 0.5 - ground / 2.))
-            .top(px(center - ground / 2.))
-            .size(px(ground))
-            .rounded_full()
-            .bg(rgb(colors().bg))
-            .flex()
-            .items_center()
-            .justify_center()
-            .child(
-                div()
-                    .size(px(size))
-                    .rounded_full()
-                    .bg(rgb(color))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .when(hollow, |el| {
-                        el.child(
-                            div()
-                                .size(px(size - 3.))
-                                .rounded_full()
-                                .bg(rgb(colors().bg)),
-                        )
-                    }),
-            ),
+        strand_mark_ground(center, size).child(
+            div()
+                .size(px(size))
+                .rounded_full()
+                .bg(rgb(color))
+                .flex()
+                .items_center()
+                .justify_center()
+                .when(hollow, |el| {
+                    el.child(
+                        div()
+                            .size(px(size - 3.))
+                            .rounded_full()
+                            .bg(rgb(colors().bg)),
+                    )
+                }),
+        ),
     )
 }
 
@@ -1677,13 +1679,24 @@ Tone::Filled,
                             .when(joined, |el| {
                                 el.children(strand_end(self.preferences.value.turns, center))
                             })
-                            .children(strand_mark(
-                                self.preferences.value.turns,
-                                center,
-                                NODE,
-                                tint,
-                                false,
-                            ))
+                            .map(|el| {
+                                let style = self.preferences.value.turns;
+                                if self.host.connection.connected
+                                    && snapshot.status == ThreadStatus::Running
+                                {
+                                    let mark = running_mark(px(13.));
+                                    match style {
+                                        Turns::Line => {
+                                            el.child(strand_mark_ground(center, 13.).child(mark))
+                                        }
+                                        Turns::Bubbles => el.child(
+                                            div().pt(px((RECORD_LINE - 13.) / 2.)).child(mark),
+                                        ),
+                                    }
+                                } else {
+                                    el.children(strand_mark(style, center, NODE, tint, false))
+                                }
+                            })
                             .child(
                                 div()
                                     .min_w_0()
