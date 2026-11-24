@@ -20,6 +20,13 @@ unicode-segmentation = "=1.13.3"
 # GPUI already pins this decoder; direct access supplies allocation limits and thumbnails.
 image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg"] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# Workspace accessibility notifications, forwarded to GPUI on its executor.
+async-channel = "=2.5.0"
+block2 = "=0.6.2"
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["NSAccessibility", "NSWorkspace"] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["NSNotification", "NSOperation", "NSString", "block2"] }
+
 # Scene snapshots (see src/ui/snapshot.rs). GPUI's headless renderers draw the
 # root view to PNG files without a window. `test-support` is a dev-dependency
 # feature, so `cargo build` and release builds do not compile it.
