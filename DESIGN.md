@@ -1091,8 +1091,10 @@ Skip this step if D4 is declined; nothing later depends on it.
 ### 13. Running mark
 
 - A new original SVG, the open ring, in `assets/`, and `theme::running_mark`
-  that draws it at a size and turns it with a timed transformation; under
-  Reduce Motion it draws still.
+  that draws it at a size and turns it with `Svg::with_timed_transformation`
+  using `TimedTransformation::rotation`. Under Reduce Motion it draws
+  still. Do not use `with_animation` for the mark. That path requests an
+  animation frame and re-renders the owning view on each frame.
 - Use it wherever a working state is drawn: thread rows, tabs, the state
   line under a running turn, and a running tool row.
 - **Scenes:** `running-mark` (still, as scenes are), in the sidebar, a tab,
