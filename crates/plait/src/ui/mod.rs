@@ -989,7 +989,6 @@ impl Plait {
         let current_thread = !self.worktrees_visible()
             && !self.issues_visible()
             && self.host.thread.selected.is_some();
-        let state = current_thread.then(|| self.header_state()).flatten();
         let inset = if sidebar {
             16.
         } else {
@@ -998,6 +997,8 @@ impl Plait {
         let mut header = self
             .window_drag(row(), cx)
             .id("sheet-header")
+            // The body is padded to clear the sheet corners. The unfilled header meets its edges.
+            .when(sidebar, |el| el.mx(px(-4.)).mt(px(-4.)))
             .h(px(tabs::HEADER_HEIGHT))
             .flex_shrink_0()
             .min_w_0()
@@ -1014,56 +1015,62 @@ impl Plait {
             if self.tabs.list_open {
                 self.measure_tabs(window);
             }
-            let title = if self.worktrees_visible() {
-                "Worktrees".to_owned()
-            } else if self.issues_visible() {
-                "Linear issues".to_owned()
-            } else if let Some(id) = &self.host.thread.selected {
-                self.thread_title(id)
-            } else if self.draft.open {
-                self.current_draft_title().to_owned()
-            } else {
-                self.active_project().name.clone()
-            };
             header = header
-                .child(
-                    div()
-                        .id("header-title")
-                        .min_w_0()
-                        .truncate()
-                        .text_size(px(14.))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(rgb(colors().strong))
-                        .child(a11y_text("title", title.clone()))
-                        .tooltip(move |_, cx| {
-                            cx.new(|_| thread_controls::TextTooltip(title.clone()))
-                                .into()
-                        }),
+                .child(self.header_title())
+                .when(
+                    self.tabs.model.active().is_some() && self.panels.viewport >= 760.,
+                    |el| el.child(self.environment(cx)),
                 )
-                .when(current_thread && self.panels.viewport >= 760., |el| {
-                    el.child(self.environment(cx))
-                })
                 .child(div().flex_1().min_w(px(16.)));
         }
         header
             .children(self.cleanup_control(cx))
-            .when_some(state, |el, (word, tint)| {
-                el.child(
-                    row()
-                        .id("header-state")
-                        .h(px(20.))
-                        .flex_shrink_0()
-                        .px(px(7.))
-                        .gap(px(4.))
-                        .rounded_full()
-                        .bg(rgba((tint << 8) | 36))
-                        .font_weight(FontWeight::MEDIUM)
-                        .whitespace_nowrap()
-                        .child(dot(tint))
-                        .child(tag("state-word", word, tint)),
-                )
-            })
+            .when_some(
+                self.header_state().filter(|_| current_thread),
+                |el, (word, tint)| {
+                    el.child(
+                        row()
+                            .id("header-state")
+                            .h(px(20.))
+                            .flex_shrink_0()
+                            .px(px(7.))
+                            .gap(px(4.))
+                            .rounded_full()
+                            .bg(rgba((tint << 8) | 36))
+                            .font_weight(FontWeight::MEDIUM)
+                            .whitespace_nowrap()
+                            .child(dot(tint))
+                            .child(tag("state-word", word, tint)),
+                    )
+                },
+            )
             .when(current_thread, |el| el.child(self.header_panel_toggle(cx)))
+    }
+
+    fn header_title(&self) -> impl IntoElement {
+        let title = if self.worktrees_visible() {
+            "Worktrees".to_owned()
+        } else if self.issues_visible() {
+            "Linear issues".to_owned()
+        } else if let Some(id) = &self.host.thread.selected {
+            self.thread_title(id)
+        } else if self.draft.open {
+            self.current_draft_title().to_owned()
+        } else {
+            self.active_project().name.clone()
+        };
+        div()
+            .id("header-title")
+            .min_w_0()
+            .truncate()
+            .text_size(px(14.))
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(rgb(colors().strong))
+            .child(a11y_text("title", title.replace(['\r', '\n'], " ")))
+            .tooltip(move |_, cx| {
+                cx.new(|_| thread_controls::TextTooltip(title.clone()))
+                    .into()
+            })
     }
 
     fn header_state(&self) -> Option<(&'static str, u32)> {
@@ -1102,7 +1109,7 @@ impl Plait {
 
     /// The same checkout chips sit beside the title or below the message box.
     fn environment(&self, cx: &mut Context<Self>) -> Div {
-        let checkout = &self.host.creation.checkout;
+        let checkout = self.visible_project_checkout();
         let path = checkout.display().to_string();
         let worktree = self.lists().worktree(checkout);
         let branch = self
@@ -1113,8 +1120,13 @@ impl Plait {
             .filter(|snapshot| snapshot.root == *checkout && !snapshot.plain)
             .map(|snapshot| snapshot.branch.as_str())
             .or_else(|| worktree.map(|tree| tree.branch.as_str()))
-            .filter(|branch| !branch.is_empty());
-        let label = |id, value: String| div().min_w_0().truncate().child(a11y_text(id, value));
+            .filter(|branch| !branch.is_empty() && checkout == self.host.creation.checkout);
+        let label = |id, value: String| {
+            div()
+                .min_w_0()
+                .truncate()
+                .child(a11y_text(id, value.replace(['\r', '\n'], " ")))
+        };
         let chip = |glyph: &'static str| {
             icon(glyph)
                 .size(px(12.))
@@ -1161,8 +1173,16 @@ impl Plait {
                         .font_weight(FontWeight::NORMAL)
                         .aria_label(format!("Switch Branch: {branch}"))
                         .aria_keyshortcuts(self.shortcut_aria("git.switch_branch"))
-                        .when(worktree.is_some(), |el| el.child(chip("folder")))
-                        .child(chip("branch"))
+                        .child(if worktree.is_some() {
+                            chip("branch").into_any_element()
+                        } else {
+                            div()
+                                .w(px(12.))
+                                .flex_shrink_0()
+                                .text_size(px(12.))
+                                .child("⑂")
+                                .into_any_element()
+                        })
                         .child(label("branch-name", branch.to_owned()))
                         .tooltip(move |_, cx| {
                             cx.new(|_| thread_controls::TextTooltip(tip.clone())).into()
@@ -1171,7 +1191,7 @@ impl Plait {
                 )
             })
     }
-    /// Where the selected thread runs: Project, Machine, and its checkout branch.
+    /// Idle checkout context and the model and policy reported by older hosts.
     pub(super) fn connection_details(
         &self,
         model: Option<String>,
@@ -1201,11 +1221,14 @@ impl Plait {
             .gap_4()
             .text_size(px(11.))
             .text_color(rgb(colors().muted))
-            .child(chip("environment-project", "folder", project.name.clone()))
-            .child(chip("environment-machine", "machine", machine.name.clone()))
-            .when_some(branch, |el, branch| {
-                el.child(chip("environment-branch", "branch", branch))
+            .when(self.host.thread.selected.is_none(), |el| {
+                el.child(chip("environment-project", "folder", project.name.clone()))
             })
+            .child(chip("environment-machine", "machine", machine.name.clone()))
+            .when_some(
+                branch.filter(|_| self.host.thread.selected.is_none()),
+                |el, branch| el.child(chip("environment-branch", "branch", branch)),
+            )
             .when_some(model, |el, model| {
                 el.child(
                     div()

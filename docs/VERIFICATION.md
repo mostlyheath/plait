@@ -61,6 +61,8 @@ in wide and narrow layouts. Export them with:
 bash scripts/snapshots.sh /tmp/plait-snapshots
 ```
 
+The `header-*` scenes cover the title and tabs settings, tab overflow, thread states, project views, drafts, and both traffic-light insets. Pixel inspection, native interaction and frame timings for the header are pending. Exercise tab shortcuts in both settings, reorder and close a tab with the pointer, and check truncation with a long title and branch. Check window dragging, the system double-click action and both transitions into and out of full screen with the sidebar shown and hidden.
+
 macOS uses the app's text shaping and renderer offscreen; Linux uses its own
 fonts and software rendering. Scenes do not validate the native window,
 input, accessibility bridge, or live provider. Build and inspect the native

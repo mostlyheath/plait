@@ -835,7 +835,7 @@ impl Plait {
                     .min_w_0()
                     .truncate()
                     .when(meta.active, |el| el.text_color(rgb(colors().strong)))
-                    .child(meta.title.clone()),
+                    .child(meta.title.replace(['\r', '\n'], " ")),
             )
             .child(self.tab_close_control(id, &meta.title, close_hover, close, group, cx))
     }
@@ -906,7 +906,7 @@ impl Plait {
             .audited()
             .absolute()
             .top(px(
-                HEADER_HEIGHT + if self.visible_sidebar() { 13. } else { 0. }
+                HEADER_HEIGHT + if self.visible_sidebar() { 9. } else { 0. }
             ))
             .right(px(48.))
             .w(px(320.))
