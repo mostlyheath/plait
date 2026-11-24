@@ -142,7 +142,7 @@ that the application's frame or latency goals are met.
   Native pointer and keyboard checks in both themes and widths, VoiceOver
   announcements, and the d1–d7 and d9 frame checks are pending.
 - The earlier desktop layout (sidebar, status line, message box, This turn,
-  folded turns, Work view) was released without inspection in the native app.
+  folded turns, and the former split layout) was released without inspection in the native app.
   Its scenes were rendered and looked at on Linux only. See
   [#130](https://github.com/mostlyheath/plait/issues/130).
 - Some tests depend on timing and fail now and then on unrelated changes; one

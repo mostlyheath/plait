@@ -112,10 +112,10 @@ impl Plait {
                 PanelKind::History => None,
             };
         }
-        if let Some(kind) = self.focused_work_kind() {
+        if let Some(kind) = self.focused_panel_kind() {
             use plait_client::panes::PaneKind;
             return match kind {
-                PaneKind::Changes if !self.work_recorded() => self.changes_target(),
+                PaneKind::Changes if !self.panel_recorded() => self.changes_target(),
                 PaneKind::Files => self.files_target(),
                 _ => None,
             };

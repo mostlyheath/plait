@@ -159,7 +159,10 @@ fn action_items(view: &Plait, window: &Window) -> Vec<Item> {
                 "pane.next" | "pane.previous" if view.overview.is_some() => {
                     Some("Close Every Thread to focus a pane.")
                 }
-                _ => view.pane_action_refusal(action.id).map(|why| why.reason()),
+                "pane.next" | "pane.previous" if view.settings_open || !view.panel_is_open() => {
+                    Some("Open the panel first.")
+                }
+                _ => None,
             };
             Item::new(
                 format!("action:{}", action.id),

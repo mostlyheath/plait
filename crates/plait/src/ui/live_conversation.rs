@@ -267,6 +267,8 @@ pub(super) struct MeasuredWork {
     enabled: bool,
 }
 
+const CONVERSATION_PADDING: f32 = 24.;
+
 impl Plait {
     /// The desktop default from Settings → New threads.
     pub(super) fn default_approval(&self) -> ApprovalMode {
@@ -942,7 +944,7 @@ impl Plait {
             return div()
                 .group(row_group(index))
                 .w_full()
-                .px(px(self.conversation_padding()))
+                .px(px(CONVERSATION_PADDING))
                 .child(
                     div()
                         .relative()
@@ -1300,7 +1302,7 @@ impl Plait {
         div()
             .group(row_group(index))
             .w_full()
-            .px(px(self.conversation_padding()))
+            .px(px(CONVERSATION_PADDING))
             .child(
                 div()
                     .relative()
@@ -1377,7 +1379,7 @@ impl Plait {
                         .bottom(px(10.))
                         .left_0()
                         .right_0()
-                        .px(px(self.conversation_padding()))
+                        .px(px(CONVERSATION_PADDING))
                         .child(
                             div()
                                 .flex()
@@ -1846,7 +1848,7 @@ Tone::Filled,
                 && !self.reading_back();
             if snapshot.truncated && !self.workspace.history.enabled {
                 main = main.child(
-                    div().px(px(self.conversation_padding())).child(
+                    div().px(px(CONVERSATION_PADDING)).child(
                         div()
                             .relative()
                             .w_full()
@@ -1871,7 +1873,7 @@ Tone::Filled,
                 .filter(|_| self.host.protocol() >= 5 && !snapshot.status.busy())
             {
                 main = main.child(
-                    div().px(px(self.conversation_padding())).child(
+                    div().px(px(CONVERSATION_PADDING)).child(
                         div()
                             .relative()
                             .w_full()
@@ -1917,7 +1919,7 @@ Tone::Filled,
                     record.is_some() && self.preferences.value.turns == Turns::Bubbles;
                 let (name, parts) = record.unwrap_or_else(|| (state.clone(), Vec::new()));
                 main = main.child(
-                    div().px(px(self.conversation_padding())).child(
+                    div().px(px(CONVERSATION_PADDING)).child(
                         row()
                             .id("turn-state")
                             .when(legacy_line, |el| {
@@ -1996,7 +1998,7 @@ Tone::Filled,
                 && self.host.thread.live_preview_clipped
             {
                 main = main.child(
-                    div().px(px(self.conversation_padding())).child(
+                    div().px(px(CONVERSATION_PADDING)).child(
                         div()
                             .w_full()
                             .max_w(px(CONTENT_WIDTH))
@@ -2041,7 +2043,7 @@ Tone::Filled,
         main = main.child(
             column()
                 .flex_shrink_0()
-                .px(px(self.conversation_padding()))
+                .px(px(CONVERSATION_PADDING))
                 .pt(px(6.))
                 .pb(px(18.))
                 .gap_2()

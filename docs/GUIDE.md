@@ -103,7 +103,7 @@ Choose **Settings → Appearance → Thread tabs → Show** to see the open tabs
 
 Open **Toggle Panel** (`Cmd-L`) on a thread. Choose **Changes**, **Files**, or **History** inside the panel. The close control or **Conversation** (`Cmd-Shift-1`) returns focus to the thread. New and restored tabs start with the panel closed.
 
-**This turn** shows the selected turn’s recorded diff. **Uncommitted** shows the checkout’s current changes and commit controls. A thread without a recorded turn opens on **Uncommitted**. Use **Cmd-Option-Right** or **Cmd-Option-Left** to move focus between the conversation and panel. Find searches the focused conversation, diff, or file.
+**This turn** shows the selected turn’s recorded diff. **Uncommitted** shows the checkout’s current changes and commit controls. A thread without a recorded turn opens on **Uncommitted**. Use **Cmd-Option-Right** or **Cmd-Option-Left** to move focus between the conversation and panel. Find searches the focused conversation, diff, or file. Both focus shortcuts stay within the panel when it fills the sheet.
 
 Drag the divider to resize the panel. Its width is saved on this device. Double-click the divider to return to half the sheet. **Cmd-Backslash** toggles fill. On sheets narrower than 1020 points the panel fills the sheet automatically.
 

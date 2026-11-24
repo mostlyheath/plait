@@ -157,6 +157,12 @@ fn keys_focus_fill_and_tab_memory() {
         assert_eq!(p.panel_kind(), Some(PanelKind::Changes));
         assert!(!p.panel_fills());
     });
+    h.keystroke("cmd-alt-right");
+    h.update(|p, w, _| assert!(p.focus.is_focused(w)));
+    h.keystroke("cmd-alt-left");
+    h.update(|p, w, cx| {
+        assert!(p.panel_focus[p.panel_focus_kind() as usize].contains_focused(w, cx));
+    });
     h.keystroke("cmd-shift-3");
     h.draw();
     h.update(|p, _, _| assert_eq!(p.panel_kind(), Some(PanelKind::History)));
@@ -200,9 +206,55 @@ fn filling_from_conversation_moves_find_into_panel() {
     h.update(|p, w, cx| {
         assert!(p.panel_fills());
         assert!(
-            p.work_focus[plait_client::panes::PaneKind::Changes as usize].contains_focused(w, cx)
+            p.panel_focus[plait_client::panes::PaneKind::Changes as usize].contains_focused(w, cx)
         );
         assert_eq!(p.find_target(), Some(FindIn::Changes));
+    });
+}
+
+/// Find in Changes belongs to the tab, like the panel it searches.
+#[core::prelude::v1::test]
+fn changes_find_returns_with_its_tab() {
+    use crate::ui::tab_lifecycle::Intent;
+    if !isolated("panel::changes_find_returns_with_its_tab") {
+        return;
+    }
+    let home = PathBuf::from(std::env::var_os("HOME").unwrap());
+    let repo = fixture_repository(&home.join("panel-find-memory"));
+    let mut h = this_turn::harness(&repo, None, 900., 600.);
+    undo::prepare(&mut h, &repo);
+    tabs::install(&mut h, 2);
+    h.update(|p, _, _| p.host.connection.connected = false);
+    h.draw();
+    h.keystroke("cmd-shift-2");
+    h.keystroke("cmd-f");
+    h.update(|p, w, cx| {
+        assert!(p.panel_is_open());
+        let field = p.workspace.diff_find.field.clone().unwrap();
+        field.update(cx, |f, cx| f.set_text("refresh", cx));
+        let next = p.tabs.model.tabs()[1].id();
+        p.request_tab(Intent::Activate(next), w, cx);
+    });
+    h.draw();
+    h.update(|p, w, cx| {
+        assert!(!p.workspace.diff_find.open, "another tab's find leaked in");
+        let first = p.tabs.model.tabs()[0].id();
+        p.request_tab(Intent::Activate(first), w, cx);
+    });
+    h.draw();
+    h.update(|p, _, cx| {
+        assert!(p.panel_is_open());
+        assert!(
+            p.workspace.diff_find.open,
+            "the tab's find bar did not return"
+        );
+        let query = p
+            .workspace
+            .diff_find
+            .field
+            .as_ref()
+            .map(|f| f.read(cx).text().to_string());
+        assert_eq!(query.as_deref(), Some("refresh"));
     });
 }
 
@@ -234,7 +286,7 @@ fn panel_changes_handoff_stays_on_the_scope_row() {
             .unwrap_or_else(|| panic!("missing {id}"))
             .bounds
     };
-    let scope = bounds("work-recorded");
+    let scope = bounds("panel-recorded");
     let editor = bounds("panel-editor");
     assert!(editor.center().y <= scope.bottom(), "the handoff wrapped");
     assert!(

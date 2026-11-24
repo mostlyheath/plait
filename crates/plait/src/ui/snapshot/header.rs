@@ -61,7 +61,7 @@ pub(super) fn walk(output: Option<&Path>) {
     for (suffix, width, height) in [("wide", 1380., 860.), ("narrow", 900., 600.)] {
         let mut h = fixture(output, width, height);
         capture_both(&mut h, &format!("header-title-{suffix}"));
-        h.update(|p, _, _| p.workspace.work_total = Some("+12 −3".into()));
+        h.update(|p, _, _| p.workspace.panel_change_total = Some("+12 −3".into()));
         h.capture(&format!("header-panel-totals-{suffix}"));
         h.update(|p, _, _| {
             p.host.connection.threads_mut()[0].title = Some(
@@ -199,7 +199,7 @@ fn panel_toggle_shows_only_known_checkout_totals() {
         })
     };
     assert_eq!(totals(&mut h), None);
-    h.update(|p, _, _| p.workspace.work_total = Some("+12 −3".into()));
+    h.update(|p, _, _| p.workspace.panel_change_total = Some("+12 −3".into()));
     assert_eq!(totals(&mut h).as_deref(), Some("+12 −3"));
     h.update(|p, _, _| p.state.repository.data.snapshot = Load::Empty);
     assert_eq!(totals(&mut h), None);

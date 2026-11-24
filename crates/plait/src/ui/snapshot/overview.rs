@@ -251,7 +251,7 @@ fn overview_keeps_focus_over_an_open_panel() {
     h.keystroke("cmd-alt-right");
     h.update(|p, window, cx| {
         assert!(p.overview.is_none() && p.panel_is_open());
-        assert!(p.work_focus[p.panel_focus_kind() as usize].contains_focused(window, cx));
+        assert!(p.panel_focus[p.panel_focus_kind() as usize].contains_focused(window, cx));
     });
 }
 
@@ -274,7 +274,7 @@ fn filling_the_panel_leaves_overview() {
     h.update(|p, window, cx| {
         assert!(p.overview.is_none());
         assert!(p.panel_fills());
-        assert!(p.work_focus[p.panel_focus_kind() as usize].contains_focused(window, cx));
+        assert!(p.panel_focus[p.panel_focus_kind() as usize].contains_focused(window, cx));
     });
 }
 

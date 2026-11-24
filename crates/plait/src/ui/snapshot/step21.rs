@@ -796,9 +796,9 @@ fn review_strip_opens_changes_with_fresh_counts() {
         // These counts were loaded for an older status before the panel closed.
         plait
             .workspace
-            .work_counts
+            .panel_file_counts
             .insert("src/review.rs".into(), "+1 −1".into());
-        plait.workspace.work_total = Some("+1 −1".into());
+        plait.workspace.panel_change_total = Some("+1 −1".into());
     });
     click(&mut harness, "Modified src/review.rs. Show in Changes");
     harness.update(|plait, _, _| {
@@ -816,11 +816,11 @@ fn review_strip_opens_changes_with_fresh_counts() {
             Path::new("src/review.rs")
         );
         assert!(
-            plait.workspace.work_total.is_none(),
+            plait.workspace.panel_change_total.is_none(),
             "Changes must refresh the totals"
         );
         assert!(
-            plait.workspace.work_counts.is_empty(),
+            plait.workspace.panel_file_counts.is_empty(),
             "Changes must refresh file counts"
         );
     });
@@ -868,17 +868,17 @@ fn changed_file_strip_recounts_when_leaving_this_turn() {
             let path = PathBuf::from("src/review.rs");
             plait
                 .workspace
-                .work_counts
+                .panel_file_counts
                 .insert(path.clone(), "+1 −1".into());
-            plait.workspace.work_total = Some("+1 −1".into());
+            plait.workspace.panel_change_total = Some("+1 −1".into());
             plait.open_thread_file(path, window, cx);
             assert_eq!(plait.tabs.model.panel().unwrap().scope, Scope::Uncommitted);
             assert!(
-                plait.workspace.work_total.is_none(),
+                plait.workspace.panel_change_total.is_none(),
                 "stale panel total survived the scope change"
             );
             assert!(
-                plait.workspace.work_counts.is_empty(),
+                plait.workspace.panel_file_counts.is_empty(),
                 "stale file counts survived the scope change"
             );
         });

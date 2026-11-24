@@ -127,7 +127,7 @@ impl Plait {
         let events = cx.subscribe(
             &field,
             move |this, _, _: &TextFieldEvent, cx| match target {
-                FindIn::Changes => this.search_work_diff(cx),
+                FindIn::Changes => this.search_panel_diff(cx),
                 FindIn::File => this.update_find(cx),
                 FindIn::Conversation => this.search_conversation(cx),
             },
@@ -153,18 +153,18 @@ impl Plait {
             }
         }
     }
-    fn work_patch(&self) -> Option<&Arc<plait_client::model::Diff>> {
-        if self.tabs.model.work()?.recorded {
+    fn panel_patch(&self) -> Option<&Arc<plait_client::model::Diff>> {
+        if self.panel_recorded() {
             self.workspace.turn_review.diff.as_ref()
         } else {
             self.state.repository.diff().ready()
         }
     }
-    pub(super) fn search_work_diff(&mut self, cx: &mut Context<Self>) {
-        if !self.workspace.diff_find.open || !self.tabs.model.work().is_some_and(|w| w.open) {
+    pub(super) fn search_panel_diff(&mut self, cx: &mut Context<Self>) {
+        if !self.workspace.diff_find.open || !self.panel_is_open() {
             return;
         }
-        let patch = self.work_patch().cloned();
+        let patch = self.panel_patch().cloned();
         let find = &mut self.workspace.diff_find;
         let query = find
             .field
@@ -200,7 +200,7 @@ impl Plait {
                 if this.tabs.model.active() == tab
                     && this.workspace.diff_find.generation == generation
                     && this
-                        .work_patch()
+                        .panel_patch()
                         .is_some_and(|now| Arc::ptr_eq(now, &source))
                 {
                     let find = &mut this.workspace.diff_find;
@@ -239,11 +239,10 @@ impl Plait {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.leave_work_fallback(window, cx);
         self.open_file(path, None, cx);
         if self.shows_kind(plait_client::panes::PaneKind::Files) {
             window.focus(
-                &self.work_focus[plait_client::panes::PaneKind::Files as usize],
+                &self.panel_focus[plait_client::panes::PaneKind::Files as usize],
                 cx,
             );
         }
@@ -256,19 +255,11 @@ impl Plait {
             return;
         }
         self.tabs.lifecycle.view_revision += 1;
-        let visible = self.draws_work();
-        let routed = self
-            .tabs
-            .model
-            .work_mut()
-            .is_some_and(|w| w.route(Workspace::Files, visible));
-        if !routed {
-            if let Some(panel) = self.tabs.model.panel_mut() {
-                panel.open_on(plait_client::panel::PanelKind::Files);
-            }
-            self.workspace.tab = Workspace::Conversation;
-            self.panels.focused = Some(plait_client::panes::PaneKind::Files);
+        if let Some(panel) = self.tabs.model.panel_mut() {
+            panel.open_on(plait_client::panel::PanelKind::Files);
         }
+        self.workspace.tab = Workspace::Conversation;
+        self.panels.focused = Some(plait_client::panes::PaneKind::Files);
         self.workspace.restore_pending[3] = false;
         let root = self.file_root();
         let viewer = &mut self.workspace.file_viewer;
@@ -355,7 +346,6 @@ impl Plait {
     pub(super) fn check_file(&mut self, cx: &mut Context<Self>) {
         if self.workspace.tab != Workspace::Files
             && !self.shows_kind(plait_client::panes::PaneKind::Files)
-            && !self.remembers_kind(plait_client::panes::PaneKind::Files)
         {
             return;
         }
@@ -519,7 +509,7 @@ impl Plait {
         // Whatever search is running now answers nothing.
         find.generation += 1;
         if self.panel_is_open() {
-            window.focus(&self.work_focus[self.panel_focus_kind() as usize], cx);
+            window.focus(&self.panel_focus[self.panel_focus_kind() as usize], cx);
         } else {
             window.focus(&self.focus, cx);
         }
@@ -745,7 +735,7 @@ impl Plait {
         if self.settings_open {
             return None;
         }
-        if let Some(kind) = self.focused_work_kind() {
+        if let Some(kind) = self.focused_panel_kind() {
             use plait_client::panes::PaneKind;
             return match kind {
                 PaneKind::Thread => Some(FindIn::Conversation),
@@ -775,7 +765,7 @@ impl Plait {
                     self.restore_find_bookmark(target, &Default::default(), cx);
                 }
                 self.workspace.diff_find.open = true;
-                self.search_work_diff(cx);
+                self.search_panel_diff(cx);
                 window.focus(
                     &self
                         .workspace
@@ -814,7 +804,7 @@ impl Plait {
             FindIn::Changes => {
                 self.workspace.diff_find.open = false;
                 if self.panel_is_open() {
-                    window.focus(&self.work_focus[self.panel_focus_kind() as usize], cx);
+                    window.focus(&self.panel_focus[self.panel_focus_kind() as usize], cx);
                 } else {
                     window.focus(&self.focus, cx);
                 }

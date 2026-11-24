@@ -61,7 +61,7 @@ impl Plait {
             },
             focus,
             restore,
-            sidebar: self.visible_sidebar(),
+            sidebar: self.sidebar,
             scroll: ListState::new(0, ListAlignment::Top, px(90.)),
             sidebar_rows: None,
             grid: Rc::new(OverviewGrid {
@@ -76,9 +76,7 @@ impl Plait {
 
     pub(super) fn close_overview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(view) = self.overview.take() {
-            let restore = view
-                .restore
-                .filter(|_| view.sidebar == self.visible_sidebar());
+            let restore = view.restore.filter(|_| view.sidebar == self.sidebar);
             window.focus(restore.as_ref().unwrap_or(&self.focus), cx);
             cx.notify();
         }
@@ -134,7 +132,7 @@ impl Plait {
     fn refresh_overview(&mut self, cx: &Context<Self>) {
         // Match the sheet's margin, border and inner padding when the sidebar is shown.
         let sheet_width = self.panels.viewport
-            - if self.visible_sidebar() {
+            - if self.sidebar {
                 self.panel_width(Panel::Sidebar) + 18.
             } else {
                 0.

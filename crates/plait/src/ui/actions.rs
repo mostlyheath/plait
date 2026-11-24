@@ -117,12 +117,9 @@ pub(super) const ACTIONS: &[AppAction] = &[
     entry("palette.toggle", "Command Palette…", "View", Some("cmd-k"), Item, || Box::new(CommandPalette)),
     entry("view.toggle_sidebar", "Toggle Sidebar", "View", Some("cmd-b"), Group, || Box::new(ToggleSidebar)),
     entry("view.overview", "Every Thread", "View", Some("cmd-shift-e"), Item, || Box::new(ToggleOverview)),
-    entry("view.toggle_work", "Fill Panel", "View", Some("cmd-\\"), Item, || Box::new(ToggleWorkView)),
+    entry("view.toggle_work", "Fill Panel", "View", Some("cmd-\\"), Item, || Box::new(FillPanel)),
     entry("pane.next", "Focus Next Pane", "View", Some("cmd-alt-right"), Item, || Box::new(FocusNextPane)),
     entry("pane.previous", "Focus Previous Pane", "View", Some("cmd-alt-left"), Item, || Box::new(FocusPreviousPane)),
-    entry("pane.split_right", "Split Pane Right", "View", None, Item, || Box::new(SplitPaneRight)),
-    entry("pane.split_down", "Split Pane Down", "View", None, Item, || Box::new(SplitPaneDown)),
-    entry("pane.close", "Close Pane", "View", None, Item, || Box::new(ClosePane)),
     entry("view.toggle_inspector", "Toggle Panel", "View", Some("cmd-l"), Item, || Box::new(ToggleInspector)),
     entry("view.toggle_changed_files", "Toggle Changed Files", "View", None, Item, || Box::new(ToggleChangedFiles)),
     entry("view.toggle_diagnostics", "Toggle Diagnostics", "View", Some("cmd-shift-d"), Item, || Box::new(ToggleDiagnostics)),
@@ -769,7 +766,10 @@ fn keyboard_table() -> String {
 #[cfg(test)]
 mod tests {
     // Named imports: a glob would bring in GPUI's own `test` attribute.
-    use super::{ACTIONS, KeyOverrides, documented, keyboard_table, keystroke, menus, parses};
+    use super::{
+        ACTIONS, KeyOverrides, documented, keyboard_table, keystroke, menus, parses, reset_all,
+        unknown, winning_bindings,
+    };
     use std::collections::HashSet;
 
     #[test]
@@ -900,6 +900,23 @@ mod tests {
         assert_eq!(documented("cmd-alt-down"), "Cmd-Option-Down");
         assert_eq!(documented("shift-tab"), "Shift-Tab");
         assert_eq!(documented("cmd-alt-."), "Cmd-Option-period");
+    }
+
+    #[test]
+    fn retired_pane_actions_never_bind_or_appear_in_menus() {
+        let mut overrides = KeyOverrides::from([
+            ("pane.split_right".into(), "cmd-n".into()),
+            ("pane.split_down".into(), "cmd-8".into()),
+            ("pane.close".into(), "cmd-7".into()),
+        ]);
+        assert_eq!(unknown(&overrides), 3);
+        assert_eq!(
+            winning_bindings(&overrides),
+            winning_bindings(&KeyOverrides::new())
+        );
+        let previous = overrides.clone();
+        reset_all(&mut overrides);
+        assert_eq!(overrides, previous);
     }
 
     /// An approval answer must not come from a typing slip or from the

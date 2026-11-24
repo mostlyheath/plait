@@ -272,16 +272,12 @@ impl Plait {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Clearing a turn target can change which diff is drawable before the panel switches.
         let entering_uncommitted = !self.shows_kind(PaneKind::Changes)
-            || if self.panel_is_open() {
-                self.tabs
-                    .model
-                    .panel()
-                    .is_some_and(|panel| panel.scope == Scope::ThisTurn)
-            } else {
-                self.work_recorded()
-            };
+            || self
+                .tabs
+                .model
+                .panel()
+                .is_some_and(|panel| panel.scope == Scope::ThisTurn);
         self.clear_turn_review();
         let found = self
             .state
@@ -304,7 +300,7 @@ impl Plait {
         if let Some((index, mode)) = found {
             self.select_file(index, mode, window, cx);
             if entering_uncommitted {
-                self.count_work_files(cx);
+                self.count_panel_files(cx);
             }
         } else {
             if let Some(panel) = self.tabs.model.panel_mut() {

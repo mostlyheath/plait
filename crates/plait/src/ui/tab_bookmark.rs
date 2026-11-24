@@ -37,20 +37,6 @@ fn query(field: &Option<Entity<TextField>>, cx: &App) -> String {
 }
 
 impl Plait {
-    pub(super) fn durable_tab_bookmark(&self, window: Option<&Window>, cx: &App) -> ThreadBookmark {
-        let mut bookmark = self.capture_tab_bookmark(window, cx);
-        if let Some(chat) = self
-            .tabs
-            .model
-            .work()
-            .filter(|w| w.open)
-            .and_then(|w| w.chat_locations.as_ref())
-        {
-            chat.restore(&mut bookmark);
-        }
-        bookmark
-    }
-
     pub(super) fn capture_tab_bookmark(&self, window: Option<&Window>, cx: &App) -> ThreadBookmark {
         let w = &self.workspace;
         let top = w.live_scroll.logical_scroll_top();
@@ -276,19 +262,10 @@ impl Plait {
 
     pub(super) fn restore_tab_bookmark(
         &mut self,
-        mut bookmark: ThreadBookmark,
+        bookmark: ThreadBookmark,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(locations) = self
-            .tabs
-            .model
-            .work()
-            .filter(|w| w.open && w.chat_locations.is_some())
-            .and_then(|w| w.pane_locations.as_ref())
-        {
-            locations.restore(&mut bookmark);
-        }
         self.workspace.tab = bookmark.view;
         self.workspace.thread_files.collapsed = bookmark.panels.changed_files_collapsed;
         self.workspace.thread_controls.usage_open = bookmark.panels.context_open;
@@ -310,8 +287,8 @@ impl Plait {
         if let Some(saved) = self
             .tabs
             .model
-            .work()
-            .map(|w| w.diff_find.clone())
+            .panel()
+            .map(|p| p.diff_find.clone())
             .filter(|f| f.open || !f.query.is_empty())
         {
             self.restore_find_bookmark(FindIn::Changes, &saved, cx);
@@ -327,8 +304,7 @@ impl Plait {
             && let Some(thread) = self.host.thread.selected.clone()
         {
             self.clear_turn_review();
-            if self.panel_recorded() || self.tabs.model.work().is_some_and(|w| w.open && w.recorded)
-            {
+            if self.panel_recorded() {
                 self.workspace.turn_records.selection.earlier(original);
             }
             self.workspace.turn_review.window = Some(window.window_handle());
@@ -359,14 +335,6 @@ impl Plait {
             self.workspace.turn_review.window = Some(window.window_handle());
         }
         self.present_workspace(view, window, cx);
-        if self
-            .tabs
-            .model
-            .work()
-            .is_some_and(|w| w.open && !w.recorded)
-        {
-            self.count_work_files(cx);
-        }
         match focus {
             FocusTarget::Composer => self.focus_composer(window, cx),
             FocusTarget::ConversationFind => {
@@ -393,24 +361,6 @@ impl Plait {
         self.workspace.file_viewer.reveal = Some(bookmark.files.line as usize);
         self.workspace.restore_pending = [true; 4];
         self.workspace.restore = Some(bookmark);
-    }
-
-    pub(super) fn restore_view_locations(
-        &mut self,
-        bookmark: ThreadBookmark,
-        cx: &mut Context<Self>,
-    ) {
-        self.workspace.file_viewer.clear_checkout();
-        self.workspace.line_pick = None;
-        self.state.repository.view.changes = Default::default();
-        self.state.repository.view.history = Default::default();
-        if let Some(commit) = bookmark.history.commit.clone() {
-            self.state.repository.select_commit(commit);
-        }
-        self.install_view_locations(bookmark, cx);
-        self.search_conversation(cx);
-        self.load_workspace_locations(cx);
-        self.restore_ready_bookmarks(cx);
     }
 
     pub(super) fn restore_tab_image(&mut self, window: &mut Window, cx: &mut Context<Self>) {

@@ -301,20 +301,14 @@ impl Plait {
                     this.remeasure_records(previous.as_deref(), &before);
                 }
                 this.install_record_lines(lines, record_generation);
-                if this.records_current()
-                    && let Some(work) = this.tabs.model.work_mut()
-                {
-                    work.records_ready(!this.workspace.turn_records.lines.runs.is_empty());
-                }
                 if this.panel_recorded()
                     && this
                         .tabs
                         .model
                         .panel()
                         .is_some_and(|p| p.recorded.is_none())
-                    || this.tabs.model.work().is_some_and(|w| w.open && w.recorded)
                 {
-                    this.sync_work_scope(true, window, cx);
+                    this.sync_panel_scope(true, window, cx);
                 }
                 this.conversation_rows_changed(cx);
                 this.restore_ready_bookmarks(cx);

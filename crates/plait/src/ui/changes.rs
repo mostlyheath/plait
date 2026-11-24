@@ -841,9 +841,10 @@ impl Plait {
                             rows,
                             cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
                                 let find = &this.workspace.diff_find;
-                                let hit = (find.open && id != "commit-lines" && this.draws_work())
-                                    .then(|| find.matches.get(find.current))
-                                    .flatten();
+                                let hit =
+                                    (find.open && id != "commit-lines" && this.panel_is_open())
+                                        .then(|| find.matches.get(find.current))
+                                        .flatten();
                                 range
                                     .map(|drawn| {
                                         // Clicks, hunks, and ids use the patch line.
@@ -925,7 +926,7 @@ impl Plait {
                                             .line_height(px(line_height))
                                             .when(
                                                 hit.is_some_and(|r| r.contains(&drawn))
-                                                    && this.draws_work(),
+                                                    && this.panel_is_open(),
                                                 |el| {
                                                     el.border_l_2()
                                                         .border_color(rgb(c.blue))
@@ -999,16 +1000,11 @@ impl Plait {
         }
     }
 
-    pub(super) fn count_work_files(&mut self, cx: &mut Context<Self>) {
-        self.workspace.work_counts.clear();
-        self.workspace.work_total = None;
-        if (self.panel_kind() != Some(plait_client::panel::PanelKind::Changes)
-            || self.panel_recorded())
-            && !self
-                .tabs
-                .model
-                .work()
-                .is_some_and(|w| w.open && !w.recorded)
+    pub(super) fn count_panel_files(&mut self, cx: &mut Context<Self>) {
+        self.workspace.panel_file_counts.clear();
+        self.workspace.panel_change_total = None;
+        if self.panel_kind() != Some(plait_client::panel::PanelKind::Changes)
+            || self.panel_recorded()
         {
             return;
         }
@@ -1055,15 +1051,15 @@ impl Plait {
                         .is_some_and(|s| std::sync::Arc::ptr_eq(s, &snapshot))
                     && let Ok((counts, total)) = counts
                 {
-                    this.workspace.work_counts = counts;
-                    this.workspace.work_total = total;
+                    this.workspace.panel_file_counts = counts;
+                    this.workspace.panel_change_total = total;
                     cx.notify();
                 }
             });
         })
         .detach();
     }
-    pub(super) fn work_file_count(&self, recorded: bool) -> usize {
+    pub(super) fn panel_file_count(&self, recorded: bool) -> usize {
         if recorded {
             self.workspace
                 .turn_review
@@ -1078,14 +1074,14 @@ impl Plait {
                 .map_or(0, |s| s.changes.len())
         }
     }
-    pub(super) fn work_select_file(
+    pub(super) fn select_panel_file(
         &mut self,
         index: usize,
         recorded: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.draws_work() && !self.panel_is_open() {
+        if !self.panel_is_open() {
             return;
         }
         if recorded {
@@ -1110,11 +1106,9 @@ impl Plait {
         }
         if self.panel_is_open() {
             window.focus(
-                &self.work_focus[plait_client::panes::PaneKind::Changes as usize],
+                &self.panel_focus[plait_client::panes::PaneKind::Changes as usize],
                 cx,
             );
-        } else {
-            self.route_work_tab(super::Workspace::Changes, window, cx);
         }
     }
     fn panel_file_chip(
@@ -1153,27 +1147,27 @@ impl Plait {
                 let name = path.rsplit('/').next().unwrap_or(&path);
                 let counts = self
                     .workspace
-                    .work_counts
+                    .panel_file_counts
                     .get(&file.path)
                     .map_or("", String::as_str);
                 (format!("{name} {counts}"), format!("{path} {counts}"))
             }
         };
         Some(
-            nav_row(("work-file", index), path, selected == Some(index))
+            nav_row(("panel-file", index), path, selected == Some(index))
                 .w_auto()
                 .max_w(px(160.))
                 .aria_selected(selected == Some(index))
                 .min_w_0()
                 .child(div().truncate().child(name))
                 .on_activate(cx, move |this, w, cx| {
-                    this.work_select_file(index, recorded, w, cx)
+                    this.select_panel_file(index, recorded, w, cx)
                 })
                 .into_any_element(),
         )
     }
-    pub(super) fn work_changes(&self, recorded: bool, width: f32, cx: &mut Context<Self>) -> Div {
-        let count = self.work_file_count(recorded);
+    pub(super) fn panel_changes(&self, recorded: bool, width: f32, cx: &mut Context<Self>) -> Div {
+        let count = self.panel_file_count(recorded);
         let per_row = (width / 132.).floor().max(1.) as usize;
         let rows = count.div_ceil(per_row);
         let chips = uniform_list(
@@ -1195,13 +1189,13 @@ impl Plait {
         .flex_shrink_0();
         let mut switch = segmented();
         for (id, label, value) in [
-            ("work-recorded", "This turn", true),
-            ("work-uncommitted", "Uncommitted", false),
+            ("panel-recorded", "This turn", true),
+            ("panel-uncommitted", "Uncommitted", false),
         ] {
             switch = switch.child(
                 segment(id, label, value == recorded)
                     .disabled(value && self.panel_is_open() && !self.has_panel_record())
-                    .on_activate(cx, move |this, w, cx| this.choose_work_scope(value, w, cx)),
+                    .on_activate(cx, move |this, w, cx| this.choose_panel_scope(value, w, cx)),
             );
         }
         let body = column()
@@ -1228,7 +1222,7 @@ impl Plait {
                         |el, r| el.child(tag("panel-totals", r.counts.clone(), colors().subtle)),
                     )
                     .when(!recorded, |el| {
-                        el.when_some(self.workspace.work_total.clone(), |el, total| {
+                        el.when_some(self.workspace.panel_change_total.clone(), |el, total| {
                             el.child(tag("panel-working-totals", total, colors().subtle))
                         })
                     })
