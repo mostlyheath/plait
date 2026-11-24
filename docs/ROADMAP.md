@@ -20,7 +20,7 @@ for evidence and limits.
   Files, and History in place of This turn and Work view; Every thread;
   requests as bubbles, with the line kept as a setting; folded work; and the
   approval in the message box's place. Every step is presentation only: no
-  change to the protocol, to stored state, to permissions, or to Git
+  change to the protocol, to state the host stores, to permissions, or to Git
   writes. Each step is inspected in the native app before it merges. The
   layout it replaces was released without that inspection; see
   [#130](https://github.com/mostlyheath/plait/issues/130).
