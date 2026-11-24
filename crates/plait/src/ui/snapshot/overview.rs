@@ -235,3 +235,44 @@ fn assert_cards(h: &mut Harness, title: &str, count: &str) {
             .any(|n| n.value.as_deref() == Some(count))
     );
 }
+
+#[cfg(debug_assertions)]
+#[core::prelude::v1::test]
+fn overview_closes_when_a_project_view_opens() {
+    if !isolated("overview::overview_closes_when_a_project_view_opens") {
+        return;
+    }
+    let scratch = std::env::temp_dir().join(format!("plait-overview-views-{}", std::process::id()));
+    std::fs::create_dir_all(&scratch).unwrap();
+    let repository = scratch.canonicalize().unwrap();
+    let mut h = Harness::with_host(&repository, None, 1380., 860., None);
+    h.connect(&repository, false);
+    install(&mut h, [&repository, &repository]);
+    h.draw();
+    // The project menu's Worktrees and Linear issues open a tab of their own;
+    // Every thread must not stay drawn over it.
+    type Open = fn(&mut Plait, PathBuf, &mut Window, &mut Context<Plait>);
+    for (name, open) in [
+        ("Worktrees", Plait::open_worktrees as Open),
+        ("Linear issues", Plait::open_issues as Open),
+    ] {
+        h.keystroke("cmd-shift-e");
+        h.update(|p, _, _| assert!(p.overview.is_some(), "{name}: opened"));
+        let checkout = repository.clone();
+        h.update(move |p, window, cx| open(p, checkout, window, cx));
+        undo::wait(&mut h, |p| !p.tabs.lifecycle.busy);
+        h.draw();
+        h.update(|p, window, _| {
+            assert!(
+                p.worktrees_visible() || p.issues_visible(),
+                "{name}: view shown"
+            );
+            assert!(p.overview.is_none(), "{name}: Every thread still covers it");
+            assert!(p.focus.is_focused(window), "{name}: keys reach the view");
+        });
+        h.update(|p, window, cx| p.select_host_thread(THREAD.into(), window, cx));
+        undo::wait(&mut h, |p| !p.tabs.lifecycle.busy);
+    }
+    drop(h);
+    std::fs::remove_dir_all(scratch).unwrap();
+}
