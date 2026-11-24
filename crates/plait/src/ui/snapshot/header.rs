@@ -4,7 +4,7 @@ use plait_client::{model::Snapshot as GitSnapshot, preferences::ThreadTabs};
 
 const PROJECT: &str = "/projects/forecast";
 
-fn fixture(output: Option<&Path>, width: f32, height: f32) -> Harness {
+pub(super) fn fixture(output: Option<&Path>, width: f32, height: f32) -> Harness {
     let root = Path::new(PROJECT);
     let mut h = Harness::with_host(root, output, width, height, None);
     h.connect(root, false);
