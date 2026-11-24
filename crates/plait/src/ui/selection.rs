@@ -105,7 +105,6 @@ pub(super) struct Hit {
 #[derive(Default)]
 pub(super) struct Reading {
     selection: Option<Selection>,
-    pub(super) quote_press: bool,
     dragging: bool,
     /// The link under the press; it opens if the release is still on it.
     pressed_link: Option<SharedString>,
@@ -407,21 +406,22 @@ impl Plait {
         let entity = cx.weak_entity();
         canvas(
             // Text paints after this and records itself for the new frame.
-            move |_, _, _| fresh.borrow_mut().clear(),
-            move |bounds, _, window, _| {
+            move |bounds, window, _| {
+                fresh.borrow_mut().clear();
+                window.insert_hitbox(bounds, HitboxBehavior::Normal)
+            },
+            move |bounds, surface, window, _| {
                 let (press_regions, press_entity) = (regions.clone(), entity.clone());
                 window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
-                    if phase != DispatchPhase::Bubble || event.button != MouseButton::Left {
+                    if phase != DispatchPhase::Bubble
+                        || event.button != MouseButton::Left
+                        || !surface.is_hovered(window)
+                    {
                         return;
                     }
                     let (count, extend) = (event.click_count, event.modifiers.shift);
+                    let hit = under(&press_regions.borrow(), event.position, window);
                     let _ = press_entity.update(cx, |this, cx| {
-                        if std::mem::take(&mut this.workspace.reading.quote_press)
-                            || !bounds.contains(&event.position)
-                        {
-                            return;
-                        }
-                        let hit = under(&press_regions.borrow(), event.position, window);
                         this.press_text(hit, count, extend, window, cx)
                     });
                 });

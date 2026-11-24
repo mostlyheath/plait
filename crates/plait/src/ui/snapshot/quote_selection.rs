@@ -72,6 +72,22 @@ pub(super) fn scenes(
 }
 
 #[cfg(debug_assertions)]
+fn click(h: &mut Harness, position: Point<Pixels>) {
+    h.pointer(PlatformInput::MouseDown(MouseDownEvent {
+        position,
+        button: MouseButton::Left,
+        click_count: 1,
+        ..Default::default()
+    }));
+    h.pointer(PlatformInput::MouseUp(MouseUpEvent {
+        position,
+        button: MouseButton::Left,
+        click_count: 1,
+        ..Default::default()
+    }));
+}
+
+#[cfg(debug_assertions)]
 #[core::prelude::v1::test]
 fn quote_selection_works_by_pointer_and_a_rebound_key() {
     if !isolated("quote_selection::quote_selection_works_by_pointer_and_a_rebound_key") {
@@ -102,18 +118,7 @@ fn quote_selection_works_by_pointer_and_a_rebound_key() {
     stage(&mut h, &repo);
     h.update(|p, _, _| assert_eq!(p.selected_text().as_deref(), Some(SELECTION)));
     let position = button(&mut h).expect("quote control is visible");
-    h.pointer(PlatformInput::MouseDown(MouseDownEvent {
-        position,
-        button: MouseButton::Left,
-        click_count: 1,
-        ..Default::default()
-    }));
-    h.pointer(PlatformInput::MouseUp(MouseUpEvent {
-        position,
-        button: MouseButton::Left,
-        click_count: 1,
-        ..Default::default()
-    }));
+    click(&mut h, position);
     verify(&mut h);
 
     stage(&mut h, &repo);
@@ -135,4 +140,45 @@ fn quote_selection_works_by_pointer_and_a_rebound_key() {
     assert!(button(&mut h).is_some());
     h.keystroke("ctrl-alt-q");
     verify(&mut h);
+}
+
+#[cfg(debug_assertions)]
+#[core::prelude::v1::test]
+fn quote_selection_from_command_palette() {
+    if !isolated("quote_selection::quote_selection_from_command_palette") {
+        return;
+    }
+    let home = PathBuf::from(std::env::var_os("HOME").unwrap());
+    let repo = fixture_repository(&home.join("palette-quote"));
+    let mut h = this_turn::harness(&repo, None, 900., 600.);
+    for pointer in [false, true] {
+        stage(&mut h, &repo);
+        h.keystroke("cmd-k");
+        set_query(&mut h, "Quote selection");
+        let position = h
+            .draw_a11y()
+            .nodes
+            .into_iter()
+            .find(|node| {
+                node.role == Role::ListBoxOption
+                    && node
+                        .label
+                        .as_deref()
+                        .is_some_and(|label| label.starts_with("Quote selection"))
+            })
+            .expect("quote command")
+            .bounds
+            .center();
+        if pointer {
+            click(&mut h, position);
+        } else {
+            h.keystroke("enter");
+        }
+        h.update(|p, window, cx| {
+            assert!(p.overlay.is_none());
+            let composer = p.workspace.composers[THREAD].read(cx);
+            assert_eq!(composer.text(), QUOTED_DRAFT, "pointer = {pointer}");
+            assert!(composer.focus_handle(cx).is_focused(window));
+        });
+    }
 }

@@ -434,10 +434,7 @@ impl Plait {
                     button("quote-selection", "Quote selection")
                         .h(px(AUTHOR_LINE))
                         .aria_keyshortcuts(self.shortcut_aria("conversation.quote_selection"))
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|this, _, _, _| this.workspace.reading.quote_press = true),
-                        )
+                        .block_mouse_except_scroll()
                         .on_activate(cx, move |this, window, cx| {
                             this.quote_reply_selection(Some(&reply), window, cx);
                         }),
