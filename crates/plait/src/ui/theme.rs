@@ -237,9 +237,11 @@ pub(super) fn pressed<E: Styled>(style: E, tone: Tone) -> E {
 }
 
 pub(super) fn focused_control<E: Styled>(style: E) -> E {
+    // A hollow inset keeps the surface visible with the pinned GPUI styles.
     style.shadow(vec![
-        BoxShadow::new(px(0.), px(0.), rgb(colors().blue).into()).spread_radius(px(2.5)),
-        BoxShadow::new(px(0.), px(0.), rgb(colors().bg).into()).spread_radius(px(1.)),
+        BoxShadow::new(px(0.), px(0.), rgb(colors().blue).into())
+            .spread_radius(px(1.5))
+            .inset(),
     ])
 }
 

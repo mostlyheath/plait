@@ -163,3 +163,105 @@ pub(super) fn walk(output: Option<&Path>, suffix: &str, width: f32, height: f32)
     }
     set_colors(&plait_client::theme::DEFAULT_DARK);
 }
+
+#[cfg(target_os = "macos")]
+#[core::prelude::v1::test]
+fn keyboard_focus_preserves_the_surface_behind_quiet_controls() {
+    use crate::ui::Tab;
+
+    struct FocusSpecimen {
+        palette: plait_client::theme::Palette,
+        surface: u32,
+        focus: FocusHandle,
+    }
+
+    impl Render for FocusSpecimen {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            set_colors(&self.palette);
+            column()
+                .id("focus-specimen")
+                .track_focus(&self.focus)
+                .on_action(|_: &Tab, window, cx| window.focus_next(cx))
+                .size_full()
+                .bg(rgb(self.surface))
+                .child(
+                    toned_button("quiet", "", Tone::Ghost)
+                        .absolute()
+                        .left(px(24.))
+                        .top(px(16.))
+                        .w(px(60.)),
+                )
+        }
+    }
+
+    let Ok(Some(renderer)) = gpui_platform::current_headless_renderer() else {
+        eprintln!("offscreen Metal unavailable");
+        return;
+    };
+    drop(renderer);
+    let mut cx = HeadlessAppContext::with_platform(
+        text_system(),
+        Arc::new(Assets),
+        gpui_platform::current_headless_renderer,
+    );
+    cx.update(|cx| cx.bind_keys([KeyBinding::new("tab", Tab, None)]));
+    for palette in [
+        plait_client::theme::DEFAULT_DARK,
+        plait_client::theme::DEFAULT_LIGHT,
+    ] {
+        for (name, surface) in [
+            ("panel", palette.panel),
+            ("raised", palette.raised),
+            ("navigation", palette.rail),
+        ] {
+            let handle = cx
+                .open_window(size(px(112.), px(64.)), |window, cx| {
+                    let focus = cx.focus_handle();
+                    window.focus(&focus, cx);
+                    cx.new(|_| FocusSpecimen {
+                        palette,
+                        surface,
+                        focus,
+                    })
+                })
+                .unwrap();
+            let window = handle.into();
+            cx.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
+                .unwrap();
+            let rest = cx.capture_screenshot(window).unwrap();
+            cx.update_window(window, |_, window, cx| {
+                window.dispatch_event(
+                    PlatformInput::KeyDown(KeyDownEvent {
+                        keystroke: Keystroke::parse("tab").unwrap(),
+                        is_held: false,
+                        prefer_character_input: false,
+                    }),
+                    cx,
+                );
+                assert!(window.last_input_was_keyboard());
+                window.refresh();
+                window.draw(cx).clear(cx);
+            })
+            .unwrap();
+            let focus = cx.capture_screenshot(window).unwrap();
+            let scale = focus.width() / 112;
+            let pixel = |image: &image::RgbaImage, x, y| image.get_pixel(x * scale, y * scale).0;
+            for (x, y) in [(54, 30), (23, 30)] {
+                assert_eq!(
+                    pixel(&focus, x, y),
+                    pixel(&rest, x, y),
+                    "focus changed {name} at ({x}, {y}) for light={}",
+                    palette.light,
+                );
+            }
+            let [_, red, green, blue] = palette.blue.to_be_bytes();
+            assert_eq!(
+                pixel(&focus, 24, 30),
+                [red, green, blue, 255],
+                "no blue focus edge on {name} for light={}",
+                palette.light,
+            );
+        }
+    }
+    set_colors(&plait_client::theme::DEFAULT_DARK);
+}
