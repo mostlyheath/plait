@@ -1,4 +1,4 @@
-use super::{Assets, Harness, text_system};
+use super::{Assets, Harness, capture_both, text_system};
 use crate::ui::theme::running_mark;
 use gpui::{prelude::*, *};
 use std::{cell::Cell, path::Path, rc::Rc, sync::Arc, time::Duration};
@@ -6,7 +6,7 @@ use std::{cell::Cell, path::Path, rc::Rc, sync::Arc, time::Duration};
 pub(super) fn walk(harness: &mut Harness, repository: &Path, suffix: &str) {
     harness.cx.update(|cx| cx.set_reduce_motion(true));
     install(harness, repository);
-    harness.capture(&format!("running-mark-{suffix}"));
+    capture_both(harness, &format!("running-mark-{suffix}"));
     harness.cx.update(|cx| cx.set_reduce_motion(false));
 }
 
