@@ -41,8 +41,8 @@ no web view.
 - **Work that outlives the window.** The host owns each run, its history, and
   its approvals. Quit, update, or reconnect; everything is where you left it.
 - **Any machine, the same app.** Each machine keeps its own projects and your
-  tabs on it. The status line names the machine you are on and switches between
-  them.
+  tabs on it. The control at the bottom of the sidebar shows the current
+  machine and lets you switch machines.
 - **Approvals you can read.** Let the agent work, or approve each edit and
   command. On a Mac, a project can run commands in a sandbox that cannot write
   the checkout or reach the network.

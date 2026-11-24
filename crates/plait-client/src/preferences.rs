@@ -73,6 +73,26 @@ pub const CODE_SIZE_DEFAULT: u8 = 12;
 pub const CODE_SIZE_MIN: u8 = 12;
 pub const CODE_SIZE_MAX: u8 = 14;
 
+/// Interface font family for labels, controls, and conversation text.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InterfaceFont {
+    #[default]
+    Plex,
+    System,
+}
+
+impl InterfaceFont {
+    pub const ALL: [Self; 2] = [Self::Plex, Self::System];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Plex => "Plex Sans",
+            Self::System => "System",
+        }
+    }
+}
+
 /// Clamp a point size to the allowed code size range (12–14).
 pub fn clamp_code_size(size: u8) -> u8 {
     size.clamp(CODE_SIZE_MIN, CODE_SIZE_MAX)
@@ -148,6 +168,9 @@ pub struct Preferences {
     /// Theme names for each appearance; `None` is the default (Plait Light, Stillwater).
     pub light_theme: Option<String>,
     pub dark_theme: Option<String>,
+    /// Interface font family (`plex` or `system`). Older files default to `plex`.
+    #[serde(deserialize_with = "lenient")]
+    pub interface_font: InterfaceFont,
     /// The font family code, paths, and commands are drawn in; `None` is the
     /// system's monospaced font. Read it through `code_font`.
     pub code_font: Option<String>,
@@ -619,6 +642,59 @@ mod tests {
             serde_json::from_str(r#"{"appearance":"dusk","hide_inspector":true}"#).unwrap();
         assert_eq!(newer.appearance, Appearance::System);
         assert!(newer.hide_inspector);
+    }
+
+    #[test]
+    fn interface_font_defaults_to_plex_and_reads_leniently() {
+        assert_eq!(Preferences::default().interface_font, InterfaceFont::Plex);
+        // A file saved before the key existed loads as plex and keeps other fields.
+        let older: Preferences = serde_json::from_str(r#"{"hide_inspector":true}"#).unwrap();
+        assert_eq!(older.interface_font, InterfaceFont::Plex);
+        assert!(older.hide_inspector);
+
+        // Unknown or malformed values fall back to plex without failing the file.
+        for raw in [r#""inter""#, "42", "null", "true", "{}"] {
+            let loaded: Preferences = serde_json::from_str(&format!(
+                r#"{{"interface_font":{raw},"hide_inspector":true}}"#
+            ))
+            .unwrap();
+            assert_eq!(loaded.interface_font, InterfaceFont::Plex, "raw={raw}");
+            assert!(loaded.hide_inspector);
+        }
+
+        // Valid values serialize as snake_case and round-trip through disk.
+        let root = scratch("interface-font");
+        let path = root.join("desktop.json");
+        for (choice, expected) in [
+            (InterfaceFont::Plex, "plex"),
+            (InterfaceFont::System, "system"),
+        ] {
+            let chosen = Preferences {
+                interface_font: choice,
+                ..Default::default()
+            };
+            let encoded = serde_json::to_value(&chosen).unwrap();
+            assert_eq!(encoded["interface_font"], expected);
+            save(&path, &chosen).unwrap();
+            let loaded = load(&path).unwrap();
+            assert_eq!(loaded, chosen);
+            assert_eq!(loaded.interface_font, choice);
+        }
+
+        // Startup merge preserves a saved System choice when untouched during startup.
+        let saved_system = Preferences {
+            interface_font: InterfaceFont::System,
+            ..Default::default()
+        };
+        let edited_elsewhere = Preferences {
+            hide_inspector: true,
+            ..Default::default()
+        };
+        let merged = merge_startup(saved_system, &edited_elsewhere).unwrap();
+        assert_eq!(merged.interface_font, InterfaceFont::System);
+        assert!(merged.hide_inspector);
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

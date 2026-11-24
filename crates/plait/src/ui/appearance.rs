@@ -10,7 +10,10 @@ use super::{
     thread_controls::TextTooltip,
 };
 use gpui::{prelude::*, *};
-use plait_client::theme::{self as themes, Appearance, DEFAULT_DARK, DEFAULT_LIGHT, Theme};
+use plait_client::{
+    preferences::InterfaceFont,
+    theme::{self as themes, Appearance, DEFAULT_DARK, DEFAULT_LIGHT, Theme},
+};
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 /// The code font choice: the families installed on this Mac, read in the
@@ -193,6 +196,8 @@ impl Plait {
         if set_colors(&self.themes.palette(name, light)) {
             cx.refresh_windows();
         }
+        // Keep the interface font aligned when preferences load on startup.
+        self.apply_interface_font(cx);
     }
 
     fn light_appearance(&self, appearance: Appearance, cx: &App) -> bool {
@@ -299,6 +304,53 @@ impl Plait {
             self.workspace.live_scroll.remeasure();
             cx.refresh_windows();
         }
+    }
+
+    /// Draw the interface in the saved font choice (falling back to System if
+    /// the bundled IBM Plex Sans faces did not load), remeasuring open views
+    /// and tabs when the family changes.
+    pub(super) fn apply_interface_font(&mut self, cx: &mut Context<Self>) {
+        if set_ui_font(self.preferences.value.interface_font) {
+            self.workspace.live_scroll.remeasure();
+            self.invalidate_tab_measurement();
+            cx.refresh_windows();
+        }
+    }
+
+    /// Save a new interface font choice and apply it immediately to open views.
+    pub(super) fn set_interface_font(&mut self, choice: InterfaceFont, cx: &mut Context<Self>) {
+        let mut value = self.preferences.value.clone();
+        value.interface_font = choice;
+        self.set_preferences(value, PreferenceGroup::View, cx);
+        self.apply_interface_font(cx);
+    }
+
+    /// Settings → Appearance: the font interface labels, prose, and controls use.
+    fn interface_font_setting(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let chosen = self.preferences.value.interface_font;
+        let bundled = bundled_ui_font_loaded();
+        let mut choices = segmented();
+        for (index, choice) in InterfaceFont::ALL.into_iter().enumerate() {
+            let selected = choice == chosen;
+            let label = choice.label();
+            choices = choices.child(
+                segment(("interface-font", index), label, selected)
+                    .role(Role::RadioButton)
+                    .aria_toggled(if selected {
+                        Toggled::True
+                    } else {
+                        Toggled::False
+                    })
+                    .aria_label(format!("Interface font: {label}"))
+                    .on_activate(cx, move |this, _, cx| this.set_interface_font(choice, cx)),
+            );
+        }
+        let detail = if chosen == InterfaceFont::Plex && !bundled {
+            "Bundled IBM Plex Sans faces could not be loaded; using the system font."
+        } else {
+            "Labels, controls, and conversation text. Plex Sans is bundled; System uses macOS's interface font."
+        };
+        super::settings::setting("Interface font", detail, choices)
     }
 
     /// Draw code at the saved point size, remeasuring open views when it changes.
@@ -737,6 +789,7 @@ impl Plait {
                             .line_height(px(16.))
                     })),
             )
+            .child(self.interface_font_setting(cx))
             .child(self.code_font_setting(cx))
             .child(self.code_size_setting(cx))
             .child(self.turns_setting(cx))
