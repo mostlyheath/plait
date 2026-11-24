@@ -7,8 +7,11 @@ const REQUEST: &str = "> Keep the public API.\n\nYes, build it.\nKeep the implem
 const ANSWER: &str =
     "I’ll keep the API unchanged and separate the new presentation from the thread state.";
 
-fn stage(harness: &mut Harness, repository: &Path) {
+pub(super) fn stage(harness: &mut Harness, repository: &Path) {
     harness.connect(repository, false);
+    harness.update(|plait, _, _| {
+        plait.preferences.value.turns = plait_client::preferences::Turns::Line
+    });
     harness.change_snapshot(|snapshot| {
         snapshot.status = ThreadStatus::Idle;
         snapshot.messages = vec![
@@ -53,7 +56,7 @@ pub(super) fn walk(harness: &mut Harness, repository: &Path, suffix: &str) {
     harness.capture(&format!("message-roles-streaming-{suffix}"));
 }
 
-fn caret(harness: &mut Harness, id: &str, block: usize, offset: usize) -> Point<Pixels> {
+pub(super) fn caret(harness: &mut Harness, id: &str, block: usize, offset: usize) -> Point<Pixels> {
     harness.draw();
     harness
         .window

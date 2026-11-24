@@ -155,19 +155,22 @@ fn action_items(view: &Plait, window: &Window) -> Vec<Item> {
         .map(|action| {
             let run = action.action();
             let hint = shortcut(run.as_ref(), window);
-            let unavailable = matches!(action.id, "pane.next" | "pane.previous")
-                && (view.settings_open || !view.panel_is_open());
+            let refusal = match action.id {
+                "pane.next" | "pane.previous" if view.overview.is_some() => {
+                    Some("Close Every Thread to focus a pane.")
+                }
+                "pane.next" | "pane.previous" if view.settings_open || !view.panel_is_open() => {
+                    Some("Open the panel first.")
+                }
+                _ => None,
+            };
             Item::new(
                 format!("action:{}", action.id),
                 action.title,
                 Command::Action(run),
             )
-            .enabled(!unavailable)
-            .detail(if unavailable {
-                "Open the panel first."
-            } else {
-                action.category
-            })
+            .enabled(refusal.is_none())
+            .detail(refusal.unwrap_or(action.category))
             .section("Commands")
             .hint(hint)
         })

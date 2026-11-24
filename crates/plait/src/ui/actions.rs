@@ -114,6 +114,7 @@ pub(super) const ACTIONS: &[AppAction] = &[
     entry("window.close", "Close Window", "File", Some("cmd-shift-w"), Group, || Box::new(Close)),
     entry("palette.toggle", "Command Palette…", "View", Some("cmd-k"), Item, || Box::new(CommandPalette)),
     entry("view.toggle_sidebar", "Toggle Sidebar", "View", Some("cmd-b"), Group, || Box::new(ToggleSidebar)),
+    entry("view.overview", "Every Thread", "View", Some("cmd-shift-e"), Item, || Box::new(ToggleOverview)),
     entry("view.toggle_work", "Fill Panel", "View", Some("cmd-\\"), Item, || Box::new(FillPanel)),
     entry("pane.next", "Focus Next Pane", "View", Some("cmd-alt-right"), Item, || Box::new(FocusNextPane)),
     entry("pane.previous", "Focus Previous Pane", "View", Some("cmd-alt-left"), Item, || Box::new(FocusPreviousPane)),

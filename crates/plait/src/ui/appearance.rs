@@ -614,6 +614,45 @@ impl Plait {
         cx.notify();
     }
 
+    pub(super) fn set_turns(
+        &mut self,
+        style: plait_client::preferences::Turns,
+        cx: &mut Context<Self>,
+    ) {
+        let mut value = self.preferences.value.clone();
+        value.turns = style;
+        self.set_preferences(value, PreferenceGroup::View, cx);
+        self.workspace.live_scroll.remeasure();
+        cx.notify();
+    }
+
+    fn turns_setting(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        use plait_client::preferences::Turns;
+        let mut choices = segmented();
+        for (index, (label, style)) in [("Bubbles", Turns::Bubbles), ("Line", Turns::Line)]
+            .into_iter()
+            .enumerate()
+        {
+            let selected = self.preferences.value.turns == style;
+            choices = choices.child(
+                segment(("turns", index), label, selected)
+                    .role(Role::RadioButton)
+                    .aria_toggled(if selected {
+                        Toggled::True
+                    } else {
+                        Toggled::False
+                    })
+                    .aria_label(format!("Turns: {label}"))
+                    .on_activate(cx, move |this, _, cx| this.set_turns(style, cx)),
+            );
+        }
+        super::settings::setting(
+            "Turns",
+            "Show requests in bubbles or connect turns with a line.",
+            choices,
+        )
+    }
+
     pub(super) fn thread_tabs_setting(&self, cx: &mut Context<Self>) -> impl IntoElement {
         use plait_client::preferences::ThreadTabs;
         let mut choices = segmented()
@@ -671,6 +710,35 @@ impl Plait {
         super::settings::setting(
             "Fold earlier turns",
             "Show turns before the latest as their request and closing line. Activate a folded request to open it.",
+            choices,
+        )
+    }
+
+    fn finished_work_setting(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let enabled = self.preferences.value.fold_finished_work();
+        let mut choices = segmented();
+        for (index, (label, value)) in [("On", true), ("Off", false)].into_iter().enumerate() {
+            let selected = value == enabled;
+            choices = choices.child(
+                segment(("fold-finished-work", index), label, selected)
+                    .role(Role::RadioButton)
+                    .aria_toggled(if selected {
+                        Toggled::True
+                    } else {
+                        Toggled::False
+                    })
+                    .aria_label(format!("Fold finished work: {label}"))
+                    .on_activate(cx, move |this, _, cx| {
+                        let mut preferences = this.preferences.value.clone();
+                        preferences.fold_finished_work = Some(value);
+                        this.set_preferences(preferences, PreferenceGroup::View, cx);
+                        cx.notify();
+                    }),
+            );
+        }
+        super::settings::setting(
+            "Fold finished work",
+            "Show the steps before a finished turn’s final reply in one expandable row.",
             choices,
         )
     }
@@ -789,7 +857,9 @@ impl Plait {
             .child(self.interface_font_setting(cx))
             .child(self.code_font_setting(cx))
             .child(self.code_size_setting(cx))
+            .child(self.turns_setting(cx))
             .child(self.fold_earlier_turns_setting(cx))
+            .child(self.finished_work_setting(cx))
     }
 
     fn theme_list(&self, light: bool, cx: &mut Context<Self>) -> impl IntoElement {
