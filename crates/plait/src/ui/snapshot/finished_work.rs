@@ -290,6 +290,34 @@ fn opening_work_keeps_the_disclosure_in_place() {
 }
 
 #[core::prelude::v1::test]
+fn clicking_find_opened_work_does_not_pin_it_open() {
+    if !isolated("finished_work::clicking_find_opened_work_does_not_pin_it_open") {
+        return;
+    }
+    let repo = fixture_repository(&PathBuf::from(std::env::var_os("HOME").unwrap()).join("find"));
+    let mut harness = this_turn::harness(&repo, None, 1024., 740.);
+    stage(&mut harness, &repo);
+    harness.update(|p, window, cx| {
+        assert_eq!(p.work_open_at(1), Some(false));
+        p.open_conversation_find(window, cx);
+        p.workspace
+            .conversation_find
+            .field
+            .clone()
+            .unwrap()
+            .update(cx, |field, cx| field.set_text("polling loop", cx));
+    });
+    harness.draw();
+    harness.update(|p, window, cx| {
+        assert_eq!(p.work_open_at(1), Some(true));
+        p.toggle_finished_work("request-changes", cx);
+        assert_eq!(p.work_open_at(1), Some(true));
+        p.close_conversation_find(window, cx);
+        assert_eq!(p.work_open_at(1), Some(false));
+    });
+}
+
+#[core::prelude::v1::test]
 fn recorded_work_scenes_draw_with_injected_records() {
     if !isolated("finished_work::recorded_work_scenes_draw_with_injected_records") {
         return;

@@ -36,10 +36,12 @@ pub struct ObservedOutcomes {
 }
 
 impl ObservedOutcomes {
-    pub fn toggle_work(&self, request: &str) {
+    pub fn set_work_open(&self, request: &str, open: bool) -> bool {
         let mut opened = self.opened_work.borrow_mut();
-        if !opened.remove(request) {
-            opened.insert(request.to_owned());
+        if open {
+            opened.insert(request.to_owned())
+        } else {
+            opened.remove(request)
         }
     }
 
@@ -1071,7 +1073,7 @@ mod tests {
             assert_eq!(fold.summary, "1 step · 1 read");
         }
         let tab = ObservedOutcomes::default();
-        tab.toggle_work("request-start");
+        tab.set_work_open("request-start", true);
         let reopened = build_layout(
             &snapshot,
             true,

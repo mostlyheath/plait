@@ -1104,6 +1104,9 @@ impl Plait {
         else {
             return;
         };
+        let Some(open) = fold.open(self.preferences.value.fold_finished_work()) else {
+            return;
+        };
         let Some(tab) = self
             .tabs
             .model
@@ -1112,7 +1115,11 @@ impl Plait {
         else {
             return;
         };
-        tab.session().outcomes().toggle_work(&fold.request);
+        // The current Find match keeps its work visible. Activating an open
+        // disclosure clears the manual choice instead of pinning it open.
+        if !tab.session().outcomes().set_work_open(&fold.request, !open) {
+            return;
+        }
         let scroll = &self.workspace.live_scroll;
         // Bottom alignment may put a short transcript partway down the list.
         // Preserve that space before taller rows replace the zero-height ones.
