@@ -71,18 +71,17 @@ pub(super) fn scenes(
     capture_both(&mut h, &format!("quote-selection-in-draft-{suffix}"));
 }
 
-#[cfg(debug_assertions)]
-fn click(h: &mut Harness, position: Point<Pixels>) {
+fn click(h: &mut Harness, position: Point<Pixels>, count: usize) {
     h.pointer(PlatformInput::MouseDown(MouseDownEvent {
         position,
         button: MouseButton::Left,
-        click_count: 1,
+        click_count: count,
         ..Default::default()
     }));
     h.pointer(PlatformInput::MouseUp(MouseUpEvent {
         position,
         button: MouseButton::Left,
-        click_count: 1,
+        click_count: count,
         ..Default::default()
     }));
 }
@@ -118,7 +117,7 @@ fn quote_selection_works_by_pointer_and_a_rebound_key() {
     stage(&mut h, &repo);
     h.update(|p, _, _| assert_eq!(p.selected_text().as_deref(), Some(SELECTION)));
     let position = button(&mut h).expect("quote control is visible");
-    click(&mut h, position);
+    click(&mut h, position, 1);
     verify(&mut h);
 
     stage(&mut h, &repo);
@@ -170,7 +169,7 @@ fn quote_selection_from_command_palette() {
             .bounds
             .center();
         if pointer {
-            click(&mut h, position);
+            click(&mut h, position, 1);
         } else {
             h.keystroke("enter");
         }
@@ -181,4 +180,39 @@ fn quote_selection_from_command_palette() {
             assert!(composer.focus_handle(cx).is_focused(window));
         });
     }
+}
+
+#[core::prelude::v1::test]
+fn quote_selection_skips_a_reply_hidden_by_a_turn_fold() {
+    if !isolated("quote_selection::quote_selection_skips_a_reply_hidden_by_a_turn_fold") {
+        return;
+    }
+    let home = PathBuf::from(std::env::var_os("HOME").unwrap());
+    let repo = fixture_repository(&home.join("folded-quote"));
+    let mut h = this_turn::harness(&repo, None, 900., 600.);
+    folded_turns::install_long_thread(&mut h, &repo);
+    h.change_snapshot(|s| s.model = choice());
+    let id = "answer-r1";
+    h.update(|p, _, cx| {
+        p.set_fold_earlier_turns(false, cx);
+        let item_ix = p.workspace.live_layout.row_of_message[id];
+        p.workspace.live_scroll.scroll_to(ListOffset {
+            item_ix,
+            ..Default::default()
+        });
+    });
+    let position = messages::caret(&mut h, id, 0, 2);
+    click(&mut h, position, 2);
+    h.draw();
+    h.update(|p, window, cx| {
+        assert_eq!(p.selected_text().as_deref(), Some("Sample"));
+        assert!(p.can_quote_reply(id, cx));
+        p.set_fold_earlier_turns(true, cx);
+        assert!(!p.workspace.live_layout.row_of_message.contains_key(id));
+        assert!(
+            !p.quote_reply_selection(None, window, cx),
+            "quoted a folded reply"
+        );
+        assert!(p.workspace.composers[THREAD].read(cx).text().is_empty());
+    });
 }

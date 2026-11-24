@@ -675,17 +675,19 @@ impl Plait {
     fn selected_reply(&self) -> Option<&str> {
         let selection = self.workspace.reading.selection.as_ref()?;
         if self.settings_open
-            || (!self.draws_work() && self.workspace.tab != super::Workspace::Conversation)
+            || self.workspace.tab != super::Workspace::Conversation
             || self.host.thread.selected.as_deref() != Some(selection.thread.as_str())
             || self.conversation_snapshot()?.id != selection.thread
             || selection.anchor.owner != selection.head.owner
         {
             return None;
         }
-        match &selection.anchor.owner {
-            Owner::Message(id) if self.workspace.reading.span.get().is_some() => Some(id.as_ref()),
-            _ => None,
-        }
+        let Owner::Message(id) = &selection.anchor.owner else {
+            return None;
+        };
+        let row = *self.workspace.live_layout.row_of_message.get(id.as_ref())?;
+        (self.workspace.reading.span.get().is_some() && self.work_open_at(row) != Some(false))
+            .then_some(id.as_ref())
     }
 
     pub(super) fn can_quote_reply(&self, id: &str, cx: &App) -> bool {
