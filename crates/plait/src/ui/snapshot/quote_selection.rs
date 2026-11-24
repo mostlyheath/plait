@@ -256,3 +256,64 @@ fn quote_selection_requires_text_between_the_carets() {
         "offered Quote selection for an empty paragraph gap"
     );
 }
+
+#[cfg(debug_assertions)]
+#[core::prelude::v1::test]
+fn quote_selection_reveals_the_draft_during_an_approval() {
+    if !isolated("quote_selection::quote_selection_reveals_the_draft_during_an_approval") {
+        return;
+    }
+    let home = PathBuf::from(std::env::var_os("HOME").unwrap());
+    let repo = fixture_repository(&home.join("quote-approval"));
+    let mut h = this_turn::harness(&repo, None, 900., 600.);
+    stage(&mut h, &repo);
+    h.change_snapshot(|snapshot| {
+        snapshot.status = ThreadStatus::AwaitingApproval;
+        snapshot.pending_approval = Some(Approval {
+            id: "quote-approval".into(),
+            tool_id: "command".into(),
+            kind: ApprovalKind::Command,
+            summary: "Run cargo test".into(),
+            details: r#"{"command":"cargo","args":["test"]}"#.into(),
+            dirty_paths: vec![],
+            risk: "Runs in the command sandbox.".into(),
+        });
+    });
+    select_reply(&mut h, "reply", "reply");
+    let frame = h.draw_a11y();
+    assert!(frame.has_node(Role::Button, |n| n.label.as_deref()
+        == Some("Reply instead")));
+    assert!(!frame.has_node(Role::MultilineTextInput, |_| true));
+    let position = frame
+        .nodes
+        .into_iter()
+        .find(|n| n.label.as_deref() == Some("Quote selection"))
+        .expect("quote control is visible during an approval")
+        .bounds
+        .center();
+    click(&mut h, position, 1);
+    h.update(|p, window, cx| {
+        assert!(p.workspace.showing_composer_for_approval("quote-approval"));
+        let snapshot = p.host.thread.snapshot.as_ref().unwrap();
+        assert_eq!(
+            snapshot.pending_approval.as_ref().unwrap().id,
+            "quote-approval"
+        );
+        assert_eq!(snapshot.status, ThreadStatus::AwaitingApproval);
+        assert!(snapshot.queued.is_empty());
+        assert!(!p.host.thread.decided_approvals.contains("quote-approval"));
+        p.workspace.composers[THREAD].update(cx, |composer, cx| {
+            assert_eq!(composer.saved_draft().0, QUOTED_DRAFT);
+            assert_eq!(composer.saved_draft().1, 8);
+            assert_eq!(composer.caret(), 4..4);
+            assert!(composer.focus_handle(cx).is_focused(window));
+            assert!(!composer.acknowledge(DRAFT, Some(7), cx));
+        });
+    });
+    let frame = h.draw_a11y();
+    assert!(
+        frame.has_node(Role::MultilineTextInput, |n| n.value.as_deref()
+            == Some(QUOTED_DRAFT))
+    );
+    assert!(frame.has_node(Role::Button, |n| n.label.as_deref() == Some("Allow once")));
+}

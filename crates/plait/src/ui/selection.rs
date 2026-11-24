@@ -738,6 +738,15 @@ impl Plait {
         let (Some(text), Some(composer)) = (self.selected_text(), composer) else {
             return false;
         };
+        if let Some(snapshot) = &self.host.thread.snapshot
+            && self.host.thread.selected.as_deref() == Some(snapshot.id.as_str())
+            && let Some(approval) = &snapshot.pending_approval
+            && !text.is_empty()
+            && composer.read(cx).accepts_quote()
+        {
+            self.workspace
+                .show_composer_for_approval(approval.id.clone());
+        }
         if !composer.update(cx, |composer, cx| {
             composer.quote_selection(&text, window, cx)
         }) {
