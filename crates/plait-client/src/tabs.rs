@@ -272,6 +272,7 @@ pub struct TabRecord {
     lifetime: TabLifetime,
     content: TabContent,
     work: crate::panes::WorkView,
+    panel: crate::panel::Panel,
 }
 impl TabRecord {
     pub fn id(&self) -> TabId {
@@ -359,6 +360,13 @@ impl WindowTabs {
     }
     pub fn get(&self, id: TabId) -> Option<&TabRecord> {
         self.tabs.iter().find(|tab| tab.id == id)
+    }
+    pub fn panel(&self) -> Option<&crate::panel::Panel> {
+        Some(&self.get(self.active?)?.panel)
+    }
+    pub fn panel_mut(&mut self) -> Option<&mut crate::panel::Panel> {
+        let index = self.index(self.active?).ok()?;
+        Some(&mut self.tabs[index].panel)
     }
     /// Work view lives only for the lifetime of an open thread tab.
     pub fn work(&self) -> Option<&crate::panes::WorkView> {
@@ -546,6 +554,7 @@ impl WindowTabs {
                     generation: serial,
                 },
                 work: Default::default(),
+                panel: Default::default(),
                 content: content_for(Box::new(TabSession {
                     target,
                     bookmark,

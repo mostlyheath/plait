@@ -20,7 +20,18 @@ impl Plait {
             PaneKind::History,
             PaneKind::Files,
         ]) {
+            cx.on_focus_out(handle, window, move |this, _, _, cx| {
+                if this.panels.focused == Some(kind) {
+                    this.panels.focused = None;
+                    cx.notify();
+                }
+            })
+            .detach();
             cx.on_focus_in(handle, window, move |this, _, cx| {
+                if this.panel_is_open() {
+                    this.panels.focused = Some(kind);
+                    cx.notify();
+                }
                 if this.draws_work()
                     && let Some(tree) = this
                         .tabs
@@ -54,7 +65,7 @@ impl Plait {
                 let _ = view.update(cx, |this, cx| {
                     if this.workspace.work_area != bounds {
                         this.workspace.work_area = bounds;
-                        if this.tabs.model.work().is_some_and(|w| w.open) {
+                        if this.panel_is_open() || this.tabs.model.work().is_some_and(|w| w.open) {
                             cx.notify();
                         }
                     }
@@ -213,10 +224,18 @@ impl Plait {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(work) = self.tabs.model.work_mut() else {
-            return;
-        };
-        work.select_scope(recorded);
+        if self.panel_is_open() {
+            use plait_client::panel::Scope;
+            if let Some(panel) = self.tabs.model.panel_mut() {
+                panel.select_scope(if recorded {
+                    Scope::ThisTurn
+                } else {
+                    Scope::Uncommitted
+                });
+            }
+        } else if let Some(work) = self.tabs.model.work_mut() {
+            work.select_scope(recorded);
+        }
         self.sync_work_scope(recorded, window, cx);
     }
     pub(super) fn sync_work_scope(
@@ -229,13 +248,24 @@ impl Plait {
             let records = &self.workspace.turn_records;
             let line = records.selection.review_line(&records.lines);
             if let (Some(line), Some(thread)) = (line, self.host.thread.selected.as_ref()) {
-                let target = Target {
+                let remembered = self
+                    .tabs
+                    .model
+                    .panel()
+                    .filter(|p| p.open)
+                    .and_then(|p| p.recorded.as_ref())
+                    .filter(|t| {
+                        &t.thread == thread
+                            && t.checkout == self.host.creation.checkout
+                            && t.original == line.run
+                    });
+                let target = remembered.cloned().unwrap_or_else(|| Target {
                     thread: thread.clone(),
                     checkout: self.host.creation.checkout.clone(),
                     record: line.displayed.clone(),
                     original: line.run.clone(),
                     path: None,
-                };
+                });
                 if !self
                     .workspace
                     .turn_review
@@ -287,6 +317,12 @@ impl Plait {
         true
     }
     pub(super) fn focused_work_kind(&self) -> Option<PaneKind> {
+        if self.panel_is_open() {
+            return self
+                .panels
+                .focused
+                .filter(|k| *k == self.panel_focus_kind());
+        }
         let tree = self
             .tabs
             .model
@@ -298,7 +334,8 @@ impl Plait {
     }
 
     pub(super) fn shows_kind(&self, kind: PaneKind) -> bool {
-        self.draws_work() && self.remembers_kind(kind)
+        self.panel_is_open() && self.panel_focus_kind() == kind
+            || self.draws_work() && self.remembers_kind(kind)
     }
 
     pub(super) fn remembers_kind(&self, kind: PaneKind) -> bool {
@@ -351,6 +388,12 @@ impl Plait {
         if !id.starts_with("pane.") {
             return None;
         }
+        if self.panel_is_open()
+            && matches!(id, "pane.next" | "pane.previous")
+            && !self.settings_open
+        {
+            return None;
+        }
         if self.settings_open || !self.draws_work() {
             return Some(PaneRefusal::WorkViewRequired);
         }
@@ -379,6 +422,16 @@ impl Plait {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.panel_is_open() && matches!(command, PaneCommand::Next | PaneCommand::Previous) {
+            let handle = &self.work_focus[self.panel_focus_kind() as usize];
+            if handle.contains_focused(window, cx) && !self.panel_fills() {
+                window.focus(&self.focus, cx);
+            } else {
+                window.focus(handle, cx);
+            }
+            cx.notify();
+            return;
+        }
         let size = self.workspace.work_area.size;
         let previous_views = self.work_readers();
         if self.draws_work()
@@ -400,31 +453,8 @@ impl Plait {
     }
 
     pub(super) fn work_recorded(&self) -> bool {
-        self.draws_work() && self.tabs.model.work().is_some_and(|w| w.recorded)
-    }
-    pub(super) fn work_switch(&self, cx: &mut Context<Self>) -> Div {
-        let work = self.draws_work();
-        let width_refusal = check_work_view_width(self.panels.viewport).err();
-        let mut bar = segmented();
-        for (id, label, selected) in [("work-chat", "Chat", !work), ("work-work", "Work", work)] {
-            let active = self.tabs.model.work().is_some_and(|w| w.open);
-            let refusal = width_refusal.filter(|_| !active || label == "Work");
-            bar = bar.child(
-                segment(id, label, selected)
-                    .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
-                    .disabled(refusal.is_some())
-                    .aria_keyshortcuts(self.shortcut_aria("view.toggle_work"))
-                    .when_some(refusal, |el, why| {
-                        el.aria_description(why.reason()).tooltip(move |_, cx| {
-                            cx.new(|_| TextTooltip(why.reason().into())).into()
-                        })
-                    })
-                    .when(refusal.is_none() && active != (label == "Work"), |el| {
-                        el.on_activate(cx, |this, window, cx| this.toggle_work(window, cx))
-                    }),
-            );
-        }
-        bar
+        self.panel_recorded()
+            || self.draws_work() && self.tabs.model.work().is_some_and(|w| w.recorded)
     }
     pub(super) fn work_view(
         &self,

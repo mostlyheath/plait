@@ -139,3 +139,5 @@ that the application's frame or latency goals are met.
   every configuration.
 - CI runs on macOS 26; behavior on the minimum supported macOS version needs
   separate validation. The desktop is not validated as a native Linux app.
+
+Panel interaction checks cover opening each view, switching focus for Find, resizing and resetting the divider, reopening a tab, and returning to the conversation on narrow sheets. Check the saved width again after restarting the native app.
