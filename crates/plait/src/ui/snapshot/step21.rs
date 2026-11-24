@@ -761,3 +761,54 @@ fn review_strip_reselects_file_after_status_refresh() {
         })
         .unwrap();
 }
+
+#[cfg(debug_assertions)]
+#[core::prelude::v1::test]
+fn review_strip_opens_changes_with_fresh_counts() {
+    use plait_client::panel::{PanelKind, Scope};
+    if !isolated("step21::review_strip_opens_changes_with_fresh_counts") {
+        return;
+    }
+    let home = PathBuf::from(std::env::var_os(SCENE_HOME).unwrap());
+    let repository = fixture_repository(&home);
+    let mut harness = Harness::with_host(&repository, None, 1380., 860., None);
+    setup_base_thread(&mut harness, &repository, "Sample model");
+    checkout_strip(
+        &mut harness,
+        &repository,
+        plait_engine::git::status(&repository).unwrap(),
+    );
+    harness.update(|plait, _, _| {
+        assert!(!plait.panel_is_open());
+        // These counts were loaded for an older status before the panel closed.
+        plait
+            .workspace
+            .work_counts
+            .insert("src/review.rs".into(), "+1 −1".into());
+        plait.workspace.work_total = Some("+1 −1".into());
+    });
+    click(&mut harness, "Modified src/review.rs. Show in Changes");
+    harness.update(|plait, _, _| {
+        let panel = plait.tabs.model.panel().unwrap();
+        assert_eq!(
+            (panel.open, panel.kind, panel.scope),
+            (true, PanelKind::Changes, Scope::Uncommitted)
+        );
+        assert!(
+            !plait.panel_fills(),
+            "the wide panel leaves the conversation visible"
+        );
+        assert_eq!(
+            plait.state.repository.selected_diff().unwrap().path,
+            Path::new("src/review.rs")
+        );
+        assert!(
+            plait.workspace.work_total.is_none(),
+            "Changes must refresh the totals"
+        );
+        assert!(
+            plait.workspace.work_counts.is_empty(),
+            "Changes must refresh file counts"
+        );
+    });
+}

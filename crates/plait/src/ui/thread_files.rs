@@ -9,6 +9,7 @@ use plait_client::{
     host::{self, Request},
     model::{Change, DiffMode},
     panel::Scope,
+    panes::PaneKind,
 };
 use std::path::PathBuf;
 
@@ -291,7 +292,11 @@ impl Plait {
                 Some((index, mode))
             });
         if let Some((index, mode)) = found {
+            let entering_uncommitted = !self.shows_kind(PaneKind::Changes) || self.work_recorded();
             self.select_file(index, mode, window, cx);
+            if entering_uncommitted {
+                self.count_work_files(cx);
+            }
         } else {
             if let Some(panel) = self.tabs.model.panel_mut() {
                 panel.select_scope(Scope::Uncommitted);
