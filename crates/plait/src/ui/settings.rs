@@ -548,6 +548,7 @@ impl Plait {
             );
         }
         section("Appearance")
+            .child(self.thread_tabs_setting(cx))
             .child(self.theme_settings(cx))
             .child(setting(
                 "Changed files above the message box",

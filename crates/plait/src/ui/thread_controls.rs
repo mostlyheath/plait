@@ -393,7 +393,7 @@ impl Plait {
             );
         }
         notices.extend(parts.notices);
-        column()
+        let message_box = column()
             .w_full()
             .max_w(px(CONTENT_WIDTH))
             .mx_auto()
@@ -423,7 +423,18 @@ impl Plait {
                         .pb_2()
                         .children(notices),
                 )
-            })
+            });
+        if self.preferences.value.shows_thread_tabs() {
+            column()
+                .w_full()
+                .max_w(px(CONTENT_WIDTH))
+                .mx_auto()
+                .gap_1()
+                .child(message_box)
+                .child(self.environment(cx))
+        } else {
+            message_box
+        }
     }
 
     pub(super) fn thread_message_box_parts(&self, cx: &mut Context<Self>) -> MessageBoxParts {

@@ -75,7 +75,7 @@ impl Plait {
                             .flex_shrink_0()
                             .px_6()
                             .pb_3()
-                            .child(self.environment(self.new_thread_note(), None)),
+                            .child(self.connection_details(self.new_thread_note(), None)),
                     ),
                 )
             })

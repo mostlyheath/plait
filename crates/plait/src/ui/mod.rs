@@ -983,138 +983,196 @@ impl Plait {
         }
     }
 
-    /// The active content supplies the second row; an empty workspace has none.
-    fn header(
-        &self,
-        _title: String,
-        _location: Option<String>,
-        _status: (String, u32),
-        wide: bool,
-        _fullscreen: bool,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        if self.tabs.model.active().is_none() || self.worktrees_visible() {
-            return div().into_any_element();
-        }
-        let header = row()
-            .h(px(36.))
+    fn header(&mut self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let sidebar = self.visible_sidebar();
+        let show_tabs = self.preferences.value.shows_thread_tabs();
+        let current_thread = !self.worktrees_visible()
+            && !self.issues_visible()
+            && self.host.thread.selected.is_some();
+        let state = current_thread.then(|| self.header_state()).flatten();
+        let inset = if sidebar {
+            16.
+        } else {
+            tabs::lights_inset(window.is_fullscreen())
+        };
+        let mut header = self
+            .window_drag(row(), cx)
+            .id("sheet-header")
+            .h(px(tabs::HEADER_HEIGHT))
             .flex_shrink_0()
-            .px_3()
-            .gap_2()
+            .min_w_0()
+            .pl(px(inset))
+            .pr(px(10.))
+            .gap(px(8.))
             .border_b_1()
-            .border_color(rgb(colors().border));
-        let project = self.active_project();
+            .border_color(rgb(colors().border))
+            .when(!sidebar, |el| el.child(self.sidebar_toggle(cx)));
+
+        if show_tabs {
+            header = header.child(self.tab_row(window, cx));
+        } else {
+            if self.tabs.list_open {
+                self.measure_tabs(window);
+            }
+            let title = if self.worktrees_visible() {
+                "Worktrees".to_owned()
+            } else if self.issues_visible() {
+                "Linear issues".to_owned()
+            } else if let Some(id) = &self.host.thread.selected {
+                self.thread_title(id)
+            } else if self.draft.open {
+                self.current_draft_title().to_owned()
+            } else {
+                self.active_project().name.clone()
+            };
+            header = header
+                .child(
+                    div()
+                        .id("header-title")
+                        .min_w_0()
+                        .truncate()
+                        .text_size(px(14.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(rgb(colors().strong))
+                        .child(a11y_text("title", title.clone()))
+                        .tooltip(move |_, cx| {
+                            cx.new(|_| thread_controls::TextTooltip(title.clone()))
+                                .into()
+                        }),
+                )
+                .when(current_thread && self.panels.viewport >= 760., |el| {
+                    el.child(self.environment(cx))
+                })
+                .child(div().flex_1().min_w(px(16.)));
+        }
+        header
+            .children(self.cleanup_control(cx))
+            .when_some(state, |el, (word, tint)| {
+                el.child(
+                    row()
+                        .id("header-state")
+                        .h(px(20.))
+                        .flex_shrink_0()
+                        .px(px(7.))
+                        .gap(px(4.))
+                        .rounded_full()
+                        .bg(rgba((tint << 8) | 36))
+                        .font_weight(FontWeight::MEDIUM)
+                        .whitespace_nowrap()
+                        .child(dot(tint))
+                        .child(tag("state-word", word, tint)),
+                )
+            })
+            .when(current_thread, |el| el.child(self.header_panel_toggle(cx)))
+    }
+
+    fn header_state(&self) -> Option<(&'static str, u32)> {
+        use plait_client::navigation::{ThreadRowState::*, thread_row_state};
+        let id = self.host.thread.selected.as_deref()?;
+        let summary = self.host.connection.threads().get(self.thread_index(id)?)?;
+        let state = thread_row_state(summary, &self.lists().unread);
+        match state {
+            Working | Approval | Failed | Interrupted => {
+                Some((state.spoken(summary), thread_row_colors(state, true).0))
+            }
+            _ => None,
+        }
+    }
+
+    fn header_panel_toggle(&self, cx: &mut Context<Self>) -> Control {
+        let open = self.panel_is_open();
+        let keys = self.shortcut_label("view.toggle_inspector");
+        let tip = format!("Toggle Panel  {keys}").trim_end().to_owned();
+        toned_button(
+            "header-panel-toggle",
+            "",
+            if open { Tone::Selected } else { Tone::Ghost },
+        )
+        .map(|el| self.covered_tab_control(el))
+        .h(px(28.))
+        .px(px(7.))
+        .gap_1()
+        .aria_label("Toggle Panel")
+        .aria_toggled(if open { Toggled::True } else { Toggled::False })
+        .aria_keyshortcuts(self.shortcut_aria("view.toggle_inspector"))
+        .tooltip(move |_, cx| cx.new(|_| thread_controls::TextTooltip(tip.clone())).into())
+        .child(div().text_size(px(16.)).child("±"))
+        .on_activate(cx, |this, window, cx| this.toggle_panel(window, cx))
+    }
+
+    /// The same checkout chips sit beside the title or below the message box.
+    fn environment(&self, cx: &mut Context<Self>) -> Div {
+        let checkout = &self.host.creation.checkout;
+        let path = checkout.display().to_string();
+        let worktree = self.lists().worktree(checkout);
         let branch = self
             .state
             .repository
             .snapshot()
             .ready()
-            .map(|s| s.branch.as_str());
-        let full = format!(
-            "{} / {}{}\n{}",
-            project.name,
-            project.machines[0].name,
-            branch.map(|b| format!(" · {b}")).unwrap_or_default(),
-            self.host.creation.checkout.display()
-        );
-        let context = format!(
-            "{}{}{}",
-            project.name,
-            if wide {
-                format!(" / {}", project.machines[0].name)
-            } else {
-                String::new()
-            },
-            branch.map(|b| format!(" · {b}")).unwrap_or_default()
-        );
-        header
+            .filter(|snapshot| snapshot.root == *checkout && !snapshot.plain)
+            .map(|snapshot| snapshot.branch.as_str())
+            .or_else(|| worktree.map(|tree| tree.branch.as_str()))
+            .filter(|branch| !branch.is_empty());
+        let label = |id, value: String| div().min_w_0().truncate().child(a11y_text(id, value));
+        let chip = |glyph: &'static str| {
+            icon(glyph)
+                .size(px(12.))
+                .flex_shrink_0()
+                .text_color(rgb(colors().muted))
+        };
+        row()
+            .min_w_0()
+            .gap(px(8.))
+            .text_size(px(11.))
+            .text_color(rgb(colors().muted))
             .child(
-                div()
-                    .id("workspace-context")
+                row()
+                    .id("checkout-project")
                     .min_w_0()
-                    .flex_1()
-                    .truncate()
-                    .text_size(px(12.))
-                    .text_color(rgb(colors().muted))
-                    .child(context)
+                    .max_w(px(160.))
+                    .gap_1()
+                    .h(px(22.))
+                    .px(px(6.))
+                    .rounded(px(6.))
+                    .bg(rgba(colors().hover))
+                    .child(chip("folder"))
+                    .child(label("project-name", self.active_project().name.clone()))
                     .tooltip(move |_, cx| {
-                        cx.new(|_| thread_controls::TextTooltip(full.clone()))
+                        cx.new(|_| thread_controls::TextTooltip(path.clone()))
                             .into()
                     }),
             )
-            .children(self.cleanup_control(cx))
-            .child(self.workspace_switch(cx))
-            .into_any_element()
+            .when_some(branch, |el, branch| {
+                let blocker = self.branch_blocker();
+                let tip = format!("{} · {}", branch, blocker.unwrap_or("Switch Branch"));
+                el.child(
+                    button("checkout-branch", "")
+                        .map(|el| self.covered_tab_control(el))
+                        .min_w_0()
+                        .flex_shrink(1.)
+                        .max_w(px(190.))
+                        .gap_1()
+                        .h(px(22.))
+                        .px(px(6.))
+                        .rounded(px(6.))
+                        .bg(rgba(colors().hover))
+                        .text_size(px(11.))
+                        .font_weight(FontWeight::NORMAL)
+                        .aria_label(format!("Switch Branch: {branch}"))
+                        .aria_keyshortcuts(self.shortcut_aria("git.switch_branch"))
+                        .when(worktree.is_some(), |el| el.child(chip("folder")))
+                        .child(chip("branch"))
+                        .child(label("branch-name", branch.to_owned()))
+                        .tooltip(move |_, cx| {
+                            cx.new(|_| thread_controls::TextTooltip(tip.clone())).into()
+                        })
+                        .on_activate(cx, |this, window, cx| this.open_branches(false, window, cx)),
+                )
+            })
     }
-
-    /// Conversation, Changes, History, and Files: the views of the open checkout.
-    fn workspace_switch(&self, cx: &mut Context<Self>) -> Div {
-        let views = self
-            .tabs
-            .model
-            .active()
-            .and_then(|id| self.tabs.model.get(id))
-            .map(|tab| tab.content().view_commands())
-            .unwrap_or_default();
-        let changed = self
-            .state
-            .repository
-            .snapshot()
-            .ready()
-            .map(|s| s.changes.len())
-            .filter(|n| *n > 0);
-        let mut controls = segmented();
-        for &view in views {
-            let (id, title, action, hover) = match view {
-                Workspace::Conversation => (
-                    "conversation-tab",
-                    "Conversation",
-                    "view.conversation",
-                    "Read this thread and write a message.",
-                ),
-                Workspace::Changes => (
-                    "changes-tab",
-                    "Changes",
-                    "view.changes",
-                    "Review changes in this thread’s checkout.",
-                ),
-                Workspace::History => (
-                    "history-tab",
-                    "History",
-                    "view.history",
-                    "Read commits in this thread’s checkout.",
-                ),
-                Workspace::Files => (
-                    "files-tab",
-                    "Files",
-                    "view.files",
-                    "Read files in this thread’s checkout.",
-                ),
-            };
-            controls = controls.child(
-                segment(id, title, self.selected_view() == view)
-                    .map(|el| self.covered_tab_control(el))
-                    .aria_keyshortcuts(self.shortcut_aria(action))
-                    .tooltip(move |_, cx| {
-                        cx.new(|_| thread_controls::TextTooltip(hover.into()))
-                            .into()
-                    })
-                    .when_some(changed.filter(|_| view == Workspace::Changes), |el, n| {
-                        el.child(
-                            div()
-                                .text_size(px(11.))
-                                .text_color(rgb(colors().subtle))
-                                .child(n.to_string()),
-                        )
-                    })
-                    .on_activate(cx, move |this, window, cx| this.show_tab(view, window, cx)),
-            );
-        }
-        controls
-    }
-
     /// Where the selected thread runs: Project, Machine, and its checkout branch.
-    pub(super) fn environment(
+    pub(super) fn connection_details(
         &self,
         model: Option<String>,
         note: Option<(&'static str, u32)>,
@@ -1201,54 +1259,14 @@ impl Render for Plait {
         }
         let wide = Self::wide(window);
         self.cover_workspace(window, cx);
-        // Full screen hides the traffic lights the header otherwise clears.
-        let fullscreen = window.is_fullscreen();
         self.panels.viewport = f32::from(window.viewport_size().width);
         if self.workspace.work_area.size.height > px(0.) {
             self.sync_work_locations(window, cx);
         }
         self.advance_reveals(window);
         self.settle_find_reveal(window);
-        let project = self.active_project();
-        let machine = &project.machines[0];
         let real = self.host.thread.selected.is_some();
-        let connection = if self.host.connection.connecting {
-            ("Connecting…".to_owned(), colors().muted)
-        } else if self.host.connection.connected {
-            (format!("{} connected", self.machine_label()), colors().mint)
-        } else {
-            (
-                format!("{} disconnected", self.machine_label()),
-                colors().amber,
-            )
-        };
         let drafting = !real && self.draft.open;
-        let title = if real {
-            self.thread_title(self.host.thread.selected.as_deref().unwrap_or_default())
-        } else if drafting {
-            session::UNTITLED.to_owned()
-        } else {
-            project.name.clone()
-        };
-        let status = if real {
-            self.host.thread.snapshot.as_ref().map_or_else(
-                || ("Loading".to_owned(), colors().muted),
-                |snapshot| {
-                    (
-                        snapshot.status.label().to_owned(),
-                        host_status_color(snapshot.status),
-                    )
-                },
-            )
-        } else {
-            connection
-        };
-        // With no thread open the title already names the project.
-        let location = if real || drafting {
-            Some(format!("{} / {}", project.name, machine.name))
-        } else {
-            Some(machine.name.clone())
-        };
         let sidebar = self.visible_sidebar();
         let root = column()
             .id("plait")
@@ -1507,7 +1525,6 @@ impl Render for Plait {
             .text_size(px(13.))
             .font_family(".SystemUIFont")
             .child(self.tab_save_input(cx))
-            .child(self.tab_row(window, cx))
             .child(
                 row()
                     .gap_0()
@@ -1533,7 +1550,7 @@ impl Render for Plait {
                                     // GPUI clips children to a rectangle. Keep opaque views inside the arc.
                                     .p(px(4.))
                             })
-                            .child(self.header(title, location, status, wide, fullscreen, cx))
+                            .child(self.header(window, cx))
                             .when_some(self.session.note.clone(), |el, note| {
                                 el.child(
                                     div()
