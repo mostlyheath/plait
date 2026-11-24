@@ -50,6 +50,7 @@ mod cards;
 mod code_size;
 mod find;
 mod folded_turns;
+mod interface_font;
 mod isolation;
 mod issues;
 mod linear_settings;
@@ -61,6 +62,7 @@ mod messages;
 mod mixed_tabs;
 mod overview;
 mod pickers;
+mod running_mark;
 mod settings_modal;
 mod sheet;
 mod showcase;
@@ -727,8 +729,11 @@ impl Harness {
             }
         });
         cx.allow_parking();
-        // As main does, so scenes show the shortcuts the palette reads from the keymap.
-        cx.update(super::menus);
+        // As main does, register bundled interface fonts and shortcuts before opening the window.
+        cx.update(|cx| {
+            super::theme::load_bundled_fonts(cx.text_system());
+            super::menus(cx);
+        });
         let path = repository.to_owned();
         let window = cx
             .open_window(size(px(width), px(height)), |window, cx| {
@@ -2414,11 +2419,13 @@ fn walk(output: Option<&Path>) {
         harness.connect(&repository, true);
         harness.update(|plait, _, cx| plait.toggle_live_tool("t1", cx));
         harness.capture(&format!("live-approval-{suffix}"));
+        running_mark::walk(&mut harness, &repository, suffix);
         streaming_walk(&mut harness, &repository, suffix);
         tool_states_walk(&mut harness, &repository, suffix);
         reading_walk(&mut harness, &repository, suffix);
         messages::walk(&mut harness, &repository, suffix);
         code_size::walk(&mut harness, &repository, suffix);
+        interface_font::walk(&mut harness, &repository, suffix);
         find::find_walk(&mut harness, &repository, suffix);
         folded_turns::walk(&mut harness, &repository, suffix);
         #[cfg(debug_assertions)]

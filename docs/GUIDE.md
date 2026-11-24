@@ -65,6 +65,12 @@ Choose **Use** to connect in the background; if connecting fails, Plait stays on
 
 Press **Cmd-Option-J** (Next Thread Needing Me) to open the oldest waiting approval, followed by failures or interruptions, then unread results. Archived threads are excluded. Settings and any available Update sit beside the machine control.
 
+A blue open ring marks an active thread in the sidebar and tabs, and appears
+beside the current turn’s state and any tool still running. The ring turns
+while work is in progress. It stays still when macOS **System Settings →
+Accessibility → Display → Reduce motion** is enabled. If the host disconnects, cached activity stops animating until
+the connection returns.
+
 **Each machine's own projects:** Hosts supporting the workspace stream ([HOST.md](HOST.md#workspace)) keep their own opened and hidden projects, worktree ownership, and read/unread state. On this Mac, existing desktop lists import into this Mac's host once. Switching machines shows that machine's projects. Choose **Open project…** (`Cmd-O`) to pick a folder on this Mac, or browse another machine's folders through its host (repositories open in one step; a typed absolute path also works).
 
 **Plain folders:** A folder that is not a Git repository opens too. Threads, approvals, and the file viewer work there; Changes, History, branches, worktrees, and undo need Git and say so. Nothing an agent changes in a plain folder can be undone, and no file is protected as already changed.
@@ -202,7 +208,7 @@ If any file changed after the run ended, Undo changes nothing and opens **Change
 
 Press `Cmd-comma` (or **Plait → Settings…**) for application Settings, and open **Project settings…** from any project's sidebar **…** menu, **File → Project Settings…**, or the command palette. Opening Project settings from a sidebar project menu targets that project without switching the active thread underneath. Press `Escape`, **Done**, or click outside to close.
 
-- **Application tabs:** **New threads** (default harness, model, thinking, Pi approval mode), **Providers** (subscriptions, API keys, custom servers), **Linear** (API key), **Machines** (This Mac, remote hosts, and host updates over SSH), **Agents** (install, sign-in, harness paths, setup, default modes), **Keyboard** (record, search, and reset shortcuts; see [SHORTCUTS.md](SHORTCUTS.md)), **Editor** (file and terminal handoffs), **Appearance** (light/dark/follow macOS, **Stillwater Deep** default dark, **Stillwater**, **Plait Dark**, **Plait Light** default light, bundled Base16 schemes, custom `.yaml` Base16 files in `~/Library/Application Support/Plait/themes/`, monospaced **Code font** defaulting to SF Mono or any installed monospaced family such as `Menlo`, **Code size** from 12 to 14 points defaulting to 12, **Fold earlier turns**, and toggling the Changed files card), and **About** (build revision, host protocol, updates).
+- **Application tabs:** **New threads** (default harness, model, thinking, Pi approval mode), **Providers** (subscriptions, API keys, custom servers), **Linear** (API key), **Machines** (This Mac, remote hosts, and host updates over SSH), **Agents** (install, sign-in, harness paths, setup, default modes), **Keyboard** (record, search, and reset shortcuts; see [SHORTCUTS.md](SHORTCUTS.md)), **Editor** (file and terminal handoffs), **Appearance** (light/dark/follow macOS, **Stillwater Deep** default dark, **Stillwater**, **Plait Dark**, **Plait Light** default light, bundled Base16 schemes, custom `.yaml` Base16 files in `~/Library/Application Support/Plait/themes/`, **Interface font** choosing bundled **Plex Sans** or **System**, monospaced **Code font** defaulting to SF Mono or any installed monospaced family such as `Menlo`, **Code size** from 12 to 14 points defaulting to 12, **Fold earlier turns**, and toggling the Changed files card), and **About** (build revision, host protocol, updates).
 - **Project settings:** **Commands** (Trusted vs Sandboxed), Pi skills/templates/instructions and **MCP servers**, **New threads** (busy-project behavior and **Build output** directories), **Linear** team link, and **Worktrees**.
 
 Preferences live in `~/Library/Application Support/Plait/desktop.json`. Custom Base16 themes automatically adjust low-contrast text and accents for readability.

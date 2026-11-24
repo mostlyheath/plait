@@ -460,7 +460,12 @@ impl Plait {
                 .gap_1()
                 .text_size(px(11.))
                 .h(px(16.))
-                .child(super::navigation::card_mark(card.state, color, px(9.)))
+                .child(super::navigation::card_mark(
+                    card.state,
+                    color,
+                    px(9.),
+                    self.host.connection.connected,
+                ))
                 .child(
                     div()
                         .flex_1()
