@@ -1241,7 +1241,11 @@ impl Plait {
                             })
                             .into()
                         })
-                        .on_activate(cx, |this, window, cx| this.show_settings(true, window, cx)),
+                        .on_activate(cx, |this, window, cx| {
+                            this.navigation.menu = None;
+                            this.settings_tab = super::settings::SettingsTab::About;
+                            this.show_settings(true, window, cx);
+                        }),
                 )
             })
             .child(

@@ -133,3 +133,41 @@ fn foot_activation_and_next_thread_shortcut() {
     drop(h);
     std::fs::remove_dir_all(scratch).unwrap();
 }
+
+#[core::prelude::v1::test]
+fn update_button_opens_about_settings_and_closes_machine_menu() {
+    if !isolated("sheet::update_button_opens_about_settings_and_closes_machine_menu") {
+        return;
+    }
+    let scratch = std::env::temp_dir().join(format!("plait-foot-update-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    let mut h = Harness::with_host(&repo, None, 900., 600., None);
+    h.connect(&repo, false);
+    h.update(|p, _, _| {
+        p.updates = update_offer();
+        p.settings_tab = SettingsTab::NewThreads;
+        p.navigation.menu = Some("machines".into());
+    });
+    #[cfg(debug_assertions)]
+    {
+        let update = h
+            .draw_a11y()
+            .nodes
+            .into_iter()
+            .find(|n| n.path.contains("sidebar-update") && n.role == Role::Button)
+            .expect("sidebar Update button")
+            .bounds
+            .center();
+        super::settings_modal::click(&mut h, f32::from(update.x), f32::from(update.y));
+        h.update(|p, _, _| {
+            assert!(p.settings_open);
+            assert_eq!(p.settings_tab, SettingsTab::About);
+            assert!(p.navigation.menu.is_none());
+        });
+        assert!(h.draw_a11y().has_node(Role::Button, |n| {
+            n.label.as_deref() == Some("Install 1.2.3 and Restart")
+        }));
+    }
+    drop(h);
+    std::fs::remove_dir_all(scratch).unwrap();
+}
