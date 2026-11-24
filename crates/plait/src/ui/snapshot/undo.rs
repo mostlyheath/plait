@@ -79,7 +79,6 @@ pub(super) fn prepare(harness: &mut Harness, repository: &Path) {
             .protocol_version = 5;
         plait.workspace.turn_records = Default::default();
         plait.workspace.thread_files = Default::default();
-        plait.preferences.value.hide_inspector = true;
         plait.settings_open = false;
         plait.overlay = None;
         plait.workspace.history = Default::default();

@@ -306,7 +306,14 @@ impl Plait {
                 {
                     work.records_ready(!this.workspace.turn_records.lines.runs.is_empty());
                 }
-                if this.tabs.model.work().is_some_and(|w| w.open && w.recorded) {
+                if this.panel_recorded()
+                    && this
+                        .tabs
+                        .model
+                        .panel()
+                        .is_some_and(|p| p.recorded.is_none())
+                    || this.tabs.model.work().is_some_and(|w| w.open && w.recorded)
+                {
                     this.sync_work_scope(true, window, cx);
                 }
                 this.conversation_rows_changed(cx);

@@ -10,6 +10,8 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
+const STRIP_HEIGHT: f32 = 44.;
+
 /// Room the traffic lights take at the bar's left, and the inset that is left
 /// in full screen, where macOS hides them.
 const LIGHTS_INSET: f32 = 84.;
@@ -172,18 +174,26 @@ fn tooltip(value: String, cx: &mut App) -> AnyView {
 fn measure(text: &str, window: &Window) -> f32 {
     let run = TextRun {
         len: text.len(),
-        font: font(".SystemUIFont"),
+        font: Font {
+            weight: TYPE_CONTROL_WEIGHT,
+            features: tabular_nums(),
+            ..font(ui_font())
+        },
         color: rgb(colors().muted).into(),
         ..Default::default()
     };
     window
         .text_system()
-        .shape_line(text.to_owned().into(), px(12.), &[run], None)
+        .shape_line(text.to_owned().into(), px(TYPE_CONTROL_SIZE), &[run], None)
         .width
         .into()
 }
 
 impl Plait {
+    pub(super) fn invalidate_tab_measurement(&mut self) {
+        self.tabs.measured = None;
+    }
+
     pub(super) fn dismiss_tab_controls(&mut self) {
         self.tabs.list_open = false;
         self.tabs.drag = None;
@@ -444,17 +454,17 @@ impl Plait {
                 self.restore_worktrees_bookmark();
                 self.refresh_worktrees_view(false, cx);
             }
-            Some((TabTarget::Existing { id, .. }, view)) => {
+            Some((TabTarget::Existing { id, .. }, _)) => {
                 self.select_host_thread_content(id, window, cx);
-                self.present_workspace(view, window, cx);
+                self.present_workspace(super::Workspace::Conversation, window, cx);
             }
-            Some((TabTarget::Draft { id, checkout }, view)) => {
+            Some((TabTarget::Draft { id, checkout }, _)) => {
                 if checkout.root != self.host.creation.checkout {
                     self.change_checkout(checkout.root, window, cx);
                 }
                 self.restore_draft_tab(id, cx);
                 self.open_draft_content(window, cx);
-                self.present_workspace(view, window, cx);
+                self.present_workspace(super::Workspace::Conversation, window, cx);
             }
             None => {
                 self.workspace.reset_for_thread_selection();
@@ -535,7 +545,11 @@ impl Plait {
             maximum_tab: 240.,
             overflow,
         };
-        let limit = if width > super::WIDE_WINDOW { 2 } else { 1 };
+        let limit = if width > super::EXPANDED_CHROME_WIDTH {
+            2
+        } else {
+            1
+        };
         let initial = model::layout(&self.tabs.rows, widths(44.), self.tabs.first_visible, limit);
         let overflow = (measure(&initial.overflow_label, window) + 16.)
             .clamp(44., if limit == 2 { 164. } else { 140. });
@@ -608,12 +622,10 @@ impl Plait {
         let bar = self
             .window_drag(row(), cx)
             .id("window-tab-bar")
-            .h(px(CHROME_HEIGHT))
+            .h(px(STRIP_HEIGHT))
             .flex_shrink_0()
             .gap_0()
             .bg(rgb(colors().rail))
-            .border_b_1()
-            .border_color(rgb(colors().border))
             // The lead holds the lights and the toggle; its empty rest is bar,
             // so it moves the window like the right end does.
             .child(
@@ -622,6 +634,7 @@ impl Plait {
                     .h_full()
                     .flex_shrink_0()
                     .pl(px(inset))
+                    .when(self.visible_sidebar(), |lead| lead.justify_end().pr(px(8.)))
                     .child(
                         icon_button("toggle-sidebar", "panel", "Toggle sidebar")
                             .map(|el| self.covered_tab_control(el))
@@ -636,12 +649,13 @@ impl Plait {
                 let accent = self.tabs.overflow_state.map(|state| tint(state, false));
                 bar.child(
                     button("tab-overflow", layout.overflow_label.clone())
+                        .font_features(tabular_nums())
                         // Share the tab titles' line: tabs sit 3 points below the bar's centre.
                         .relative()
                         .top(px(3.))
                         .ml_1()
                         .when_some(accent, |el, accent| el.text_color(rgb(accent)))
-                        .max_w(px(if self.panels.viewport > super::WIDE_WINDOW {
+                        .max_w(px(if self.panels.viewport > super::EXPANDED_CHROME_WIDTH {
                             164.
                         } else {
                             140.
@@ -794,11 +808,12 @@ impl Plait {
             }))
             .hover(|s| s.bg(rgba(colors().hover)))
             .focus_visible(|s| s.border_color(rgb(colors().blue)))
-            .text_size(px(12.5))
+            .text_size(px(TYPE_CONTROL_SIZE))
+            .line_height(px(TYPE_CONTROL_LINE))
             .font_weight(if meta.active || meta.unread || attention {
-                FontWeight::MEDIUM
+                TYPE_CONTROL_WEIGHT
             } else {
-                FontWeight::NORMAL
+                TYPE_REGULAR
             })
             .tooltip(move |_, cx| tooltip(hover.clone(), cx))
             .on_mouse_down(
@@ -951,7 +966,7 @@ impl Plait {
             .aria_label("All open tabs")
             .audited()
             .absolute()
-            .top(px(CHROME_HEIGHT))
+            .top(px(STRIP_HEIGHT))
             .right(px(48.))
             .w(px(320.))
             .max_h(px(336.))

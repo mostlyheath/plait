@@ -3,7 +3,7 @@
 //! A drag changes only the width on screen. The width is saved to preferences
 //! when the button is released, so a drag writes the file once, not per move.
 
-use super::{Plait, WIDE_WINDOW, jump::PreferenceGroup, theme::*};
+use super::{Plait, jump::PreferenceGroup, theme::*};
 use gpui::{prelude::*, *};
 
 /// A sidebar whose width can be dragged.
@@ -12,7 +12,7 @@ pub(super) enum Panel {
     /// Projects and threads, on the left.
     Sidebar,
     /// The Git inspector, on the right.
-    Inspector,
+    Review,
 }
 
 /// What a resize drag carries.
@@ -27,22 +27,22 @@ impl Panel {
     fn limits(self) -> (f32, f32) {
         match self {
             Self::Sidebar => (200., 480.),
-            Self::Inspector => (220., 560.),
+            Self::Review => (360., f32::MAX),
         }
     }
 
     fn default_width(self, viewport: f32) -> f32 {
         match self {
-            Self::Sidebar if viewport > WIDE_WINDOW => 272.,
-            Self::Sidebar => 240.,
-            Self::Inspector => 280.,
+            Self::Sidebar if viewport < 760. => 236.,
+            Self::Sidebar => 288.,
+            Self::Review => viewport / 2.,
         }
     }
 
     fn other(self) -> Self {
         match self {
-            Self::Sidebar => Self::Inspector,
-            Self::Inspector => Self::Sidebar,
+            Self::Sidebar => Self::Review,
+            Self::Review => Self::Sidebar,
         }
     }
 }
@@ -59,6 +59,7 @@ fn fit(panel: Panel, width: f32, room: f32) -> f32 {
 pub(super) struct Panels {
     /// Window width at the last render; widths are fitted to it.
     pub viewport: f32,
+    pub focused: Option<plait_client::panes::PaneKind>,
     /// The width being dragged, saved when the button is released.
     live: Option<(Panel, f32)>,
 }
@@ -68,7 +69,7 @@ impl Plait {
         let value = &self.preferences.value;
         match panel {
             Panel::Sidebar => value.sidebar_width,
-            Panel::Inspector => value.inspector_width,
+            Panel::Review => value.panel_width,
         }
         .map(f32::from)
     }
@@ -88,7 +89,7 @@ impl Plait {
         let other = panel.other();
         let shown = match other {
             Panel::Sidebar => self.visible_sidebar(),
-            Panel::Inspector => self.shows_inspector(self.panels.viewport > WIDE_WINDOW),
+            Panel::Review => false,
         };
         let taken = if shown {
             let (min, max) = other.limits();
@@ -101,6 +102,17 @@ impl Plait {
 
     /// The width to draw a panel at.
     pub(super) fn panel_width(&self, panel: Panel) -> f32 {
+        if let Panel::Review = panel
+            && let Some(model) = self.tabs.model.panel()
+        {
+            let preferred = self
+                .panels
+                .live
+                .filter(|(edge, _)| *edge == panel)
+                .map(|(_, w)| w)
+                .or_else(|| self.saved_width(panel));
+            return model.width(self.sheet_width(), preferred);
+        }
         fit(panel, self.wanted_width(panel), self.room_for(panel))
     }
 
@@ -109,7 +121,7 @@ impl Plait {
     pub(super) fn resize_handle(&self, panel: Panel, cx: &mut Context<Self>) -> impl IntoElement {
         let (id, label) = match panel {
             Panel::Sidebar => ("resize-sidebar", "Resize sidebar"),
-            Panel::Inspector => ("resize-inspector", "Resize This turn"),
+            Panel::Review => ("resize-panel", "Resize panel"),
         };
         div()
             .id(id)
@@ -123,7 +135,7 @@ impl Plait {
             .w(px(HANDLE))
             .map(|el| match panel {
                 Panel::Sidebar => el.right_0(),
-                Panel::Inspector => el.left_0(),
+                Panel::Review => el.left_0(),
             })
             .cursor(CursorStyle::ResizeLeftRight)
             .hover(|s| s.bg(rgba(colors().hover)))
@@ -146,9 +158,13 @@ impl Plait {
             let x = f32::from(event.event.position.x);
             let width = match panel {
                 Panel::Sidebar => x,
-                Panel::Inspector => this.panels.viewport - x,
+                Panel::Review => f32::from(this.workspace.work_area.right()) - x,
             };
-            this.panels.live = Some((panel, fit(panel, width, this.room_for(panel))));
+            let room = match panel {
+                Panel::Sidebar => this.room_for(panel),
+                Panel::Review => this.sheet_width(),
+            };
+            this.panels.live = Some((panel, fit(panel, width, room)));
             cx.notify();
         }))
         // Any release ends the drag. One released outside the window is saved
@@ -164,7 +180,7 @@ impl Plait {
         let width = Some(width.round() as u16);
         match panel {
             Panel::Sidebar => value.sidebar_width = width,
-            Panel::Inspector => value.inspector_width = width,
+            Panel::Review => value.panel_width = width,
         }
         self.set_preferences(value, PreferenceGroup::View, cx);
     }
@@ -174,7 +190,7 @@ impl Plait {
         let mut value = self.preferences.value.clone();
         match panel {
             Panel::Sidebar => value.sidebar_width = None,
-            Panel::Inspector => value.inspector_width = None,
+            Panel::Review => value.panel_width = None,
         }
         self.set_preferences(value, PreferenceGroup::View, cx);
     }
@@ -185,14 +201,20 @@ mod tests {
     use super::{Panel, fit};
 
     #[test]
+    fn sidebar_default_changes_below_760_points() {
+        assert_eq!(Panel::Sidebar.default_width(759.), 236.);
+        assert_eq!(Panel::Sidebar.default_width(760.), 288.);
+    }
+
+    #[test]
     fn widths_stay_within_limits_and_leave_the_conversation_room() {
         assert_eq!(fit(Panel::Sidebar, 320., 1400.), 320.);
         assert_eq!(fit(Panel::Sidebar, 40., 1400.), 200.);
         assert_eq!(fit(Panel::Sidebar, 900., 1400.), 480.);
         // 1000 points of room leave 580 for the panel, under its own limit.
-        assert_eq!(fit(Panel::Inspector, 560., 1000.), 560.);
-        assert_eq!(fit(Panel::Inspector, 560., 800.), 380.);
+        assert_eq!(fit(Panel::Review, 560., 1000.), 560.);
+        assert_eq!(fit(Panel::Review, 560., 800.), 380.);
         // Too small a window for both: the panel keeps its minimum.
-        assert_eq!(fit(Panel::Inspector, 300., 500.), 220.);
+        assert_eq!(fit(Panel::Review, 300., 500.), 360.);
     }
 }

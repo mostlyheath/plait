@@ -101,6 +101,53 @@ pub const ITEM_CORNER: f32 = 6.;
 pub const SURFACE_CORNER: f32 = 12.;
 pub const PALETTE_CORNER: f32 = 14.;
 
+/// Type scale from DESIGN.md: point sizes, line heights, and weights.
+/// Reserved entries stay ready for later lanes without changing values here.
+#[allow(dead_code)]
+pub const TYPE_PAGE_TITLE_SIZE: f32 = 20.;
+#[allow(dead_code)]
+pub const TYPE_PAGE_TITLE_LINE: f32 = 26.;
+#[allow(dead_code)]
+pub const TYPE_PAGE_TITLE_WEIGHT: FontWeight = FontWeight::SEMIBOLD;
+
+pub const TYPE_BODY_SIZE: f32 = 14.5;
+pub const TYPE_BODY_LINE: f32 = 23.;
+#[allow(dead_code)]
+pub const TYPE_DRAFT_LINE: f32 = 21.;
+
+pub const TYPE_HEADER_SIZE: f32 = 14.;
+pub const TYPE_HEADER_LINE: f32 = 20.;
+pub const TYPE_HEADER_WEIGHT: FontWeight = FontWeight::SEMIBOLD;
+
+pub const TYPE_ROW_SIZE: f32 = 13.5;
+pub const TYPE_ROW_LINE: f32 = 19.;
+#[allow(dead_code)]
+pub const TYPE_CARD_TITLE_WEIGHT: FontWeight = FontWeight::SEMIBOLD;
+
+pub const TYPE_CONTROL_SIZE: f32 = 12.;
+pub const TYPE_CONTROL_LINE: f32 = 17.;
+pub const TYPE_CONTROL_WEIGHT: FontWeight = FontWeight::MEDIUM;
+
+pub const TYPE_META_SIZE: f32 = 11.;
+pub const TYPE_META_LINE: f32 = 15.;
+pub const TYPE_META_WEIGHT: FontWeight = FontWeight::MEDIUM;
+
+pub const TYPE_KEY_HINT_SIZE: f32 = 10.5;
+
+#[allow(dead_code)]
+pub const TYPE_REGULAR: FontWeight = FontWeight::NORMAL;
+pub const TYPE_MEDIUM: FontWeight = FontWeight::MEDIUM;
+#[allow(dead_code)]
+pub const TYPE_SEMIBOLD: FontWeight = FontWeight::SEMIBOLD;
+
+/// OpenType tabular figures (`tnum=1`), shared so in-place numbers do not
+/// allocate per frame and keep constant digit width in System UI font.
+pub fn tabular_nums() -> FontFeatures {
+    static TABULAR: std::sync::LazyLock<FontFeatures> =
+        std::sync::LazyLock::new(|| FontFeatures(std::sync::Arc::new(vec![("tnum".into(), 1)])));
+    TABULAR.clone()
+}
+
 fn shadow_layer(y: f32, blur: f32, spread: f32, tint: u32) -> BoxShadow {
     BoxShadow::new(px(0.), px(y), rgba(tint).into())
         .blur_radius(px(blur))
@@ -134,6 +181,20 @@ pub fn box_shadow() -> Vec<BoxShadow> {
     )]
 }
 
+/// The system's own interface font family.
+pub const SYSTEM_UI_FONT: &str = ".SystemUIFont";
+/// The bundled interface font family (Regular, Medium, SemiBold).
+pub const PLEX_UI_FONT: &str = "IBM Plex Sans";
+
+const BUNDLED_UI_FONT_PATHS: [&str; 3] = [
+    "fonts/IBMPlexSans-Regular.otf",
+    "fonts/IBMPlexSans-Medium.otf",
+    "fonts/IBMPlexSans-SemiBold.otf",
+];
+
+const BUNDLED_UI_WEIGHTS: [FontWeight; 3] =
+    [FontWeight::NORMAL, FontWeight::MEDIUM, FontWeight::SEMIBOLD];
+
 /// The system's own monospaced font: SF Mono on macOS, asked for by the
 /// family name Core Text gives it, since it is not installed under a public one.
 #[cfg(target_os = "macos")]
@@ -142,6 +203,11 @@ pub const SYSTEM_MONO: &str = ".AppleSystemUIFontMonospaced";
 pub const SYSTEM_MONO: &str = "DejaVu Sans Mono";
 
 thread_local! {
+    /// Whether every bundled IBM Plex Sans face loaded and resolved cleanly.
+    static BUNDLED_UI_LOADED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The family interface labels, controls, and prose are drawn in.
+    static UI_FONT: std::cell::RefCell<SharedString> =
+        const { std::cell::RefCell::new(SharedString::new_static(SYSTEM_UI_FONT)) };
     /// The family code, paths, and commands are drawn in. Per thread, like
     /// the palette, so parallel UI tests do not see each other's choice.
     static CODE_FONT: std::cell::RefCell<SharedString> =
@@ -150,6 +216,71 @@ thread_local! {
     /// the palette and code font, so parallel UI tests stay isolated.
     static CODE_SIZE: std::cell::Cell<f32> =
         const { std::cell::Cell::new(plait_client::preferences::CODE_SIZE_DEFAULT as f32) };
+}
+
+/// Register the bundled IBM Plex Sans faces and verify that Regular, Medium,
+/// and SemiBold each resolve directly to distinct faces before drawing with them.
+pub fn load_bundled_fonts(text_system: &TextSystem) -> bool {
+    let mut faces = Vec::with_capacity(BUNDLED_UI_FONT_PATHS.len());
+    for path in BUNDLED_UI_FONT_PATHS {
+        match Assets.load(path) {
+            Ok(Some(bytes)) => faces.push(bytes),
+            _ => {
+                BUNDLED_UI_LOADED.with(|loaded| loaded.set(false));
+                return false;
+            }
+        }
+    }
+    if text_system.add_fonts(faces).is_err() {
+        BUNDLED_UI_LOADED.with(|loaded| loaded.set(false));
+        return false;
+    }
+    let mut resolved = Vec::with_capacity(BUNDLED_UI_WEIGHTS.len());
+    for weight in BUNDLED_UI_WEIGHTS {
+        let wanted = Font {
+            weight,
+            ..font(SharedString::new_static(PLEX_UI_FONT))
+        };
+        let id = text_system.resolve_font(&wanted);
+        let direct = text_system
+            .get_font_for_id(id)
+            .is_some_and(|found| found.family.eq_ignore_ascii_case(PLEX_UI_FONT));
+        if !direct || resolved.contains(&id) {
+            BUNDLED_UI_LOADED.with(|loaded| loaded.set(false));
+            return false;
+        }
+        resolved.push(id);
+    }
+    BUNDLED_UI_LOADED.with(|loaded| loaded.set(true));
+    true
+}
+
+/// True when all three bundled IBM Plex Sans weights loaded at startup.
+pub fn bundled_ui_font_loaded() -> bool {
+    BUNDLED_UI_LOADED.with(std::cell::Cell::get)
+}
+
+/// The interface font family. Read during render; cheap.
+pub fn ui_font() -> SharedString {
+    UI_FONT.with(|font| font.borrow().clone())
+}
+
+/// Draw the interface in `choice` (falling back to the system UI font if the
+/// bundled faces did not load). False when already in use.
+pub fn set_ui_font(choice: plait_client::preferences::InterfaceFont) -> bool {
+    let family = match choice {
+        plait_client::preferences::InterfaceFont::Plex if bundled_ui_font_loaded() => {
+            SharedString::new_static(PLEX_UI_FONT)
+        }
+        _ => SharedString::new_static(SYSTEM_UI_FONT),
+    };
+    UI_FONT.with(|font| {
+        if *font.borrow() == family {
+            return false;
+        }
+        *font.borrow_mut() = family;
+        true
+    })
 }
 
 /// The code font's family. Read during render; cheap.
@@ -275,7 +406,7 @@ fn control(id: impl Into<ElementId>, name: SharedString, tone: Tone) -> Control 
         Tone::Primary => base
             .bg(rgb(colors().strong))
             .text_color(rgb(colors().bg))
-            .font_weight(FontWeight::MEDIUM),
+            .font_weight(TYPE_CONTROL_WEIGHT),
     }
 }
 
@@ -292,9 +423,9 @@ pub fn toned_button(
     control(id, label.clone(), tone)
         .h(px(ROW_HEIGHT))
         .flex_shrink_0()
-        .text_size(px(12.))
+        .text_size(px(TYPE_CONTROL_SIZE))
         .px(px(11.))
-        .font_weight(FontWeight::MEDIUM)
+        .font_weight(TYPE_CONTROL_WEIGHT)
         // Callers that pass no label supply their own children.
         .when(!label.is_empty(), |el| el.child(label))
 }
@@ -355,7 +486,7 @@ pub fn nav_row(id: impl Into<ElementId>, name: impl Into<SharedString>, selected
         .h(px(ROW_HEIGHT))
         .px_2()
         .gap(px(6.))
-        .text_size(px(13.))
+        .text_size(px(TYPE_ROW_SIZE))
 }
 
 pub trait ButtonAction {
@@ -408,7 +539,7 @@ impl<E: StatefulInteractiveElement + Styled + FluentBuilder> DisabledControl for
 /// cannot collide in the accessibility tree.
 pub fn tag(id: impl Into<ElementId>, text: impl Into<SharedString>, color: u32) -> Div {
     div()
-        .text_size(px(11.))
+        .text_size(px(TYPE_META_SIZE))
         .text_color(rgb(color))
         .child(a11y_text(id, text))
 }
@@ -419,7 +550,7 @@ pub fn key_hint(id: impl Into<ElementId>, text: impl Into<SharedString>) -> Div 
         .px(px(4.))
         .rounded(px(4.))
         .bg(rgba(colors().hover))
-        .text_size(px(10.5))
+        .text_size(px(TYPE_KEY_HINT_SIZE))
         .font_family(mono())
 }
 
@@ -435,7 +566,7 @@ pub fn host_status_color(status: host::ThreadStatus) -> u32 {
 
 /// Small uppercase-free heading above a group, in the manner of a list label.
 pub fn section_label(id: impl Into<ElementId>, text: impl Into<SharedString>) -> Div {
-    tag(id, text, colors().subtle).font_weight(FontWeight::MEDIUM)
+    tag(id, text, colors().subtle).font_weight(TYPE_META_WEIGHT)
 }
 
 /// Two-option switch. The caller supplies tab buttons with `aria_selected`.
@@ -471,7 +602,7 @@ pub fn chip(id: impl Into<ElementId>, label: &'static str, on: bool) -> Control 
         .px(px(9.))
         .flex_shrink_0()
         .rounded(px(ITEM_CORNER))
-        .text_size(px(11.))
+        .text_size(px(TYPE_META_SIZE))
         .when(!on, |el| el.border_color(rgb(colors().border)))
         .when(on, |el| el.border_color(rgb(colors().edge)))
         .aria_toggled(if on { Toggled::True } else { Toggled::False })
@@ -480,7 +611,9 @@ pub fn chip(id: impl Into<ElementId>, label: &'static str, on: bool) -> Control 
 
 /// Open assistant text on the conversation surface.
 pub fn prose() -> Div {
-    div().text_size(px(13.)).line_height(px(21.))
+    div()
+        .text_size(px(TYPE_BODY_SIZE))
+        .line_height(px(TYPE_BODY_LINE))
 }
 
 /// Pulls a disclosure row left so its chevron sits on the text edge.
@@ -586,8 +719,9 @@ pub fn empty(title: &'static str, detail: impl Into<SharedString>) -> Control {
         .gap_2()
         .child(
             div()
-                .text_size(px(15.))
-                .font_weight(FontWeight::MEDIUM)
+                .text_size(px(TYPE_HEADER_SIZE))
+                .line_height(px(TYPE_HEADER_LINE))
+                .font_weight(TYPE_HEADER_WEIGHT)
                 .text_color(rgb(colors().strong))
                 .child(title),
         )
@@ -595,8 +729,8 @@ pub fn empty(title: &'static str, detail: impl Into<SharedString>) -> Control {
             div()
                 .max_w(px(380.))
                 .text_center()
-                .text_size(px(12.))
-                .line_height(px(19.))
+                .text_size(px(TYPE_CONTROL_SIZE))
+                .line_height(px(TYPE_CONTROL_LINE))
                 .text_color(rgb(colors().muted))
                 .child(detail),
         )
@@ -605,6 +739,21 @@ pub fn empty(title: &'static str, detail: impl Into<SharedString>) -> Control {
 pub struct Assets;
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> gpui::Result<Option<Cow<'static, [u8]>>> {
+        let font = match path {
+            "fonts/IBMPlexSans-Regular.otf" => {
+                Some(include_bytes!("../../../../assets/fonts/IBMPlexSans-Regular.otf").as_slice())
+            }
+            "fonts/IBMPlexSans-Medium.otf" => {
+                Some(include_bytes!("../../../../assets/fonts/IBMPlexSans-Medium.otf").as_slice())
+            }
+            "fonts/IBMPlexSans-SemiBold.otf" => {
+                Some(include_bytes!("../../../../assets/fonts/IBMPlexSans-SemiBold.otf").as_slice())
+            }
+            _ => None,
+        };
+        if let Some(bytes) = font {
+            return Ok(Some(Cow::Borrowed(bytes)));
+        }
         let svg = match path {
             "plait-mark.svg" => {
                 include_str!("../../../../assets/branding/marks/plait-mark-gradient.svg")
@@ -622,6 +771,9 @@ impl AssetSource for Assets {
             // An original mark for an issue: a ring around a point.
             "issue" => {
                 r#"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5" fill="none" stroke="black" stroke-width="1.4"/><circle cx="8" cy="8" r="1.6"/></svg>"#
+            }
+            "open-external" => {
+                r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M6.5 4H4v8h8V9.5m-5.5 0 6-6M9 3.5h3.5V7" fill="none" stroke="black" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>"#
             }
             "close" => {
                 r#"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><path d="m4 4 8 8m0-8-8 8" fill="none" stroke="black" stroke-width="1.4" stroke-linecap="round"/></svg>"#
@@ -685,7 +837,13 @@ impl AssetSource for Assets {
         };
         Ok(Some(Cow::Borrowed(svg.as_bytes())))
     }
-    fn list(&self, _: &str) -> gpui::Result<Vec<SharedString>> {
+    fn list(&self, path: &str) -> gpui::Result<Vec<SharedString>> {
+        if path == "fonts" {
+            return Ok(BUNDLED_UI_FONT_PATHS
+                .into_iter()
+                .map(SharedString::new_static)
+                .collect());
+        }
         Ok(vec![])
     }
 }
@@ -714,17 +872,102 @@ pub fn home_relative(path: &std::path::Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::Assets;
+    use super::*;
     use gpui::{AssetSource, SvgRenderer};
     use std::sync::Arc;
 
-    #[test]
+    #[core::prelude::v1::test]
+    fn type_scale_constants_match_design() {
+        assert_eq!(TYPE_PAGE_TITLE_SIZE, 20.);
+        assert_eq!(TYPE_PAGE_TITLE_LINE, 26.);
+        assert_eq!(TYPE_PAGE_TITLE_WEIGHT, FontWeight::SEMIBOLD);
+        assert_eq!(TYPE_BODY_SIZE, 14.5);
+        assert_eq!(TYPE_BODY_LINE, 23.);
+        assert_eq!(TYPE_DRAFT_LINE, 21.);
+        assert_eq!(TYPE_HEADER_SIZE, 14.);
+        assert_eq!(TYPE_HEADER_LINE, 20.);
+        assert_eq!(TYPE_HEADER_WEIGHT, FontWeight::SEMIBOLD);
+        assert_eq!(TYPE_ROW_SIZE, 13.5);
+        assert_eq!(TYPE_ROW_LINE, 19.);
+        assert_eq!(TYPE_CARD_TITLE_WEIGHT, FontWeight::SEMIBOLD);
+        assert_eq!(TYPE_CONTROL_SIZE, 12.);
+        assert_eq!(TYPE_CONTROL_LINE, 17.);
+        assert_eq!(TYPE_CONTROL_WEIGHT, FontWeight::MEDIUM);
+        assert_eq!(TYPE_META_SIZE, 11.);
+        assert_eq!(TYPE_META_LINE, 15.);
+        assert_eq!(TYPE_META_WEIGHT, FontWeight::MEDIUM);
+        assert_eq!(TYPE_KEY_HINT_SIZE, 10.5);
+        assert_eq!(TYPE_REGULAR, FontWeight::NORMAL);
+        assert_eq!(TYPE_MEDIUM, FontWeight::MEDIUM);
+        assert_eq!(TYPE_SEMIBOLD, FontWeight::SEMIBOLD);
+    }
+
+    #[core::prelude::v1::test]
+    fn tabular_nums_enables_tnum_feature() {
+        assert_eq!(tabular_nums().tag_value_list(), &[("tnum".to_owned(), 1)]);
+        #[cfg(target_os = "macos")]
+        {
+            let text_system = TextSystem::new(Arc::new(gpui_apple::AppleTextSystem::new()));
+            let id = text_system.resolve_font(&Font {
+                features: tabular_nums(),
+                ..font(SharedString::new_static(SYSTEM_UI_FONT))
+            });
+            let narrow = text_system.layout_width(id, px(TYPE_META_SIZE), '1');
+            let wide = text_system.layout_width(id, px(TYPE_META_SIZE), '8');
+            assert!(
+                (narrow - wide).abs() < px(0.05),
+                "tabular figures differed: 1={narrow:?}, 8={wide:?}"
+            );
+        }
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[core::prelude::v1::test]
+    fn bundled_ui_fonts_load_all_three_weights() {
+        #[cfg(target_os = "macos")]
+        let platform: Arc<dyn PlatformTextSystem> = Arc::new(gpui_apple::AppleTextSystem::new());
+        #[cfg(target_os = "linux")]
+        let platform: Arc<dyn PlatformTextSystem> =
+            Arc::new(gpui_wgpu::CosmicTextSystem::new("DejaVu Sans"));
+
+        let text_system = TextSystem::new(platform);
+        assert_eq!(Assets.list("fonts").unwrap().len(), 3);
+        assert!(load_bundled_fonts(&text_system));
+        assert!(bundled_ui_font_loaded());
+
+        let ids: Vec<FontId> = BUNDLED_UI_WEIGHTS
+            .into_iter()
+            .map(|weight| {
+                let id = text_system.resolve_font(&Font {
+                    weight,
+                    ..font(SharedString::new_static(PLEX_UI_FONT))
+                });
+                let found = text_system
+                    .get_font_for_id(id)
+                    .expect("bundled weight resolved directly");
+                assert!(found.family.eq_ignore_ascii_case(PLEX_UI_FONT));
+                id
+            })
+            .collect();
+        assert_ne!(ids[0], ids[1]);
+        assert_ne!(ids[1], ids[2]);
+        assert_ne!(ids[0], ids[2]);
+
+        set_ui_font(plait_client::preferences::InterfaceFont::Plex);
+        assert_eq!(ui_font().as_ref(), PLEX_UI_FONT);
+        set_ui_font(plait_client::preferences::InterfaceFont::System);
+        assert_eq!(ui_font().as_ref(), SYSTEM_UI_FONT);
+        set_ui_font(plait_client::preferences::InterfaceFont::Plex);
+    }
+
+    #[core::prelude::v1::test]
     fn embedded_icons_render_and_brand_keeps_color() {
         let renderer = SvgRenderer::new(Arc::new(Assets));
         for name in [
             "plait-mark.svg",
             "plait-wordmark.svg",
             "folder",
+            "open-external",
             "machine",
             "thread",
             "branch",

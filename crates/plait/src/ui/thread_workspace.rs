@@ -20,6 +20,7 @@ use std::{
 pub(super) struct ThreadWorkspace {
     pub(super) diff_search: Option<(std::sync::Weak<plait_client::model::Diff>, String)>,
     pub(super) diff_find: file_view::Find,
+    pub(super) work_total: Option<String>,
     pub(super) work_counts: HashMap<std::path::PathBuf, String>,
     pub(super) work_area: Bounds<Pixels>,
     pub(super) restore: Option<plait_client::tabs::bookmark::ThreadBookmark>,
@@ -44,7 +45,6 @@ pub(super) struct ThreadWorkspace {
     pub(super) turn_review: turn_review::TurnReview,
     pub(super) reveal: live_conversation::Reveals,
     /// The inspector toggle was used on a window too narrow to show it.
-    pub(super) inspector_note: bool,
     pub(super) thread_controls: thread_controls::ThreadControls,
     pub(super) expanded_live_tools: HashSet<String>,
     pub(super) reading: selection::Reading,
@@ -66,6 +66,7 @@ impl ThreadWorkspace {
             diff_search: None,
             diff_find: Default::default(),
             work_counts: Default::default(),
+            work_total: None,
             work_area: Default::default(),
             restore: None,
             restore_pending: [false; 4],
@@ -84,7 +85,6 @@ impl ThreadWorkspace {
             turn_records: Default::default(),
             turn_review: Default::default(),
             reveal: Default::default(),
-            inspector_note: false,
             thread_controls: Default::default(),
             expanded_live_tools: HashSet::new(),
             reading: Default::default(),

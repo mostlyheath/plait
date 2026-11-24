@@ -46,7 +46,7 @@ fn stage(h: &mut Harness, repository: &Path) {
         s.live_text.clear();
     });
     h.update(|p, window, cx| {
-        p.preferences.value.hide_inspector = true;
+        p.tabs.model.panel_mut().unwrap().open = false;
         p.state.projects[0].machines[0].name = "studio".into();
         p.sync_composer(cx);
         p.workspace.composers[THREAD].update(cx, |composer, cx| {

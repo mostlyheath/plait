@@ -51,6 +51,7 @@ mod code_size;
 mod find;
 mod finished_work;
 mod folded_turns;
+mod interface_font;
 mod isolation;
 mod issues;
 mod linear_settings;
@@ -60,9 +61,11 @@ mod mcp;
 mod message_box;
 mod messages;
 mod mixed_tabs;
+mod panel;
 mod pickers;
 mod quote_selection;
 mod settings_modal;
+mod sheet;
 mod showcase;
 mod sidebar;
 mod storage;
@@ -727,8 +730,11 @@ impl Harness {
             }
         });
         cx.allow_parking();
-        // As main does, so scenes show the shortcuts the palette reads from the keymap.
-        cx.update(super::menus);
+        // As main does, register bundled interface fonts and shortcuts before opening the window.
+        cx.update(|cx| {
+            super::theme::load_bundled_fonts(cx.text_system());
+            super::menus(cx);
+        });
         let path = repository.to_owned();
         let window = cx
             .open_window(size(px(width), px(height)), |window, cx| {
@@ -1329,7 +1335,7 @@ fn files_tab_reads_finds_and_reloads_a_real_file() {
     };
     harness.update(|plait, _, cx| plait.open_file("src/review.rs".into(), Some(2), cx));
     harness.update(|plait, _, _| {
-        assert_eq!(plait.workspace.tab, super::Workspace::Files);
+        assert_eq!(plait.selected_view(), super::Workspace::Files);
         assert!(text(plait).contains("notify_when_ready"));
     });
     harness.draw();
@@ -2028,7 +2034,7 @@ fn changed_files_count_with_git_hide_on_request_and_open_in_changes() {
         assert!(plait.thread_files_card(cx).is_none());
         plait.preferences.value.hide_changed_files = false;
         plait.open_thread_file("src/review.rs".into(), window, cx);
-        assert_eq!(plait.workspace.tab, super::Workspace::Changes);
+        assert_eq!(plait.selected_view(), super::Workspace::Changes);
         let repo = &plait.state.repository;
         let key = repo.selected_diff().unwrap();
         assert_eq!(
@@ -2421,13 +2427,14 @@ fn walk(output: Option<&Path>) {
         finished_work::scenes(&repository, output, suffix, width, height);
         quote_selection::scenes(&repository, output, suffix, width, height);
         code_size::walk(&mut harness, &repository, suffix);
+        interface_font::walk(&mut harness, &repository, suffix);
         find::find_walk(&mut harness, &repository, suffix);
         folded_turns::walk(&mut harness, &repository, suffix);
         #[cfg(debug_assertions)]
         if suffix == "wide" {
             work_view::scenes(&repository, output);
         }
-        this_turn::scenes(&mut harness, &repository, suffix);
+        panel::scenes(&mut harness, &repository, suffix);
         undo::undo_walk(&mut harness, &repository, suffix);
         turn_review::walk(&mut harness, &repository, suffix);
         history_walk(&mut harness, &repository, suffix);
@@ -2451,7 +2458,7 @@ fn walk(output: Option<&Path>) {
         claude_walk(&mut harness, &repository, suffix);
         draft_scenes_walk(&mut harness, &repository, suffix);
         branches::branches_walk(&mut harness, &repository, suffix);
-        inspector_walk(&mut harness, &repository, suffix);
+
         sidebar::walk(&mut harness, &repository, suffix);
         navigation_walk(&mut harness, &repository, suffix);
         // Threads exist, but none is open.
@@ -2977,7 +2984,7 @@ fn composer_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
         let event =
             super::composer::ComposerEvent::Command(super::composer::CommandId::ShowChanges);
         plait.composer_event(&event, window, cx);
-        assert_eq!(plait.workspace.tab, super::Workspace::Changes);
+        assert_eq!(plait.selected_view(), super::Workspace::Changes);
         let event =
             super::composer::ComposerEvent::Command(super::composer::CommandId::ShowConversation);
         plait.composer_event(&event, window, cx);
@@ -4229,34 +4236,6 @@ fn a_mode_reply_lands_only_on_the_thread_it_was_sent_for() {
     harness.update(|plait, _, _| assert_eq!(shown(plait), ("ask".into(), true)));
     drop(harness);
     std::fs::remove_dir_all(scratch).unwrap();
-}
-
-/// The Git inspector hidden. A narrow window has no inspector, so the toggle
-/// explains where Git is instead.
-fn inspector_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
-    harness.connect(repository, false);
-    harness.update(|plait, window, cx| {
-        plait.toggle_inspector(window, cx);
-        let wide = Plait::wide(window);
-        assert_eq!(plait.preferences.value.hide_inspector, wide);
-        assert_eq!(plait.workspace.inspector_note, !wide);
-    });
-    harness.capture(&format!("inspector-hidden-{suffix}"));
-    harness.update(|plait, window, cx| {
-        plait.toggle_inspector(window, cx);
-        assert!(!plait.preferences.value.hide_inspector);
-        assert!(!plait.workspace.inspector_note);
-    });
-    // Widths saved by dragging, fitted so the conversation keeps its room.
-    harness.update(|plait, _, _| {
-        plait.preferences.value.sidebar_width = Some(380);
-        plait.preferences.value.inspector_width = Some(520);
-    });
-    harness.capture(&format!("panels-resized-{suffix}"));
-    harness.update(|plait, _, _| {
-        plait.preferences.value.sidebar_width = None;
-        plait.preferences.value.inspector_width = None;
-    });
 }
 
 // The glob import above brings in `gpui::test`; these are plain tests.
@@ -5802,7 +5781,7 @@ fn the_window_bar_moves_the_window_only_from_empty_space() {
     let scratch = std::env::temp_dir().join(format!("plait-window-bar-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&scratch);
     let repository = fixture_repository(&scratch);
-    let mut harness = Harness::new(&repository, None, 1380., 860.);
+    let mut harness = Harness::with_host(&repository, None, 1380., 860., None);
     let rail = harness
         .window
         .update(&mut harness.cx, |plait, _, _| {
@@ -5851,7 +5830,7 @@ fn the_window_bar_moves_the_window_only_from_empty_space() {
     );
     assert!(arms(&mut harness, rail + 400.), "the header's empty middle");
     // A control in the bar keeps its click: this one hides the rail.
-    assert!(!arms(&mut harness, 98.), "the sidebar toggle");
+    assert!(!arms(&mut harness, rail - 22.), "the sidebar toggle");
     assert!(!sidebar(&mut harness));
     // With the rail hidden the header starts under the lights, so its toggle
     // moves clear of them and the space it leaves still moves the window.
