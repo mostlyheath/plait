@@ -536,7 +536,7 @@ impl IssuesView {
                 };
                 false
             }
-            Err(WriteFailure::Refused(error)) => {
+            Err(WriteFailure::Refused(error) | WriteFailure::Undecided(error)) => {
                 current.status = ChangeStatus::Failed {
                     note: state_message(error),
                     retry: !matches!(
@@ -856,7 +856,8 @@ impl IssuesView {
         let title = title.trim();
         let problem = if title.is_empty() {
             Some("Give the issue a title.")
-        } else if title.chars().count() > TITLE_LIMIT {
+        // Counted as the host counts: UTF-16 units.
+        } else if title.encode_utf16().count() > TITLE_LIMIT {
             Some("The title is longer than 512 characters.")
         } else if description.len() > DESCRIPTION_LIMIT {
             Some("The description is longer than 32 KB.")
@@ -915,6 +916,14 @@ impl IssuesView {
 
     /// The draft could not be written before sending, so nothing was sent.
     pub fn draft_unsaved(&mut self, request: &FormRequest) {
+        self.not_sent(
+            request,
+            "Couldn't save your draft, so nothing was sent. Try again.",
+        );
+    }
+
+    /// Unfreezes a form whose request was never sent, saying why.
+    pub fn not_sent(&mut self, request: &FormRequest, note: &str) {
         let slot = request_slot(request);
         if let Some(form) = self.form_mut(&slot)
             && form.sent.as_ref() == Some(request)
@@ -922,7 +931,7 @@ impl IssuesView {
         {
             form.sent = None;
             form.status = FormStatus::Failed {
-                note: "Couldn't save your draft, so nothing was sent. Try again.".into(),
+                note: note.into(),
                 retry: true,
             };
         }
@@ -1002,6 +1011,13 @@ impl IssuesView {
             }) => (
                 failed("Nothing was saved. Save again to send this text.", true),
                 Retire::Next,
+            ),
+            Err(WriteFailure::Undecided(error)) => (
+                failed(
+                    &format!("Nothing was saved. {}", message(Pending::Loading, error)),
+                    true,
+                ),
+                Retire::Never,
             ),
             Err(WriteFailure::Refused(error)) => (
                 failed(
@@ -1785,5 +1801,25 @@ mod form_tests {
             FormDone::Nothing
         );
         assert!(view.form().unwrap().frozen());
+    }
+
+    #[test]
+    fn a_refusal_without_a_recorded_outcome_keeps_the_request() {
+        let mut view = view();
+        view.start_new("n1".into());
+        let first = sent(view.submit_form("New", "", "x1".into()));
+        view.form_reply(&first, Err(WriteFailure::Lost));
+        // 300 emoji are 300 characters but 600 UTF-16 units: refused here, as the host would.
+        let emoji = "🙂".repeat(300);
+        assert_eq!(view.submit_form(&emoji, "", "x2".into()), Submit::Nothing);
+        // A refusal the host did not record leaves the earlier request in charge.
+        let again = sent(view.submit_form("Newer", "", "x3".into()));
+        assert_eq!(again.request_id, "n1");
+        view.form_reply(&again, Err(WriteFailure::Undecided(Rejection::Other)));
+        let corrected = sent(view.submit_form("Newest", "", "x4".into()));
+        assert_eq!(
+            corrected.request_id, "n1",
+            "never a fresh ID without a recorded outcome"
+        );
     }
 }

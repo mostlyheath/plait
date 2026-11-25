@@ -457,8 +457,12 @@ pub enum WriteFailure {
     /// The host's reply was lost. Retrying with the same request ID is safe:
     /// the host returns its saved outcome instead of sending twice.
     Lost,
-    /// Refused or not sent: nothing was written.
+    /// Refused or not sent, as the host recorded it: nothing was written.
     Refused(Rejection),
+    /// Refused without a recorded outcome, such as a request the host found
+    /// malformed before looking at its receipt: an earlier request under the
+    /// same ID may still have been written, so the ID is kept.
+    Undecided(Rejection),
     /// The issue changed in Linear since it was read; nothing was sent.
     Changed,
     /// The request ID already carries other text. `earlier` is what became
@@ -492,7 +496,8 @@ pub fn write_failure(error: &Error) -> WriteFailure {
                 _ => Earlier::Unknown,
             },
         },
-        _ => WriteFailure::Refused(classify(error, false)),
+        (_, Some("not_sent" | "rejected")) => WriteFailure::Refused(classify(error, false)),
+        _ => WriteFailure::Undecided(classify(error, false)),
     }
 }
 
@@ -772,6 +777,13 @@ mod write_tests {
             write_failure(&limited),
             WriteFailure::Refused(Rejection::RateLimited(Some(7)))
         );
+        // Refused before the host looked at its receipt: not a recorded outcome.
+        let malformed = envelope(serde_json::json!({"code": "invalid_request",
+            "message": "title is too long."}));
+        assert_eq!(
+            write_failure(&malformed),
+            WriteFailure::Undecided(Rejection::Other)
+        );
         for (outcome, earlier) in [
             ("accepted", Earlier::Accepted),
             ("rejected", Earlier::NothingWritten),
@@ -793,9 +805,10 @@ mod write_tests {
             write_failure(&Error::Transport("closed".into())),
             WriteFailure::Lost
         );
+        // Without a recorded outcome a refusal settles nothing about the request.
         assert_eq!(
             write_failure(&rejected("linear_offline")),
-            WriteFailure::Refused(Rejection::Offline)
+            WriteFailure::Undecided(Rejection::Offline)
         );
     }
 

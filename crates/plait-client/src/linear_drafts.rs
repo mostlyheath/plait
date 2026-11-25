@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 pub const RECORD: &str = "linear-issue-drafts";
 /// The record's size limit: forms are bounded text, and few are kept.
 pub const RECORD_LIMIT: usize = 4 * 1024 * 1024;
-/// Forms kept in all, oldest first out.
+/// Forms kept in all. Another one is refused rather than dropping text.
 pub const FORM_LIMIT: usize = 64;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -121,17 +121,21 @@ impl Drafts {
         self.forms.iter().filter(move |f| f.checkout == checkout)
     }
 
-    /// Replaces one project's forms with `forms`, keeping the others, and
-    /// drops the oldest beyond the limit. Returns whether anything changed.
+    /// Replaces one project's forms with `forms`, keeping the others. Nothing
+    /// is ever dropped here; `full` keeps the count bounded instead. Returns
+    /// whether anything changed.
     pub fn replace(&mut self, checkout: &Path, forms: Vec<SavedForm>) -> bool {
         if self.of(checkout).eq(forms.iter()) {
             return false;
         }
         self.forms.retain(|f| f.checkout != checkout);
         self.forms.extend(forms);
-        let excess = self.forms.len().saturating_sub(FORM_LIMIT);
-        self.forms.drain(..excess);
         true
+    }
+
+    /// Whether another form would pass the limit: save or discard one first.
+    pub fn full(&self) -> bool {
+        self.forms.len() >= FORM_LIMIT
     }
 }
 
@@ -190,16 +194,23 @@ mod tests {
     }
 
     #[test]
-    fn the_oldest_forms_go_first_beyond_the_limit() {
+    fn every_draft_survives_up_to_the_limit_and_none_is_dropped() {
         let mut drafts = Drafts::default();
-        let forms = (0..FORM_LIMIT + 3)
-            .map(|i| new_form(&format!("/p{i}"), "x"))
-            .collect::<Vec<_>>();
-        for form in forms {
-            let root = form.checkout.clone();
-            drafts.replace(&root, vec![form]);
+        for i in 0..FORM_LIMIT {
+            let root = PathBuf::from(format!("/p{i}"));
+            assert!(!drafts.full(), "room for draft {i}");
+            drafts.replace(
+                &root,
+                vec![new_form(&format!("/p{i}"), &format!("Draft {i}"))],
+            );
         }
+        assert!(drafts.full());
+        // Writing one project again keeps every other project's text.
+        drafts.replace(Path::new("/p0"), vec![new_form("/p0", "Draft 0, edited")]);
         assert_eq!(drafts.forms.len(), FORM_LIMIT);
-        assert_eq!(drafts.forms[0].checkout, Path::new("/p3"));
+        for i in 1..FORM_LIMIT {
+            let root = PathBuf::from(format!("/p{i}"));
+            assert_eq!(drafts.of(&root).next().unwrap().title, format!("Draft {i}"));
+        }
     }
 }

@@ -55,8 +55,8 @@ pub(super) struct IssuesUi {
     checking_writes: bool,
     /// Images on Linear's storage for the shown issue, by address.
     pub images: HashMap<String, Picture>,
-    /// The connection and sign-in the images were read under.
-    images_owner: Option<(u64, String, String)>,
+    /// The connection, sign-in and key the images were read under.
+    images_owner: Option<(u64, u64, String, String)>,
     /// Bumped when the sign-in changes, so earlier reads are dropped.
     image_generation: u64,
     /// Image reads in flight.
@@ -75,6 +75,8 @@ pub(super) struct IssuesUi {
     restored_for: Option<PathBuf>,
     /// The issue whose exact text is being read for an edit.
     reading_text: Option<String>,
+    /// The last form was refused because the drafts are at their limit.
+    drafts_full: bool,
     /// Why the last Edit did not open, by issue.
     edit_note: Option<(String, String)>,
 }
@@ -95,6 +97,49 @@ impl IssuesUi {
     pub(super) fn form_fields_for_scene(&self) -> Option<(Entity<TextField>, Entity<Composer>)> {
         let fields = self.form_fields.values().next()?;
         Some((fields.title.clone(), fields.description.clone()))
+    }
+}
+
+impl IssuesUi {
+    pub(super) fn decoded_bytes(&self) -> usize {
+        self.image_bytes.values().sum()
+    }
+
+    /// Lets go of the least recently shown pixels until `room` more bytes fit
+    /// the bound, never the shown issue's.
+    fn evict_images(&mut self, visible: &[String], room: usize) {
+        while self.decoded_bytes() + room > IMAGE_MEMORY {
+            let Some(at) = self
+                .image_order
+                .iter()
+                .position(|url| !visible.contains(url))
+            else {
+                break;
+            };
+            let url = self.image_order.remove(at);
+            self.image_bytes.remove(&url);
+            self.images.remove(&url);
+        }
+    }
+
+    /// Keeps a decoded image if it fits the bound, making room from other
+    /// issues' images first. One that still does not fit is shown in Linear.
+    pub(super) fn admit_image(
+        &mut self,
+        url: String,
+        pixels: Arc<RenderImage>,
+        bytes: usize,
+        visible: &[String],
+    ) {
+        self.evict_images(visible, bytes);
+        if self.decoded_bytes() + bytes > IMAGE_MEMORY {
+            self.images.insert(url, Picture::Elsewhere);
+            return;
+        }
+        self.image_bytes.insert(url.clone(), bytes);
+        self.image_order.retain(|held| held != &url);
+        self.image_order.push(url.clone());
+        self.images.insert(url, Picture::Ready(pixels));
     }
 }
 
@@ -406,6 +451,7 @@ impl Plait {
         let owner = match &self.linear.account.auth {
             Auth::SignedIn { workspace, viewer } => Some((
                 self.host.connection.epoch,
+                self.linear.account.credentials,
                 workspace.to_string(),
                 viewer.to_string(),
             )),
@@ -482,23 +528,20 @@ impl Plait {
                     if !this.issues.images.contains_key(&url) {
                         return true;
                     }
-                    let picture = match result {
-                        Ok((pixels, bytes)) => {
-                            this.issues.image_bytes.insert(url.clone(), bytes);
-                            this.issues.image_order.retain(|held| held != &url);
-                            this.issues.image_order.push(url.clone());
-                            Picture::Ready(pixels)
-                        }
-                        Err(reason) => Picture::Failed(reason),
-                    };
-                    this.issues.images.insert(url, picture);
                     let visible = this
                         .issues
                         .text
                         .as_ref()
                         .map(|text| text.linear_images())
                         .unwrap_or_default();
-                    this.evict_images(&visible);
+                    match result {
+                        Ok((pixels, bytes)) => {
+                            this.issues.admit_image(url, pixels, bytes, &visible)
+                        }
+                        Err(reason) => {
+                            this.issues.images.insert(url, Picture::Failed(reason));
+                        }
+                    }
                     true
                 },
                 cx,
@@ -507,25 +550,11 @@ impl Plait {
     }
 
     fn decoded_bytes(&self) -> usize {
-        self.issues.image_bytes.values().sum()
+        self.issues.decoded_bytes()
     }
 
-    /// Lets go of the least recently shown pixels beyond the bound, never the
-    /// shown issue's while any other remain.
     fn evict_images(&mut self, visible: &[String]) {
-        while self.decoded_bytes() > IMAGE_MEMORY {
-            let Some(at) = self
-                .issues
-                .image_order
-                .iter()
-                .position(|url| !visible.contains(url))
-            else {
-                break;
-            };
-            let url = self.issues.image_order.remove(at);
-            self.issues.image_bytes.remove(&url);
-            self.issues.images.remove(&url);
-        }
+        self.issues.evict_images(visible, 0);
     }
 
     /// What is known of an image in the shown issue, for drawing it.
@@ -542,6 +571,10 @@ impl Plait {
     }
 
     pub(super) fn open_new_issue(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.issues.view.new_form.is_none() && self.drafts_full() {
+            cx.notify();
+            return;
+        }
         if self
             .issues
             .view
@@ -570,7 +603,8 @@ impl Plait {
         let Some(issue_id) = self.issues.view.selected.clone() else {
             return;
         };
-        if self.issues.reading_text.is_some() {
+        if self.issues.reading_text.is_some() || self.drafts_full() {
+            cx.notify();
             return;
         }
         self.issues.reading_text = Some(issue_id.clone());
@@ -648,6 +682,14 @@ impl Plait {
             self.persist_forms(cx);
         }
         cx.notify();
+    }
+
+    /// Whether the saved drafts are at their limit. Another form is refused
+    /// with a note, so no unsaved text is ever dropped to make room.
+    fn drafts_full(&mut self) -> bool {
+        let full = self.issues.drafts.as_ref().is_some_and(Drafts::full);
+        self.issues.drafts_full = full;
+        full
     }
 
     fn focus_form_title(&self, slot: &FormSlot, window: &mut Window, cx: &mut Context<Self>) {
@@ -871,20 +913,44 @@ impl Plait {
             };
             journal.write_record(linear_drafts::RECORD, &drafts, linear_drafts::RECORD_LIMIT)
         });
+        // The machine Save was pressed on: it alone may receive the request.
+        let target = (self.host.connection.epoch, self.tabs.host.clone());
         cx.spawn(async move |this, cx| {
             let flushed = flush.await;
             let _ = this.update(cx, |this, cx| {
                 // A newer debounced write would only repeat this one.
                 this.issues.drafts_generation += 1;
-                if flushed.is_err() {
-                    this.issues.view.draft_unsaved(&request);
-                    cx.notify();
-                    return;
-                }
-                this.send_issue_form(request, cx);
+                this.finish_flush(request, target, flushed, cx);
             });
         })
         .detach();
+    }
+
+    /// After the draft is on disk: sends the request only to the machine and
+    /// connection it was saved on. Returns whether it was sent.
+    pub(super) fn finish_flush(
+        &mut self,
+        request: linear_issues::FormRequest,
+        target: (u64, plait_client::tabs::HostKey),
+        flushed: Result<(), String>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        cx.notify();
+        if self.host.connection.epoch != target.0 || self.tabs.host != target.1 {
+            self.issues.view.not_sent(
+                &request,
+                "The machine changed before this was sent. Nothing was sent; save again to send it here.",
+            );
+            return false;
+        }
+        if flushed.is_err() {
+            self.issues.view.draft_unsaved(&request);
+            return false;
+        }
+        if !cfg!(test) {
+            self.send_issue_form(request, cx);
+        }
+        true
     }
 
     fn send_issue_form(&mut self, request: linear_issues::FormRequest, cx: &mut Context<Self>) {
@@ -1792,6 +1858,16 @@ impl Plait {
             .py_2()
             .when_some(team, |el, team| {
                 el.child(tag("issues-team", team, colors().muted))
+            })
+            .when(self.issues.drafts_full, |el| {
+                el.child(
+                    tag(
+                        "issues-drafts-full",
+                        "64 unsaved issue drafts are kept. Save or discard one to start another.",
+                        colors().amber,
+                    )
+                    .line_height(px(18.)),
+                )
             })
             .child(div().flex_1())
             .when(

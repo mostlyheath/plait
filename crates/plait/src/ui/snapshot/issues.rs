@@ -565,3 +565,148 @@ fn issue_form_keys_match_an_editor() {
     });
     std::fs::remove_dir_all(scratch).unwrap();
 }
+
+fn pixels() -> Arc<gpui::RenderImage> {
+    super::super::images::decode(
+        include_bytes!("../../../../../runtime/test/support/images/0.png"),
+        64,
+    )
+    .unwrap()
+}
+
+const MIB: usize = 1024 * 1024;
+
+/// Decoded images share one bound: other issues' go first, least recently
+/// shown first, and a shown image that cannot fit is left in Linear.
+#[core::prelude::v1::test]
+fn decoded_issue_images_stay_within_one_bound() {
+    if !isolated("issues::decoded_issue_images_stay_within_one_bound") {
+        return;
+    }
+    let scratch = std::env::temp_dir().join(format!("plait-issues-memory-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    let mut h = Harness::new(&repo, None, 900., 600.);
+    h.update(|p, _, _| {
+        let ui = &mut p.issues;
+        let shown = vec!["s1".to_owned(), "s2".to_owned(), "s3".to_owned()];
+        // Three images of earlier issues, oldest first.
+        for url in ["old1", "old2", "old3"] {
+            ui.admit_image(url.into(), pixels(), 15 * MIB, &[]);
+        }
+        assert_eq!(ui.decoded_bytes(), 45 * MIB);
+        // The shown issue's first image makes room by letting the oldest go.
+        ui.admit_image("s1".into(), pixels(), 15 * MIB, &shown);
+        assert!(!ui.images.contains_key("old1") && ui.images.contains_key("old2"));
+        assert!(ui.decoded_bytes() <= 48 * MIB);
+        // Two more finish together: the others go, then the bound holds.
+        ui.admit_image("s2".into(), pixels(), 15 * MIB, &shown);
+        ui.admit_image("s3".into(), pixels(), 15 * MIB, &shown);
+        assert!(ui.decoded_bytes() <= 48 * MIB, "{}", ui.decoded_bytes());
+        assert!(["old2", "old3"].iter().all(|u| !ui.images.contains_key(*u)));
+        assert!(matches!(
+            ui.images["s1"],
+            super::super::issue_text::Picture::Ready(_)
+        ));
+        assert!(matches!(
+            ui.images["s3"],
+            super::super::issue_text::Picture::Ready(_)
+        ));
+        // A fourth shown image does not fit beside three: it stays in Linear.
+        let more = vec![
+            "s1".to_owned(),
+            "s2".to_owned(),
+            "s3".to_owned(),
+            "s4".to_owned(),
+        ];
+        ui.admit_image("s4".into(), pixels(), 15 * MIB, &more);
+        assert!(matches!(
+            ui.images["s4"],
+            super::super::issue_text::Picture::Elsewhere
+        ));
+        assert!(ui.decoded_bytes() <= 48 * MIB);
+    });
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
+/// A replacement key with the same workspace and viewer still lets go of
+/// every image read under the old one.
+#[core::prelude::v1::test]
+fn a_new_key_lets_go_of_images_read_under_the_old_one() {
+    if !isolated("issues::a_new_key_lets_go_of_images_read_under_the_old_one") {
+        return;
+    }
+    let scratch = std::env::temp_dir().join(format!("plait-issues-key-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    let mut h = Harness::new(&repo, None, 1380., 860.);
+    h.connect(&repo, false);
+    open(&mut h);
+    writable(&mut h, true);
+    h.settle();
+    h.update(|p, _, cx| {
+        p.issues.admit_image(
+            "https://uploads.linear.app/acme/ab12/failure.png".into(),
+            pixels(),
+            MIB,
+            &[],
+        );
+        cx.notify();
+    });
+    h.settle();
+    h.update(|p, _, _| assert_eq!(p.issues.images.len(), 1, "same key: kept"));
+    h.update(|p, _, cx| {
+        p.linear.account.credentials += 1;
+        cx.notify();
+    });
+    h.settle();
+    h.update(|p, _, _| {
+        assert!(p.issues.images.is_empty(), "a new key: let go");
+        assert_eq!(p.issues.decoded_bytes(), 0);
+    });
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
+/// A save whose draft reached disk after the machine changed sends nothing,
+/// and the form is editable again with its text.
+#[core::prelude::v1::test]
+fn a_save_is_sent_only_to_the_machine_it_was_made_on() {
+    if !isolated("issues::a_save_is_sent_only_to_the_machine_it_was_made_on") {
+        return;
+    }
+    let scratch = std::env::temp_dir().join(format!("plait-issues-machine-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    let mut h = Harness::new(&repo, None, 1380., 860.);
+    h.connect(&repo, false);
+    open(&mut h);
+    writable(&mut h, false);
+    h.update(|p, window, cx| p.open_new_issue(window, cx));
+    h.update(|p, _, cx| {
+        let (title, _) = p.issues.form_fields_for_scene().unwrap();
+        title.update(cx, |field, cx| field.set_text("Machine A only", cx));
+        let target = (p.host.connection.epoch, p.tabs.host.clone());
+        let request = match p.issues.view.submit_form("Machine A only", "", "x".into()) {
+            plait_client::linear_issues::Submit::Send(request) => request,
+            other => panic!("{other:?}"),
+        };
+        // The flush finishes after the window moved to machine B.
+        p.host.connection.epoch += 1;
+        assert!(!p.finish_flush(request.clone(), target, Ok(()), cx), "nothing sent to B");
+        let form = p.issues.view.form().unwrap();
+        assert!(!form.frozen());
+        assert!(matches!(
+            &form.status,
+            plait_client::linear_issues::FormStatus::Failed { note, .. } if note.contains("machine changed")
+        ));
+        assert_eq!(
+            p.issues.form_fields_for_scene().unwrap().0.read(cx).text(),
+            "Machine A only"
+        );
+        // On the same machine and connection it is sent.
+        let target = (p.host.connection.epoch, p.tabs.host.clone());
+        let again = match p.issues.view.submit_form("Machine A only", "", "y".into()) {
+            plait_client::linear_issues::Submit::Send(request) => request,
+            other => panic!("{other:?}"),
+        };
+        assert!(p.finish_flush(again, target, Ok(()), cx));
+    });
+    std::fs::remove_dir_all(scratch).unwrap();
+}
