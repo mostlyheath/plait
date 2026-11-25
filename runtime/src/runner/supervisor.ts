@@ -7,6 +7,9 @@ import { RunnerClient } from './socket.ts';
 import { spawnRunner } from './spawn.ts';
 import type { Command, Event } from './protocol.ts';
 
+/** After the launch deadline, how long a runner still starting may take to exit and leave its reason. */
+const START_FAILURE_GRACE_MS = 2000;
+
 type Options = {
   store: string;
   onEvent: (event: Event) => void | Promise<void>;
@@ -19,6 +22,7 @@ type Options = {
   retryBaseMs?: number;
   retryMaxMs?: number;
   failedStopTimeoutMs?: number;
+  launchTimeoutMs?: number;
 };
 export class RunnerSupervisor {
   private readonly registry: RunnerRegistry;
@@ -46,11 +50,18 @@ export class RunnerSupervisor {
     let handedOff = false;
     try {
       await this.registry.writeManifest({ run_id: runId, thread_id: args.threadId, request_id: args.requestId, checkout: args.lease.root, harness: String(args.payload.kind ?? 'unknown'), build_id: 'runner-skeleton', ...(args.cleanupToken ? { cleanup_token: args.cleanupToken } : {}), lease: { root: args.lease.root, identity: args.lease.identity } });
-      const pid = await spawnRunner(this.options.entry ?? fileURLToPath(new URL('./main.ts', import.meta.url)), args.lease, { PLAIT_RUNNER_STORE: this.options.store, PLAIT_RUNNER_ID: runId }, this.registry.path(runId, '.log'));
-      const deadline = Date.now() + 5000;
+      let exited = false; let noticeExit = () => {};
+      const exit = new Promise<void>(resolve => { noticeExit = resolve; });
+      const pid = await spawnRunner(this.options.entry ?? fileURLToPath(new URL('./main.ts', import.meta.url)), args.lease, { PLAIT_RUNNER_STORE: this.options.store, PLAIT_RUNNER_ID: runId }, this.registry.path(runId, '.log'), () => { exited = true; noticeExit(); });
+      const deadline = Date.now() + (this.options.launchTimeoutMs ?? 5000);
       for (;;) {
         try { await this.attach(runId, 0, Math.max(1, deadline - Date.now()), true); break; }
-        catch (error) { if (Date.now() >= deadline) throw await this.startFailure(runId, error); await new Promise(resolve => setTimeout(resolve, 25)); }
+        catch (error) {
+          // A runner that exited has finished writing its log; one still starting gets a short grace to explain itself.
+          if (!exited && Date.now() >= deadline) await Promise.race([exit, new Promise(resolve => setTimeout(resolve, START_FAILURE_GRACE_MS))]);
+          if (exited || Date.now() >= deadline) throw await this.startFailure(runId, error);
+          await new Promise(resolve => setTimeout(resolve, 25));
+        }
       }
       await releaseAfterHandoff(args.lease); handedOff = true;
       try {

@@ -57,7 +57,24 @@ pub fn connect(host: &str, port: u16) -> Result<Arc<Link>, Error> {
         }
         Ok(())
     })();
-    result.map_err(|e| Error::Transport(if matches!(e.kind(), std::io::ErrorKind::UnexpectedEof | std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::ConnectionAborted
-                | std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::NotConnected) { "The host refused this device. On that machine run: plait-host tailnet allow <your login>".into() } else { format!("Tailnet startup failed: {e}") }))?;
+    // A refusing host closes the connection, so the link is dead before its
+    // streams fail. The local stream's error kind varies: macOS can report
+    // EPROTOTYPE for a write that races the teardown.
+    result.map_err(|e| {
+        let refused = link.is_dead()
+            || matches!(
+                e.kind(),
+                std::io::ErrorKind::UnexpectedEof
+                    | std::io::ErrorKind::BrokenPipe
+                    | std::io::ErrorKind::ConnectionAborted
+                    | std::io::ErrorKind::ConnectionReset
+                    | std::io::ErrorKind::NotConnected
+            );
+        Error::Transport(if refused {
+            "The host refused this device. On that machine run: plait-host tailnet allow <your login>".into()
+        } else {
+            format!("Tailnet startup failed: {e}")
+        })
+    })?;
     Ok(link)
 }

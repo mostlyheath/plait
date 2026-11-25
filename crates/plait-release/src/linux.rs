@@ -412,6 +412,20 @@ mod tests {
         );
         fs::remove_dir_all(root).unwrap();
     }
+    /// Writes an executable script without this process ever holding it open
+    /// for writing: a concurrent test's fork could inherit that descriptor, and
+    /// running the script would then fail with ETXTBSY.
+    fn install_script(path: &Path, body: &str) {
+        let source = path.with_extension("source");
+        fs::write(&source, body).unwrap();
+        let copied = std::process::Command::new("/bin/cp")
+            .arg(&source)
+            .arg(path)
+            .status()
+            .unwrap();
+        assert!(copied.success());
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
     #[test]
     fn activation_rolls_back_after_failed_start() {
         let root = scratch();
@@ -427,8 +441,7 @@ mod tests {
             (&new, "#!/bin/sh\nexit 0\n".into()),
             (&systemctl, "#!/bin/sh\nexit 0\n".into()),
         ] {
-            fs::write(path, body).unwrap();
-            fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+            install_script(path, &body);
         }
         assert!(
             activate(

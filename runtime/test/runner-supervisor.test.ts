@@ -300,6 +300,15 @@ test('a runner that cannot listen explains why the launch failed', async t => {
   } finally { supervisor.detach(); await lease.close(); }
 });
 
+test('a runner that fails after the launch deadline still explains why', async t => {
+  const { root, base } = await setup(t); const lease = await acquireCheckout(root);
+  // The runner writes its reason only after the deadline, as a slow machine would.
+  const supervisor = new RunnerSupervisor({ store: base, onEvent: () => {}, entry: resolve('test/support/runner-slow-failure.ts'), launchTimeoutMs: 50 });
+  try {
+    await assert.rejects(supervisor.launch({ threadId: 'thread', requestId: 'request', lease, payload: { kind: 'test' } }), /Runner did not start[\s\S]*slow runner: listen failed/);
+  } finally { supervisor.detach(); await lease.close(); }
+});
+
 test('an attach that times out while connecting leaves no unhandled rejection', async t => {
   const { base } = await setup(t);
   const unhandled: unknown[] = []; const record = (error: unknown) => { unhandled.push(error); };

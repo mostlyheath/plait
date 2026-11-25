@@ -286,8 +286,10 @@ test('a normal call succeeds through a burst of 1,000 progress notifications', a
 
 for (const behavior of ['flood', 'flood-bytes', 'flood-sustained']) test(`${behavior} is disconnected while another thread searches and calls a healthy server`, async t => {
   const abusive = await rig(t, 'trusted', 'auto', behavior); const healthy = await rig(t);
+  // The output budget, not the clock, is under test: the observation below must name the budget.
+  // This bound only catches a hang; a runner that just built a release took 10 s here.
   const start = Date.now(); await Promise.all([abusive.search(), healthy.search()]);
-  assert.ok(Date.now() - start < 5000);
+  assert.ok(Date.now() - start < 30_000);
   // On a slow machine a flood of large lines can fill the pipe and end the fixture before the
   // budget is spent. Either way the server has failed and the other thread is untouched.
   assert.match(JSON.stringify(abusive.observations),
