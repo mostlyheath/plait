@@ -1,17 +1,19 @@
 import { createHash } from 'node:crypto';
 import { fail, HostError } from '../protocol.ts';
 import { checkout, rootIdentity } from '../safety.ts';
+import { describe } from '../images.ts';
 import type { Store } from '../store.ts';
 import { LinearAuthStore, formatAuthStatus, validateLinearKey } from './auth.ts';
 import type { StoredLinearAuth } from './auth.ts';
 import { issueReference, issueSummary, matchesIssueUrl } from './identity.ts';
-import { LinearClient } from './client.ts';
+import { LINEAR_IMAGE_MAX_BYTES, LinearClient } from './client.ts';
 import { LINEAR_WRITE_HISTORY_LIMIT } from './writes.ts';
 import type { WriteIntent, WriteReceipt } from './writes.ts';
 import type { LinearClientOptions } from './client.ts';
 import {
   LINEAR_LINKS_DEFAULT_LIMIT,
   asFilterPreset,
+  checkImageUrl,
   handlesLinearOp,
   parseLinkCursor,
   validateLinearRequest,
@@ -38,6 +40,11 @@ import type {
 export type LinearServiceOptions = LinearClientOptions & {
   now?: () => number;
 };
+
+/** Bytes per `linear_read_image` reply; base64 keeps a reply under the 1 MiB line. */
+export const LINEAR_IMAGE_CHUNK = 512 * 1024;
+const IMAGE_CACHE_COUNT = 64;
+const IMAGE_CACHE_BYTES = 64 * 1024 * 1024;
 
 const OFFLINE_TEAMS_WARNING = 'Linear could not be reached. Showing cached teams.';
 const OFFLINE_ISSUES_WARNING = 'Linear could not be reached. Showing cached issues.';
@@ -83,7 +90,7 @@ export class LinearService {
   async handle(input: unknown): Promise<unknown> {
     const request = validateLinearRequest(input);
     switch (request.op) {
-      case 'linear_info': return { schema: 1, features: { durable_write_outcomes: true, exact_issue_resolution: true, workspace_links: true, typed_rate_limits: true }, write_history_limit: LINEAR_WRITE_HISTORY_LIMIT, write_history_retention: 'store_lifetime' };
+      case 'linear_info': return { schema: 1, features: { durable_write_outcomes: true, exact_issue_resolution: true, workspace_links: true, typed_rate_limits: true, issue_writes: true, images: true }, write_history_limit: LINEAR_WRITE_HISTORY_LIMIT, write_history_retention: 'store_lifetime' };
       case 'linear_get_write': return this.getWriteOutcome(String(request.request_id));
       case 'linear_auth_status': return this.authStatus();
       case 'linear_set_key': return this.setKey(validateLinearKey(request.key));
@@ -136,6 +143,22 @@ export class LinearService {
         stateId: String(request.state_id),
         requestId: String(request.request_id),
       }));
+      case 'linear_create_issue': return this.withWriteOutcome(String(request.request_id), () => this.createIssue({
+        teamId: String(request.team_id),
+        title: String(request.title).trim(),
+        description: typeof request.description === 'string' ? request.description : null,
+        stateId: typeof request.state_id === 'string' ? request.state_id : null,
+        requestId: String(request.request_id),
+      }));
+      case 'linear_update_issue': return this.withWriteOutcome(String(request.request_id), () => this.updateIssue({
+        issueId: String(request.issue_id),
+        expectedUpdatedAt: String(request.expected_updated_at).trim(),
+        title: typeof request.title === 'string' ? request.title.trim() : undefined,
+        description: typeof request.description === 'string' ? request.description : undefined,
+        requestId: String(request.request_id),
+      }));
+      case 'linear_read_image': return this.readImage(checkImageUrl(request.url), Number(request.offset));
+      case 'linear_get_issue_text': return this.getIssueText(String(request.issue_id));
       default: fail('invalid_request', 'Unknown operation or field.');
     }
   }
@@ -661,10 +684,120 @@ export class LinearService {
       });
   }
 
+  /**
+   * Creates an issue in a team. The issue's id is derived from the request,
+   * so a retry names the same issue and a refresh can read it back.
+   */
+  async createIssue(params: {
+    teamId: string; title: string; description: string | null; stateId: string | null; requestId: string;
+  }): Promise<WriteReceipt> {
+    const issueId = issueUuid(params.teamId, params.requestId);
+    const payload = JSON.stringify([params.teamId, params.title, params.description, params.stateId]);
+    return this.write(params.requestId, 'linear_create_issue', issueId, payload,
+      async (_auth, authGen) => {
+        const cached = this.store.linear.getTeams();
+        const fresh = cached !== null && this.now() - cached.cached_at < LINEAR_CACHE_TEAMS_TTL_MS
+          ? cached.teams.find(team => team.id === params.teamId) ?? null
+          : null;
+        const team = params.stateId || !fresh
+          ? await this.resolveTeamForValidation(params.teamId, params.stateId ?? '', authGen)
+          : fresh;
+        if (!team) fail('invalid_request', 'Linear team not found.');
+        if (params.stateId && !team.states.some(state => state.id === params.stateId)) {
+          fail('invalid_request', 'Workflow state does not belong to this team.');
+        }
+      },
+      async auth => {
+        const created = await this.client.createIssue(auth.api_key, {
+          id: issueId, teamId: params.teamId, title: params.title,
+          description: params.description, stateId: params.stateId,
+        });
+        return { issue_id: created.issue_id, identifier: created.identifier };
+      });
+  }
+
+  /**
+   * Changes an issue's title or description. Linear offers no conditional
+   * update, so the host reads the issue first and refuses when it changed
+   * since the person read it; a change in the moments between remains possible.
+   */
+  async updateIssue(params: {
+    issueId: string; expectedUpdatedAt: string; title?: string; description?: string; requestId: string;
+  }): Promise<WriteReceipt> {
+    const payload = JSON.stringify([params.title ?? null, params.description ?? null]);
+    return this.write(params.requestId, 'linear_update_issue', params.issueId, payload,
+      async (auth, authGen) => {
+        let current: LinearIssueDetail | null;
+        try {
+          current = (await this.client.getIssue(auth.api_key, { issueId: params.issueId })).data;
+        } catch (error) {
+          this.noteError(error, authGen);
+        }
+        if (this.authGeneration !== authGen) {
+          throw new LinearError('not_signed_in', 'Linear sign-in changed while the request was in flight.');
+        }
+        if (!current) fail('not_found', 'Linear issue not found.');
+        if (current.updated_at !== params.expectedUpdatedAt) {
+          fail('linear_issue_changed', 'The issue changed in Linear since it was read. Read it again before editing.');
+        }
+      },
+      async auth => {
+        await this.client.updateIssueText(auth.api_key, params.issueId,
+          { title: params.title, description: params.description });
+        return {};
+      });
+  }
+
+  /** An issue's exact title and description, read live for an edit. */
+  async getIssueText(issueId: string) {
+    const { auth, authGen } = await this.requireAuth();
+    let text: Awaited<ReturnType<LinearClient['getIssueText']>>;
+    try {
+      text = await this.client.getIssueText(auth.api_key, issueId);
+    } catch (error) {
+      this.noteError(error, authGen);
+    }
+    if (this.authGeneration !== authGen) {
+      throw new LinearError('not_signed_in', 'Linear sign-in changed while the request was in flight.');
+    }
+    if (!text) fail('not_found', 'Linear issue not found.');
+    return text;
+  }
+
+  /**
+   * One chunk of an image from Linear's file storage. The first read fetches
+   * and caches it; later chunks and later reads come from the cache.
+   */
+  async readImage(url: URL, offset: number) {
+    const key = url.href;
+    // Every read, cached or not, needs the current sign-in, and only its own images.
+    const { auth, authGen } = await this.requireAuth();
+    const credential = imageCredential(auth);
+    let cached = this.store.linear.readImage(key, credential, offset, LINEAR_IMAGE_CHUNK, this.now());
+    if (!cached) {
+      let bytes: Buffer;
+      try {
+        bytes = await this.client.readImage(auth.api_key, url);
+      } catch (error) {
+        this.noteError(error, authGen);
+      }
+      if (this.authGeneration !== authGen) {
+        throw new LinearError('not_signed_in', 'Linear sign-in changed while the request was in flight.');
+      }
+      if (bytes.length > LINEAR_IMAGE_MAX_BYTES) fail('invalid_request', 'Image is larger than 5 MiB.');
+      // Only PNG and JPEG within the thread image bounds are kept; describe refuses the rest.
+      describe(bytes);
+      this.store.linear.saveImage(key, credential, bytes, this.now(), IMAGE_CACHE_COUNT, IMAGE_CACHE_BYTES);
+      cached = { size: bytes.length, chunk: bytes.subarray(offset, offset + LINEAR_IMAGE_CHUNK) };
+    }
+    if (offset >= cached.size) fail('invalid_request', 'Invalid image offset.');
+    return { url: key, size: cached.size, offset, data: cached.chunk.toString('base64') };
+  }
+
   private async write(
     requestId: string, op: string, issueId: string, payload: string,
     validate: (auth: StoredLinearAuth, authGen: number) => Promise<void>,
-    send: (auth: StoredLinearAuth) => Promise<{ comment_id?: string }>,
+    send: (auth: StoredLinearAuth) => Promise<{ comment_id?: string; issue_id?: string; identifier?: string | null }>,
   ): Promise<WriteReceipt> {
     const { auth, authGen } = await this.requireAuth();
     // Never persist a pasted credential as an exact mutation payload or identifier.
@@ -698,7 +831,7 @@ export class LinearService {
   private async executeWrite(
     intent: WriteIntent, payload: string, auth: StoredLinearAuth, authGen: number,
     validate: (auth: StoredLinearAuth, authGen: number) => Promise<void>,
-    send: (auth: StoredLinearAuth) => Promise<{ comment_id?: string }>,
+    send: (auth: StoredLinearAuth) => Promise<{ comment_id?: string; issue_id?: string; identifier?: string | null }>,
   ): Promise<WriteReceipt> {
     try {
       await validate(auth, authGen);
@@ -710,7 +843,7 @@ export class LinearService {
       this.noteError(error, authGen);
     }
     if (!this.store.linear.writes.claim(intent.request_id, payload, this.now())) this.unknownWrite();
-    let result: { comment_id?: string };
+    let result: { comment_id?: string; issue_id?: string; identifier?: string | null };
     try {
       result = await send(auth);
     } catch (error) {
@@ -802,7 +935,24 @@ function writeDigest(parts: unknown[]): string {
 
 /** Linear documents UUID v4 syntax; fix its version/variant bits on a domain-separated digest. */
 function commentUuid(workspaceId: string, requestId: string): string {
-  const bytes = createHash('sha256').update(JSON.stringify(['plait-linear-comment', workspaceId, requestId])).digest().subarray(0, 16);
+  return requestUuid(['plait-linear-comment', workspaceId, requestId]);
+}
+
+/**
+ * Which sign-in cached an image. The key file's save time changes with every
+ * key and survives restarts; it is hashed with the workspace, never the key.
+ */
+function imageCredential(auth: StoredLinearAuth): string {
+  return createHash('sha256').update(JSON.stringify(['plait-linear-images', auth.workspace_id, auth.saved_at])).digest('hex');
+}
+
+/** A new issue's id, fixed by its team and request so a retry cannot create a second one. */
+function issueUuid(teamId: string, requestId: string): string {
+  return requestUuid(['plait-linear-issue', teamId, requestId]);
+}
+
+function requestUuid(parts: string[]): string {
+  const bytes = createHash('sha256').update(JSON.stringify(parts)).digest().subarray(0, 16);
   bytes[6] = (bytes[6] & 0x0f) | 0x40;
   bytes[8] = (bytes[8] & 0x3f) | 0x80;
   const hex = bytes.toString('hex');

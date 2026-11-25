@@ -14,8 +14,9 @@
   project binding, issue lists and details, exact resolution, and thread links,
   with the key redacted from debug output and typed rejections (offline, rate
   limited with its wait, conflict, not found, rejected key, signed out, older
-  host). `linear_update_issue_state` is modelled for the desktop's status
-  control; `linear_post_comment` and `linear_get_write` are not modelled yet.
+  host). `linear_update_issue_state`, `linear_create_issue`,
+  `linear_update_issue` and `linear_read_image` are modelled for the desktop;
+  `linear_post_comment` and `linear_get_write` are not modelled yet.
 - **Desktop sign-in and project team (Settings → Linear, Project settings →
   Linear).** Save, replace, and sign out of the host's Linear key, and link a
   project to one Linear team, with the state models in
@@ -24,8 +25,11 @@
   linked team's issues, resolves a pasted identifier or URL exactly, and
   shows an issue's description and comments as formatted Markdown, with Open
   in Linear. Links stay inert and show their destination; images are not
-  loaded. A Status menu moves the issue to another of its team's workflow
-  states on a person's choice, with the outcome shown inline. State lives in
+  loaded unless the host reads them. A Status menu moves the issue to another
+  of its team's workflow states on a person's choice, with the outcome shown
+  inline. New issue and Edit write an issue's title and description through the
+  host; images uploaded to Linear are read through the host and drawn in the
+  description. State lives in
   `plait-client::linear_issues`. Start thread fills a new draft and links the
   thread once the host creates it; Add to thread appends the reference to an
   existing thread's draft; a linked thread shows its source issue. Links are
@@ -171,10 +175,10 @@ Agreed:
 - **Sign-in first step.** Start with a personal or restricted API key pasted in
   Settings and stored by the host in its own private file (mode `0600`), never
   in `host.sqlite` or any reply. Browser OAuth with PKCE comes later.
-- **Explicit writes.** Plait may perform two writes against Linear, each only
-  when the desktop asks on a person's action: posting a comment on an issue,
-  and moving an issue to another workflow state in its team. Nothing writes
-  automatically, and no agent, tool, or MCP server can reach these operations.
+- **Explicit writes.** Plait may write to Linear only when the desktop asks on
+  a person's action: posting a comment on an issue, moving an issue to another
+  workflow state in its team, creating an issue, and editing an issue's title
+  or description. Nothing writes automatically. No harness or agent receives a Linear tool; writes come only from explicit requests on the host socket, which any process running as you can reach.
 - **Thread links.** One local source-issue link per thread, stored in the host
   without writing to Linear.
 

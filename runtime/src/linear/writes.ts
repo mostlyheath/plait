@@ -6,6 +6,9 @@ export const LINEAR_WRITE_HISTORY_LIMIT = 10_000;
 export type WriteOutcome = 'not_sent' | 'rejected' | 'accepted' | 'unknown';
 export type WriteReceipt = {
   comment_id?: string;
+  /** A created issue's id and, when Linear returned it, its identifier. */
+  issue_id?: string;
+  identifier?: string | null;
   issue: LinearIssueDetail | null;
   partial: boolean;
   warning: string | null;

@@ -24,7 +24,14 @@ the next preview. Nobody tags by hand.
    check. A failure there is fixed with another pull request before the next
    release. A merge that changes only prose skips it. Nothing is built for
    release and nothing is published.
-4. **Release, when ready.** Run the **macOS build** workflow on `main` with
+4. **Collect the release notes.** A pull request with a change people will
+   notice adds a note to [`changes/`](../changes/README.md). Before a release,
+   open a release-prep pull request that finds the next tag with
+   `python3 scripts/release_plan.py main` and runs
+   `python3 scripts/changelog.py collect <tag>`. That moves the notes into a
+   new section of [CHANGELOG.md](../CHANGELOG.md). Read the section as a
+   person updating would, edit it if needed, and merge it.
+5. **Release, when ready.** Run the **macOS build** workflow on `main` with
    **Build main and publish the next preview** checked, or:
 
    ```

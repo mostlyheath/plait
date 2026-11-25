@@ -24,6 +24,8 @@ fn page(stale: bool) -> Issues {
         issue("i1", "PLA-142", "Retry rate-limited requests with backoff", "In Progress"),
         issue("i2", "PLA-139", "Keep image attachments across a host restart", "Todo"),
         issue("i3", "PLA-131", "Explain a rejected Linear key in Settings", "In Review"),
+        // Long enough to overflow the list column unless it truncates.
+        issue("i4", "PLA-7", "The three-dot menu opens at the bottom of the left sidebar; it should open as a small popover beside the row instead", "Todo"),
     ], "has_more": true, "next_cursor": "C"});
     v.as_object_mut()
         .unwrap()
@@ -135,9 +137,87 @@ fn changed(h: &mut Harness, status: plait_client::linear_issues::ChangeStatus) {
     });
 }
 
+/// A host that creates and edits issues and reads their images.
+fn writable(h: &mut Harness, selected: bool) {
+    linked(h, false, selected);
+    h.update(|p, _, _| {
+        p.issues.view.writes = Some(true);
+        p.issues.view.issue_writes = true;
+        p.issues.view.images = true;
+        // No saved drafts: recovery finishes on the next sync.
+        p.issues
+            .drafts_for_scene(plait_client::linear_drafts::Drafts::default());
+    });
+    h.settle();
+}
+
+fn new_issue(h: &mut Harness) {
+    writable(h, false);
+    h.update(|p, window, cx| p.open_new_issue(window, cx));
+    h.update(|p, _, cx| {
+        let fields = p.issues.form_fields_for_scene().expect("the form is open");
+        fields.0.update(cx, |field, cx| {
+            field.set_text("Show Linear images in the issue", cx)
+        });
+    });
+    // The description takes typing at once: a new composer starts disabled.
+    h.update(|p, window, cx| {
+        let fields = p.issues.form_fields_for_scene().expect("the form is open");
+        fields.1.update(cx, |editor, cx| {
+            editor.type_text("Draw them **inline**, not as links.", window, cx)
+        });
+        assert_eq!(
+            fields.1.read(cx).saved_draft().0,
+            "Draw them **inline**, not as links."
+        );
+    });
+}
+
+fn edit_refused(h: &mut Harness) {
+    writable(h, true);
+    h.update(|p, window, cx| {
+        let text = serde_json::from_value(serde_json::json!({"issue_id": "i1",
+            "updated_at": "2026-11-18T12:00:00.000Z", "editable": true,
+            "title": "Retry rate-limited requests with backoff", "description": DESCRIPTION}))
+        .unwrap();
+        p.open_edit(&text, window, cx)
+    });
+    h.update(|p, _, cx| {
+        let fields = p.issues.form_fields_for_scene().expect("editing");
+        fields.0.update(cx, |field, cx| {
+            field.set_text("Retry 429s with backoff and jitter", cx)
+        });
+        p.issues.view.edits.get_mut("i1").expect("editing").status =
+            plait_client::linear_issues::FormStatus::Changed;
+        // Linear's newer version, read again after the refusal.
+        let shown = &mut p.issues.view.detail.as_mut().unwrap().issue;
+        shown.summary.title = "Retry rate-limited requests (owner: Sam)".into();
+        shown.summary.updated_at = "2026-11-19T08:00:00.000Z".into();
+        shown.description = Some("Sam is taking this. Retry at most three times.".into());
+    });
+}
+
+/// The description's image, as if the host had read it.
+fn image_read(h: &mut Harness) {
+    writable(h, true);
+    // After the sign-in settles: a new sign-in clears images read before it.
+    h.settle();
+    h.update(|p, _, _| {
+        let pixels = super::super::images::decode(
+            include_bytes!("../../../../../runtime/test/support/images/0.png"),
+            1600,
+        )
+        .unwrap();
+        p.issues.images.insert(
+            "https://uploads.linear.app/acme/ab12/failure.png".into(),
+            super::super::issue_text::Picture::Ready(pixels),
+        );
+    });
+}
+
 type Scene = (&'static str, fn(&mut Harness), &'static [&'static str]);
 
-fn scenes() -> [Scene; 7] {
+fn scenes() -> [Scene; 10] {
     [
         (
             "issues-signed-out",
@@ -195,6 +275,27 @@ fn scenes() -> [Scene; 7] {
                 )
             },
             &["Try again", "Dismiss", "Status: In Progress"],
+        ),
+        (
+            "issues-new",
+            new_issue,
+            &[
+                "Issue title",
+                "Issue description",
+                "Save",
+                "Discard",
+                "Refresh",
+            ],
+        ),
+        (
+            "issues-edit-changed",
+            edit_refused,
+            &["Issue title", "Keep editing mine", "Discard mine"],
+        ),
+        (
+            "issues-image",
+            image_read,
+            &["Image: Failure in the thread", "Edit", "New issue"],
         ),
         (
             "issues-status-unknown",
@@ -417,5 +518,338 @@ fn opening_issues_shows_them_at_once() {
     linked(&mut h, false, false);
     h.capture("issues-from-thread");
     assert_issues_drawn(&mut h, "thread open");
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
+/// A Linear description is plain text: Enter in the title moves on, Enter in
+/// the description adds a line, and Cmd-Enter saves.
+#[cfg(debug_assertions)]
+#[core::prelude::v1::test]
+fn issue_form_keys_match_an_editor() {
+    if !isolated("issues::issue_form_keys_match_an_editor") {
+        return;
+    }
+    let scratch = std::env::temp_dir().join(format!("plait-issues-keys-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    let mut h = Harness::new(&repo, None, 1380., 860.);
+    h.connect(&repo, false);
+    open(&mut h);
+    writable(&mut h, false);
+    h.update(|p, window, cx| p.open_new_issue(window, cx));
+    h.draw_a11y();
+    h.update(|p, _, cx| {
+        let (title, _) = p.issues.form_fields_for_scene().unwrap();
+        title.update(cx, |field, cx| field.set_text("Keys", cx));
+    });
+    h.keystroke("enter");
+    h.update(|p, window, cx| {
+        let (_, description) = p.issues.form_fields_for_scene().unwrap();
+        assert!(
+            description.focus_handle(cx).is_focused(window),
+            "Enter in the title moves to the description"
+        );
+        description.update(cx, |editor, cx| editor.type_text("one", window, cx));
+    });
+    h.keystroke("enter");
+    h.update(|p, window, cx| {
+        let (_, description) = p.issues.form_fields_for_scene().unwrap();
+        description.update(cx, |editor, cx| editor.type_text("two", window, cx));
+        assert_eq!(description.read(cx).saved_draft().0, "one\ntwo");
+        assert_eq!(
+            p.issues.view.form().unwrap().status,
+            plait_client::linear_issues::FormStatus::Editing,
+            "Enter did not save"
+        );
+    });
+    h.keystroke("cmd-enter");
+    h.update(|p, _, _| {
+        assert_eq!(
+            p.issues.view.form().unwrap().status,
+            plait_client::linear_issues::FormStatus::Saving,
+            "Cmd-Enter saves"
+        );
+    });
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
+fn pixels() -> Arc<gpui::RenderImage> {
+    super::super::images::decode(
+        include_bytes!("../../../../../runtime/test/support/images/0.png"),
+        64,
+    )
+    .unwrap()
+}
+
+const MIB: usize = 1024 * 1024;
+
+/// Decoded images share one bound: other issues' go first, least recently
+/// shown first, and a shown image that cannot fit is left in Linear.
+#[core::prelude::v1::test]
+fn decoded_issue_images_stay_within_one_bound() {
+    if !isolated("issues::decoded_issue_images_stay_within_one_bound") {
+        return;
+    }
+    let scratch = std::env::temp_dir().join(format!("plait-issues-memory-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    let mut h = Harness::new(&repo, None, 900., 600.);
+    h.update(|p, _, _| {
+        let ui = &mut p.issues;
+        let shown = vec!["s1".to_owned(), "s2".to_owned(), "s3".to_owned()];
+        // Three images of earlier issues, oldest first.
+        for url in ["old1", "old2", "old3"] {
+            ui.admit_image(url.into(), pixels(), 15 * MIB, &[]);
+        }
+        assert_eq!(ui.decoded_bytes(), 45 * MIB);
+        // The shown issue's first image makes room by letting the oldest go.
+        ui.admit_image("s1".into(), pixels(), 15 * MIB, &shown);
+        assert!(!ui.images.contains_key("old1") && ui.images.contains_key("old2"));
+        assert!(ui.decoded_bytes() <= 48 * MIB);
+        // Two more finish together: the others go, then the bound holds.
+        ui.admit_image("s2".into(), pixels(), 15 * MIB, &shown);
+        ui.admit_image("s3".into(), pixels(), 15 * MIB, &shown);
+        assert!(ui.decoded_bytes() <= 48 * MIB, "{}", ui.decoded_bytes());
+        assert!(["old2", "old3"].iter().all(|u| !ui.images.contains_key(*u)));
+        assert!(matches!(
+            ui.images["s1"],
+            super::super::issue_text::Picture::Ready(_)
+        ));
+        assert!(matches!(
+            ui.images["s3"],
+            super::super::issue_text::Picture::Ready(_)
+        ));
+        // A fourth shown image does not fit beside three: it stays in Linear.
+        let more = vec![
+            "s1".to_owned(),
+            "s2".to_owned(),
+            "s3".to_owned(),
+            "s4".to_owned(),
+        ];
+        ui.admit_image("s4".into(), pixels(), 15 * MIB, &more);
+        assert!(matches!(
+            ui.images["s4"],
+            super::super::issue_text::Picture::Elsewhere
+        ));
+        assert!(ui.decoded_bytes() <= 48 * MIB);
+    });
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
+/// A replacement key with the same workspace and viewer still lets go of
+/// every image read under the old one.
+#[core::prelude::v1::test]
+fn a_new_key_lets_go_of_images_read_under_the_old_one() {
+    if !isolated("issues::a_new_key_lets_go_of_images_read_under_the_old_one") {
+        return;
+    }
+    let scratch = std::env::temp_dir().join(format!("plait-issues-key-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    let mut h = Harness::new(&repo, None, 1380., 860.);
+    h.connect(&repo, false);
+    open(&mut h);
+    writable(&mut h, true);
+    h.settle();
+    h.update(|p, _, cx| {
+        p.issues.admit_image(
+            "https://uploads.linear.app/acme/ab12/failure.png".into(),
+            pixels(),
+            MIB,
+            &[],
+        );
+        cx.notify();
+    });
+    h.settle();
+    h.update(|p, _, _| assert_eq!(p.issues.images.len(), 1, "same key: kept"));
+    h.update(|p, _, cx| {
+        p.linear.account.credentials += 1;
+        cx.notify();
+    });
+    h.settle();
+    h.update(|p, _, _| {
+        assert!(p.issues.images.is_empty(), "a new key: let go");
+        assert_eq!(p.issues.decoded_bytes(), 0);
+    });
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
+/// A save whose draft reached disk after the machine changed sends nothing,
+/// and the form is editable again with its text.
+#[core::prelude::v1::test]
+fn a_save_is_sent_only_to_the_machine_it_was_made_on() {
+    if !isolated("issues::a_save_is_sent_only_to_the_machine_it_was_made_on") {
+        return;
+    }
+    let scratch = std::env::temp_dir().join(format!("plait-issues-machine-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    let mut h = Harness::new(&repo, None, 1380., 860.);
+    h.connect(&repo, false);
+    open(&mut h);
+    writable(&mut h, false);
+    h.update(|p, window, cx| p.open_new_issue(window, cx));
+    h.update(|p, _, cx| {
+        let (title, _) = p.issues.form_fields_for_scene().unwrap();
+        title.update(cx, |field, cx| field.set_text("Machine A only", cx));
+        let target = (p.host.connection.epoch, p.tabs.host.clone());
+        let request = match p.issues.view.submit_form("Machine A only", "", "x".into()) {
+            plait_client::linear_issues::Submit::Send(request) => request,
+            other => panic!("{other:?}"),
+        };
+        // The flush finishes after the window moved to machine B.
+        p.host.connection.epoch += 1;
+        assert!(!p.finish_flush(request.clone(), target, Ok(()), cx), "nothing sent to B");
+        let form = p.issues.view.form().unwrap();
+        assert!(!form.frozen());
+        assert!(matches!(
+            &form.status,
+            plait_client::linear_issues::FormStatus::Failed { note, .. } if note.contains("machine changed")
+        ));
+        assert_eq!(
+            p.issues.form_fields_for_scene().unwrap().0.read(cx).text(),
+            "Machine A only"
+        );
+        // On the same machine and connection it is sent.
+        let target = (p.host.connection.epoch, p.tabs.host.clone());
+        let again = match p.issues.view.submit_form("Machine A only", "", "y".into()) {
+            plait_client::linear_issues::Submit::Send(request) => request,
+            other => panic!("{other:?}"),
+        };
+        assert!(p.finish_flush(again, target, Ok(()), cx));
+    });
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
+/// A title the field shows on one line, but the person did not change, is
+/// left out of a description-only save, so Linear's exact title stays.
+#[cfg(debug_assertions)]
+#[core::prelude::v1::test]
+fn saving_a_description_keeps_the_exact_title() {
+    if !isolated("issues::saving_a_description_keeps_the_exact_title") {
+        return;
+    }
+    let scratch = std::env::temp_dir().join(format!("plait-issues-title-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    let mut h = Harness::new(&repo, None, 1380., 860.);
+    h.connect(&repo, false);
+    open(&mut h);
+    writable(&mut h, true);
+    h.update(|p, window, cx| {
+        let text = serde_json::from_value(serde_json::json!({"issue_id": "i1",
+            "updated_at": "2026-11-18T12:00:00.000Z", "editable": true,
+            "title": " Retry\u{2028}rate-limited requests ", "description": "Old"}))
+        .unwrap();
+        p.open_edit(&text, window, cx);
+        let (title, description) = p.issues.form_fields_for_scene().unwrap();
+        assert_eq!(title.read(cx).text(), " Retry rate-limited requests ");
+        description.update(cx, |editor, cx| editor.type_text(" and new", window, cx));
+        p.save_issue_form_for_scene(cx);
+        let sent = p.issues.view.form().unwrap().sending().cloned().unwrap();
+        assert_eq!(sent.title, None, "the title is left as Linear has it");
+        assert_eq!(sent.description.as_deref(), Some("Old and new"));
+    });
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
+fn saved_new(
+    checkout: &Path,
+    title: &str,
+    request: &str,
+) -> plait_client::linear_drafts::SavedForm {
+    plait_client::linear_drafts::SavedForm::new(
+        checkout,
+        &plait_client::linear_issues::FormKind::New {
+            team_id: "t-plait".into(),
+            team_name: Some("Plait".into()),
+        },
+        title,
+        "",
+        request,
+    )
+}
+
+/// New waits for saved drafts to be read, so a fresh form never takes the
+/// place of a saved one; the saved text and request come back.
+#[core::prelude::v1::test]
+fn new_waits_for_saved_drafts_and_keeps_them() {
+    if !isolated("issues::new_waits_for_saved_drafts_and_keeps_them") {
+        return;
+    }
+    let scratch = std::env::temp_dir().join(format!("plait-issues-recover-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    let mut h = Harness::new(&repo, None, 1380., 860.);
+    h.connect(&repo, false);
+    open(&mut h);
+    linked(&mut h, false, false);
+    h.update(|p, _, _| {
+        p.issues.view.writes = Some(true);
+        p.issues.view.issue_writes = true;
+    });
+    h.settle();
+    // The journal read is still pending: New does nothing.
+    h.update(|p, window, cx| {
+        assert!(!p.forms_ready());
+        p.open_new_issue(window, cx);
+        assert!(p.issues.view.new_form.is_none());
+    });
+    // The read finishes with a saved draft for this project.
+    h.update(|p, _, _| {
+        let checkout = p.issues.view.checkout.clone().unwrap();
+        p.issues
+            .drafts_for_scene(plait_client::linear_drafts::Drafts {
+                forms: vec![saved_new(&checkout, "Saved before quitting", "r-saved")],
+            });
+    });
+    h.settle();
+    h.update(|p, window, cx| {
+        assert!(p.forms_ready());
+        p.open_new_issue(window, cx);
+        let form = p.issues.view.form().unwrap();
+        assert_eq!(form.request_id, "r-saved");
+        let (title, _) = p.issues.form_fields_for_scene().unwrap();
+        assert_eq!(title.read(cx).text(), "Saved before quitting");
+    });
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
+/// With 63 saved drafts, a New takes the 64th place and an Edit whose text
+/// arrives afterwards is refused; no saved draft is dropped.
+#[core::prelude::v1::test]
+fn the_draft_limit_holds_when_edit_and_new_race() {
+    if !isolated("issues::the_draft_limit_holds_when_edit_and_new_race") {
+        return;
+    }
+    let scratch = std::env::temp_dir().join(format!("plait-issues-limit-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    let mut h = Harness::new(&repo, None, 1380., 860.);
+    h.connect(&repo, false);
+    open(&mut h);
+    linked(&mut h, false, true);
+    h.update(|p, _, _| {
+        p.issues.view.writes = Some(true);
+        p.issues.view.issue_writes = true;
+        let forms = (0..63)
+            .map(|i| {
+                saved_new(
+                    Path::new(&format!("/other/{i}")),
+                    &format!("Draft {i}"),
+                    "r",
+                )
+            })
+            .collect();
+        p.issues
+            .drafts_for_scene(plait_client::linear_drafts::Drafts { forms });
+    });
+    h.settle();
+    h.update(|p, window, cx| {
+        p.open_new_issue(window, cx);
+        assert!(p.issues.view.new_form.is_some(), "the 64th draft opens");
+        let text = serde_json::from_value(serde_json::json!({"issue_id": "i1",
+            "updated_at": "2026-11-18T12:00:00.000Z", "editable": true,
+            "title": "Retry rate-limited requests with backoff", "description": "Old"}))
+        .unwrap();
+        p.open_edit(&text, window, cx);
+        assert!(p.issues.view.edits.is_empty(), "a 65th is refused");
+        let saved = p.issues.saved_drafts_for_scene().unwrap();
+        assert_eq!(saved.forms.len(), 64);
+        assert!((0..63).all(|i| saved.forms.iter().any(|f| f.title == format!("Draft {i}"))));
+    });
     std::fs::remove_dir_all(scratch).unwrap();
 }

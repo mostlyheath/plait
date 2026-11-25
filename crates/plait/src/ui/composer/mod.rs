@@ -236,10 +236,21 @@ pub struct Composer {
     stop: StopGesture,
     /// Skills and templates of the person's Pi setup, offered after local commands.
     agent: Arc<[AgentCommand]>,
+    /// What the editor is for, read aloud, and the hint drawn while it is empty.
+    label: SharedString,
+    placeholder: SharedString,
+    /// A plain multi-line editor: Enter adds a line, Cmd-Enter submits, and
+    /// there are no @ mentions, / commands, attachments or history recall.
+    plain: bool,
 }
 
 impl Composer {
     pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self::detached(cx)
+    }
+
+    /// A composer made outside a window's event, such as one restored from disk.
+    pub fn detached(cx: &mut Context<Self>) -> Self {
         Self {
             // Tracked focus uses the handle's tab settings, not the div's.
             box_focus: cx.focus_handle(),
@@ -267,7 +278,27 @@ impl Composer {
             rank_task: None,
             stop: StopGesture::default(),
             agent: Arc::from([]),
+            label: "Message to agent".into(),
+            placeholder: PLACEHOLDER.into(),
+            plain: false,
         }
+    }
+
+    /// Makes this a plain text editor for writing that is not a message to an
+    /// agent. `attachments` says why pasted images are refused.
+    pub fn set_plain(&mut self, attachments: impl Into<String>) {
+        self.plain = true;
+        self.images.text_only = Some(attachments.into());
+    }
+
+    /// An editor for something other than a message to an agent.
+    pub fn set_purpose(
+        &mut self,
+        label: impl Into<SharedString>,
+        placeholder: impl Into<SharedString>,
+    ) {
+        self.label = label.into();
+        self.placeholder = placeholder.into();
     }
 
     /// The draft to keep across a restart, its edit revision, and the pending
@@ -450,8 +481,13 @@ impl Composer {
             self.draft.submitted = Some((text.clone(), self.draft.revision));
             Some(text)
         } else {
-            self.draft
-                .submit(self.enabled, self.busy && !self.queue_enabled)
+            let text = self
+                .draft
+                .submit(self.enabled, self.busy && !self.queue_enabled);
+            if self.plain {
+                self.draft.history = Default::default();
+            }
+            text
         };
         if let Some(text) = submitted {
             self.close_popup();
@@ -643,7 +679,7 @@ impl Composer {
             cx.notify();
             return;
         }
-        if self.enabled && self.draft.recall(!down, self.on_edge_row(!down)) {
+        if self.enabled && !self.plain && self.draft.recall(!down, self.on_edge_row(!down)) {
             self.close_popup();
             self.changed(window, cx);
             return;
@@ -739,7 +775,7 @@ impl Composer {
         let quiet = draft.marked.is_none()
             && draft.selection().is_empty()
             && draft.recall_position().is_none();
-        let trigger = (self.enabled && quiet)
+        let trigger = (self.enabled && quiet && !self.plain)
             .then(|| trigger::detect(&draft.value.text, draft.value.head))
             .flatten();
         let Some(trigger) = trigger else {
@@ -1338,11 +1374,11 @@ impl Render for Composer {
                 div()
                     .id("composer-input")
                     .role(Role::MultilineTextInput)
-                    .aria_label("Message to agent")
+                    .aria_label(self.label.clone())
                     .audited()
                     .aria_description(description)
                     .aria_value(self.draft.value.text.clone())
-                    .aria_placeholder(PLACEHOLDER)
+                    .aria_placeholder(self.placeholder.clone())
                     .on_a11y_action(AccessibleAction::SetValue, move |data, window, cx| {
                         // A composer is never in a window modal.
                         if crate::ui::theme::beneath_modal(None, window, cx) {
@@ -1378,12 +1414,21 @@ impl Render for Composer {
                     .text_size(px(14.5))
                     .line_height(px(LINE_HEIGHT))
                     .on_action(cx.listener(|this, _: &Submit, window, cx| {
-                        if !this.accept(None, window, cx) {
+                        if this.plain {
+                            // In plain text Enter only starts a line; Cmd-Enter submits.
+                            if this.draft.marked.is_none() {
+                                this.edit(|draft| draft.insert("\n"), window, cx);
+                            }
+                        } else if !this.accept(None, window, cx) {
                             this.submit(false, cx);
                         }
                     }))
                     .on_action(cx.listener(|this, _: &SubmitNow, _, cx| this.submit(false, cx)))
-                    .on_action(cx.listener(|this, _: &Steer, _, cx| this.submit(true, cx)))
+                    .on_action(cx.listener(|this, _: &Steer, _, cx| {
+                        if !this.plain {
+                            this.submit(true, cx)
+                        }
+                    }))
                     .on_action(cx.listener(|this, _: &Complete, window, cx| {
                         if !this.accept(None, window, cx) {
                             window.focus_next(cx);

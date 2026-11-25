@@ -14,6 +14,8 @@ pub(super) struct Attachments {
     pub failed: HashMap<String, String>,
     pub uploading: bool,
     pub blocked: Option<(String, String)>,
+    /// Why this editor takes text only; a pasted image is refused with it.
+    pub text_only: Option<String>,
 }
 impl Composer {
     fn pin_images(&mut self, references: &[ImageRef]) {
@@ -191,6 +193,9 @@ impl Composer {
     pub(super) fn paste_images(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
         if !self.enabled {
             return;
+        }
+        if let Some(reason) = self.images.text_only.clone() {
+            return self.refuse_image(reason, cx);
         }
         // Clipboard allocation is GPUI's; reject immediately, before retaining or decoding it.
         let info = match images::describe(&bytes) {

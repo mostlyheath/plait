@@ -570,6 +570,7 @@ fn removal_here_marks_the_folder_missing_for_the_sidebar() {
                 retry_after_seconds: None,
                 code: "busy".into(),
                 message: "New work appeared.".into(),
+                outcome: None,
             }),
         };
         p.settle_worktree_removal(&attempt, &machine, Ok(refused), cx);

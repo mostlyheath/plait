@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { gzipSync } from 'node:zlib';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
@@ -38,6 +39,12 @@ export type FaultHandler = (
   parsed: { query: string; variables: Record<string, unknown> },
 ) => boolean | Promise<boolean>;
 
+/** A 1x1 PNG: the smallest image the host's describe() accepts. */
+export const TINY_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+  'base64',
+);
+
 export class FakeLinearServer {
   readonly server: Server;
   url = '';
@@ -52,6 +59,14 @@ export class FakeLinearServer {
   redirectTargetHits = 0;
   attachmentHits = 0;
   dropNextMutationReply = false;
+  /** Authorization sent with each image read, in order; a redirect's second read must carry none. */
+  imageAuthorizations: (string | undefined)[] = [];
+  /** How the exact-text read misbehaves: with GraphQL errors, or a field left out. */
+  issueTextFault: 'errors' | 'no_description' | null = null;
+  /** Where /org-1/redirect-away sends the reader: another origin, which must get nothing. */
+  awayOrigin = '';
+  /** Bytes served at /org-1/<name>, as Linear's storage serves an organization's files. */
+  images = new Map<string, Buffer>([['png', TINY_PNG]]);
   private faults: FaultHandler[] = [];
   private commentSeq = 1;
 
@@ -154,6 +169,10 @@ export class FakeLinearServer {
       this.redirectTargetHits++;
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ data: { viewer: this.viewer, organization: this.organization } }));
+      return;
+    }
+    if (req.url?.startsWith('/org-1/')) {
+      this.serveImage(req, res);
       return;
     }
     if (req.url?.startsWith('/attachment')) {
@@ -321,6 +340,61 @@ export class FakeLinearServer {
       return;
     }
 
+    if (parsed.query.includes('PlaitIssueText')) {
+      const issue = this.issues.find(item => item.id === parsed.variables.id || item.identifier === parsed.variables.id);
+      const node: Record<string, unknown> | null = issue
+        ? { id: issue.id, title: issue.title, description: issue.description, updatedAt: issue.updatedAt }
+        : null;
+      if (node && this.issueTextFault === 'no_description') delete node.description;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ data: { issue: node },
+        ...(this.issueTextFault === 'errors' ? { errors: [{ message: 'description could not be resolved', path: ['issue', 'description'] }] } : {}) }));
+      return;
+    }
+
+    if (parsed.query.includes('PlaitIssueCreate')) {
+      const team = this.teams.find(t => t.id === parsed.variables.teamId);
+      const stateId = typeof parsed.variables.stateId === 'string' ? parsed.variables.stateId : team?.states[0]?.id;
+      if (!team || !team.states.some(s => s.id === stateId)) {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ data: { issueCreate: { success: false, issue: null } }, errors: [{ message: 'Invalid team', extensions: { code: 'INPUT_ERROR' } }] }));
+        return;
+      }
+      const id = String(parsed.variables.id);
+      if (!this.issues.some(item => item.id === id)) {
+        const number = 200 + this.issues.length;
+        this.issues.push({
+          id, identifier: `${team.key}-${number}`, number, title: String(parsed.variables.title),
+          url: `https://linear.app/acme/issue/${team.key}-${number}/new`, priority: 0,
+          updatedAt: '2026-11-18T15:00:00.000Z',
+          description: typeof parsed.variables.description === 'string' ? parsed.variables.description : null,
+          teamId: team.id, stateId: stateId!, assigneeName: null, assignedToMe: false,
+          labels: [], attachments: [], comments: [],
+        });
+      }
+      const issue = this.issues.find(item => item.id === id)!;
+      if (this.dropMutationReply(res)) return;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ data: { issueCreate: { success: true, issue: { id: issue.id, identifier: issue.identifier } } } }));
+      return;
+    }
+
+    if (parsed.query.includes('PlaitIssueUpdateText')) {
+      const issue = this.issues.find(item => item.id === parsed.variables.id);
+      if (!issue) {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ data: { issueUpdate: { success: false, issue: null } }, errors: [{ message: 'Entity not found', extensions: { code: 'INPUT_ERROR' } }] }));
+        return;
+      }
+      if (typeof parsed.variables.title === 'string') issue.title = parsed.variables.title;
+      if (typeof parsed.variables.description === 'string') issue.description = parsed.variables.description;
+      issue.updatedAt = '2026-11-18T16:00:00.000Z';
+      if (this.dropMutationReply(res)) return;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ data: { issueUpdate: { success: true, issue: { id: issue.id } } } }));
+      return;
+    }
+
     if (parsed.query.includes('PlaitIssueUpdateState')) {
       const issue = this.issues.find(item => item.id === parsed.variables.id);
       const stateId = String(parsed.variables.stateId);
@@ -340,6 +414,59 @@ export class FakeLinearServer {
 
     res.writeHead(400, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ errors: [{ message: 'Unknown query' }] }));
+  }
+
+  /** Linear's file storage: the key is required, and `redirect` sends the reader elsewhere once. */
+  private serveImage(req: IncomingMessage, res: ServerResponse) {
+    const auth = typeof req.headers.authorization === 'string' ? req.headers.authorization : undefined;
+    this.imageAuthorizations.push(auth);
+    const name = (req.url ?? '').slice('/org-1/'.length);
+    if (name === 'redirect') {
+      res.writeHead(302, { location: `${this.url.replace(/\/graphql$/, '')}/org-1/signed-png` });
+      res.end();
+      return;
+    }
+    if (name === 'redirect-away') {
+      res.writeHead(302, { location: `${this.awayOrigin}/org-1/png` });
+      res.end();
+      return;
+    }
+    if (name === 'limited') {
+      res.writeHead(429, { 'retry-after': '7' });
+      res.end();
+      return;
+    }
+    if (name === 'signed-png') {
+      res.writeHead(200, { 'content-type': 'image/png' });
+      res.end(TINY_PNG);
+      return;
+    }
+    if (auth !== this.validKey) {
+      res.writeHead(401);
+      res.end();
+      return;
+    }
+    if (name === 'streamed-huge') {
+      // No content-length: the reader must stop on what arrives.
+      res.writeHead(200, { 'content-type': 'image/png' });
+      const chunk = Buffer.alloc(1024 * 1024);
+      for (let i = 0; i < 6; i++) res.write(chunk);
+      res.end();
+      return;
+    }
+    if (name === 'gzip-bomb') {
+      res.writeHead(200, { 'content-type': 'image/png', 'content-encoding': 'gzip' });
+      res.end(gzipSync(Buffer.concat([TINY_PNG, Buffer.alloc(6 * 1024 * 1024)])));
+      return;
+    }
+    const bytes = this.images.get(name);
+    if (!bytes) {
+      res.writeHead(404);
+      res.end();
+      return;
+    }
+    res.writeHead(200, { 'content-type': 'application/octet-stream' });
+    res.end(bytes);
   }
 
   private dropMutationReply(res: ServerResponse): boolean {

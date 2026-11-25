@@ -151,12 +151,13 @@ impl Plait {
                         let app: &mut App = cx;
                         app.on_app_quit(move |cx| {
                             let journal = quit_journal.clone();
-                            let tabs = quit_window.update(cx, |_, window, cx| {
+                            let (tabs, drafts) = quit_window.update(cx, |_, window, cx| {
                                 quit_view.update(cx, |this, cx| {
                                     this.capture_session(cx);
-                                    this.flush_tab_preferences(Some(window), cx)
+                                    let tabs = this.flush_tab_preferences(Some(window), cx);
+                                    (tabs, this.draft_flush(cx))
                                 })
-                            }).ok().and_then(Result::ok).flatten();
+                            }).ok().and_then(Result::ok).unwrap_or((None, None));
                             cx.background_executor().spawn(async move {
                                 // This quit cannot be cancelled (a user quit goes through
                                 // close_desktop, which can). Local saves come first, within
@@ -166,6 +167,12 @@ impl Plait {
                                         Ok(kept) => eprintln!("Plait workspace: {error} Unsaved work was kept in {kept:?}."),
                                         Err(kept) => eprintln!("Plait workspace: {error} {kept}"),
                                     }
+                                }
+                                // Unsaved Linear issue text, as the close path writes it; also local.
+                                if let Some((writer, revision, drafts)) = drafts
+                                    && let Err(error) = writer.write(&journal, revision, &drafts)
+                                {
+                                    eprintln!("Plait issue drafts: {error}");
                                 }
                                 if let Some(tabs) = tabs && let Err(error) = tabs.write() { eprintln!("Plait tabs: {error}"); }
                             })
@@ -223,12 +230,17 @@ impl Plait {
             return;
         };
         let tabs = self.flush_tab_preferences(Some(window), cx);
+        // Unsaved Linear issue text, newest revision, without waiting for its pause.
+        let drafts = self.draft_flush(cx);
         self.session.closing = true;
         self.sync_composer(cx);
         let task = cx.background_executor().spawn(async move {
             journal.flush()?;
             if let Some(tabs) = tabs {
                 tabs.write()?;
+            }
+            if let Some((writer, revision, drafts)) = drafts {
+                writer.write(&journal, revision, &drafts)?;
             }
             Ok::<_, String>(())
         });

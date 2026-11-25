@@ -77,7 +77,7 @@ pub(super) fn bind_keys(cx: &mut App) {
 }
 
 /// Pasted or dictated text can span lines; the field holds one.
-fn single_line(text: &str) -> Cow<'_, str> {
+pub(super) fn single_line(text: &str) -> Cow<'_, str> {
     let breaks = |ch: char| matches!(ch, '\n' | '\r' | '\t' | '\u{2028}' | '\u{2029}');
     if !text.contains(breaks) {
         return Cow::Borrowed(text);

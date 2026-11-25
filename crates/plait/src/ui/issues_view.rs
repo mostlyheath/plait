@@ -6,7 +6,8 @@
 //! choice and is recorded by the host before it is sent.
 use super::{
     Plait,
-    issue_text::{self, IssueText, READING_WIDTH},
+    composer::{Composer, ComposerEvent},
+    issue_text::{self, IssueText, Picture, READING_WIDTH},
     settings,
     tab_lifecycle::Intent,
     text_field::TextField,
@@ -16,8 +17,12 @@ use super::{
 use gpui::{prelude::*, *};
 use plait_client::{
     host::linear::{self, IssueDetail, IssueSummary},
-    linear_issues::{self, FILTERS, IssueRef, IssuesView, ListRequest, Load},
-    linear_settings::Auth,
+    linear_drafts::{self, Drafts, SavedForm},
+    linear_issues::{
+        self, FILTERS, FormDone, FormKind, FormSlot, FormStatus, IssueForm, IssueRef, IssuesView,
+        ListRequest, Load, Submit,
+    },
+    linear_settings::{self, Auth},
     tabs::{TabTarget, bookmark::BookmarkRecord},
 };
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
@@ -48,7 +53,117 @@ pub(super) struct IssuesUi {
     parsing: Option<(String, String)>,
     /// `linear_info` is in flight.
     checking_writes: bool,
+    /// Images on Linear's storage for the shown issue, by address.
+    pub images: HashMap<String, Picture>,
+    /// The connection, sign-in and key the images were read under.
+    images_owner: Option<(u64, u64, String, String)>,
+    /// Bumped when the sign-in changes, so earlier reads are dropped.
+    image_generation: u64,
+    /// Image reads in flight.
+    image_reads: usize,
+    /// Decoded bytes held per image, and the images in the order last shown.
+    image_bytes: HashMap<String, usize>,
+    image_order: Vec<String>,
+    /// The open form's fields, made when it opens and dropped when it closes.
+    form_fields: HashMap<FormSlot, FormFields>,
+    /// Every project's unsaved forms as last written, once read from disk.
+    drafts: Option<Drafts>,
+    drafts_loading: bool,
+    /// Bumped on each change to the drafts; writes carry it.
+    drafts_revision: u64,
+    /// Writes one at a time, so an older snapshot never replaces a newer.
+    drafts_writer: Arc<linear_drafts::Writer>,
+    /// The project whose saved forms were last reopened.
+    restored_for: Option<PathBuf>,
+    /// The issue whose exact text is being read for an edit.
+    reading_text: Option<String>,
+    /// The last form was refused because the drafts are at their limit.
+    drafts_full: bool,
+    /// Why the last Edit did not open, by issue.
+    edit_note: Option<(String, String)>,
 }
+
+/// The fields of a new issue or an edit. Enter in the description saves.
+struct FormFields {
+    title: Entity<TextField>,
+    description: Entity<Composer>,
+    _subscriptions: [Subscription; 3],
+}
+
+/// Typing pauses this long before unsaved issue text is written to disk.
+const DRAFT_PAUSE: Duration = Duration::from_millis(500);
+
+impl IssuesUi {
+    /// Scenes have no journal: the saved drafts are `drafts`, and recovery
+    /// runs as soon as the view targets a project.
+    #[cfg(test)]
+    pub(super) fn drafts_for_scene(&mut self, drafts: Drafts) {
+        self.drafts = Some(drafts);
+        self.restored_for = None;
+    }
+
+    #[cfg(test)]
+    pub(super) fn saved_drafts_for_scene(&self) -> Option<&Drafts> {
+        self.drafts.as_ref()
+    }
+
+    /// The open form's title and description, for scenes to type into.
+    #[cfg(test)]
+    pub(super) fn form_fields_for_scene(&self) -> Option<(Entity<TextField>, Entity<Composer>)> {
+        let fields = self.form_fields.values().next()?;
+        Some((fields.title.clone(), fields.description.clone()))
+    }
+}
+
+impl IssuesUi {
+    pub(super) fn decoded_bytes(&self) -> usize {
+        self.image_bytes.values().sum()
+    }
+
+    /// Lets go of the least recently shown pixels until `room` more bytes fit
+    /// the bound, never the shown issue's.
+    fn evict_images(&mut self, visible: &[String], room: usize) {
+        while self.decoded_bytes() + room > IMAGE_MEMORY {
+            let Some(at) = self
+                .image_order
+                .iter()
+                .position(|url| !visible.contains(url))
+            else {
+                break;
+            };
+            let url = self.image_order.remove(at);
+            self.image_bytes.remove(&url);
+            self.images.remove(&url);
+        }
+    }
+
+    /// Keeps a decoded image if it fits the bound, making room from other
+    /// issues' images first. One that still does not fit is shown in Linear.
+    pub(super) fn admit_image(
+        &mut self,
+        url: String,
+        pixels: Arc<RenderImage>,
+        bytes: usize,
+        visible: &[String],
+    ) {
+        self.evict_images(visible, bytes);
+        if self.decoded_bytes() + bytes > IMAGE_MEMORY {
+            self.images.insert(url, Picture::Elsewhere);
+            return;
+        }
+        self.image_bytes.insert(url.clone(), bytes);
+        self.image_order.retain(|held| held != &url);
+        self.image_order.push(url.clone());
+        self.images.insert(url, Picture::Ready(pixels));
+    }
+}
+
+/// Images read at once, so a long issue does not queue every one together.
+const IMAGE_READS: usize = 3;
+/// Longest side an issue image is decoded to; it is drawn no wider than the text.
+const IMAGE_EDGE: u32 = 1600;
+/// Decoded issue images held at once, across every issue.
+const IMAGE_MEMORY: usize = 48 * 1024 * 1024;
 
 /// Where a reference is waiting to be added.
 #[derive(Clone, PartialEq, Eq)]
@@ -166,10 +281,24 @@ impl Plait {
         self.issues_search_field(cx);
         let checkout = self.visible_project_checkout().to_owned();
         let restored = self.issues.restored.take();
-        self.issues
+        if self
+            .issues
             .view
-            .target(self.host.connection.epoch, &checkout, restored);
+            .target(self.host.connection.epoch, &checkout, restored)
+        {
+            self.issues.restored_for = None;
+        }
         self.parse_issue_text(cx);
+        self.load_issue_images(cx);
+        self.load_saved_forms(cx);
+        self.restore_saved_forms(cx);
+        // Fields live as long as their form; a closed or reset form lets them go.
+        let view = &self.issues.view;
+        let open = |slot: &FormSlot| match slot {
+            FormSlot::New => view.new_form.is_some(),
+            FormSlot::Edit(id) => view.edits.contains_key(id),
+        };
+        self.issues.form_fields.retain(|slot, _| open(slot));
         if cfg!(test)
             || !self.host.connection.connected
             || !matches!(self.linear.account.auth, Auth::SignedIn { .. })
@@ -245,8 +374,11 @@ impl Plait {
                 |client| linear::info(client).map_err(|error| linear::classify(&error, true)),
                 |this, result, _| {
                     this.issues.checking_writes = false;
-                    this.issues.view.writes =
-                        Some(result.is_ok_and(|info| info.features.durable_write_outcomes));
+                    let features = result.ok().map(|info| info.features);
+                    let view = &mut this.issues.view;
+                    view.writes = Some(features.as_ref().is_some_and(|f| f.durable_write_outcomes));
+                    view.issue_writes = features.as_ref().is_some_and(|f| f.issue_writes);
+                    view.images = features.as_ref().is_some_and(|f| f.images);
                     true
                 },
                 cx,
@@ -324,6 +456,879 @@ impl Plait {
         cx.notify();
     }
 
+    /// Reads the shown issue's Linear images through the host, a few at a
+    /// time, and decodes them off the UI thread. Decoded images of every issue
+    /// share one memory bound: the least recently shown go first, and the
+    /// shown issue's are kept over others. An image let go is read again from
+    /// the host's disk cache when it is shown. Images read under another
+    /// sign-in are let go and their pending reads ignored.
+    fn load_issue_images(&mut self, cx: &mut Context<Self>) {
+        let owner = match &self.linear.account.auth {
+            Auth::SignedIn { workspace, viewer } => Some((
+                self.host.connection.epoch,
+                self.linear.account.credentials,
+                workspace.to_string(),
+                viewer.to_string(),
+            )),
+            _ => None,
+        };
+        if self.issues.images_owner != owner {
+            self.issues.images_owner = owner;
+            self.issues.images.clear();
+            self.issues.image_bytes.clear();
+            self.issues.image_generation += 1;
+            self.issues.image_reads = 0;
+        }
+        let Some(text) = self.issues.text.clone() else {
+            return;
+        };
+        let visible = text.linear_images();
+        // Reads that never finished for another issue are let go; pixels stay.
+        self.issues
+            .images
+            .retain(|url, picture| matches!(picture, Picture::Ready(_)) || visible.contains(url));
+        // Shown now: the most recently used.
+        self.issues.image_order.retain(|url| !visible.contains(url));
+        self.issues.image_order.extend(
+            visible
+                .iter()
+                .filter(|url| self.issues.image_bytes.contains_key(*url))
+                .cloned(),
+        );
+        self.evict_images(&visible);
+        if cfg!(test)
+            || !self.issues.view.images
+            || !self.host.connection.connected
+            || self.issues.images_owner.is_none()
+        {
+            return;
+        }
+        let wanted: Vec<_> = visible
+            .into_iter()
+            .filter(|url| !self.issues.images.contains_key(url))
+            .take(IMAGE_READS.saturating_sub(self.issues.image_reads))
+            .collect();
+        for url in wanted {
+            // The shown issue alone fills the bound: later images stay in Linear.
+            if self.decoded_bytes() >= IMAGE_MEMORY {
+                break;
+            }
+            self.issues.images.insert(url.clone(), Picture::Loading);
+            self.issues.image_reads += 1;
+            let generation = self.issues.image_generation;
+            let read = url.clone();
+            self.linear_task(
+                move |client| {
+                    let bytes =
+                        linear::read_image(client, &read).map_err(
+                            |error| match linear::classify(&error, false) {
+                                linear::Rejection::NotFound => {
+                                    "Not readable with this key".to_owned()
+                                }
+                                linear::Rejection::Other => {
+                                    "Not a PNG or JPEG Plait can show".to_owned()
+                                }
+                                _ => "Could not be read".to_owned(),
+                            },
+                        )?;
+                    super::images::decode_counted(&bytes, IMAGE_EDGE)
+                        .map_err(|_| "Could not be decoded".to_owned())
+                },
+                move |this, result, _| {
+                    // A read from before a sign-in change is dropped with its pixels.
+                    if this.issues.image_generation != generation {
+                        return false;
+                    }
+                    this.issues.image_reads = this.issues.image_reads.saturating_sub(1);
+                    if !this.issues.images.contains_key(&url) {
+                        return true;
+                    }
+                    let visible = this
+                        .issues
+                        .text
+                        .as_ref()
+                        .map(|text| text.linear_images())
+                        .unwrap_or_default();
+                    match result {
+                        Ok((pixels, bytes)) => {
+                            this.issues.admit_image(url, pixels, bytes, &visible)
+                        }
+                        Err(reason) => {
+                            this.issues.images.insert(url, Picture::Failed(reason));
+                        }
+                    }
+                    true
+                },
+                cx,
+            );
+        }
+    }
+
+    fn decoded_bytes(&self) -> usize {
+        self.issues.decoded_bytes()
+    }
+
+    fn evict_images(&mut self, visible: &[String]) {
+        self.issues.evict_images(visible, 0);
+    }
+
+    /// What is known of an image in the shown issue, for drawing it.
+    fn picture(&self, url: &str) -> Picture {
+        if !self.issues.view.images {
+            return Picture::Elsewhere;
+        }
+        match self.issues.images.get(url) {
+            Some(picture) => picture.clone(),
+            // Not started because the shown issue's images fill the bound.
+            None if self.decoded_bytes() >= IMAGE_MEMORY => Picture::Elsewhere,
+            None => Picture::Loading,
+        }
+    }
+
+    /// Whether this project's saved drafts have been reopened. Until then a
+    /// new form could take the place of a saved one, so none opens.
+    pub(super) fn forms_ready(&self) -> bool {
+        self.issues.drafts.is_some()
+            && self.issues.view.checkout.is_some()
+            && self.issues.restored_for == self.issues.view.checkout
+    }
+
+    pub(super) fn open_new_issue(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.forms_ready() {
+            return;
+        }
+        if self.issues.view.new_form.is_none() && self.drafts_full() {
+            cx.notify();
+            return;
+        }
+        if self
+            .issues
+            .view
+            .start_new(plait_client::host_state::request_id())
+        {
+            if !self.issues.form_fields.contains_key(&FormSlot::New) {
+                self.make_form_fields(FormSlot::New, "", "", cx);
+            }
+            self.focus_form_title(&FormSlot::New, window, cx);
+            self.persist_forms(cx);
+        }
+        cx.notify();
+    }
+
+    /// Edit brings back an unsaved edit, or reads the issue's exact text from
+    /// Linear first: the details are shortened for display and must not be
+    /// written back.
+    pub(super) fn edit_issue(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.forms_ready() {
+            return;
+        }
+        if self.issues.view.show_edit() {
+            if let Some(slot) = self.issues.view.form().map(IssueForm::slot) {
+                self.focus_form_title(&slot, window, cx);
+            }
+            cx.notify();
+            return;
+        }
+        let Some(issue_id) = self.issues.view.selected.clone() else {
+            return;
+        };
+        if self.issues.reading_text.is_some() || self.drafts_full() {
+            cx.notify();
+            return;
+        }
+        self.issues.reading_text = Some(issue_id.clone());
+        cx.notify();
+        let epoch = self.host.connection.epoch;
+        let client = self.host_client();
+        let read = issue_id.clone();
+        let task = cx.background_executor().spawn(async move {
+            linear::get_issue_text(&client, read).map_err(|error| linear::classify(&error, false))
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = task.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                if this.host.connection.epoch != epoch
+                    || this.issues.reading_text.as_deref() != Some(issue_id.as_str())
+                {
+                    return;
+                }
+                this.issues.reading_text = None;
+                match result {
+                    Ok(text) => this.open_edit(&text, window, cx),
+                    Err(error) => {
+                        this.issues.edit_note = Some((
+                            issue_id.clone(),
+                            format!(
+                                "The issue could not be read for editing. {}",
+                                linear_settings::message(linear_settings::Pending::Loading, error)
+                            ),
+                        ));
+                        cx.notify();
+                    }
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Why Edit is not offered for this issue, if it is not.
+    fn edit_note(&self, issue_id: &str) -> Option<String> {
+        if self.issues.view.not_editable.as_deref() == Some(issue_id) {
+            return Some(
+                "This issue's title or description is too long for Plait to edit without losing text. Edit it in Linear."
+                    .into(),
+            );
+        }
+        self.issues
+            .edit_note
+            .as_ref()
+            .filter(|(id, _)| id == issue_id)
+            .map(|(_, note)| note.clone())
+    }
+
+    /// Opens an edit from the exact text the host read.
+    pub(super) fn open_edit(
+        &mut self,
+        text: &linear::IssueText,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.issues.edit_note = None;
+        if !self.forms_ready()
+            || (!self.issues.view.edits.contains_key(&text.issue_id) && self.drafts_full())
+        {
+            cx.notify();
+            return;
+        }
+        if self
+            .issues
+            .view
+            .begin_edit(text, plait_client::host_state::request_id())
+            && let Some(form) = self.issues.view.form().cloned()
+        {
+            if !self.issues.form_fields.contains_key(&form.slot())
+                && let FormKind::Edit {
+                    title, description, ..
+                } = &form.kind
+            {
+                self.make_form_fields(form.slot(), title, description, cx);
+            }
+            self.focus_form_title(&form.slot(), window, cx);
+            self.persist_forms(cx);
+        }
+        cx.notify();
+    }
+
+    /// Whether the saved drafts are at their limit. Another form is refused
+    /// with a note, so no unsaved text is ever dropped to make room.
+    fn drafts_full(&mut self) -> bool {
+        let full = self.issues.drafts.as_ref().is_some_and(Drafts::full);
+        self.issues.drafts_full = full;
+        full
+    }
+
+    fn focus_form_title(&self, slot: &FormSlot, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(fields) = self.issues.form_fields.get(slot) {
+            window.focus(&fields.title.focus_handle(cx), cx);
+        }
+    }
+
+    fn make_form_fields(
+        &mut self,
+        slot: FormSlot,
+        title: &str,
+        description: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let title_field = cx.new(|cx| {
+            let mut field = TextField::new("Issue title", "Title", cx);
+            field.set_text(title, cx);
+            field
+        });
+        let text = description.to_owned();
+        let editor = cx.new(|cx| {
+            let mut editor = Composer::detached(cx);
+            // A new composer waits for a thread; this one is ready at once.
+            editor.set_enabled(true, None, cx);
+            editor.set_purpose("Issue description", "Describe the issue. Markdown works.");
+            editor.set_plain("Linear issues take text here. Add images in Linear.");
+            editor.restore_draft(text, 0, None, cx);
+            editor
+        });
+        let submit = cx.subscribe(&editor, |this, _, event: &ComposerEvent, cx| {
+            if matches!(event, ComposerEvent::Submit { .. }) {
+                this.save_issue_form(cx);
+            }
+        });
+        // Typing in either field is kept on disk once it pauses.
+        let typed = cx.observe(&editor, |this, _, cx| this.persist_forms(cx));
+        let titled = cx.subscribe(&title_field, |this, _, _: &TextFieldEvent, cx| {
+            this.persist_forms(cx)
+        });
+        self.issues.form_fields.insert(
+            slot,
+            FormFields {
+                title: title_field,
+                description: editor,
+                _subscriptions: [submit, typed, titled],
+            },
+        );
+    }
+
+    fn cancel_issue_form(&mut self, cx: &mut Context<Self>) {
+        if let Some(slot) = self.issues.view.cancel_form() {
+            self.issues.form_fields.remove(&slot);
+            self.persist_forms(cx);
+        }
+        cx.notify();
+    }
+
+    /// Reads the saved forms once, off the UI thread.
+    fn load_saved_forms(&mut self, cx: &mut Context<Self>) {
+        if self.issues.drafts.is_some() || self.issues.drafts_loading {
+            return;
+        }
+        let Some(journal) = self.session.journal.clone() else {
+            return;
+        };
+        self.issues.drafts_loading = true;
+        let task = cx.background_executor().spawn(async move {
+            journal
+                .read_record::<Drafts>(linear_drafts::RECORD, linear_drafts::RECORD_LIMIT)
+                .ok()
+                .flatten()
+                .unwrap_or_default()
+        });
+        cx.spawn(async move |this, cx| {
+            let drafts = task.await;
+            let _ = this.update(cx, |this, cx| {
+                this.issues.drafts_loading = false;
+                this.issues.drafts = Some(drafts);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Reopens this project's saved forms, once each time the view starts
+    /// over for a project, behind whatever is shown. A host that cannot write
+    /// issues reopens none, and the drafts stay on disk for one that can.
+    fn restore_saved_forms(&mut self, cx: &mut Context<Self>) {
+        let Some(checkout) = self.issues.view.checkout.clone() else {
+            return;
+        };
+        let Some(drafts) = &self.issues.drafts else {
+            return;
+        };
+        if self.issues.restored_for.as_ref() == Some(&checkout) || !self.issues.view.issue_writes {
+            return;
+        }
+        let saved: Vec<_> = drafts.of(&checkout).cloned().collect();
+        self.issues.restored_for = Some(checkout);
+        for form in saved {
+            if self
+                .issues
+                .view
+                .restore_form(form.form_kind(), form.request_id.clone())
+            {
+                self.make_form_fields(form.slot(), &form.title, &form.description, cx);
+            }
+        }
+    }
+
+    /// This project's open forms as typed, folded into the saved drafts.
+    /// Returns the drafts to write when they changed, or `None`.
+    fn capture_forms(&mut self, cx: &mut Context<Self>) -> Option<Drafts> {
+        let checkout = self.issues.view.checkout.clone()?;
+        // Until the saved forms are read, writing would forget other projects'.
+        if self.issues.drafts.is_none() || self.issues.restored_for.as_ref() != Some(&checkout) {
+            return None;
+        }
+        let mut forms: Vec<_> = self
+            .issues
+            .view
+            .forms()
+            .filter_map(|form| {
+                let fields = self.issues.form_fields.get(&form.slot())?;
+                Some(SavedForm::new(
+                    &checkout,
+                    &form.kind,
+                    fields.title.read(cx).text(),
+                    fields.description.read(cx).saved_draft().0,
+                    &form.request_id,
+                ))
+            })
+            .collect();
+        forms.sort_by_key(|form| match form.slot() {
+            FormSlot::New => String::new(),
+            FormSlot::Edit(id) => id,
+        });
+        let drafts = self.issues.drafts.as_mut()?;
+        let changed = drafts.replace(&checkout, forms);
+        if changed {
+            self.issues.drafts_revision += 1;
+        }
+        changed.then(|| drafts.clone())
+    }
+
+    /// The drafts as typed now, with their revision and the writer, for a
+    /// write that must not wait: Save, close and quit.
+    pub(super) fn draft_flush(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Option<(Arc<linear_drafts::Writer>, u64, Drafts)> {
+        self.capture_forms(cx);
+        let drafts = self.issues.drafts.clone()?;
+        Some((
+            self.issues.drafts_writer.clone(),
+            self.issues.drafts_revision,
+            drafts,
+        ))
+    }
+
+    /// Records this project's open forms as typed, and writes them after
+    /// typing pauses. Writing runs on the background executor.
+    fn persist_forms(&mut self, cx: &mut Context<Self>) {
+        if self.capture_forms(cx).is_none() {
+            return;
+        }
+        let revision = self.issues.drafts_revision;
+        let Some(journal) = self.session.journal.clone() else {
+            return;
+        };
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(DRAFT_PAUSE).await;
+            // Typing went on: a later timer writes the newer text.
+            let Ok(Some((writer, drafts))) = this.update(cx, |this, _| {
+                (this.issues.drafts_revision == revision)
+                    .then(|| this.issues.drafts.clone())
+                    .flatten()
+                    .map(|drafts| (this.issues.drafts_writer.clone(), drafts))
+            }) else {
+                return;
+            };
+            cx.background_executor()
+                .spawn(async move {
+                    let _ = writer.write(&journal, revision, &drafts);
+                })
+                .await;
+        })
+        .detach();
+    }
+
+    /// After a conflict, keeps the person's text and bases it on Linear's version.
+    fn keep_my_edit(&mut self, cx: &mut Context<Self>) {
+        if self.issues.view.keep_mine() {
+            self.persist_forms(cx);
+        }
+        cx.notify();
+    }
+
+    #[cfg(test)]
+    pub(super) fn save_issue_form_for_scene(&mut self, cx: &mut Context<Self>) {
+        self.save_issue_form(cx);
+    }
+
+    /// Writes the form in front. Only this explicit action sends anything,
+    /// and only once its draft, with the request's ID, is on disk: a save
+    /// after a crash then names the same request.
+    fn save_issue_form(&mut self, cx: &mut Context<Self>) {
+        let Some(slot) = self.issues.view.form().map(|f| f.slot()) else {
+            return;
+        };
+        let Some(fields) = self.issues.form_fields.get(&slot) else {
+            return;
+        };
+        let typed = fields.title.read(cx).text().to_owned();
+        // The field shows the title on one line; one the person did not change
+        // is Linear's exactly, so it is not rewritten in its normalized form.
+        let title = match self.issues.view.form().map(|f| &f.kind) {
+            Some(FormKind::Edit { title: base, .. })
+                if super::text_field::single_line(base) == typed =>
+            {
+                base.clone()
+            }
+            _ => typed,
+        };
+        let description = fields.description.read(cx).saved_draft().0.to_owned();
+        let fresh = plait_client::host_state::request_id();
+        let request = match self.issues.view.submit_form(&title, &description, fresh) {
+            Submit::Send(request) => request,
+            Submit::Closed(slot) => {
+                self.issues.form_fields.remove(&slot);
+                self.persist_forms(cx);
+                cx.notify();
+                return;
+            }
+            Submit::Nothing => {
+                cx.notify();
+                return;
+            }
+        };
+        cx.notify();
+        if cfg!(test) {
+            return;
+        }
+        let drafts = self.draft_flush(cx);
+        let journal = self.session.journal.clone();
+        let flush = cx.background_executor().spawn(async move {
+            let (Some(journal), Some((writer, revision, drafts))) = (journal, drafts) else {
+                return Err("The desktop's saved state is unavailable.".to_owned());
+            };
+            writer.write(&journal, revision, &drafts)
+        });
+        // The machine Save was pressed on: it alone may receive the request.
+        let target = (self.host.connection.epoch, self.tabs.host.clone());
+        cx.spawn(async move |this, cx| {
+            let flushed = flush.await;
+            let _ = this.update(cx, |this, cx| {
+                this.finish_flush(request, target, flushed, cx);
+            });
+        })
+        .detach();
+    }
+
+    /// After the draft is on disk: sends the request only to the machine and
+    /// connection it was saved on. Returns whether it was sent.
+    pub(super) fn finish_flush(
+        &mut self,
+        request: linear_issues::FormRequest,
+        target: (u64, plait_client::tabs::HostKey),
+        flushed: Result<(), String>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        cx.notify();
+        if self.host.connection.epoch != target.0 || self.tabs.host != target.1 {
+            self.issues.view.not_sent(
+                &request,
+                "The machine changed before this was sent. Nothing was sent; save again to send it here.",
+            );
+            return false;
+        }
+        if flushed.is_err() {
+            self.issues.view.draft_unsaved(&request);
+            return false;
+        }
+        if !cfg!(test) {
+            self.send_issue_form(request, cx);
+        }
+        true
+    }
+
+    fn send_issue_form(&mut self, request: linear_issues::FormRequest, cx: &mut Context<Self>) {
+        let call = request.clone();
+        self.linear_task(
+            move |client| {
+                let result = match call.kind {
+                    FormKind::New { team_id, .. } => linear::create_issue(
+                        client,
+                        team_id,
+                        call.title.unwrap_or_default(),
+                        call.description,
+                        None,
+                        call.request_id,
+                    ),
+                    FormKind::Edit {
+                        issue_id,
+                        expected_updated_at,
+                        ..
+                    } => linear::update_issue(
+                        client,
+                        issue_id,
+                        expected_updated_at,
+                        call.title,
+                        call.description,
+                        call.request_id,
+                    ),
+                };
+                result.map_err(|error| linear::write_failure(&error))
+            },
+            move |this, result, cx| {
+                match this.issues.view.form_reply(&request, result) {
+                    FormDone::Created(id) => {
+                        this.issues.form_fields.remove(&FormSlot::New);
+                        this.select_issue(&id, cx);
+                        this.load_issue_list(true, cx);
+                    }
+                    FormDone::Closed(slot) => {
+                        this.issues.form_fields.remove(&slot);
+                        this.load_issue_list(true, cx);
+                    }
+                    FormDone::Reload => {
+                        // Linear's version, beside a refused edit or after an accepted one.
+                        if let FormKind::Edit { issue_id, .. } = &request.kind
+                            && this.issues.view.selected.as_deref() == Some(issue_id)
+                            && let Some((id, generation)) = this.issues.view.reload_detail()
+                        {
+                            this.load_issue_detail(id, generation, cx);
+                        }
+                        // An accepted edit closed its form; a refused one is still open.
+                        if let FormKind::Edit { issue_id, .. } = &request.kind
+                            && !this.issues.view.edits.contains_key(issue_id)
+                        {
+                            this.load_issue_list(true, cx);
+                        }
+                    }
+                    FormDone::Nothing => {}
+                }
+                this.persist_forms(cx);
+                true
+            },
+            cx,
+        );
+    }
+
+    /// The form in front: a title, a description, and its outcome.
+    fn issue_form(&self, cx: &mut Context<Self>) -> Option<Div> {
+        let form = self.issues.view.form()?;
+        let fields = self.issues.form_fields.get(&form.slot())?;
+        let shown = self.issues.view.detail.as_ref().map(|d| &d.issue);
+        // A new issue names the team it was written for, which Save sends it to.
+        let elsewhere = match &form.kind {
+            FormKind::New { team_id, team_name } => self
+                .issues
+                .view
+                .team()
+                .is_none_or(|b| &b.team_id != team_id)
+                .then(|| team_name.clone().unwrap_or_else(|| "its team".into())),
+            FormKind::Edit { .. } => None,
+        };
+        let heading = match &form.kind {
+            FormKind::New { team_name, .. } => format!(
+                "New issue in {}",
+                team_name.clone().unwrap_or_else(|| "its team".into())
+            ),
+            FormKind::Edit { .. } => format!(
+                "Edit {}",
+                shown
+                    .map(|d| d.summary.identifier.clone())
+                    .unwrap_or_default()
+            ),
+        };
+        let saving = form.frozen();
+        let changed = form.status == FormStatus::Changed;
+        // While a save is in flight the text is shown, not edited.
+        let frozen_text = |id: &'static str, text: String| {
+            div()
+                .id(id)
+                .w_full()
+                .min_w_0()
+                .px_3()
+                .py_2()
+                .rounded(px(ITEM_CORNER))
+                .border_1()
+                .border_color(rgb(colors().border))
+                .text_size(px(14.))
+                .line_height(px(22.))
+                .text_color(rgb(colors().muted))
+                .children(
+                    text.lines()
+                        .map(|line| div().min_h(px(22.)).child(line.to_owned()))
+                        .collect::<Vec<_>>(),
+                )
+        };
+        let note = match &form.status {
+            FormStatus::Failed { note, .. } => Some(note.clone()),
+            FormStatus::Unknown => {
+                Some("Linear may have saved this. Check in Linear before saving again.".to_owned())
+            }
+            _ => None,
+        };
+        let label = |id: &'static str, text: &'static str| {
+            div()
+                .id(id)
+                .text_size(px(12.))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(rgb(colors().muted))
+                .child(text)
+        };
+        Some(
+            column()
+                .w_full()
+                .max_w(px(READING_WIDTH))
+                .gap_3()
+                .child(
+                    div()
+                        .text_size(px(20.))
+                        .line_height(px(28.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(rgb(colors().text))
+                        .child(heading),
+                )
+                .when_some(elsewhere, |el, team| {
+                    el.child(
+                        tag(
+                            "issue-form-team",
+                            format!(
+                                "This draft is for {team}, not this project's linked team. Save sends it to {team}; Discard drops it."
+                            ),
+                            colors().amber,
+                        )
+                        .line_height(px(18.)),
+                    )
+                })
+                .when(changed, |el| el.child(self.linear_version(form, cx)))
+                .child(label(
+                    "issue-form-title-label",
+                    if changed { "Your title" } else { "Title" },
+                ))
+                .child(
+                    // Enter in the title goes on to the description; Cmd-Enter saves.
+                    div()
+                        .w_full()
+                        .on_key_down(cx.listener({
+                            let description = fields.description.clone();
+                            move |this, event: &KeyDownEvent, window, cx| {
+                                if event.keystroke.key != "enter" {
+                                    return;
+                                }
+                                cx.stop_propagation();
+                                if event.keystroke.modifiers.platform {
+                                    this.save_issue_form(cx);
+                                } else {
+                                    window.focus(&description.focus_handle(cx), cx);
+                                }
+                            }
+                        }))
+                        .child(if saving {
+                            frozen_text(
+                                "issue-form-title-saving",
+                                fields.title.read(cx).text().to_owned(),
+                            )
+                            .into_any_element()
+                        } else {
+                            fields.title.clone().into_any_element()
+                        }),
+                )
+                .child(label(
+                    "issue-form-description-label",
+                    if changed {
+                        "Your description"
+                    } else {
+                        "Description"
+                    },
+                ))
+                .child(if saving {
+                    frozen_text(
+                        "issue-form-description-saving",
+                        fields.description.read(cx).saved_draft().0.to_owned(),
+                    )
+                    .min_h(px(180.))
+                    .into_any_element()
+                } else {
+                    div()
+                        .w_full()
+                        .min_h(px(180.))
+                        .px_3()
+                        .py_2()
+                        .rounded(px(ITEM_CORNER))
+                        .border_1()
+                        .border_color(rgb(colors().border))
+                        .bg(rgb(colors().panel))
+                        .child(fields.description.clone())
+                        .into_any_element()
+                })
+                .child(tag(
+                    "issue-form-hint",
+                    "Markdown works. Cmd-Enter saves; nothing is sent until you save.",
+                    colors().subtle,
+                ))
+                .when_some(note, |el, note| {
+                    el.child(tag("issue-form-note", note, colors().amber).line_height(px(18.)))
+                })
+                .when(!changed, |el| {
+                    el.child(
+                        row()
+                            .gap_2()
+                            .child(div().flex_1())
+                            .child(
+                                button("issue-form-cancel", "Discard")
+                                    .disabled(saving)
+                                    .on_activate(cx, |this, _, cx| this.cancel_issue_form(cx)),
+                            )
+                            .child(
+                                toned_button(
+                                    "issue-form-save",
+                                    if saving { "Saving…" } else { "Save" },
+                                    Tone::Primary,
+                                )
+                                .disabled(saving || form.status == FormStatus::Unknown)
+                                .on_activate(cx, |this, _, cx| this.save_issue_form(cx)),
+                            ),
+                    )
+                }),
+        )
+    }
+
+    /// Linear's version of an issue whose edit was refused, above the person's,
+    /// with the two ways forward.
+    fn linear_version(&self, form: &IssueForm, cx: &mut Context<Self>) -> Div {
+        let FormKind::Edit {
+            issue_id,
+            expected_updated_at,
+            ..
+        } = &form.kind
+        else {
+            return div();
+        };
+        // Linear's version is the re-read issue, once it is newer than the edit's start.
+        let theirs = self
+            .issues
+            .view
+            .detail
+            .as_ref()
+            .map(|d| &d.issue)
+            .filter(|d| &d.summary.id == issue_id && &d.summary.updated_at != expected_updated_at);
+        column()
+            .gap_2()
+            .p_3()
+            .rounded(px(ITEM_CORNER))
+            .border_1()
+            .border_color(rgb(colors().amber))
+            .child(
+                tag(
+                    "issue-conflict-note",
+                    "Someone changed this issue in Linear after you started editing. Nothing was saved.",
+                    colors().amber,
+                )
+                .line_height(px(18.)),
+            )
+            .child(match theirs {
+                Some(theirs) => column()
+                    .gap_1()
+                    .child(tag("issue-conflict-label", "Linear's version", colors().muted))
+                    .child(
+                        div()
+                            .text_size(px(15.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(rgb(colors().text))
+                            .child(theirs.summary.title.clone()),
+                    )
+                    .child(plain_text(
+                        "issue-conflict-description",
+                        theirs.description.as_deref().unwrap_or("No description."),
+                    )),
+                None => column().child(tag(
+                    "issue-conflict-loading",
+                    "Reading Linear's version…",
+                    colors().muted,
+                )),
+            })
+            .child(
+                row()
+                    .gap_2()
+                    .child(div().flex_1())
+                    .child(
+                        button("issue-conflict-discard", "Discard mine")
+                            .on_activate(cx, |this, _, cx| this.cancel_issue_form(cx)),
+                    )
+                    .child(
+                        toned_button("issue-conflict-keep", "Keep editing mine", Tone::Filled)
+                            .disabled(theirs.is_none())
+                            .on_activate(cx, |this, _, cx| this.keep_my_edit(cx)),
+                    ),
+            )
+    }
     fn close_issue(&mut self, cx: &mut Context<Self>) {
         self.issues.view.clear_selection();
         self.save_issues_bookmark(cx);
@@ -609,9 +1614,12 @@ impl Plait {
             .map(|(index, issue)| self.issue_row(index, issue, cx))
             .collect::<Vec<_>>();
         let empty = view.issues.is_empty() && view.list == Load::Idle && view.cache.is_some();
+        // min_w_0 lets the column shrink to its pane, so long titles truncate
+        // instead of widening the list under the detail pane.
         column()
             .gap_2()
             .min_h_0()
+            .min_w_0()
             .flex_1()
             .children(self.issues.search.clone())
             .child(filters)
@@ -620,6 +1628,7 @@ impl Plait {
                     .id("issue-list")
                     .flex_1()
                     .min_h_0()
+                    .min_w_0()
                     .overflow_y_scroll()
                     .gap_px()
                     .children(rows)
@@ -679,8 +1688,11 @@ impl Plait {
                     .child(issue.title.clone()),
             )
             .child(self.issue_facts(issue, cx))
+            .when_some(self.edit_note(&issue.id), |el, note| {
+                el.child(tag("issue-edit-note", note, colors().amber).line_height(px(18.)))
+            })
             .children(self.state_change_note(cx))
-            .child(issue_description(detail, text))
+            .child(issue_description(detail, text, &|url| self.picture(url)))
             .when(!detail.attachments.is_empty(), |el| {
                 el.child(
                     tag(
@@ -700,7 +1712,7 @@ impl Plait {
                 )
             })
             .when(!detail.comments.is_empty(), |el| {
-                el.child(issue_comments(detail, text))
+                el.child(issue_comments(detail, text, &|url| self.picture(url)))
             })
     }
 
@@ -722,6 +1734,24 @@ impl Plait {
                 colors().subtle,
             ))
             .child(div().flex_1())
+            .when(
+                self.issues.view.issue_writes
+                    && self.issues.view.not_editable.as_deref() != Some(issue.id.as_str()),
+                |el| {
+                    el.child(
+                        button(
+                            "issue-edit",
+                            if self.issues.reading_text.is_some() {
+                                "Reading…"
+                            } else {
+                                "Edit"
+                            },
+                        )
+                        .disabled(self.issues.reading_text.is_some() || !self.forms_ready())
+                        .on_activate(cx, |this, window, cx| this.edit_issue(window, cx)),
+                    )
+                },
+            )
             .child(
                 button("issue-open-linear", "Open in Linear")
                     .on_activate(cx, move |_, _, cx| cx.open_url(&url)),
@@ -833,8 +1863,12 @@ impl Plait {
 
     fn issue_detail_pane(&self, wide: bool, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let view = &self.issues.view;
-        view.selected.as_ref()?;
+        let form = self.issue_form(cx);
+        if form.is_none() {
+            view.selected.as_ref()?;
+        }
         let body = match (&view.detail, view.detail_load) {
+            _ if form.is_some() => form.unwrap_or_else(column),
             (Some(reply), _) => self
                 .issue_detail(&reply.issue, wide, cx)
                 .when_some(linear_issues::freshness(&reply.cache), |el, note| {
@@ -891,7 +1925,29 @@ impl Plait {
             .when_some(team, |el, team| {
                 el.child(tag("issues-team", team, colors().muted))
             })
+            .when(self.issues.drafts_full, |el| {
+                el.child(
+                    tag(
+                        "issues-drafts-full",
+                        "64 unsaved issue drafts are kept. Save or discard one to start another.",
+                        colors().amber,
+                    )
+                    .line_height(px(18.)),
+                )
+            })
             .child(div().flex_1())
+            .when(
+                self.issues.view.issue_writes
+                    && self.issues.view.team().is_some()
+                    && !self.issues.view.composing_new,
+                |el| {
+                    el.child(
+                        button("issues-new", "New issue")
+                            .disabled(!self.forms_ready())
+                            .on_activate(cx, |this, window, cx| this.open_new_issue(window, cx)),
+                    )
+                },
+            )
             .child(
                 button("issues-refresh", "Refresh")
                     .disabled(self.issues_blocked().is_some())
@@ -915,6 +1971,7 @@ impl Plait {
                             .flex_shrink_0()
                             .flex()
                             .min_h_0()
+                            .overflow_hidden()
                             .child(self.issue_list(cx)),
                     )
                     .children(detail),
@@ -941,10 +1998,14 @@ impl Plait {
 }
 
 /// The description as Markdown once parsed; as text until then.
-fn issue_description(detail: &IssueDetail, text: Option<&Arc<IssueText>>) -> AnyElement {
+fn issue_description(
+    detail: &IssueDetail,
+    text: Option<&Arc<IssueText>>,
+    picture: &dyn Fn(&str) -> Picture,
+) -> AnyElement {
     match (text, detail.description.as_deref()) {
         (Some(text), _) if !text.description.is_empty() => {
-            issue_text::blocks(&text.description, "issue-description").into_any_element()
+            issue_text::blocks(&text.description, "issue-description", picture).into_any_element()
         }
         (None, Some(source)) if !source.trim().is_empty() => {
             plain_text("issue-description", source).into_any_element()
@@ -953,7 +2014,11 @@ fn issue_description(detail: &IssueDetail, text: Option<&Arc<IssueText>>) -> Any
     }
 }
 
-fn issue_comments(detail: &IssueDetail, text: Option<&Arc<IssueText>>) -> Div {
+fn issue_comments(
+    detail: &IssueDetail,
+    text: Option<&Arc<IssueText>>,
+    picture: &dyn Fn(&str) -> Picture,
+) -> Div {
     column()
         .gap_3()
         .pt_4()
@@ -969,7 +2034,7 @@ fn issue_comments(detail: &IssueDetail, text: Option<&Arc<IssueText>>) -> Div {
         .children(detail.comments.iter().enumerate().map(|(index, comment)| {
             let key = format!("issue-comment-{index}");
             let body = match text.and_then(|text| text.comments.get(index)) {
-                Some(blocks) => issue_text::blocks(blocks, &key).into_any_element(),
+                Some(blocks) => issue_text::blocks(blocks, &key, picture).into_any_element(),
                 None => plain_text(("issue-comment", index), &comment.body).into_any_element(),
             };
             column()
