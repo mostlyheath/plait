@@ -652,12 +652,13 @@ fn recovered(p: &Plait) -> Vec<String> {
     ids
 }
 
-/// The same path on two machines is two projects. A draft returns only to its
-/// verified machine, never during a switch, and a provisional remote draft is
-/// never taken for a local one (#132).
+/// The same path on two machines is two projects. Across a real switch, a
+/// draft open on one machine is saved there with its text, put away, and never
+/// edited, sent or recovered on the other. Text typed before the new machine is
+/// verified is saved for it provisionally, never dropped and never local (#132).
 #[core::prelude::v1::test]
-fn drafts_return_only_to_their_verified_machine() {
-    if !isolated("machines::drafts_return_only_to_their_verified_machine") {
+fn drafts_stay_with_their_machine_across_a_switch() {
+    if !isolated("machines::drafts_stay_with_their_machine_across_a_switch") {
         return;
     }
     let scratch = std::env::temp_dir().join(format!("plait-same-drafts-{}", std::process::id()));
@@ -675,40 +676,86 @@ fn drafts_return_only_to_their_verified_machine() {
         );
         data.set_draft_tab("zaphod".into(), saved_draft(&other, Some("zaphod"), None));
         data.set_draft_tab("older".into(), saved_draft(&repo, None, None));
-        // Typed on the remote machine before its identity was read.
+        // Typed on the remote machine before its identity was read, last time.
         data.set_draft_tab("remote".into(), saved_draft(&repo, None, Some(&remote)));
         p.session.data = Some(data);
         // Verified on this computer: its own drafts and the older build's.
         assert_eq!(recovered(p), ["here", "older"]);
-        // Only folders that could be this machine's are sent to its host.
         assert!(!p.saved_draft_roots().contains(&other));
 
-        // Switching to the remote machine, before its identity arrives: nothing
-        // returns, nothing is sent, and a capture keeps every saved owner.
-        p.machines.active = remote.clone();
-        assert!(p.known_owner().is_none());
-        assert!(recovered(p).is_empty());
-        p.draft.id = Some("older".into());
-        p.draft.composer = Some(cx.new(|cx| Composer::new(window, cx)));
-        assert!(p.draft_blocked().is_some());
-        p.capture_session(cx);
-        let older = &p.session.data.as_ref().unwrap().draft_tabs["older"];
-        assert_eq!((older.host.as_ref(), older.machine.as_ref()), (None, None));
-        assert_eq!(p.saved_draft_roots(), std::slice::from_ref(&repo));
+        // This computer's draft is open with new text when the switch starts.
+        let typed = |text: &str, window: &mut Window, cx: &mut Context<Plait>| {
+            let composer = cx.new(|cx| Composer::new(window, cx));
+            let text = text.to_owned();
+            composer.update(cx, |c, cx| c.restore_draft(text, 1, None, cx));
+            composer
+        };
+        p.draft.id = Some("here".into());
+        p.draft.composer = Some(typed("Typed on this computer", window, cx));
+        let client = p.host_client();
+        p.use_machine_client(client, remote.clone(), false, window, cx);
+        // It was saved here, under this computer, and put away.
+        let here = &p.session.data.as_ref().unwrap().draft_tabs["here"];
+        assert_eq!(here.draft.text, "Typed on this computer");
+        assert_eq!(
+            here.host.as_ref().map(|h| h.id.as_str()),
+            Some("fixture-host")
+        );
+        assert!(p.draft.id.is_none() && p.draft.composer.is_none());
 
-        // Verified as the remote machine: only its provisional draft returns.
+        // Before the remote identity arrives: only the remote's provisional
+        // draft returns, nothing is sent, and only its folders are probed.
+        assert!(p.known_owner().is_none());
+        assert_eq!(recovered(p), ["remote"]);
+        assert!(!p.saved_draft_roots().contains(&other));
+        p.draft.id = Some("remote".into());
+        p.draft.composer = Some(typed("More for the remote", window, cx));
+        assert!(p.draft_blocked().is_some());
+        // The link is up, but the host is not verified yet.
+        p.host.connection.connecting = false;
+        p.host.connection.connected = true;
+        p.start_draft_creation(window, cx);
+        assert!(p.draft.error.is_some());
+        // Text typed now is saved for the remote machine, provisionally.
+        p.capture_session(cx);
+        let remote_draft = &p.session.data.as_ref().unwrap().draft_tabs["remote"];
+        assert_eq!(remote_draft.draft.text, "More for the remote");
+        assert_eq!(
+            (remote_draft.host.as_ref(), remote_draft.machine.as_ref()),
+            (None, Some(&remote))
+        );
+        // An older build's draft is not the remote's: it is not saved over.
+        p.draft.id = Some("older".into());
+        p.draft.composer = Some(typed("", window, cx));
+        p.capture_session(cx);
+        assert_eq!(
+            p.session.data.as_ref().unwrap().draft_tabs["older"]
+                .draft
+                .text,
+            "unsent"
+        );
+
+        // Verified as the remote's host: its drafts take that host.
         p.draft = Default::default();
         p.verify_identity_for_test(host_key("workstation-host"));
         assert_eq!(recovered(p), ["remote"]);
+        p.draft.id = Some("remote".into());
+        p.draft.composer = Some(typed("More for the remote", window, cx));
+        p.capture_session(cx);
+        let remote_draft = &p.session.data.as_ref().unwrap().draft_tabs["remote"];
+        assert_eq!(
+            remote_draft.host.as_ref().map(|h| h.id.as_str()),
+            Some("workstation-host")
+        );
 
-        // Back on this computer, before verification: still nothing.
-        p.machines.active = local.clone();
-        assert!(recovered(p).is_empty());
-        p.verify_identity_for_test(host_key("fixture-host"));
-
-        // Another machine's open draft is neither saved over nor sent here.
+        // Back on this computer: another machine's draft is neither saved
+        // over nor sent here.
+        let client = p.host_client();
+        p.use_machine_client(client, local, true, window, cx);
+        p.verify_identity_for_test(fixture_host());
+        assert_eq!(recovered(p), ["here", "older"]);
         p.draft.id = Some("zaphod".into());
-        p.draft.composer = Some(cx.new(|cx| Composer::new(window, cx)));
+        p.draft.composer = Some(typed("", window, cx));
         assert!(p.draft_elsewhere());
         assert!(p.draft_blocked().is_some());
         p.capture_session(cx);
@@ -722,75 +769,126 @@ fn drafts_return_only_to_their_verified_machine() {
     std::fs::remove_dir_all(scratch).unwrap();
 }
 
-/// Saved thread work is read, shown, reconciled and saved only for its
-/// verified owner: never for a thread with the same ID on another machine, and
-/// never while the owner is unverified (#132).
+fn waiting(id: &str) -> plait_client::host_state::PendingSubmit {
+    plait_client::host_state::PendingSubmit {
+        checkout_wait: true,
+        images: Vec::new(),
+        request_id: id.into(),
+        text: "Wait for the checkout".into(),
+        approval: None,
+        when_busy: None,
+        draft_revision: None,
+    }
+}
+
+fn saved_thread_record(
+    checkout: &Path,
+    host: Option<&str>,
+    request: &str,
+) -> plait_client::session::Thread {
+    plait_client::session::Thread {
+        checkout: checkout.to_owned(),
+        model: choice(),
+        title: "Saved".into(),
+        draft: plait_client::session::Draft {
+            text: "Saved text".into(),
+            ..Default::default()
+        },
+        pending: None,
+        pending_submissions: Vec::new(),
+        queued_submissions: vec![waiting(request)],
+        approval: None,
+        host: host.map(host_key),
+        machine: None,
+    }
+}
+
+/// Saved thread work is brought back, reconciled and saved only for a listed
+/// thread at the same path whose work is usable: never another machine's, or
+/// another path's, with the same ID (#132).
 #[core::prelude::v1::test]
-fn thread_work_is_kept_for_its_verified_owner() {
-    if !isolated("machines::thread_work_is_kept_for_its_verified_owner") {
+fn thread_work_is_kept_for_its_own_thread() {
+    if !isolated("machines::thread_work_is_kept_for_its_own_thread") {
         return;
     }
-    use plait_client::host_state::PendingSubmit;
     let scratch = std::env::temp_dir().join(format!("plait-same-thread-{}", std::process::id()));
     let repo = fixture_repository(&scratch);
     let mut h = Harness::new(&repo, None, 900., 600.);
     h.connect(&repo, false);
     h.update(|p, _, cx| {
-        let wait = |id: &str| PendingSubmit {
-            checkout_wait: true,
-            images: Vec::new(),
-            request_id: id.into(),
-            text: "Wait for the checkout".into(),
-            approval: None,
-            when_busy: None,
-            draft_revision: None,
-        };
-        let record = |host: &str, request: &str| plait_client::session::Thread {
-            checkout: repo.clone(),
-            model: choice(),
-            title: "Saved".into(),
-            draft: plait_client::session::Draft {
-                text: format!("{host}'s text"),
-                ..Default::default()
-            },
-            pending: None,
-            pending_submissions: Vec::new(),
-            queued_submissions: vec![wait(request)],
-            approval: None,
-            host: Some(host_key(host)),
-            machine: None,
-        };
         let mut data = plait_client::session::Session::empty("/host".into());
         // The same thread ID and path, saved by another machine's host.
-        data.threads
-            .insert(THREAD.into(), record("zaphod", "zaphod-wait"));
-        data.threads
-            .insert("thr_0c44a9d1".into(), record("fixture-host", "own-wait"));
+        data.threads.insert(
+            THREAD.into(),
+            saved_thread_record(&repo, Some("zaphod"), "zaphod-wait"),
+        );
+        // The same ID at another path, saved by an older build.
+        data.threads.insert(
+            "thr_0c44a9d1".into(),
+            saved_thread_record(&scratch.join("elsewhere"), None, "older-wait"),
+        );
         p.session.data = Some(data);
         p.forget_saved_work();
         p.adopt_saved_work(cx);
-        // This owner's waiting message returns; the other machine's does not.
-        assert_eq!(p.host.submissions.accepted("thr_0c44a9d1").len(), 1);
         assert!(p.host.submissions.accepted(THREAD).is_empty());
-        let summary = p.host.connection.threads()[0].clone();
-        assert_eq!(summary.id, THREAD);
-        assert!(p.saved_thread(&summary).is_none());
+        assert!(p.host.submissions.accepted("thr_0c44a9d1").is_empty());
         assert!(!p.session_accepts_thread(THREAD));
-        // A capture and an acknowledgement here leave the other machine's
-        // record, its text and its waiting message, unchanged.
-        let before = p.session.data.as_ref().unwrap().threads[THREAD].clone();
+        assert!(!p.session_accepts_thread("thr_0c44a9d1"));
+        // A capture and an acknowledgement here change neither record: their
+        // text and waiting messages stay as saved.
+        let before = p.session.data.as_ref().unwrap().threads.clone();
         p.capture_session(cx);
-        p.acknowledge_saved_draft(THREAD, "zaphod's text", None, cx);
-        assert_eq!(p.session.data.as_ref().unwrap().threads[THREAD], before);
+        p.acknowledge_saved_draft(THREAD, "Saved text", None, cx);
+        assert_eq!(p.session.data.as_ref().unwrap().threads, before);
+        p.session.data = None;
+        p.forget_saved_work();
+    });
+    drop(h);
+    std::fs::remove_dir_all(scratch).unwrap();
+}
 
-        // During a switch, even this owner's work is neither read nor written.
-        let own = p.host.connection.threads()[1].clone();
-        assert!(p.saved_thread(&own).is_some());
-        p.machines.active = plait_client::machines::MachineId::new("workstation").unwrap();
-        assert!(p.saved_thread(&own).is_none());
-        let before = p.session.data.clone();
+/// A listed thread with no saved work accepts typing before any host is
+/// verified, and that text is saved provisionally for the selected machine:
+/// after a quit and relaunch, still before verification, it is back (#132).
+#[core::prelude::v1::test]
+fn thread_text_typed_before_verification_survives_a_restart() {
+    if !isolated("machines::thread_text_typed_before_verification_survives_a_restart") {
+        return;
+    }
+    let scratch = std::env::temp_dir().join(format!("plait-unverified-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    let mut h = Harness::new(&repo, None, 900., 600.);
+    h.connect(&repo, false);
+    h.update(|p, window, cx| {
+        let remote = plait_client::machines::MachineId::new("workstation").unwrap();
+        p.session.data = Some(plait_client::session::Session::empty("/host".into()));
+        // A machine whose host has not been verified (an older host, or a
+        // connection still being checked).
+        p.machines.active = remote.clone();
+        assert!(p.known_owner().is_none());
+        assert!(p.session_accepts_thread(THREAD));
+        p.workspace.composers[THREAD].update(cx, |c, cx| {
+            c.restore_draft("Typed before verification".into(), 3, None, cx)
+        });
         p.capture_session(cx);
-        assert_eq!(p.session.data, before);
+        let saved = &p.session.data.as_ref().unwrap().threads[THREAD];
+        assert_eq!(saved.draft.text, "Typed before verification");
+        assert_eq!(
+            (saved.host.as_ref(), saved.machine.as_ref()),
+            (None, Some(&remote))
+        );
+        // Quit and relaunch, still unverified: the text comes back.
+        p.forget_saved_work();
+        let composer = cx.new(|cx| Composer::new(window, cx));
+        p.workspace
+            .composers
+            .insert(THREAD.into(), composer.clone());
+        p.restore_composer(THREAD, &composer, cx);
+        assert_eq!(
+            composer.read(cx).saved_draft().0,
+            "Typed before verification"
+        );
+        assert!(p.session_accepts_thread(THREAD));
         p.session.data = None;
     });
     drop(h);

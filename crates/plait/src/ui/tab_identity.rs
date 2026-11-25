@@ -318,7 +318,10 @@ impl Plait {
             .map(|t| t.checkout.clone())
             .collect();
         roots.extend(self.lists().opened.iter().cloned());
-        roots.push(self.host.creation.checkout.clone());
+        // A folder carried over from the previous machine is not this host's.
+        if !self.host_workspace.checkout_carried {
+            roots.push(self.host.creation.checkout.clone());
+        }
         roots.extend(
             self.tabs
                 .model

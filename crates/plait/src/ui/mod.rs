@@ -278,9 +278,12 @@ impl Plait {
         // A new link to the same machine keeps what is on screen; another
         // machine starts empty, so nothing of the previous one shows as its.
         if self.machines.active != machine {
-            // Save this machine's work under its own owner before the selection
-            // changes; then nothing of it is shown or saved for the next one.
+            // Save this machine's work and tab document under its own owner,
+            // and put its workspace away, before the selection changes; then
+            // nothing of it is shown, edited or saved for the next one.
             self.capture_session(cx);
+            self.flush_machine_tabs(window, cx);
+            self.park_workspace(cx);
             self.forget_saved_work();
             self.machines.active = machine;
             self.host.connection.threads_mut().clear();

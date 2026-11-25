@@ -245,9 +245,9 @@ impl Plait {
         .detach();
     }
 
-    /// Another machine's tabs are its own: save these where they belong, then
-    /// start empty until the new machine's tabs are read from its host.
-    pub(super) fn switch_machine_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Save this machine's tab document where it belongs. Runs while this
+    /// machine is still selected, so its own drafts are in the document.
+    pub(super) fn flush_machine_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(request) = self.flush_tab_preferences(Some(window), cx) {
             cx.background_executor()
                 .spawn(async move {
@@ -255,6 +255,11 @@ impl Plait {
                 })
                 .detach();
         }
+    }
+
+    /// Another machine's tabs are its own: start empty until the new machine's
+    /// tabs are read from its host. `flush_machine_tabs` saved these first.
+    pub(super) fn switch_machine_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.tabs.model = tabs::WindowTabs::new(super::tabs::fresh_window_id());
         let state = &mut self.tabs.persistence;
         state.host_generation += 1;

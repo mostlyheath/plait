@@ -250,6 +250,15 @@ impl Plait {
         if !self.host.connection.connected || !self.session.ready() {
             return;
         }
+        // Retry, Wait and Own worktree reach here without Send's checks: a
+        // first send goes only to the draft's own, verified machine.
+        if self.known_owner().is_none() || self.draft_elsewhere() {
+            self.draft.error = Some(
+                "This draft can be sent only on its own machine, once that machine is verified."
+                    .into(),
+            );
+            return cx.notify();
+        }
         let Some(pending) = self.draft.pending.as_mut() else {
             return;
         };

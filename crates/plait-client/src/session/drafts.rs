@@ -1,5 +1,5 @@
 //! Additive schema-1 draft identities. Legacy fields remain complete snapshots.
-use super::Owner;
+use super::Access;
 use super::{Draft, Session, identifier};
 use crate::host::{ApprovalMode, ModelChoice, ThinkingLevel, harness::HarnessId};
 use crate::machines::MachineId;
@@ -110,12 +110,10 @@ impl DraftTab {
     /// to its own machine. A draft from before drafts named their machine
     /// returns only on this computer: every draft lived there until remote
     /// machines, and showing it nowhere would lose it.
-    pub fn owned_by(&self, owner: Owner<'_>) -> bool {
-        owner.owns(
-            self.host.as_ref(),
-            self.machine.as_ref(),
-            *owner.machine == MachineId::default(),
-        )
+    pub fn usable(&self, access: Access<'_>) -> bool {
+        let legacy =
+            matches!(access, Access::Verified(owner) if *owner.machine == MachineId::default());
+        access.allows(self.host.as_ref(), self.machine.as_ref(), legacy)
     }
 
     /// Whether this draft could be this machine's before its host is verified:
@@ -775,19 +773,24 @@ mod tests {
         };
         let (zaphod, arthur) = (host("zaphod"), host("arthur"));
         let (local, remote) = (MachineId::default(), MachineId::new("workstation").unwrap());
-        let owner = |host, machine| Owner { host, machine };
+        let owner = |host, machine| Access::Verified(crate::session::Owner { host, machine });
         let mut named = tab("for zaphod");
         named.host = Some(zaphod.clone());
-        assert!(named.owned_by(owner(&zaphod, &remote)));
-        assert!(!named.owned_by(owner(&arthur, &local)));
+        assert!(named.usable(owner(&zaphod, &remote)));
+        assert!(!named.usable(owner(&arthur, &local)));
+        assert!(!named.usable(Access::Provisional(&local)));
         let legacy = tab("older build");
-        assert!(legacy.owned_by(owner(&zaphod, &local)));
-        assert!(!legacy.owned_by(owner(&arthur, &remote)));
-        // Typed on the remote machine before its host was verified: never local.
+        assert!(legacy.usable(owner(&zaphod, &local)));
+        assert!(!legacy.usable(owner(&arthur, &remote)));
+        assert!(!legacy.usable(Access::Provisional(&local)));
+        // Typed on the remote machine before its host was verified: never
+        // local, and usable there again before verification.
         let mut provisional = tab("remote, unverified");
         provisional.machine = Some(remote.clone());
-        assert!(!provisional.owned_by(owner(&zaphod, &local)));
-        assert!(provisional.owned_by(owner(&arthur, &remote)));
+        assert!(!provisional.usable(owner(&zaphod, &local)));
+        assert!(!provisional.usable(Access::Provisional(&local)));
+        assert!(provisional.usable(Access::Provisional(&remote)));
+        assert!(provisional.usable(owner(&arthur, &remote)));
         // Which saved folders a machine's host is asked to identify.
         assert!(provisional.maybe_on(&remote) && !provisional.maybe_on(&local));
         assert!(legacy.maybe_on(&local) && !legacy.maybe_on(&remote));

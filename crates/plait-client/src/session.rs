@@ -76,8 +76,7 @@ pub struct Thread {
 }
 
 /// Who saved work is for: a host identity verified on the current connection,
-/// and the machine that connection was chosen as. There is no unverified owner;
-/// until one exists, saved work is neither read nor written.
+/// and the machine that connection was chosen as.
 #[derive(Clone, Copy, Debug)]
 pub struct Owner<'a> {
     pub host: &'a crate::tabs::HostKey,
@@ -101,11 +100,51 @@ impl Owner<'_> {
     }
 }
 
+/// What saved work the window may use now. `Verified` reads and writes its
+/// owner's work. Before a host identity is verified (at launch, on reconnect,
+/// during a switch) only `Provisional` work is usable: work saved for the
+/// selected machine that no verified host has claimed yet. Text typed then is
+/// saved that way, never dropped, and never taken for another machine's.
+#[derive(Clone, Copy, Debug)]
+pub enum Access<'a> {
+    Verified(Owner<'a>),
+    Provisional(&'a crate::machines::MachineId),
+}
+
+impl Access<'_> {
+    /// `legacy` says whether work from before either field existed may be used;
+    /// it never is provisionally.
+    pub fn allows(
+        &self,
+        host: Option<&crate::tabs::HostKey>,
+        machine: Option<&crate::machines::MachineId>,
+        legacy: bool,
+    ) -> bool {
+        match self {
+            Self::Verified(owner) => owner.owns(host, machine, legacy),
+            Self::Provisional(selected) => host.is_none() && machine == Some(*selected),
+        }
+    }
+
+    /// The owner fields that work saved now carries.
+    pub fn stamp(
+        &self,
+    ) -> (
+        Option<crate::tabs::HostKey>,
+        Option<crate::machines::MachineId>,
+    ) {
+        match self {
+            Self::Verified(owner) => (Some(owner.host.clone()), Some(owner.machine.clone())),
+            Self::Provisional(selected) => (None, Some((*selected).clone())),
+        }
+    }
+}
+
 impl Thread {
     /// Thread IDs are random, so a thread saved before threads named their
     /// machine is taken by the first verified host that lists it at its path.
-    pub fn owned_by(&self, owner: Owner<'_>) -> bool {
-        owner.owns(self.host.as_ref(), self.machine.as_ref(), true)
+    pub fn usable(&self, access: Access<'_>) -> bool {
+        access.allows(self.host.as_ref(), self.machine.as_ref(), true)
     }
 }
 
@@ -127,40 +166,39 @@ pub struct Session {
 }
 
 impl Session {
-    /// Saved work for a listed thread. `None` while the connection's owner is
-    /// unverified: another machine's work must not be shown or edited then.
+    /// Saved work the window may use for a listed thread: at the same path,
+    /// and usable with `access`.
     pub fn saved_thread(
         &self,
         summary: &crate::host::ThreadSummary,
-        owner: Option<Owner<'_>>,
+        access: Access<'_>,
     ) -> Option<&Thread> {
-        let owner = owner?;
         self.threads
             .get(&summary.id)
-            .filter(|saved| saved.checkout == summary.checkout && saved.owned_by(owner))
+            .filter(|saved| saved.checkout == summary.checkout && saved.usable(access))
     }
 
-    /// Whether `summary` can use the journal: it has no saved work, or the
-    /// verified owner's work is at its path.
-    pub fn accepts(&self, summary: &crate::host::ThreadSummary, owner: Option<Owner<'_>>) -> bool {
-        !self.threads.contains_key(&summary.id) || self.saved_thread(summary, owner).is_some()
+    /// Whether `summary`'s work can be edited and saved now: it has no saved
+    /// work yet, or its saved work is usable. Otherwise its composer stays
+    /// closed, so nothing typed there can be lost.
+    pub fn accepts(&self, summary: &crate::host::ThreadSummary, access: Access<'_>) -> bool {
+        !self.threads.contains_key(&summary.id) || self.saved_thread(summary, access).is_some()
     }
 
-    /// Save `thread` for `owner`, which it is stamped with. Another owner's
-    /// work, or work at another path, is refused and left unchanged.
+    /// Save `thread` with `access`'s owner fields. Work that is not usable, or
+    /// at another path, is refused and left unchanged.
     pub fn update_thread(
         &mut self,
         id: String,
         mut thread: Thread,
-        owner: Owner<'_>,
+        access: Access<'_>,
     ) -> Result<(), String> {
         if let Some(saved) = self.threads.get(&id)
-            && (saved.checkout != thread.checkout || !saved.owned_by(owner))
+            && (saved.checkout != thread.checkout || !saved.usable(access))
         {
             return Err("Thread identity conflicts with saved work. Its draft and submission were not changed. Start a new thread or check the host store.".into());
         }
-        thread.host = Some(owner.host.clone());
-        thread.machine = Some(owner.machine.clone());
+        (thread.host, thread.machine) = access.stamp();
         self.threads.insert(id, thread);
         Ok(())
     }
@@ -711,8 +749,8 @@ mod tests {
     fn owner<'a>(
         host: &'a crate::tabs::HostKey,
         machine: &'a crate::machines::MachineId,
-    ) -> Owner<'a> {
-        Owner { host, machine }
+    ) -> Access<'a> {
+        Access::Verified(Owner { host, machine })
     }
 
     #[test]
@@ -733,8 +771,8 @@ mod tests {
             model: changed.model.clone(),
             ..Default::default()
         };
-        assert!(!saved.accepts(&summary, Some(me)));
-        assert!(saved.saved_thread(&summary, Some(me)).is_none());
+        assert!(!saved.accepts(&summary, me));
+        assert!(saved.saved_thread(&summary, me).is_none());
         assert!(saved.update_thread("thread".into(), changed, me).is_err());
         assert_eq!(saved.threads["thread"], original);
         let mut edited = original;
@@ -766,25 +804,27 @@ mod tests {
         };
         assert!(
             saved
-                .saved_thread(&summary, Some(owner(&zaphod, &here)))
+                .saved_thread(&summary, owner(&zaphod, &here))
                 .is_some()
         );
         // The verified host decides, whichever machine entry reached it.
         assert!(
             saved
-                .saved_thread(&summary, Some(owner(&zaphod, &remote)))
+                .saved_thread(&summary, owner(&zaphod, &remote))
                 .is_some()
         );
         assert!(
             saved
-                .saved_thread(&summary, Some(owner(&arthur, &here)))
+                .saved_thread(&summary, owner(&arthur, &here))
                 .is_none()
         );
-        assert!(!saved.accepts(&summary, Some(owner(&arthur, &here))));
-        // Before any owner is verified, nothing is shown, and the journal does
-        // not accept the thread.
-        assert!(saved.saved_thread(&summary, None).is_none());
-        assert!(!saved.accepts(&summary, None));
+        assert!(!saved.accepts(&summary, owner(&arthur, &here)));
+        // Before any owner is verified, a verified owner's work is not shown,
+        // and the journal does not accept the thread, so its composer stays
+        // closed and nothing typed there can be lost.
+        let unverified = Access::Provisional(&here);
+        assert!(saved.saved_thread(&summary, unverified).is_none());
+        assert!(!saved.accepts(&summary, unverified));
         // Another machine's capture cannot replace this machine's work.
         let mut other = original.clone();
         other.draft.text = "Arthur's draft".into();
@@ -796,30 +836,47 @@ mod tests {
         assert_eq!(saved.threads["thread"], original);
     }
 
-    /// Provisional ownership: work saved for a machine before its host was
-    /// verified is that machine's alone, and its host is recorded on the next
-    /// save there.
+    /// Work typed before any host is verified is saved provisionally for the
+    /// selected machine, never dropped (#132). It is that machine's alone, is
+    /// usable again before verification, and its host is recorded on the
+    /// first save after verification.
     #[test]
     fn provisional_thread_work_waits_for_its_machine() {
         let (host, here) = (machine("host"), local());
         let remote = crate::machines::MachineId::new("workstation").unwrap();
-        let mut provisional = thread();
-        provisional.machine = Some(remote.clone());
         let mut saved = Session::empty("/host".into());
-        saved.threads.insert("thread".into(), provisional);
         let summary = crate::host::ThreadSummary {
             id: "thread".into(),
             checkout: "/repo".into(),
             ..Default::default()
         };
-        assert!(
+        // A listed thread with no saved work accepts edits before verification.
+        assert!(saved.accepts(&summary, Access::Provisional(&remote)));
+        let mut typed = thread();
+        typed.draft.text = "Typed before verification".into();
+        saved
+            .update_thread("thread".into(), typed, Access::Provisional(&remote))
+            .unwrap();
+        let provisional = &saved.threads["thread"];
+        assert_eq!(provisional.host, None);
+        assert_eq!(provisional.machine, Some(remote.clone()));
+        // Reopened before verification on the same machine, it is still there;
+        // on another machine it is not.
+        assert_eq!(
             saved
-                .saved_thread(&summary, Some(owner(&host, &here)))
-                .is_none()
+                .saved_thread(&summary, Access::Provisional(&remote))
+                .map(|thread| thread.draft.text.as_str()),
+            Some("Typed before verification")
         );
         assert!(
             saved
-                .saved_thread(&summary, Some(owner(&host, &remote)))
+                .saved_thread(&summary, Access::Provisional(&here))
+                .is_none()
+        );
+        assert!(saved.saved_thread(&summary, owner(&host, &here)).is_none());
+        assert!(
+            saved
+                .saved_thread(&summary, owner(&host, &remote))
                 .is_some()
         );
         let mut edited = saved.threads["thread"].clone();
@@ -846,12 +903,12 @@ mod tests {
             ..Default::default()
         };
         let (host, here) = (machine("arthur"), local());
-        assert!(saved.saved_thread(&summary, None).is_none());
         assert!(
             saved
-                .saved_thread(&summary, Some(owner(&host, &here)))
-                .is_some()
+                .saved_thread(&summary, Access::Provisional(&here))
+                .is_none()
         );
+        assert!(saved.saved_thread(&summary, owner(&host, &here)).is_some());
         let mut named = thread();
         named.host = Some(machine("zaphod"));
         named.machine = Some(here);
@@ -1057,7 +1114,7 @@ mod tests {
             model: saved.model.clone(),
             ..Default::default()
         };
-        assert!(state.saved_thread(&summary, Some(me)).is_some());
+        assert!(state.saved_thread(&summary, me).is_some());
         state.update_thread("thread".into(), saved, me).unwrap();
         let mut old = serde_json::to_value(&state).unwrap();
         let pending = old["threads"]["thread"]["pending"].as_object_mut().unwrap();

@@ -54,14 +54,17 @@ The client negotiates host protocol versions **1 through 7** per request and deg
 
 **Settings → Machines** selects which machine's host this window works with: **This Mac**, or another Mac or Linux machine over **SSH** or **Tailscale**. Each window works with one machine at a time; showing projects from several machines in one sidebar is planned ([Host-first Plait](HOST-FIRST.md)). The open folder belongs to the machine it was chosen on: after a switch, the window opens one of the new machine's projects and never lists or saves the other machine's folder as its own.
 
-The same path on two machines is two projects. Saved work belongs to the machine whose host identity Plait verified when it was saved. Until the selected machine's host is verified, after launch, a reconnect or a switch, Plait shows, restores, saves over and sends none of it:
+The same path on two machines is two projects. Saved work belongs to the host identity Plait verified when it was saved. Work typed before that check (after launch, a reconnect or a switch) is saved for the machine selected then and is never treated as another machine's. Plait does not drop it. Before a switch, Plait saves the open draft and that machine's tabs, then puts its workspace away.
 
-- **Unsent drafts** return, reopen and send only on their own machine. A draft typed before its machine's host was verified belongs to the machine selected then, never to this Mac by default.
-- **Thread drafts and unsent or waiting messages** are kept per machine. A thread on another machine with the same ID and folder neither shows nor changes them.
+- **Unsent drafts** return and reopen only on their own machine. They are sent only once that machine's host is verified, including Retry, Wait and **Own worktree**.
+- **Thread drafts and unsent or waiting messages** are kept per machine and folder. A thread with the same ID on another machine or in another folder neither shows nor changes them. If a thread's saved work names a host, its message box stays closed until that host is verified, so nothing typed there can be lost.
 - **Folded projects** fold only on the machine where you folded them.
 - **A worktree removal** that finishes after a switch or reconnect updates the lists, and shows its result, only on the machine it ran on.
 
-Limits: a draft or thread saved by an earlier Plait version names no machine. Such a draft returns only on this Mac. Such a thread is kept by the first verified host that lists it with the same ID and folder; thread IDs are random, so another host matching both is unlikely. When you reopen a folder, the message from its last Git write is still matched by folder alone.
+Limits:
+- A draft or thread saved by an earlier Plait version names no machine. Such a draft returns only on this Mac once its host is verified. Such a thread is kept by the first verified host that lists it with the same ID and folder; thread IDs are random, so another host matching both is unlikely.
+- If a machine's host identity changes (for example, its host store is reinstalled), drafts saved for the old identity stay in the saved workspace but are not offered. Saved draft tabs also return only once a host is verified, so they do not return while the selected machine is offline. See [#168](https://github.com/mostlyheath/plait/issues/168).
+- When you reopen a folder, the message from its last Git write is still matched by folder alone.
 
 To add a remote machine, choose **Add machine…**:
 
