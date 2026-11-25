@@ -6,7 +6,30 @@ use std::{path::PathBuf, time::Instant};
 fn main() {
     let startup = Instant::now();
     let requested = std::env::args_os().nth(1).map(PathBuf::from);
-    let path = requested.clone().unwrap_or_else(|| PathBuf::from("."));
+    let args: Vec<_> = std::env::args_os().collect();
+    let scratch = args.iter().any(|a| *a == "--scratch" || *a == "-s");
+    let path = if scratch {
+        // Create an isolated temporary directory so the user can work without
+        // touching any of their real repositories.
+        let tmp_dir = std::env::temp_dir().join(format!("plait-scratch-{}", std::process::id()));
+        // Ensure the directory exists.
+        let _ = std::fs::create_dir_all(&tmp_dir);
+        // Initialise a fresh Git repository so that Plait’s Git features (status,
+        // diff, branches, etc.) work, but all changes stay within this isolated repo.
+        let _ = std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(&tmp_dir)
+            .output();
+        // Set the initial branch to "main" so the repo has a sensible default.
+        let _ = std::process::Command::new("git")
+            .args(["branch", "-M", "main"])
+            .current_dir(&tmp_dir)
+            .output();
+        tmp_dir
+    } else {
+        // Existing behaviour: use the first argument or fall back to the current directory.
+        requested.clone().unwrap_or_else(|| PathBuf::from("."))
+    };
     gpui_platform::application()
         .with_assets(ui::theme::Assets)
         .run(move |cx| {
