@@ -190,7 +190,9 @@ impl Plait {
                     .collect(),
                 folded: w.reading.open_groups.iter().cloned().collect(),
                 selection: w.reading.bookmark_selection(),
-                commit_message: w.commit_message.read(cx).text().to_owned(),
+                // Kept in the machine file, not the tab document, which two
+                // machine entries for one host share (#132).
+                commit_message: String::new(),
             },
             ..Default::default()
         };
@@ -269,9 +271,18 @@ impl Plait {
         self.workspace.tab = bookmark.view;
         self.workspace.thread_files.collapsed = bookmark.panels.changed_files_collapsed;
         self.workspace.thread_controls.usage_open = bookmark.panels.context_open;
-        self.workspace.commit_message.update(cx, |field, cx| {
-            field.set_text(&bookmark.details.commit_message, cx)
-        });
+        let owner = (
+            self.host.thread.selected.clone().unwrap_or_default(),
+            self.host.creation.checkout.clone(),
+        );
+        let text = self
+            .current_work()
+            .map(|work| work.commit_message(&owner.0, &owner.1).to_owned())
+            .unwrap_or_default();
+        self.workspace.commit_owner = Some(owner);
+        self.workspace
+            .commit_message
+            .update(cx, |field, cx| field.set_text(&text, cx));
         self.workspace.reading.restore_selection(
             self.host.thread.selected.as_deref().unwrap_or_default(),
             &bookmark.details,

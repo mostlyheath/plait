@@ -29,6 +29,11 @@ pub struct MachineWork {
     /// folder is another thread.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub threads: Vec<SavedThread>,
+    /// Unsent commit messages, keyed by thread ID and folder. Not in the tab
+    /// document: two machine entries can name one host, which keeps one tab
+    /// document for both.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub commit_messages: Vec<CommitMessage>,
     /// `desktop.json`'s older records already copied in (this computer only),
     /// as `draft:<id>` and `thread:<id>`: each is copied once, so a discarded
     /// copy does not come back, and one an older build adds later still does.
@@ -45,6 +50,14 @@ pub struct SavedThread {
     /// such as one reinstalled under this machine entry, never settle it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub accepted_by: BTreeMap<String, HostKey>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommitMessage {
+    /// Empty when the folder has no thread selected.
+    pub thread: String,
+    pub checkout: PathBuf,
+    pub text: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -110,6 +123,27 @@ impl MachineWork {
                     .entry(request.clone())
                     .or_insert_with(|| host.clone());
             }
+        }
+    }
+
+    /// The unsent commit message for `thread` at `checkout`.
+    pub fn commit_message(&self, thread: &str, checkout: &Path) -> &str {
+        self.commit_messages
+            .iter()
+            .find(|m| m.thread == thread && m.checkout == checkout)
+            .map_or("", |m| m.text.as_str())
+    }
+
+    /// Save, or with empty `text` remove, the commit message for `thread` at `checkout`.
+    pub fn set_commit_message(&mut self, thread: &str, checkout: &Path, text: &str) {
+        self.commit_messages
+            .retain(|m| !(m.thread == thread && m.checkout == checkout));
+        if !text.is_empty() {
+            self.commit_messages.push(CommitMessage {
+                thread: thread.to_owned(),
+                checkout: checkout.to_owned(),
+                text: text.to_owned(),
+            });
         }
     }
 

@@ -673,26 +673,62 @@ fn an_acknowledgement_after_a_switch_clears_nothing_there() {
     });
 }
 
-/// #174 round 2, finding 3: a parked editor is the machine's it was typed on,
-/// even when two machine entries name the same host and tab.
+/// #174 round 2, finding 3: two machine entries naming one host share a tab
+/// target. After a real switch and hydration, each composer keeps its own text,
+/// with equal revisions, so only the machine key can tell them apart.
 #[core::prelude::v1::test]
 fn a_parked_editor_returns_only_on_its_machine() {
     if !isolated("saved_work::a_parked_editor_returns_only_on_its_machine") {
         return;
     }
-    scene("editor", |p, _, _, cx| {
+    scene("editor", |p, repo, window, cx| {
         let target = p.tabs.model.tabs()[0].session().target().clone();
-        let editor = p.workspace.composers[THREAD].update(cx, |c, _| c.park_editor());
+        let composer = p.workspace.composers[THREAD].clone();
+        composer.update(cx, |c, cx| c.restore_draft("A's text".into(), 5, None, cx));
+        let parked = composer.update(cx, |c, _| c.park_editor());
         p.tabs.lifecycle.editors.push((
             local(),
             target.clone(),
-            crate::ui::tab_lifecycle::EditorRecord::Memory(Box::new(editor)),
+            crate::ui::tab_lifecycle::EditorRecord::Memory(Box::new(parked)),
         ));
-        assert!(p.parked_editor(&target).is_some());
-        p.machines.active = remote();
-        assert!(p.parked_editor(&target).is_none());
-        p.machines.active = local();
-        assert!(p.parked_editor(&target).is_some());
+        p.capture_session(cx);
+        // Machine B names the same host, so the tab target is the same.
+        switch(p, remote(), false, repo, window, cx);
+        p.verify_identity_for_test(fixture_host());
+        assert!(p.open_thread_tab(THREAD.into(), repo.to_owned(), cx));
+        p.host.thread.selected = Some(THREAD.into());
+        let b = mount(p, window, cx);
+        b.update(cx, |c, cx| c.restore_draft("B's text".into(), 5, None, cx));
+        p.hydrate_tab(window, cx);
+        assert_eq!(b.read(cx).saved_draft().0, "B's text");
+        // Back on A: A's parked editor returns to A's composer.
+        switch(p, local(), true, repo, window, cx);
+        p.verify_identity_for_test(fixture_host());
+        assert!(p.open_thread_tab(THREAD.into(), repo.to_owned(), cx));
+        p.host.thread.selected = Some(THREAD.into());
+        let a = mount(p, window, cx);
+        a.update(cx, |c, cx| c.restore_draft("A's text".into(), 5, None, cx));
+        p.hydrate_tab(window, cx);
+        assert_eq!(a.read(cx).saved_draft().0, "A's text");
+        relaunch(p, repo, cx);
+        assert_eq!(
+            work(p, &remote())
+                .thread(THREAD, repo)
+                .unwrap()
+                .thread
+                .draft
+                .text,
+            "B's text"
+        );
+        assert_eq!(
+            work(p, &local())
+                .thread(THREAD, repo)
+                .unwrap()
+                .thread
+                .draft
+                .text,
+            "A's text"
+        );
     });
 }
 
@@ -752,8 +788,9 @@ fn work_past_the_file_bound_stays_in_memory() {
     });
 }
 
-/// A quit whose save fails is cancelled like a window close: the app stays
-/// open with the notice, and the unsaved work is still in memory.
+/// A quit saves every window and is cancelled at one that cannot save, like
+/// a window close: two windows, the second over its file bound; the app stays
+/// open with that window's notice, and its text is still there.
 #[core::prelude::v1::test]
 fn a_quit_that_cannot_save_keeps_the_app_open() {
     if !isolated("saved_work::a_quit_that_cannot_save_keeps_the_app_open") {
@@ -766,37 +803,113 @@ fn a_quit_that_cannot_save_keeps_the_app_open() {
     h.update(|p, _, _| {
         launch(p, &repo);
         seed(p, &local(), |w| {
-            for n in 0..40 {
-                w.drafts.insert(
-                    format!("big-{n}"),
-                    draft_tab(&repo, &"x".repeat(250 * 1024)),
-                );
-            }
+            w.drafts.insert(
+                "small".into(),
+                draft_tab(&repo, "saved by the first window"),
+            );
         });
     });
+    // A second window, with its own saved workspace, over its file bound.
+    let second_home = scratch.join("second").join("plait");
+    let client = plait_client::host::Client::with_test_git_host(None, repo.join("absent.sock"));
+    let path = repo.clone();
+    let second =
+        h.cx.open_window(size(px(900.), px(600.)), |window, cx| {
+            cx.new(|cx| Plait::with_host_client(path, Instant::now(), client, window, cx))
+        })
+        .expect("second window");
+    second
+        .update(&mut h.cx, |p, _, _| {
+            launch(p, &second_home);
+            seed(p, &local(), |w| {
+                for n in 0..40 {
+                    w.drafts.insert(
+                        format!("big-{n}"),
+                        draft_tab(&repo, &"x".repeat(250 * 1024)),
+                    );
+                }
+            });
+        })
+        .unwrap();
     // The app's Quit, as from the menu with no window focused.
     h.cx.update(crate::ui::quit_app);
     let deadline = Instant::now() + Duration::from_secs(10);
-    while h
-        .window
-        .update(&mut h.cx, |p, _, _| p.session.closing)
-        .unwrap()
-    {
-        h.settle();
-        assert!(Instant::now() < deadline, "the failed save did not finish");
-    }
-    h.update(|p, _, _| {
-        let note = p.session.note.clone().unwrap_or_default();
+    loop {
+        h.cx.run_until_parked();
+        let settled = second
+            .update(&mut h.cx, |p, _, _| {
+                !p.session.closing && p.session.note.is_some()
+            })
+            .unwrap_or(false);
+        if settled {
+            break;
+        }
         assert!(
-            note.contains("kept open") && note.contains("exceeds"),
-            "{note}"
+            Instant::now() < deadline,
+            "the second window's save did not finish"
         );
-        assert_eq!(work(p, &local()).drafts.len(), 40);
-        p.session.journal = None;
-        p.session.data = None;
-    });
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    second
+        .update(&mut h.cx, |p, _, _| {
+            let note = p.session.note.clone().unwrap_or_default();
+            assert!(
+                note.contains("kept open") && note.contains("exceeds"),
+                "{note}"
+            );
+            assert_eq!(work(p, &local()).drafts.len(), 40);
+            p.session.journal = None;
+            p.session.data = None;
+        })
+        .expect("the window that could not save stays open");
+    let first = plait_client::session::read_machines(&state(&repo)).unwrap();
+    assert_eq!(
+        first[&local()].drafts["small"].draft.text,
+        "saved by the first window"
+    );
     drop(h);
     std::fs::remove_dir_all(scratch).unwrap();
+}
+
+/// #174 round 3, finding 1: two machine entries naming one host share its tab
+/// document, but each keeps its own unsent commit message.
+#[core::prelude::v1::test]
+fn each_machine_entry_keeps_its_commit_message() {
+    if !isolated("saved_work::each_machine_entry_keeps_its_commit_message") {
+        return;
+    }
+    scene("commit", |p, repo, window, cx| {
+        let bookmark = Default::default;
+        p.restore_tab_bookmark(bookmark(), window, cx);
+        let field = p.workspace.commit_message.clone();
+        field.update(cx, |f, cx| f.set_text("A's commit message", cx));
+        p.capture_session(cx);
+        switch(p, remote(), false, repo, window, cx);
+        p.verify_identity_for_test(fixture_host());
+        p.host.thread.selected = Some(THREAD.into());
+        p.restore_tab_bookmark(bookmark(), window, cx);
+        let field = p.workspace.commit_message.clone();
+        assert_eq!(field.read(cx).text(), "");
+        field.update(cx, |f, cx| f.set_text("B's commit message", cx));
+        p.capture_session(cx);
+        switch(p, local(), true, repo, window, cx);
+        p.verify_identity_for_test(fixture_host());
+        p.host.thread.selected = Some(THREAD.into());
+        p.restore_tab_bookmark(bookmark(), window, cx);
+        assert_eq!(
+            p.workspace.commit_message.read(cx).text(),
+            "A's commit message"
+        );
+        relaunch(p, repo, cx);
+        assert_eq!(
+            work(p, &local()).commit_message(THREAD, repo),
+            "A's commit message"
+        );
+        assert_eq!(
+            work(p, &remote()).commit_message(THREAD, repo),
+            "B's commit message"
+        );
+    });
 }
 
 /// Older records are copied to this computer once, then edited there; the
@@ -884,6 +997,16 @@ fn saving_and_switching_stay_within_budget() {
                 );
             }
         });
+        // A host listing 10,000 threads; only threads with work are visited.
+        let listed = p.host.connection.threads()[0].clone();
+        let mut catalog = vec![listed];
+        catalog.extend((0..10_000).map(|n| ThreadSummary {
+            id: format!("listed-{n}"),
+            checkout: repo.to_owned(),
+            model: choice(),
+            ..Default::default()
+        }));
+        *p.host.connection.threads_mut() = catalog;
         p.capture_session(cx);
         let composer = p.workspace.composers[THREAD].clone();
         let mut worst_save = Duration::ZERO;
@@ -898,7 +1021,9 @@ fn saving_and_switching_stay_within_budget() {
         let started = Instant::now();
         switch(p, remote(), false, repo, window, cx);
         let switched = started.elapsed();
-        eprintln!("saved-work timing: worst save {worst_save:?}, machine switch {switched:?}");
+        eprintln!(
+            "saved-work timing (10,000 listed threads): worst save {worst_save:?}, machine switch {switched:?}"
+        );
         assert!(
             worst_save < Duration::from_millis(50),
             "save took {worst_save:?}"

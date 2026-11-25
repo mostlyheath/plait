@@ -391,6 +391,7 @@ impl Plait {
         self.capture_open_draft(&mut works, cx);
         self.capture_parked_drafts(&mut works);
         self.capture_threads(&mut works, cx);
+        self.capture_commit_message(&mut works, cx);
         let (mut changed, mut removed_image) = self.store_machine_work(works);
         // desktop.json keeps only the window's folder and selection; its older
         // records stay as they are for older builds.
@@ -456,6 +457,26 @@ impl Plait {
             .insert(id.clone(), tab);
     }
 
+    /// The commit field's message, under the thread and folder it is for.
+    fn capture_commit_message(&mut self, works: &mut BTreeMap<MachineId, MachineWork>, cx: &App) {
+        let text = self.workspace.commit_message.read(cx).text().to_owned();
+        if self.workspace.commit_owner.is_none() {
+            if text.is_empty() {
+                return;
+            }
+            self.workspace.commit_owner = Some((
+                self.host.thread.selected.clone().unwrap_or_default(),
+                self.host.creation.checkout.clone(),
+            ));
+        }
+        let (thread, checkout) = self.workspace.commit_owner.clone().unwrap();
+        let machine = self.machines.active.clone();
+        let work = super::saved_work::touch(works, &self.saved_work.machines, &machine);
+        if work.commit_message(&thread, &checkout) != text {
+            work.set_commit_message(&thread, &checkout, &text);
+        }
+    }
+
     /// Drafts parked behind other tabs, into their machines' work, so a parked
     /// draft dropped from memory later is still saved.
     fn capture_parked_drafts(&self, works: &mut BTreeMap<MachineId, MachineWork>) {
@@ -508,17 +529,41 @@ impl Plait {
         let ledger = self.ledger_machine();
         let accepted = self.accepting_hosts();
         let none = BTreeMap::new();
-        let summaries = self.host.connection.threads().to_vec();
+        // Only threads with something to save: a mounted composer, sends in
+        // memory or saved, or an approval choice made here. Each check is a
+        // lookup, and only those threads are copied, so a large catalog costs
+        // little more than its threads with work.
+        let summaries: Vec<_> = self
+            .host
+            .connection
+            .threads()
+            .iter()
+            .filter(|summary| {
+                let id = &summary.id;
+                self.workspace.composers.contains_key(id)
+                    || self.host.submissions.pending(id).is_some()
+                    || !self.host.submissions.accepted(id).is_empty()
+                    || self.saved_work.adopted.contains_key(id)
+                    || self.workspace.thread_controls.approvals.contains_key(id)
+            })
+            .cloned()
+            .collect();
         let mut written = Vec::new();
         for summary in &summaries {
             let id = &summary.id;
+            let in_memory = self.host.submissions.pending(id).is_some()
+                || !self.host.submissions.accepted(id).is_empty();
+            let chosen = self.workspace.thread_controls.approvals.get(id).copied();
             // Sends in memory are for another folder's thread with this ID.
             if self.ledger_conflict(summary) {
                 continue;
             }
-            let in_memory = self.host.submissions.pending(id).is_some()
-                || !self.host.submissions.accepted(id).is_empty();
-            let approval = self.thread_approval(id);
+            let approval = match chosen {
+                Some(chosen) => chosen,
+                None => self
+                    .saved_thread(summary)
+                    .and_then(|thread| thread.approval),
+            };
             let title = self
                 .saved_thread(summary)
                 .map(|thread| thread.title.clone())

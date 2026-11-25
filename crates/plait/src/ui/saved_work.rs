@@ -36,6 +36,9 @@ pub(super) struct SavedWork {
     /// the saved send, or recorded when a host's reply accepted it. Never
     /// replaced, so a replacement host cannot take over an earlier Wait.
     pub accepted_by: HashMap<String, HostKey>,
+    /// The catalog revision and record count adoption last checked, so it
+    /// scans again only when either changes.
+    pub adoption_checked: Option<(u64, usize)>,
 }
 
 impl Plait {
@@ -121,6 +124,14 @@ impl Plait {
         if self.ledger_machine() != self.machines.active {
             return;
         }
+        let checked = (
+            self.host.connection.threads_revision(),
+            self.current_work().map_or(0, |work| work.threads.len()),
+        );
+        if self.saved_work.adoption_checked == Some(checked) {
+            return;
+        }
+        self.saved_work.adoption_checked = Some(checked);
         let found: Vec<(String, Thread, BTreeMap<String, HostKey>)> = self
             .host
             .connection
@@ -187,6 +198,7 @@ impl Plait {
         self.saved_work.ledger = None;
         self.saved_work.adopted.clear();
         self.saved_work.accepted_by.clear();
+        self.saved_work.adoption_checked = None;
         // Approval choices are keyed by thread ID too; they are saved in the
         // machine's file and must not follow the same ID to another machine.
         self.workspace.thread_controls.approvals.clear();
