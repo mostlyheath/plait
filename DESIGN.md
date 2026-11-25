@@ -283,6 +283,9 @@ the tab list all work as built; closing the open tab shows the one before it.
 
 Content that is not a thread (Worktrees, Linear issues, a draft) shows its
 own title in the title form and has no state, panel toggle, or Git step.
+Worktrees and Linear issues also show a close button at the right of the
+header: with thread tabs hidden they have no sidebar row to return from, and
+closing shows the tab before, as Cmd-W does.
 
 While [Every thread](#every-thread--planned-step-18) is open the header is
 its bar instead.
