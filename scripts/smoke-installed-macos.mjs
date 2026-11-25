@@ -1,6 +1,7 @@
+import { installedFixture } from './installed-fixture.mjs';
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
-import { mkdtemp, readFile, writeFile, symlink, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, mkdir, readdir, rm, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
@@ -22,14 +23,8 @@ const { until, request } = support;
 
 // The fixture imports installed runtime code and dependencies, not checkout code.
 const fixtureRoot = await mkdtemp('/tmp/plait-installed-fixture-');
-await symlink(join(installed, 'runtime/node_modules'), join(fixtureRoot, 'node_modules'));
-let fixture = await readFile(join(repository, 'runtime/test/fixture.ts'), 'utf8');
-fixture = fixture.replaceAll("'../src/", "'" + pathToFileURL(join(installed, 'runtime/src')).href + '/')
-  .replace('sleep 30 & wait', 'sleep 300 & wait');
-const fixturePath = join(fixtureRoot, 'fixture.ts');
-await writeFile(fixturePath, fixture);
+process.env.PLAIT_TEST_RUNTIME = await installedFixture(join(installed, 'runtime'), fixtureRoot);
 process.env.PLAIT_HOST_BINARY = binary;
-process.env.PLAIT_TEST_RUNTIME = fixturePath;
 
 // This module was loaded before the fixture override; start the full suite in a child.
 test('user LaunchAgent and isolated packaged host start without developer Node', { timeout: 30000 }, async t => {
@@ -78,17 +73,32 @@ test('installed host starts repeatedly with standard service scheduling', { time
   await verifyInstalledStartup(binary);
 });
 
-// The whole runtime suite, about eight minutes on CI. A release is built once, so the limit leaves room for a
-// slow runner rather than failing the build that would have published.
-test('installed runtime passes the full macOS safety suite', { timeout: 900000 }, async () => {
-  await new Promise((resolve, reject) => {
-    const child = spawn(node, ['test/run.mjs', '--require-command-sandbox'], {
-      cwd: join(repository, 'runtime'), stdio: 'inherit',
-      env: { ...process.env, PLAIT_VERIFY_INSTALLED_UI: '1', PLAIT_INSTALLED_UI_ARTIFACTS: join(repository, 'dist') },
-    });
-    child.once('error', reject);
-    child.once('exit', code => code === 0 ? resolve() : reject(new Error(`Installed runtime suite failed: ${code}`)));
+test('installed runtime passes the full macOS safety suite', async () => {
+  const active = join(fixtureRoot, 'active-tests');
+  await mkdir(active);
+  const child = spawn(node, ['test/run.mjs', '--require-command-sandbox'], {
+    cwd: join(repository, 'runtime'), stdio: 'inherit', detached: true,
+    env: { ...process.env, PLAIT_ACTIVE_TESTS: active, PLAIT_VERIFY_INSTALLED_UI: '1',
+      PLAIT_INSTALLED_UI_ARTIFACTS: join(repository, 'dist') },
   });
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    process.kill(-child.pid, 'SIGKILL');
+  }, 25 * 60_000);
+  try {
+    const code = await new Promise((resolve, reject) => {
+      child.once('error', reject);
+      child.once('exit', resolve);
+    });
+    if (timedOut) {
+      const tests = await Promise.all((await readdir(active)).map(name => readFile(join(active, name), 'utf8')));
+      throw new Error(`Installed runtime timed out after 25 minutes. Active tests: ${tests.join(', ') || '(between tests)'}`);
+    }
+    assert.equal(code, 0, 'Installed runtime suite failed');
+  } finally {
+    clearTimeout(timer);
+  }
 });
 
 test('client update and staged host upgrade preserve an active command and durable state', { timeout: 240000 }, async () => {

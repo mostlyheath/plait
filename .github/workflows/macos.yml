@@ -144,6 +144,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: ${{ github.event_name == 'push' && '0' || '1' }}
       - id: tools
         uses: ./.github/actions/macos-tools
       - name: Restore native build cache
@@ -161,6 +162,11 @@ jobs:
             macos26-${{ runner.arch }}-${{ steps.tools.outputs.cache-id }}-check-
       - name: Check runtime and real command sandbox
         run: bash scripts/check.sh runtime --require-command-sandbox
+      - name: Check installed runtime layout on a fresh main check
+        if: github.event_name == 'push'
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: bash scripts/check-installed-changes.sh "$BEFORE"
       - name: Check runtime recovery without credentials
         working-directory: experiments/pi-durable
         run: |
@@ -273,7 +279,7 @@ jobs:
     needs: plan
     if: needs.plan.outputs.release == 'true'
     runs-on: macos-26
-    timeout-minutes: 45
+    timeout-minutes: 65
     env:
       MACOSX_DEPLOYMENT_TARGET: '15.0'
       PLAIT_RELEASE_TAG: ${{ needs.plan.outputs.tag }}

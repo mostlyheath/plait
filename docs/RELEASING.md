@@ -11,8 +11,11 @@ the next preview. Nobody tags by hand.
    refuses a direct push.
 2. **Open a pull request.** GitHub runs the tests on it: the macOS check
    (format, lint, tests, and the real command sandbox, in a Rust half and a
-   runtime half that run side by side) and the Linux check. A request that
-   changes only prose skips the macOS check. The request can merge when both
+   runtime half that run side by side) and the Linux check. For runtime or
+   runtime-packaging changes, Linux also copies the runtime and dependencies
+   into a temporary install layout. It runs the host read and restart tests
+   against that copy using the same fixture rewrite as the installer test.
+   A prose-only request skips the macOS check. The request can merge when both
    pass. It need not be up to date with `main`. A change that writes a
    person's files, or a file an older build reads, is also read by someone who
    did not write it before it merges.
@@ -21,7 +24,8 @@ the next preview. Nobody tags by hand.
    the request's passing check tested, `main` reuses that result instead,
    and its run links the request's run. That holds only for a single merged
    request from this repository; anything else, or any doubt, runs the full
-   check. A failure there is fixed with another pull request before the next
+   check, including the same layout tests on macOS when their inputs changed.
+   A failure there is fixed with another pull request before the next
    release. A merge that changes only prose skips it. Nothing is built for
    release and nothing is published.
 4. **Collect the release notes.** A pull request with a change people will
@@ -41,7 +45,10 @@ the next preview. Nobody tags by hand.
    The workflow refuses a release from any other branch. If `main` holds code
    that ships and has not been released, it builds it once: the package job
    builds the installers and runs the installer smoke test, including
-   migration to the prebuilt per-user install, and the publish job writes
+   migration to the prebuilt per-user install. The package job runs the full
+   installed runtime suite with the real macOS command sandbox and installed
+   desktop app, including verification of the desktop’s saved thread state.
+   Its 25-minute deadline reports the active tests. The publish job writes
    `update.json`, signs it, and publishes the release with the app archive,
    host archive, packages, DMG, and checksums. The
    [native acceptance check](VERIFICATION.md#scenes-and-native-checks) drives

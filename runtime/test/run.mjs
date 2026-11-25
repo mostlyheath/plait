@@ -26,6 +26,7 @@ console.log(platform === 'macos'
 // An outer integration test must not make Node silently skip this independent suite.
 const environment = { ...process.env };
 delete environment.NODE_TEST_CONTEXT;
-const result = spawnSync(process.execPath, ['--test', '--test-concurrency=2', ...tests], { stdio: 'inherit', cwd: fileURLToPath(new URL('..', import.meta.url)), env: environment });
+const progress = environment.PLAIT_ACTIVE_TESTS ? ['--import', './test/support/active-test.mjs'] : [];
+const result = spawnSync(process.execPath, ['--test', '--test-concurrency=2', ...progress, ...tests], { stdio: 'inherit', cwd: fileURLToPath(new URL('..', import.meta.url)), env: environment });
 if (result.error) console.error(result.error.message);
 process.exit(result.status ?? 1);
