@@ -1059,6 +1059,27 @@ impl Plait {
                 el.child(self.header_panel_toggle(cx))
                     .children(self.header_git_step(cx))
             })
+            .children(self.header_close(cx))
+    }
+
+    /// Worktrees and Linear issues fill the sheet like a thread but have no
+    /// sidebar row to return from, so they offer a visible way out: closing
+    /// the tab shows the one before it, as Cmd-W does.
+    fn header_close(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let name = if self.worktrees_visible() {
+            "Close Worktrees"
+        } else if self.issues_visible() {
+            "Close Linear issues"
+        } else {
+            return None;
+        };
+        let id = self.tabs.model.active()?;
+        Some(
+            icon_button("header-close", "close", name)
+                .tooltip(move |_, cx| tabs::tooltip(format!("{name} (⌘W)"), cx))
+                .on_activate(cx, move |this, window, cx| this.close_tab(id, window, cx))
+                .into_any_element(),
+        )
     }
 
     fn current_git_step(&self) -> Option<(plait_client::git_step::GitStep, Option<&'static str>)> {

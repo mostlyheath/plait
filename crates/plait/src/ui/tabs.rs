@@ -168,7 +168,7 @@ fn urgent_hidden(hidden: impl Iterator<Item = TabState>) -> Option<TabState> {
 fn close_name(title: &str) -> String {
     format!("Close {title}")
 }
-fn tooltip(value: String, cx: &mut App) -> AnyView {
+pub(super) fn tooltip(value: String, cx: &mut App) -> AnyView {
     cx.new(|_| TextTooltip(value)).into()
 }
 /// Measures at the overflow button's drawn size.
@@ -482,7 +482,7 @@ impl Plait {
         cx.notify();
     }
 
-    fn close_tab(&mut self, id: TabId, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn close_tab(&mut self, id: TabId, window: &mut Window, cx: &mut Context<Self>) {
         if self.settings_open {
             return;
         }

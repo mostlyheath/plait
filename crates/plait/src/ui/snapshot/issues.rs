@@ -256,6 +256,8 @@ fn scenes() -> [Scene; 10] {
                 "Start thread",
                 "Add to thread…",
                 "Status: In Progress",
+                // A visible way back to the tab before, with thread tabs hidden.
+                "Close Linear issues",
             ],
         ),
         (
@@ -387,6 +389,20 @@ fn issues_tab_is_labelled_and_keeps_its_selection() {
             p.tabs.model.get(tab).unwrap().session().bookmark(),
             plait_client::tabs::bookmark::BookmarkRecord::Issues { selected: Some(id) } if id == "i2"
         ));
+    });
+    // The header's close button leaves Issues for the tab that was open before.
+    let mut h = Harness::new(&repo, None, 1380., 860.);
+    h.connect(&repo, false);
+    let mut before = None;
+    h.update(|p, _, _| before = p.tabs.model.active());
+    open(&mut h);
+    linked(&mut h, false, false);
+    h.update(|p, window, cx| {
+        assert!(p.issues_visible());
+        let issues = p.tabs.model.active().unwrap();
+        p.close_tab(issues, window, cx);
+        assert!(!p.issues_visible());
+        assert_eq!(p.tabs.model.active(), before);
     });
     std::fs::remove_dir_all(scratch).unwrap();
 }
