@@ -62,7 +62,15 @@ createInterface({ input: process.stdin }).on('line', async line => {
       const count = mode === 'flood-bytes' ? 600 : mode === 'flood-sustained' ? 100 : 20000;
       // A full pipe can refuse a write outright. A server that dies of its own flood has still failed.
       process.stdout.on('error', () => process.exit(1));
-      const flood = () => { for (let i = 0; i < count; i++) process.stdout.write(line); };
+      // A failed test must leave nothing running: stop when the client closes stdin, when this
+      // process is orphaned, or after a fixed lifetime, whichever comes first.
+      const parent = process.ppid;
+      process.stdin.once('end', () => process.exit(0));
+      setTimeout(() => process.exit(0), 30_000);
+      const flood = () => {
+        if (process.ppid !== parent) process.exit(0);
+        for (let i = 0; i < count; i++) process.stdout.write(line);
+      };
       flood(); setInterval(flood, mode === 'flood-sustained' ? 50 : 10); return;
     }
     if (mode !== 'silent') reply({ protocolVersion: message.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'fixture', version: '1' }, instructions: 'SERVER_INSTRUCTIONS_MUST_NOT_REACH_MODEL' });

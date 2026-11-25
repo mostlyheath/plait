@@ -2,8 +2,11 @@ import { spawn } from 'node:child_process';
 import { closeSync, constants, openSync } from 'node:fs';
 import { handoffDescriptors, type CheckoutLease } from '../safety.ts';
 
-/** `log` receives the runner's stderr, so a runner that dies at startup leaves its reason behind. */
-export function spawnRunner(entry: string, lease: CheckoutLease, environment: NodeJS.ProcessEnv = {}, log?: string): Promise<number> {
+/**
+ * `log` receives the runner's stderr, so a runner that dies at startup leaves its reason behind.
+ * `onExit` lets a launch stop waiting for a runner that has already died.
+ */
+export function spawnRunner(entry: string, lease: CheckoutLease, environment: NodeJS.ProcessEnv = {}, log?: string, onExit?: () => void): Promise<number> {
   const env = { ...process.env, ...environment };
   delete env.PLAIT_LOCK_FD;
   delete env.PLAIT_NOTIFY_FD;
@@ -21,6 +24,7 @@ export function spawnRunner(entry: string, lease: CheckoutLease, environment: No
   finally { if (logFd !== undefined) closeSync(logFd); }
   return new Promise((resolve, reject) => {
     child.once('error', reject);
+    if (onExit) child.once('exit', onExit);
     child.once('spawn', () => {
       child.unref();
       resolve(child.pid!);

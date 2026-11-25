@@ -133,6 +133,9 @@ fn loopback_handler_accepts_and_refuses() {
         Ok(_) => panic!("unexpected connection"),
         Err(error) => error,
     };
-    assert!(error.to_string().contains("refused this device"));
+    assert!(
+        error.to_string().contains("refused this device"),
+        "unexpected error: {error}"
+    );
     let _ = fs::remove_dir_all(root);
 }

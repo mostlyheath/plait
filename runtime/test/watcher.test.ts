@@ -81,14 +81,22 @@ test('working files and Git ref changes are classified separately', async t => {
   const watcher = new CheckoutWatcher((_folder, refs) => { events.push(refs === true); });
   t.after(async () => { watcher.close(); await rm(root, { recursive: true, force: true }); });
   watcher.sync([root]);
-  await delay(600);
-  await writeFile(join(root, 'file'), 'x');
-  await delay(600);
-  assert.deepEqual(events, [false]);
-  await writeFile(join(root, '.git', 'packed-refs'), 'x');
-  await delay(1200);
-  assert.deepEqual(events, [false, true]);
-  await writeFile(join(root, '.git', 'config'), 'x');
-  await delay(1200);
-  assert.deepEqual(events, [false, true, true]);
+  // Wait on events, not a clock: macOS may start its stream late, deliver a write twice, or late.
+  const until = async (done: () => boolean, what: string) => {
+    const deadline = Date.now() + 10_000;
+    while (!done()) { assert.ok(Date.now() < deadline, `timed out waiting for ${what}: ${JSON.stringify(events)}`); await delay(20); }
+  };
+  // A write before the stream starts can be missed, so repeat it until one is seen.
+  for (let attempt = 0; !events.length; attempt++) {
+    assert.ok(attempt < 10, 'no working-file event after ten writes');
+    await writeFile(join(root, 'file'), String(attempt));
+    const wait = Date.now() + 2000;
+    while (!events.length && Date.now() < wait) await delay(20);
+  }
+  assert.ok(events.every(refs => !refs), `working files alone must not mark refs: ${JSON.stringify(events)}`);
+  for (const name of ['packed-refs', 'config']) {
+    const seen = events.length;
+    await writeFile(join(root, '.git', name), 'x');
+    await until(() => events.slice(seen).includes(true), `a refs change after .git/${name}`);
+  }
 });
