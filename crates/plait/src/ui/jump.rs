@@ -271,11 +271,38 @@ impl Plait {
                     .on_activate(cx, move |this, _, cx| this.set_jump_target(target, cx)),
             );
         }
+        let skip = self.preferences.value.skip_archive_confirmation;
+        let mut archive_choices = segmented();
+        for (index, (label, value)) in [("Ask", false), ("Don't ask", true)]
+            .into_iter()
+            .enumerate()
+        {
+            archive_choices = archive_choices.child(
+                segment(("archive-confirmation", index), label, value == skip)
+                    .role(Role::RadioButton)
+                    .aria_toggled(if value == skip {
+                        Toggled::True
+                    } else {
+                        Toggled::False
+                    })
+                    .aria_label(format!("Archiving a thread by shortcut: {label}"))
+                    .on_activate(cx, move |this, _, cx| {
+                        let mut preferences = this.preferences.value.clone();
+                        preferences.skip_archive_confirmation = value;
+                        this.set_preferences(preferences, PreferenceGroup::Keyboard, cx);
+                    }),
+            );
+        }
         settings::section("Keyboard")
             .child(settings::setting(
                 "Sidebar jumps select",
                 "Counted in sidebar order. A machine or project opens its first thread.",
                 choices,
+            ))
+            .child(settings::setting(
+                "Archive shortcut",
+                "Whether Cmd-Option-A asks before archiving the open thread.",
+                archive_choices,
             ))
             .child(self.shortcut_editor(cx))
             .when_some(

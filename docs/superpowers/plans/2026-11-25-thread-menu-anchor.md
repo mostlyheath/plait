@@ -37,9 +37,9 @@
 - Modify: `docs/MACOS.md` (keyboard table; also the sentence near line 309 naming the shortcuts)
 
 **Interfaces:**
-- Produces: `thread.rename` bound to `cmd-shift-r`, `thread.archive` bound to `cmd-shift-e` (both free in the current table).
+- Produces: `thread.rename` bound to `cmd-alt-r`, `thread.archive` bound to `cmd-alt-a` (both free in the current table; `cmd-shift-e` is Every Thread upstream).
 
-- [ ] **Step 1:** Change the two `entry(...)` calls from `None` to `Some("cmd-shift-r")` and `Some("cmd-shift-e")`.
+- [ ] **Step 1:** Change the two `entry(...)` calls from `None` to `Some("cmd-alt-r")` and `Some("cmd-alt-a")`.
 - [ ] **Step 2:** Run `cargo test -p plait actions` — expect the doc-table test `the_documented_keyboard_table_is_this_table` to FAIL.
 - [ ] **Step 3:** Add the two rows to the `docs/MACOS.md` keyboard table in the same format as neighbours.
 - [ ] **Step 4:** Run `cargo test -p plait actions` — expect PASS (collision and doc tests included). If the collision test names a clash, pick another free `cmd-shift-<letter>` and update both files.
