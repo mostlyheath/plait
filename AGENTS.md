@@ -23,6 +23,8 @@
 - Pin dependencies. Check upstream source at the pinned revision before using APIs.
 - Use small functions, explicit errors, and short comments explaining why.
 - Test parsers, async result guards, and repository edge cases.
+- Add a note to changes/ for anything a person using Plait will notice; see
+  changes/README.md.
 - Run cargo fmt --all -- --check, cargo clippy --workspace --all-targets -- -D warnings,
   and cargo test --workspace. Build and inspect the native app after UI changes.
 - Run builds and tests directly.

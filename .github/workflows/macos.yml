@@ -73,6 +73,13 @@ jobs:
               fi
               ;;
           esac | tee -a "$GITHUB_OUTPUT"
+      # A preview ships with its changelog: refuse a release whose tag has no
+      # section, before anything is built.
+      - name: Require release notes
+        if: steps.decide.outputs.release == 'true'
+        env:
+          TAG: ${{ steps.decide.outputs.tag }}
+        run: python3 scripts/changelog.py section "$TAG" > /dev/null
       # A merge whose exact tree passed the check on its pull request is not
       # tested again. The script prints reused=false on any doubt, and anything
       # but reused=true runs the full check.
@@ -455,6 +462,8 @@ jobs:
           done
       - name: Publish an immutable preview
         run: |
+          # What changed comes first; GitHub appends its list of pull requests.
+          { echo "## What's new"; echo; python3 scripts/changelog.py section "$RELEASE_TAG"; echo; } > notes.md
           printf '%s\n' \
             '## Install' \
             'Download the DMG, open it, and drag **Plait** into **Applications**, then open it from there.' \
@@ -472,7 +481,7 @@ jobs:
             '' \
             'The attached installed-client images show that labeled test, not a personal-account session.' \
             'Linux hosts (x86_64, arm64): Plait-Host-*-linux-*.tar.gz, each with its own signed update-host-linux-*.json. See docs/REMOTE.md.' \
-            'See docs/GUIDE.md, docs/REMOTE.md, and docs/VERIFICATION.md at this tag for setup and limits.' > notes.md
+            'See docs/GUIDE.md, docs/REMOTE.md, and docs/VERIFICATION.md at this tag for setup and limits.' >> notes.md
           # The tag is created with the release, on the commit this run built.
           gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" --prerelease --draft \
             --title "Plait $RELEASE_TAG — local preview" --notes-file notes.md --generate-notes \

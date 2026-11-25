@@ -55,6 +55,9 @@ not replay interrupted effects.
   focused pull request when the work is finished. `main` changes only through
   a pull request with passing checks; a merge publishes nothing, and a person
   starts each release. See [Releasing](docs/RELEASING.md).
+- A change a person using Plait will notice adds a one-line note to
+  [`changes/`](changes/README.md). Releases publish those notes as the
+  changelog.
 - Describe the change, checks, results, and remaining verification limits;
   include screenshots for UI changes. Keep credentials, private transcripts,
   local settings, and build output out of Git.
