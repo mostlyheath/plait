@@ -24,6 +24,8 @@ fn page(stale: bool) -> Issues {
         issue("i1", "PLA-142", "Retry rate-limited requests with backoff", "In Progress"),
         issue("i2", "PLA-139", "Keep image attachments across a host restart", "Todo"),
         issue("i3", "PLA-131", "Explain a rejected Linear key in Settings", "In Review"),
+        // Long enough to overflow the list column unless it truncates.
+        issue("i4", "PLA-7", "The three-dot menu opens at the bottom of the left sidebar; it should open as a small popover beside the row instead", "Todo"),
     ], "has_more": true, "next_cursor": "C"});
     v.as_object_mut()
         .unwrap()
