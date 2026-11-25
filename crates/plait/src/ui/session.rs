@@ -184,12 +184,17 @@ impl Plait {
             return;
         };
         let tabs = self.flush_tab_preferences(Some(window), cx);
+        // Unsaved Linear issue text, newest revision, without waiting for its pause.
+        let drafts = self.draft_flush(cx);
         self.session.closing = true;
         self.sync_composer(cx);
         let task = cx.background_executor().spawn(async move {
             journal.flush()?;
             if let Some(tabs) = tabs {
                 tabs.write()?;
+            }
+            if let Some((writer, revision, drafts)) = drafts {
+                writer.write(&journal, revision, &drafts)?;
             }
             Ok::<_, String>(())
         });

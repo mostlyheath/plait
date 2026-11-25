@@ -710,3 +710,34 @@ fn a_save_is_sent_only_to_the_machine_it_was_made_on() {
     });
     std::fs::remove_dir_all(scratch).unwrap();
 }
+
+/// A title the field shows on one line, but the person did not change, is
+/// left out of a description-only save, so Linear's exact title stays.
+#[cfg(debug_assertions)]
+#[core::prelude::v1::test]
+fn saving_a_description_keeps_the_exact_title() {
+    if !isolated("issues::saving_a_description_keeps_the_exact_title") {
+        return;
+    }
+    let scratch = std::env::temp_dir().join(format!("plait-issues-title-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    let mut h = Harness::new(&repo, None, 1380., 860.);
+    h.connect(&repo, false);
+    open(&mut h);
+    writable(&mut h, true);
+    h.update(|p, window, cx| {
+        let text = serde_json::from_value(serde_json::json!({"issue_id": "i1",
+            "updated_at": "2026-11-18T12:00:00.000Z", "editable": true,
+            "title": "Retry\u{2028}rate-limited requests", "description": "Old"}))
+        .unwrap();
+        p.open_edit(&text, window, cx);
+        let (title, description) = p.issues.form_fields_for_scene().unwrap();
+        assert_eq!(title.read(cx).text(), "Retry rate-limited requests");
+        description.update(cx, |editor, cx| editor.type_text(" and new", window, cx));
+        p.save_issue_form_for_scene(cx);
+        let sent = p.issues.view.form().unwrap().sending().cloned().unwrap();
+        assert_eq!(sent.title, None, "the title is left as Linear has it");
+        assert_eq!(sent.description.as_deref(), Some("Old and new"));
+    });
+    std::fs::remove_dir_all(scratch).unwrap();
+}

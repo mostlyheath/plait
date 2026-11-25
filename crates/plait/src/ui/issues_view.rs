@@ -69,8 +69,10 @@ pub(super) struct IssuesUi {
     /// Every project's unsaved forms as last written, once read from disk.
     drafts: Option<Drafts>,
     drafts_loading: bool,
-    /// Bumped on each change; only the latest change is written.
-    drafts_generation: u64,
+    /// Bumped on each change to the drafts; writes carry it.
+    drafts_revision: u64,
+    /// Writes one at a time, so an older snapshot never replaces a newer.
+    drafts_writer: Arc<linear_drafts::Writer>,
     /// The project whose saved forms were last reopened.
     restored_for: Option<PathBuf>,
     /// The issue whose exact text is being read for an edit.
@@ -665,6 +667,10 @@ impl Plait {
         cx: &mut Context<Self>,
     ) {
         self.issues.edit_note = None;
+        if !self.issues.view.edits.contains_key(&text.issue_id) && self.drafts_full() {
+            cx.notify();
+            return;
+        }
         if self
             .issues
             .view
@@ -829,7 +835,26 @@ impl Plait {
             FormSlot::Edit(id) => id,
         });
         let drafts = self.issues.drafts.as_mut()?;
-        drafts.replace(&checkout, forms).then(|| drafts.clone())
+        let changed = drafts.replace(&checkout, forms);
+        if changed {
+            self.issues.drafts_revision += 1;
+        }
+        changed.then(|| drafts.clone())
+    }
+
+    /// The drafts as typed now, with their revision and the writer, for a
+    /// write that must not wait: Save, close and quit.
+    pub(super) fn draft_flush(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Option<(Arc<linear_drafts::Writer>, u64, Drafts)> {
+        self.capture_forms(cx);
+        let drafts = self.issues.drafts.clone()?;
+        Some((
+            self.issues.drafts_writer.clone(),
+            self.issues.drafts_revision,
+            drafts,
+        ))
     }
 
     /// Records this project's open forms as typed, and writes them after
@@ -838,27 +863,24 @@ impl Plait {
         if self.capture_forms(cx).is_none() {
             return;
         }
-        self.issues.drafts_generation += 1;
-        let generation = self.issues.drafts_generation;
+        let revision = self.issues.drafts_revision;
         let Some(journal) = self.session.journal.clone() else {
             return;
         };
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(DRAFT_PAUSE).await;
-            let Ok(Some(drafts)) = this.update(cx, |this, _| {
-                (this.issues.drafts_generation == generation)
+            // Typing went on: a later timer writes the newer text.
+            let Ok(Some((writer, drafts))) = this.update(cx, |this, _| {
+                (this.issues.drafts_revision == revision)
                     .then(|| this.issues.drafts.clone())
                     .flatten()
+                    .map(|drafts| (this.issues.drafts_writer.clone(), drafts))
             }) else {
                 return;
             };
             cx.background_executor()
                 .spawn(async move {
-                    let _ = journal.write_record(
-                        linear_drafts::RECORD,
-                        &drafts,
-                        linear_drafts::RECORD_LIMIT,
-                    );
+                    let _ = writer.write(&journal, revision, &drafts);
                 })
                 .await;
         })
@@ -873,6 +895,11 @@ impl Plait {
         cx.notify();
     }
 
+    #[cfg(test)]
+    pub(super) fn save_issue_form_for_scene(&mut self, cx: &mut Context<Self>) {
+        self.save_issue_form(cx);
+    }
+
     /// Writes the form in front. Only this explicit action sends anything,
     /// and only once its draft, with the request's ID, is on disk: a save
     /// after a crash then names the same request.
@@ -883,7 +910,17 @@ impl Plait {
         let Some(fields) = self.issues.form_fields.get(&slot) else {
             return;
         };
-        let title = fields.title.read(cx).text().to_owned();
+        let typed = fields.title.read(cx).text().to_owned();
+        // The field shows the title on one line; one the person did not change
+        // is Linear's exactly, so it is not rewritten in its normalized form.
+        let title = match self.issues.view.form().map(|f| &f.kind) {
+            Some(FormKind::Edit { title: base, .. })
+                if super::text_field::single_line(base) == typed =>
+            {
+                base.clone()
+            }
+            _ => typed,
+        };
         let description = fields.description.read(cx).saved_draft().0.to_owned();
         let fresh = plait_client::host_state::request_id();
         let request = match self.issues.view.submit_form(&title, &description, fresh) {
@@ -903,23 +940,19 @@ impl Plait {
         if cfg!(test) {
             return;
         }
-        let drafts = self
-            .capture_forms(cx)
-            .or_else(|| self.issues.drafts.clone());
+        let drafts = self.draft_flush(cx);
         let journal = self.session.journal.clone();
         let flush = cx.background_executor().spawn(async move {
-            let (Some(journal), Some(drafts)) = (journal, drafts) else {
+            let (Some(journal), Some((writer, revision, drafts))) = (journal, drafts) else {
                 return Err("The desktop's saved state is unavailable.".to_owned());
             };
-            journal.write_record(linear_drafts::RECORD, &drafts, linear_drafts::RECORD_LIMIT)
+            writer.write(&journal, revision, &drafts)
         });
         // The machine Save was pressed on: it alone may receive the request.
         let target = (self.host.connection.epoch, self.tabs.host.clone());
         cx.spawn(async move |this, cx| {
             let flushed = flush.await;
             let _ = this.update(cx, |this, cx| {
-                // A newer debounced write would only repeat this one.
-                this.issues.drafts_generation += 1;
                 this.finish_flush(request, target, flushed, cx);
             });
         })

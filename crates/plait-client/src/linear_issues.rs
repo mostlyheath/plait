@@ -639,6 +639,11 @@ impl IssueForm {
         }
     }
 
+    /// The request being saved, if one is in flight.
+    pub fn sending(&self) -> Option<&FormRequest> {
+        self.sent.as_ref()
+    }
+
     /// Whether its fields are read-only now.
     pub fn frozen(&self) -> bool {
         self.status == FormStatus::Saving

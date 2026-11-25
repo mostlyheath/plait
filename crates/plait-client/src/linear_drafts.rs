@@ -9,8 +9,12 @@
 //! The journal belongs to one host store. Moving this into the per-machine
 //! session state (#132) is a later change.
 use crate::linear_issues::{FormKind, FormSlot};
+use crate::session::Journal;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::Mutex,
+};
 
 /// The journal record's name.
 pub const RECORD: &str = "linear-issue-drafts";
@@ -139,6 +143,28 @@ impl Drafts {
     }
 }
 
+/// Writes drafts one at a time, newest wins. Each write carries the revision
+/// it was captured at; one that arrives after a newer revision is on disk is
+/// already covered by it and is skipped, so an older snapshot never replaces
+/// a newer one, whichever write finishes last.
+#[derive(Debug, Default)]
+pub struct Writer {
+    written: Mutex<u64>,
+}
+
+impl Writer {
+    /// Blocking: the caller runs this on the background executor.
+    pub fn write(&self, journal: &Journal, revision: u64, drafts: &Drafts) -> Result<(), String> {
+        let mut written = self.written.lock().map_err(|_| "Draft writer failed.")?;
+        if *written >= revision {
+            return Ok(());
+        }
+        journal.write_record(RECORD, drafts, RECORD_LIMIT)?;
+        *written = revision;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,6 +237,47 @@ mod tests {
         for i in 1..FORM_LIMIT {
             let root = PathBuf::from(format!("/p{i}"));
             assert_eq!(drafts.of(&root).next().unwrap().title, format!("Draft {i}"));
+        }
+    }
+
+    fn drafts_titled(title: &str) -> Drafts {
+        Drafts {
+            forms: vec![new_form("/a", title)],
+        }
+    }
+
+    fn reopened(dir: &Path) -> Drafts {
+        let (journal, _) = Journal::open(dir, dir.join("host")).unwrap();
+        journal.read_record(RECORD, RECORD_LIMIT).unwrap().unwrap()
+    }
+
+    #[test]
+    fn the_newest_revision_is_what_reopens_whichever_write_finishes_last() {
+        for newer_first in [false, true] {
+            let dir = std::env::temp_dir().join(format!(
+                "plait-drafts-writer-{}-{newer_first}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&dir);
+            {
+                let (journal, _) = Journal::open(&dir, dir.join("host")).unwrap();
+                let writer = Writer::default();
+                let (older, newer) = (drafts_titled("typed first"), drafts_titled("typed last"));
+                if newer_first {
+                    // A close flushes the newest text while an older write is still due.
+                    writer.write(&journal, 2, &newer).unwrap();
+                    writer.write(&journal, 1, &older).unwrap();
+                } else {
+                    writer.write(&journal, 1, &older).unwrap();
+                    writer.write(&journal, 2, &newer).unwrap();
+                }
+            }
+            assert_eq!(
+                reopened(&dir).forms[0].title,
+                "typed last",
+                "newer first: {newer_first}"
+            );
+            std::fs::remove_dir_all(&dir).unwrap();
         }
     }
 }
