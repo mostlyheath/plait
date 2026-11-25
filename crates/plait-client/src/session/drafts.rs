@@ -297,18 +297,22 @@ impl Session {
             return Err("Saved workspace exceeds 10,000 drafts. Nothing was discarded.".into());
         }
         for (id, tab) in &self.draft_tabs {
-            validate_draft_tab(id, tab)?;
+            validate_draft_tab(id, tab, super::LEGACY_TEXT_LIMIT)?;
         }
         Ok(())
     }
 }
 
 /// One saved draft's limits, wherever it is kept.
-pub(super) fn validate_draft_tab(id: &str, tab: &DraftTab) -> Result<(), String> {
+pub(super) fn validate_draft_tab(
+    id: &str,
+    tab: &DraftTab,
+    text_limit: usize,
+) -> Result<(), String> {
     if !identifier(id)
         || !tab.checkout.is_absolute()
         || tab.checkout.as_os_str().len() > 4096
-        || tab.draft.text.len() > 256 * 1024
+        || tab.draft.text.len() > text_limit
         || tab
             .draft
             .submitted
@@ -330,7 +334,7 @@ pub(super) fn validate_draft_tab(id: &str, tab: &DraftTab) -> Result<(), String>
     crate::images::validate_message(&tab.draft.images)?;
     if let Some(creation) = &tab.creation {
         if !identifier(&creation.request_id)
-            || creation.message.text.len() > 256 * 1024
+            || creation.message.text.len() > text_limit
             || creation.model.provider.len() > 1024
             || creation.model.model_id.len() > 1024
             || creation.mode.as_ref().is_some_and(|mode| mode.len() > 128)

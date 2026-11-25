@@ -76,6 +76,14 @@ impl Drop for WatchLease {
     }
 }
 
+/// Where a send went: the machine, its verified host and the thread's folder.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Dispatch {
+    pub machine: plait_client::machines::MachineId,
+    pub host: Option<plait_client::tabs::HostKey>,
+    pub checkout: Option<std::path::PathBuf>,
+}
+
 impl Plait {
     pub(super) fn host_request<T: DeserializeOwned + Send + 'static>(
         &mut self,
@@ -1037,6 +1045,7 @@ impl Plait {
         }
         let id = id.to_owned();
         let composer = self.workspace.composers.get(&id).map(Entity::downgrade);
+        let dispatch = self.dispatch(&id);
         self.host.thread.submitting = true;
         self.host.connection.error = None;
         self.sync_composer(cx);
@@ -1054,18 +1063,7 @@ impl Plait {
                         if this.admission.refused_busy.as_ref() == Some(&id) {
                             this.admission.refused_busy = None;
                         }
-                        this.host.submissions.confirm(&id, &pending.request_id);
-                        this.acknowledge_saved_draft(
-                            &id,
-                            &pending.text,
-                            pending.draft_revision,
-                            cx,
-                        );
-                        if let Some(composer) = composer {
-                            let _ = composer.update(cx, |composer, cx| {
-                                composer.acknowledge(&pending.text, pending.draft_revision, cx);
-                            });
-                        }
+                        this.submission_accepted(&id, &pending, &dispatch, composer, cx);
                     }
                     Ok(_) => this.host.submissions.uncertain(
                         &pending.request_id,
@@ -1103,6 +1101,53 @@ impl Plait {
             },
         );
         cx.notify();
+    }
+
+    /// The machine, verified host and folder a send to thread `id` goes to.
+    pub(super) fn dispatch(&self, id: &str) -> Dispatch {
+        Dispatch {
+            machine: self.machines.active.clone(),
+            host: self.verified_host().cloned(),
+            checkout: self
+                .host
+                .connection
+                .threads()
+                .iter()
+                .find(|thread| thread.id == id)
+                .map(|thread| thread.checkout.clone()),
+        }
+    }
+
+    /// A host accepted request `pending` for thread `id`. Saved work changes
+    /// only while the machine, verified host and folder it was sent from still
+    /// hold, and this ledger holds the request: an acknowledgement from
+    /// another machine's send clears nothing here (#132).
+    pub(super) fn submission_accepted(
+        &mut self,
+        id: &str,
+        pending: &plait_client::host_state::PendingSubmit,
+        dispatch: &Dispatch,
+        composer: Option<WeakEntity<Composer>>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.dispatch(id) != *dispatch
+            || self.host.submissions.get(id, &pending.request_id).is_none()
+        {
+            return;
+        }
+        self.host.submissions.confirm(id, &pending.request_id);
+        if let Some(host) = dispatch.host.clone() {
+            self.saved_work
+                .accepted_by
+                .entry(pending.request_id.clone())
+                .or_insert(host);
+        }
+        self.acknowledge_saved_draft(id, &pending.text, pending.draft_revision, cx);
+        if let Some(composer) = composer {
+            let _ = composer.update(cx, |composer, cx| {
+                composer.acknowledge(&pending.text, pending.draft_revision, cx);
+            });
+        }
     }
 
     pub(super) fn control_thread(

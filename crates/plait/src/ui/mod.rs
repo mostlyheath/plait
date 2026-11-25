@@ -1728,9 +1728,9 @@ pub fn menus(cx: &mut App) {
     cx.on_action(|_: &Quit, cx| quit_app(cx));
 }
 
-/// Quit through a window's close, which saves first and, if the save fails,
-/// stays open with a notice. GPUI's quit hook cannot cancel a quit, so only
-/// a quit with no window left to save goes straight to it.
+/// Quit through each window's close, which saves first and, if the save
+/// fails, keeps that window and the app open with a notice. GPUI's quit hook
+/// cannot cancel a quit, so the app quits only once no window is left.
 fn quit_app(cx: &mut App) {
     for window in cx.windows() {
         if let Some(handle) = window.downcast::<Plait>() {

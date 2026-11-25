@@ -32,6 +32,10 @@ pub(super) struct SavedWork {
     /// Memory keys sends by thread ID alone, so the same ID now at another
     /// folder conflicts: nothing of it is sent or saved.
     pub adopted: HashMap<String, PathBuf>,
+    /// The host that accepted each send in memory, by request ID: loaded with
+    /// the saved send, or recorded when a host's reply accepted it. Never
+    /// replaced, so a replacement host cannot take over an earlier Wait.
+    pub accepted_by: HashMap<String, HostKey>,
 }
 
 impl Plait {
@@ -117,18 +121,26 @@ impl Plait {
         if self.ledger_machine() != self.machines.active {
             return;
         }
-        let found: Vec<(String, Thread)> = self
+        let found: Vec<(String, Thread, BTreeMap<String, HostKey>)> = self
             .host
             .connection
             .threads()
             .iter()
             .filter(|summary| !self.saved_work.adopted.contains_key(&summary.id))
             .filter_map(|summary| {
-                self.saved_thread(summary)
-                    .map(|thread| (summary.id.clone(), thread.clone()))
+                self.current_work()?
+                    .thread(&summary.id, &summary.checkout)
+                    .map(|saved| {
+                        (
+                            summary.id.clone(),
+                            saved.thread.clone(),
+                            saved.accepted_by.clone(),
+                        )
+                    })
             })
             .collect();
-        for (id, thread) in found {
+        for (id, thread, accepted_by) in found {
+            self.saved_work.accepted_by.extend(accepted_by);
             for pending in thread.pending.iter().chain(&thread.pending_submissions) {
                 self.host.submissions.restore(id.clone(), pending.clone());
             }
@@ -154,15 +166,18 @@ impl Plait {
     /// selected machine's host is verified, the sends in memory are this
     /// machine's and this folder's, and they were accepted by that host.
     pub(super) fn may_reconcile(&self, summary: &ThreadSummary) -> bool {
-        let Some(host) = self.verified_host() else {
-            return false;
-        };
-        self.saved_work.ledger.as_ref() == Some(&self.machines.active)
+        self.verified_host().is_some()
+            && self.saved_work.ledger.as_ref() == Some(&self.machines.active)
             && !self.ledger_conflict(summary)
-            && self
-                .current_work()
-                .and_then(|work| work.thread(&summary.id, &summary.checkout))
-                .is_none_or(|saved| saved.host.as_ref().is_none_or(|accepted| accepted == host))
+    }
+
+    /// The accepting hosts in memory, for saving with a thread's sends.
+    pub(super) fn accepting_hosts(&self) -> BTreeMap<String, HostKey> {
+        self.saved_work
+            .accepted_by
+            .iter()
+            .map(|(request, host)| (request.clone(), host.clone()))
+            .collect()
     }
 
     /// Leaving a machine: its saved sends stay in its file, and the next
@@ -171,6 +186,7 @@ impl Plait {
         self.host.submissions = Default::default();
         self.saved_work.ledger = None;
         self.saved_work.adopted.clear();
+        self.saved_work.accepted_by.clear();
         // Approval choices are keyed by thread ID too; they are saved in the
         // machine's file and must not follow the same ID to another machine.
         self.workspace.thread_controls.approvals.clear();

@@ -6631,6 +6631,11 @@ fn accepted_wait(
                 when_busy: None,
             },
         );
+        // Accepted by this machine's host, as its reply would have recorded.
+        plait
+            .saved_work
+            .accepted_by
+            .insert(request_id.into(), fixture_host());
         plait.sync_composer(cx);
     });
     checkout

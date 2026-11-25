@@ -437,7 +437,7 @@ impl Plait {
             self.tabs
                 .lifecycle
                 .verify_pending(&previous, &host, &checkouts);
-            for (target, _) in &mut self.tabs.lifecycle.editors {
+            for (_, target, _) in &mut self.tabs.lifecycle.editors {
                 let checkout = match target {
                     TabTarget::Existing { checkout, .. }
                     | TabTarget::Draft { checkout, .. }

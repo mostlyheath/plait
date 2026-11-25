@@ -598,7 +598,7 @@ impl Plait {
                 queued_submissions: Vec::new(),
                 approval: sending.choice,
             };
-            work.put_thread(&id, thread, self.verified_host().cloned());
+            work.put_thread(&id, thread, &std::collections::BTreeMap::new());
             work.drafts.remove(&draft_id);
             self.store_machine_work(works);
         }

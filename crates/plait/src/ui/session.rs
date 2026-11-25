@@ -92,10 +92,10 @@ impl Plait {
                 .collect();
             thread.queued_submissions = self.host.submissions.accepted(id).to_vec();
         }
-        let host = self.verified_host().cloned();
+        let accepted = self.accepting_hosts();
         let mut works = BTreeMap::new();
         super::saved_work::touch(&mut works, &self.saved_work.machines, &machine)
-            .put_thread(id, thread, host);
+            .put_thread(id, thread, &accepted);
         let (changed, _) = self.store_machine_work(works);
         if changed {
             self.schedule_session_save(false, cx);
@@ -124,8 +124,7 @@ impl Plait {
         let checkout_generation = self.host.creation.generation;
         let task = cx.background_executor().spawn(async move {
             let (directory, host) = session::locations()?;
-            let (journal, mut data) = Journal::open(&directory, host)?;
-            data.import_legacy_drafts();
+            let (journal, data) = Journal::open(&directory, host)?;
             let path = requested
                 .or_else(|| data.checkout.clone().filter(|path| path.is_dir()))
                 .unwrap_or_else(|| PathBuf::from("."));
@@ -136,14 +135,15 @@ impl Plait {
                     .map(|root| root.join(&path))
                     .map_err(|error| format!("Cannot restore checkout: {error}"))?
             };
-            Ok::<_, String>((journal, data, path))
+            let recovered = journal.recovery_files();
+            Ok::<_, String>((journal, data, path, recovered))
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = task.await;
             let _ = this.update_in(cx, |this, window, cx| {
                 this.session.loading = false;
                 match result {
-                    Ok((journal, data, path)) => {
+                    Ok((journal, data, path, recovered)) => {
                         // This observer outlives the window. Closing it must flush the latest draft.
                         let quit_journal = journal.clone();
                         let quit_view = cx.weak_entity();
@@ -158,20 +158,20 @@ impl Plait {
                                 })
                             }).ok().and_then(Result::ok).flatten();
                             cx.background_executor().spawn(async move {
-                                if let Some(tabs) = tabs && let Err(error) = tabs.write() { eprintln!("Plait tabs: {error}"); }
                                 // This quit cannot be cancelled (a user quit goes through
-                                // close_desktop, which can): keep what could not be saved.
+                                // close_desktop, which can). Local saves come first, within
+                                // GPUI's quit timeout; tabs, which may go to a remote host, last.
                                 if let Err(error) = journal.flush() {
                                     match journal.keep_unsaved() {
                                         Ok(kept) => eprintln!("Plait workspace: {error} Unsaved work was kept in {kept:?}."),
                                         Err(kept) => eprintln!("Plait workspace: {error} {kept}"),
                                     }
                                 }
+                                if let Some(tabs) = tabs && let Err(error) = tabs.write() { eprintln!("Plait tabs: {error}"); }
                             })
                         }).detach();
                         let selected = data.selected.clone();
                         this.saved_work.machines = journal.take_machines();
-                        let recovered = journal.recovery_files();
                         this.session.journal = Some(journal);
                         this.session.data = Some(data);
                         // A quit that could not be cancelled kept unsaved work aside.
@@ -216,10 +216,9 @@ impl Plait {
         }
         self.capture_session(cx);
         let Some(journal) = self.session.journal.clone() else {
+            window.remove_window();
             if quit {
-                cx.quit();
-            } else {
-                window.remove_window();
+                cx.defer(super::quit_app);
             }
             return;
         };
@@ -237,10 +236,11 @@ impl Plait {
             let result = task.await;
             let _ = this.update_in(cx, |this, window, cx| match result {
                 Ok(()) => {
+                    window.remove_window();
+                    // A quit closes every window, each saving first; it ends
+                    // only once none is left, and stops at one that cannot save.
                     if quit {
-                        cx.quit();
-                    } else {
-                        window.remove_window();
+                        cx.defer(super::quit_app);
                     }
                 }
                 Err(error) => {
@@ -506,7 +506,8 @@ impl Plait {
     /// the ledger is.
     fn capture_threads(&mut self, works: &mut BTreeMap<MachineId, MachineWork>, cx: &App) {
         let ledger = self.ledger_machine();
-        let host = self.verified_host().cloned();
+        let accepted = self.accepting_hosts();
+        let none = BTreeMap::new();
         let summaries = self.host.connection.threads().to_vec();
         let mut written = Vec::new();
         for summary in &summaries {
@@ -597,7 +598,7 @@ impl Plait {
                     || thread.approval.is_some()
                     || (sends && in_memory);
                 if worth {
-                    work.put_thread(id, thread, if sends { host.clone() } else { None });
+                    work.put_thread(id, thread, if sends { &accepted } else { &none });
                 }
             }
             if ledger_written {
@@ -606,7 +607,7 @@ impl Plait {
                 let work = super::saved_work::touch(works, &self.saved_work.machines, &ledger);
                 let mut thread = with_sends(record(work));
                 thread.approval = approval;
-                work.put_thread(id, thread, host.clone());
+                work.put_thread(id, thread, &accepted);
                 written.push((id.clone(), summary.checkout.clone()));
             }
         }

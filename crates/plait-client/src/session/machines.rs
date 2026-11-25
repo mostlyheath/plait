@@ -40,11 +40,11 @@ pub struct MachineWork {
 pub struct SavedThread {
     pub id: String,
     pub thread: Thread,
-    /// The verified host its saved sends were accepted by. Receipts from
-    /// another host, such as one reinstalled under this machine entry, never
-    /// settle them.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub host: Option<HostKey>,
+    /// The host that accepted each saved send, by request ID, recorded once
+    /// when it was accepted and never changed. Receipts from any other host,
+    /// such as one reinstalled under this machine entry, never settle it.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub accepted_by: BTreeMap<String, HostKey>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -70,23 +70,46 @@ impl MachineWork {
     }
 
     /// Save thread work; the same ID at another folder is a separate record.
-    pub fn put_thread(&mut self, id: &str, thread: Thread, host: Option<HostKey>) {
-        match self
+    /// Each send keeps the host recorded as accepting it; `accepted` adds
+    /// hosts only for sends that have none yet, and sends that are gone drop theirs.
+    pub fn put_thread(&mut self, id: &str, thread: Thread, accepted: &BTreeMap<String, HostKey>) {
+        let index = match self
             .threads
-            .iter_mut()
-            .find(|saved| saved.id == id && saved.thread.checkout == thread.checkout)
+            .iter()
+            .position(|saved| saved.id == id && saved.thread.checkout == thread.checkout)
         {
-            Some(saved) => {
-                saved.thread = thread;
-                if host.is_some() {
-                    saved.host = host;
-                }
+            Some(index) => {
+                self.threads[index].thread = thread;
+                index
             }
-            None => self.threads.push(SavedThread {
-                id: id.to_owned(),
-                thread,
-                host,
-            }),
+            None => {
+                self.threads.push(SavedThread {
+                    id: id.to_owned(),
+                    thread,
+                    accepted_by: BTreeMap::new(),
+                });
+                self.threads.len() - 1
+            }
+        };
+        let saved = &mut self.threads[index];
+        let sends: std::collections::HashSet<&str> = saved
+            .thread
+            .pending
+            .iter()
+            .chain(&saved.thread.pending_submissions)
+            .chain(&saved.thread.queued_submissions)
+            .map(|pending| pending.request_id.as_str())
+            .collect();
+        saved
+            .accepted_by
+            .retain(|request, _| sends.contains(request.as_str()));
+        for (request, host) in accepted {
+            if sends.contains(request.as_str()) {
+                saved
+                    .accepted_by
+                    .entry(request.clone())
+                    .or_insert_with(|| host.clone());
+            }
         }
     }
 
@@ -117,7 +140,7 @@ impl MachineWork {
         for (id, thread) in threads {
             if self.imported.insert(format!("thread:{id}")) {
                 if self.thread(id, &thread.checkout).is_none() {
-                    self.put_thread(id, thread.clone(), None);
+                    self.put_thread(id, thread.clone(), &BTreeMap::new());
                 }
                 changed = true;
             }
@@ -150,14 +173,14 @@ impl MachineWork {
 
     pub fn validate(&self) -> Result<(), String> {
         for (id, tab) in &self.drafts {
-            validate_draft_tab(id, tab)?;
+            validate_draft_tab(id, tab, FILE_LIMIT)?;
         }
         let mut keys = std::collections::HashSet::new();
         for saved in &self.threads {
             if !keys.insert((&saved.id, &saved.thread.checkout)) {
                 return Err("A machine's saved threads repeat. Nothing was discarded.".into());
             }
-            validate_thread(&saved.id, &saved.thread)?;
+            validate_thread(&saved.id, &saved.thread, FILE_LIMIT)?;
         }
         Ok(())
     }
@@ -233,6 +256,68 @@ fn read(path: &Path, machine: &MachineId) -> Result<MachineWork, String> {
     }
     document.work.validate()?;
     Ok(document.work)
+}
+
+/// A copy of each image a machine file refers to, outside `images/`. An older
+/// build's sweep sees only `desktop.json` and may remove the image there; the
+/// copy here brings it back on the next launch of this build.
+fn backups(root: &Path) -> PathBuf {
+    directory(root).join("images")
+}
+
+fn image_path(root: &Path, id: &str) -> PathBuf {
+    root.join("images").join(id)
+}
+
+fn link_or_copy(from: &Path, to: &Path) -> std::io::Result<()> {
+    if to.exists() {
+        return Ok(());
+    }
+    fs::hard_link(from, to).or_else(|_| fs::copy(from, to).map(|_| ()))
+}
+
+/// Keep a backup of each image `work` refers to. Blocking.
+pub(super) fn back_up_images(root: &Path, work: &MachineWork) -> Result<(), String> {
+    let backups = backups(root);
+    fs::create_dir_all(&backups).map_err(|e| format!("Cannot keep draft images: {e}"))?;
+    for id in work.image_ids() {
+        let image = image_path(root, id);
+        if image.exists() {
+            link_or_copy(&image, &backups.join(id))
+                .map_err(|e| format!("Cannot keep draft images: {e}"))?;
+        }
+    }
+    Ok(())
+}
+
+/// Bring back any image a machine file refers to that is missing from
+/// `images/`, as after an older build swept it. Blocking.
+pub(super) fn restore_images(root: &Path, machines: &BTreeMap<MachineId, MachineWork>) {
+    let backups = backups(root);
+    for id in machines.values().flat_map(|work| work.image_ids()) {
+        let image = image_path(root, id);
+        let backup = backups.join(id);
+        if !image.exists() && backup.exists() {
+            let _ = fs::create_dir_all(root.join("images"));
+            let _ = link_or_copy(&backup, &image);
+        }
+    }
+}
+
+/// Remove backups no durable machine file refers to any more. Blocking.
+pub(super) fn sweep_backups(root: &Path, referenced: &std::collections::HashSet<String>) {
+    let Ok(entries) = fs::read_dir(backups(root)) else {
+        return;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        if entry
+            .file_name()
+            .to_str()
+            .is_some_and(|id| !referenced.contains(id))
+        {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
 }
 
 /// Where work that could not be saved when Plait had to quit is kept.
@@ -345,6 +430,7 @@ mod tests {
         host_state::PendingSubmit,
         session::{Draft, DraftSettings, Journal, Session},
     };
+    use std::os::unix::fs::PermissionsExt;
 
     fn root(name: &str) -> PathBuf {
         let root =
@@ -411,22 +497,35 @@ mod tests {
         huge
     }
 
-    /// The same thread ID at another folder is another record; a save never
-    /// drops the host its sends were accepted by.
+    /// The same thread ID at another folder is another record; the host that
+    /// accepted a send is recorded once and never replaced.
     #[test]
     fn threads_are_keyed_by_id_and_folder() {
         let mut work = MachineWork::default();
-        let host = HostKey {
-            id: "h".into(),
+        let host = |id: &str| HostKey {
+            id: id.into(),
             store: "/s".into(),
         };
-        work.put_thread("t", thread("/repo", "here", &["w1"]), Some(host.clone()));
-        work.put_thread("t", thread("/elsewhere", "there", &[]), None);
+        let accepted = |id: &str| [("w1".to_owned(), host(id))].into_iter().collect();
+        work.put_thread("t", thread("/repo", "here", &["w1"]), &accepted("first"));
+        work.put_thread("t", thread("/elsewhere", "there", &[]), &BTreeMap::new());
         assert_eq!(work.threads.len(), 2);
-        work.put_thread("t", thread("/repo", "edited", &["w1"]), None);
+        work.put_thread(
+            "t",
+            thread("/repo", "edited", &["w1"]),
+            &accepted("replacement"),
+        );
         let saved = work.thread("t", Path::new("/repo")).unwrap();
         assert_eq!(saved.thread.draft.text, "edited");
-        assert_eq!(saved.host, Some(host));
+        assert_eq!(saved.accepted_by["w1"], host("first"));
+        // A settled send drops its host.
+        work.put_thread("t", thread("/repo", "edited", &[]), &BTreeMap::new());
+        assert!(
+            work.thread("t", Path::new("/repo"))
+                .unwrap()
+                .accepted_by
+                .is_empty()
+        );
         work.validate().unwrap();
     }
 
@@ -448,7 +547,7 @@ mod tests {
         let root = root("files");
         let mut work = MachineWork::default();
         work.drafts.insert("d".into(), tab("saved"));
-        work.put_thread("t", thread("/repo", "text", &["w1"]), None);
+        work.put_thread("t", thread("/repo", "text", &["w1"]), &BTreeMap::new());
         write(&root, &remote(), &work).unwrap();
         assert_eq!(read_all(&root).unwrap()[&remote()], work);
         assert!(
@@ -532,6 +631,96 @@ mod tests {
                 .drafts
                 .contains_key("old")
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// An older build's draft kept only in `new_draft` or `new_drafts` is
+    /// copied on the first reopen; `desktop.json` is left exactly as it was.
+    #[test]
+    fn a_legacy_only_new_draft_is_copied_on_the_first_reopen() {
+        let root = root("legacy-only");
+        fs::create_dir_all(&root).unwrap();
+        let older = serde_json::json!({
+            "schema_version": 1, "host_store": "/host", "checkout": null, "selected": null,
+            "threads": {},
+            "new_draft": ["/project", {"text": "only in new_draft", "revision": 2}],
+            "new_drafts": {"/other": {"text": "only in new_drafts", "revision": 1}}
+        });
+        let bytes = serde_json::to_vec(&older).unwrap();
+        let path = root.join("desktop.json");
+        fs::write(&path, &bytes).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        let (journal, session) = Journal::open(&root, "/host".into()).unwrap();
+        let local = journal
+            .take_machines()
+            .remove(&MachineId::default())
+            .unwrap();
+        let mut texts: Vec<_> = local
+            .drafts
+            .values()
+            .map(|tab| tab.draft.text.clone())
+            .collect();
+        texts.sort();
+        assert_eq!(texts, ["only in new_draft", "only in new_drafts"]);
+        assert!(session.draft_tabs.is_empty());
+        journal.flush().unwrap();
+        drop(journal);
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        let (journal, _) = Journal::open(&root, "/host".into()).unwrap();
+        assert_eq!(
+            journal.take_machines()[&MachineId::default()].drafts.len(),
+            2
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// After a rollback, an older build's sweep removes images only machine
+    /// files refer to; the next launch of this build brings them back.
+    #[test]
+    fn images_survive_a_rollback_sweep() {
+        let root = root("rollback-images");
+        let (journal, _) = Journal::open(&root, "/host".into()).unwrap();
+        let mut bytes = crate::images::TEST_PNG_HEADER.to_vec();
+        bytes.push(7);
+        let image = crate::images::inspect(&bytes).unwrap();
+        fs::create_dir_all(root.join("images")).unwrap();
+        fs::write(root.join("images").join(&image.id), &bytes).unwrap();
+        let mut work = MachineWork::default();
+        let mut draft = tab("with an image");
+        draft.draft.images.push(image.clone());
+        work.drafts.insert("d".into(), draft);
+        journal.queue_machine(&remote(), work);
+        journal.flush().unwrap();
+        drop(journal);
+        // An older build's startup sweep: desktop.json names no image.
+        fs::remove_file(root.join("images").join(&image.id)).unwrap();
+        let (journal, _) = Journal::open(&root, "/host".into()).unwrap();
+        assert_eq!(
+            fs::read(root.join("images").join(&image.id)).unwrap(),
+            bytes
+        );
+        assert_eq!(
+            journal.take_machines()[&remote()].drafts["d"].draft.images,
+            [image]
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The 256 KiB draft limit is desktop.json's; a machine file takes a
+    /// longer draft, bounded by its file size.
+    #[test]
+    fn machine_files_take_drafts_past_the_legacy_limit() {
+        let root = root("long-draft");
+        let mut work = MachineWork::default();
+        work.drafts
+            .insert("long".into(), tab(&"x".repeat(1024 * 1024)));
+        write(&root, &remote(), &work).unwrap();
+        assert_eq!(read_all(&root).unwrap()[&remote()], work);
+        let mut legacy = Session::empty("/host".into());
+        legacy
+            .draft_tabs
+            .insert("long".into(), tab(&"x".repeat(1024 * 1024)));
+        assert!(legacy.validate().is_err());
         fs::remove_dir_all(root).unwrap();
     }
 

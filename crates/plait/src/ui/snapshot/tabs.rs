@@ -943,11 +943,15 @@ fn fill_journal(p: &mut Plait) {
         .cloned()
         .unwrap_or_default();
     for summary in summaries.iter().skip(1) {
-        work.put_thread(&summary.id, thread(&summary.checkout), None);
+        work.put_thread(&summary.id, thread(&summary.checkout), &Default::default());
     }
     // Unlisted threads, to pass the machine file's size limit.
     for n in 0..20 {
-        work.put_thread(&format!("filler-{n}"), thread(&summaries[0].checkout), None);
+        work.put_thread(
+            &format!("filler-{n}"),
+            thread(&summaries[0].checkout),
+            &Default::default(),
+        );
     }
     p.store_machine_work([(machine, work)].into_iter().collect());
 }

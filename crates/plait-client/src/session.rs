@@ -203,19 +203,23 @@ impl Session {
             crate::images::validate_message(&draft.images)?;
         }
         for (id, thread) in &self.threads {
-            validate_thread(id, thread)?;
+            validate_thread(id, thread, LEGACY_TEXT_LIMIT)?;
         }
         Ok(())
     }
 }
 
 /// One saved thread's limits, wherever it is kept.
-pub(super) fn validate_thread(id: &str, thread: &Thread) -> Result<(), String> {
+/// The text limit desktop.json keeps for older builds; machine files are
+/// bounded by their file size instead (#132).
+pub(super) const LEGACY_TEXT_LIMIT: usize = 256 * 1024;
+
+pub(super) fn validate_thread(id: &str, thread: &Thread, text_limit: usize) -> Result<(), String> {
     crate::images::validate_message(&thread.draft.images)?;
     if !identifier(id)
         || !thread.checkout.is_absolute()
         || thread.title.len() > 1024
-        || thread.draft.text.len() > 256 * 1024
+        || thread.draft.text.len() > text_limit
         || thread
             .draft
             .submitted
@@ -432,13 +436,18 @@ impl Journal {
         let mut machines = machines::read_all(directory)?;
         // Once, in this background load: copy `desktop.json`'s older records to
         // this computer's own machine file. They stay in place for older builds.
-        let imported = if session.draft_tabs.is_empty() && session.threads.is_empty() {
+        // Older builds may keep a draft only in `new_draft` or `new_drafts`:
+        // normalize a copy into draft tabs first, so those are copied too. The
+        // loaded fields stay exactly as written, for older builds.
+        let mut legacy = session.clone();
+        legacy.import_legacy_drafts();
+        let imported = if legacy.draft_tabs.is_empty() && legacy.threads.is_empty() {
             false
         } else {
             machines
                 .entry(MachineId::default())
                 .or_default()
-                .import_legacy(&session.draft_tabs, &session.threads)
+                .import_legacy(&legacy.draft_tabs, &legacy.threads)
         };
         let slots = machines
             .iter()
@@ -454,6 +463,8 @@ impl Journal {
                 (machine.clone(), slot)
             })
             .collect();
+        // Before the sweep: images an older build swept come back from backup.
+        machines::restore_images(directory, &machines);
         let durable: Vec<String> = session.image_ids().map(str::to_owned).collect();
         let saved = Saved::new(directory, session.clone());
         let journal = Self {
@@ -492,11 +503,15 @@ impl Journal {
     }
 
     /// Durable image references: `desktop.json`'s and every machine file's.
+    /// Backups of images no machine file refers to any more are removed.
     fn publish_images(&self) {
         let mut ids: Vec<String> = self.durable.lock().unwrap().clone();
+        let mut machine_ids = std::collections::HashSet::new();
         for slot in self.machines.lock().unwrap().values() {
-            ids.extend(slot.durable.iter().cloned());
+            machine_ids.extend(slot.durable.iter().cloned());
         }
+        machines::sweep_backups(&self.directory, &machine_ids);
+        ids.extend(machine_ids);
         crate::images::saved(&self.directory, ids.into_iter());
     }
 
@@ -537,7 +552,9 @@ impl Journal {
             .collect();
         let mut failure = None;
         for (machine, revision, saved) in pending {
-            match machines::write(&self.directory, &machine, &saved.work) {
+            let written = machines::write(&self.directory, &machine, &saved.work)
+                .and_then(|()| machines::back_up_images(&self.directory, &saved.work));
+            match written {
                 Ok(()) => {
                     let mut machines = self.machines.lock().unwrap();
                     if let Some(slot) = machines.get_mut(&machine) {

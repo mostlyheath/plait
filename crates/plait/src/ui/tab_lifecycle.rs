@@ -30,7 +30,9 @@ pub(super) struct Lifecycle {
     pub hydrating: bool,
     hydrate_generation: u64,
     pending: std::collections::VecDeque<Intent>,
-    pub editors: Vec<(TabTarget, EditorRecord)>,
+    /// Parked editors, by the machine they were typed on and their tab: two
+    /// machine entries can name the same host, so the target alone is not enough.
+    pub editors: Vec<(plait_client::machines::MachineId, TabTarget, EditorRecord)>,
     pub drafts: std::collections::BTreeMap<String, super::new_thread::Draft>,
 }
 
@@ -47,7 +49,7 @@ impl Lifecycle {
                 *checkout = key.clone();
             }
         };
-        for (target, _) in &mut self.editors {
+        for (_, target, _) in &mut self.editors {
             update(target);
         }
         for intent in &mut self.pending {
@@ -157,6 +159,7 @@ impl Plait {
             .visible_composer()
             .cloned()
             .map(|c| c.update(cx, |c, _| c.park_editor()));
+        let machine = self.machines.active.clone();
         self.capture_session(cx);
         let bookmark = self.capture_tab_bookmark(Some(window), cx);
         let record = match BookmarkRecord::capture(&bookmark) {
@@ -176,8 +179,8 @@ impl Plait {
                 .lifecycle
                 .editors
                 .iter()
-                .filter(|(old, _)| old != &target)
-                .map(|(_, e)| match e {
+                .filter(|(m, old, _)| !(m == &machine && old == &target))
+                .map(|(_, _, e)| match e {
                     EditorRecord::Memory(e) => e.retained_bytes(),
                     EditorRecord::Stored(_) => 0,
                 })
@@ -188,7 +191,7 @@ impl Plait {
                 return;
             }
             if let Some(editor) = editor {
-                self.remember_editor(target, EditorRecord::Memory(Box::new(editor)), cx);
+                self.remember_editor(machine, target, EditorRecord::Memory(Box::new(editor)), cx);
             }
             let result = self.tabs.model.save_bookmark(active, record);
             if self.tab_error(result) {
@@ -231,7 +234,9 @@ impl Plait {
                     }
                     Ok(editor) => {
                         // Edits made while flushing belong to a newer save boundary.
-                        if this.tabs.model.active() != Some(active) {
+                        if this.tabs.model.active() != Some(active)
+                            || this.machines.active != machine
+                        {
                             return;
                         }
                         if this.capture_tab_bookmark(Some(window), cx) != bookmark {
@@ -239,7 +244,7 @@ impl Plait {
                             return;
                         }
                         if let Some(editor) = editor {
-                            this.remember_editor(target, EditorRecord::Stored(editor), cx);
+                            this.remember_editor(machine, target, EditorRecord::Stored(editor), cx);
                         }
                         let result = this.tabs.model.save_bookmark(active, record);
                         if this.tab_error(result) {
@@ -252,22 +257,31 @@ impl Plait {
         .detach();
     }
 
-    fn remember_editor(&mut self, target: TabTarget, editor: EditorRecord, cx: &mut Context<Self>) {
+    fn remember_editor(
+        &mut self,
+        machine: plait_client::machines::MachineId,
+        target: TabTarget,
+        editor: EditorRecord,
+        cx: &mut Context<Self>,
+    ) {
+        let same = |m: &plait_client::machines::MachineId, old: &TabTarget| {
+            *m == machine && *old == target
+        };
         let retired: Vec<_> = self
             .tabs
             .lifecycle
             .editors
             .iter()
-            .filter_map(|(old, editor)| match editor {
-                EditorRecord::Stored(name) if old == &target => Some(name.clone()),
+            .filter_map(|(m, old, editor)| match editor {
+                EditorRecord::Stored(name) if same(m, old) => Some(name.clone()),
                 _ => None,
             })
             .collect();
         self.tabs
             .lifecycle
             .editors
-            .retain(|(old, _)| old != &target);
-        self.tabs.lifecycle.editors.push((target, editor));
+            .retain(|(m, old, _)| !same(m, old));
+        self.tabs.lifecycle.editors.push((machine, target, editor));
         if let Some(journal) = self.session.journal.clone() {
             cx.background_executor()
                 .spawn(async move {
@@ -450,6 +464,16 @@ impl Plait {
         self.state.repository.park_view();
     }
 
+    /// The parked editor for `target` on the selected machine only.
+    pub(super) fn parked_editor(&self, target: &TabTarget) -> Option<EditorRecord> {
+        self.tabs
+            .lifecycle
+            .editors
+            .iter()
+            .find(|(m, t, _)| *m == self.machines.active && t == target)
+            .map(|(_, _, e)| e.clone())
+    }
+
     pub(super) fn hydrate_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.worktrees_visible() {
             return;
@@ -468,13 +492,7 @@ impl Plait {
         let target = tab.session().target().clone();
         let record = tab.session().bookmark().clone();
         self.workspace.opened_turns = tab.session().opened_turns().clone();
-        let editor = self
-            .tabs
-            .lifecycle
-            .editors
-            .iter()
-            .find(|(t, _)| t == &target)
-            .map(|(_, e)| e.clone());
+        let editor = self.parked_editor(&target);
         if matches!(record, BookmarkRecord::Inline { .. })
             && !matches!(editor, Some(EditorRecord::Stored(_)))
         {
@@ -570,7 +588,7 @@ impl Plait {
             }) || self.session.data.is_none() && (!draft.saved.text.is_empty() || !draft.saved.images.is_empty())
         });
         let mut removed = Vec::new();
-        self.tabs.lifecycle.editors.retain(|(target, editor)| {
+        self.tabs.lifecycle.editors.retain(|(_, target, editor)| {
             if self.tabs.model.retains_target(target) {
                 return true;
             }

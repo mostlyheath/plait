@@ -71,6 +71,11 @@ fn thread_record(root: &Path, text: &str, waits: &[&str]) -> Thread {
     }
 }
 
+/// `request` was accepted by `host`.
+fn accepted(request: &str, host: HostKey) -> std::collections::BTreeMap<String, HostKey> {
+    [(request.to_owned(), host)].into_iter().collect()
+}
+
 fn typed(text: &str, window: &mut Window, cx: &mut Context<Plait>) -> Entity<Composer> {
     let composer = cx.new(|cx| Composer::new(window, cx));
     let text = text.to_owned();
@@ -221,7 +226,7 @@ fn r1_2_another_machines_same_thread_keeps_this_machines_wait() {
             w.put_thread(
                 THREAD,
                 thread_record(repo, "A's text", &["w-a"]),
-                Some(fixture_host()),
+                &accepted("w-a", fixture_host()),
             )
         });
         p.capture_session(cx);
@@ -246,7 +251,11 @@ fn r1_3_another_machine_cannot_read_or_replace_this_machines_text() {
     }
     scene("r1-3", |p, repo, window, cx| {
         seed(p, &local(), |w| {
-            w.put_thread(THREAD, thread_record(repo, "A's text", &[]), None)
+            w.put_thread(
+                THREAD,
+                thread_record(repo, "A's text", &[]),
+                &Default::default(),
+            )
         });
         switch(p, remote(), false, repo, window, cx);
         let composer = mount(p, window, cx);
@@ -361,7 +370,9 @@ fn r2_3_another_folders_wait_is_left_alone() {
     scene("r2-3", |p, repo, _, cx| {
         let elsewhere = repo.with_file_name("elsewhere");
         let saved = thread_record(&elsewhere, "Elsewhere's text", &["w-x"]);
-        seed(p, &local(), |w| w.put_thread(THREAD, saved.clone(), None));
+        seed(p, &local(), |w| {
+            w.put_thread(THREAD, saved.clone(), &Default::default())
+        });
         p.capture_session(cx);
         assert!(p.host.submissions.accepted(THREAD).is_empty());
         relaunch(p, repo, cx);
@@ -381,7 +392,11 @@ fn r3_1_a_reconnect_and_remount_keeps_the_saved_text() {
     }
     scene("r3-1", |p, repo, window, cx| {
         seed(p, &local(), |w| {
-            w.put_thread(THREAD, thread_record(repo, "saved before", &[]), None)
+            w.put_thread(
+                THREAD,
+                thread_record(repo, "saved before", &[]),
+                &Default::default(),
+            )
         });
         p.host.connection.epoch += 1;
         p.park_workspace(cx);
@@ -509,7 +524,7 @@ fn r3_4_a_wait_without_a_composer_stays_with_its_machine() {
             w.put_thread(
                 THREAD,
                 thread_record(repo, "", &["w-a"]),
-                Some(fixture_host()),
+                &accepted("w-a", fixture_host()),
             )
         });
         p.capture_session(cx);
@@ -562,40 +577,122 @@ fn r3_5_each_machines_tab_document_keeps_one_writer() {
     });
 }
 
-/// #174 finding 4: receipts settle saved Waits only from this machine's
-/// verified host, the one that accepted them; not before the check, and not
-/// from a host reinstalled under the same machine entry.
+fn empty_receipts(repo: &Path) -> plait_client::host::checkout_queue::Reply {
+    plait_client::host::checkout_queue::Reply {
+        schema: 1,
+        thread_id: THREAD.into(),
+        checkout: repo.to_owned(),
+        waiters: Vec::new(),
+    }
+}
+
+/// #174 findings 2 and 4: a Wait keeps the host that accepted it. After a
+/// reinstalled host is installed as this machine's identity, its empty
+/// receipts settle nothing; the exact message is still saved after a reload.
+/// The accepting host's empty receipts do settle it.
 #[core::prelude::v1::test]
 fn receipts_settle_waits_only_from_the_host_that_accepted_them() {
     if !isolated("saved_work::receipts_settle_waits_only_from_the_host_that_accepted_them") {
         return;
     }
-    scene("receipts", |p, repo, window, cx| {
+    scene("receipts", |p, repo, _, cx| {
+        let original = thread_record(repo, "", &["w-a"]);
         seed(p, &local(), |w| {
-            w.put_thread(
-                THREAD,
-                thread_record(repo, "", &["w-a"]),
-                Some(fixture_host()),
-            )
+            w.put_thread(THREAD, original.clone(), &accepted("w-a", fixture_host()))
         });
         p.capture_session(cx);
         let summary = p.host.connection.threads()[0].clone();
-        assert!(p.may_reconcile(&summary));
+        let checkout = plait_client::tabs::CheckoutKey {
+            host: host_key("reinstalled-host"),
+            root: repo.to_owned(),
+            directory: crate::ui::tab_identity::directory(repo),
+        };
+        // A reconnect finds a reinstalled host behind this machine entry.
         p.host.connection.epoch += 1;
         assert!(!p.may_reconcile(&summary), "not before the check");
-        p.reconcile_checkout_waits(window, cx);
-        p.verify_identity_for_test(host_key("reinstalled-host"));
-        assert!(!p.may_reconcile(&summary), "not from a replacement host");
+        p.install_tab_identity(host_key("reinstalled-host"), vec![checkout], cx);
+        assert_eq!(p.verified_host(), Some(&host_key("reinstalled-host")));
+        let asked = p.verified_host().cloned();
+        p.apply_checkout_receipts(&summary, asked.as_ref(), &empty_receipts(repo), cx);
         relaunch(p, repo, cx);
-        assert_eq!(
+        let saved = work(p, &local()).thread(THREAD, repo).unwrap();
+        assert_eq!(saved.thread.queued_submissions, original.queued_submissions);
+        assert_eq!(saved.accepted_by["w-a"], fixture_host());
+        // The host that accepted it settles it.
+        p.verify_identity_for_test(fixture_host());
+        p.capture_session(cx);
+        let asked = p.verified_host().cloned();
+        p.apply_checkout_receipts(&summary, asked.as_ref(), &empty_receipts(repo), cx);
+        relaunch(p, repo, cx);
+        assert!(
             work(p, &local())
                 .thread(THREAD, repo)
                 .unwrap()
                 .thread
                 .queued_submissions
-                .len(),
-            1
+                .is_empty()
         );
+    });
+}
+
+/// #174 round 2, finding 1: a send acknowledged after a switch changes
+/// nothing saved on the machine switched to.
+#[core::prelude::v1::test]
+fn an_acknowledgement_after_a_switch_clears_nothing_there() {
+    if !isolated("saved_work::an_acknowledgement_after_a_switch_clears_nothing_there") {
+        return;
+    }
+    scene("ack", |p, repo, window, cx| {
+        // A's send of text at revision 7: acknowledged, it would clear text at that revision.
+        let pending = p
+            .host
+            .submissions
+            .begin_with(THREAD, "Sent from A".into(), None, None, Some(7))
+            .unwrap();
+        let dispatch = p.dispatch(THREAD);
+        switch(p, remote(), false, repo, window, cx);
+        p.verify_identity_for_test(host_key("workstation-host"));
+        let composer = mount(p, window, cx);
+        composer.update(cx, |c, cx| {
+            c.restore_draft("Sent from A".into(), 7, None, cx)
+        });
+        p.capture_session(cx);
+        // Parked: no composer would write the text back.
+        p.workspace.composers.remove(THREAD);
+        p.submission_accepted(THREAD, &pending, &dispatch, None, cx);
+        relaunch(p, repo, cx);
+        assert_eq!(
+            work(p, &remote())
+                .thread(THREAD, repo)
+                .unwrap()
+                .thread
+                .draft
+                .text,
+            "Sent from A"
+        );
+    });
+}
+
+/// #174 round 2, finding 3: a parked editor is the machine's it was typed on,
+/// even when two machine entries name the same host and tab.
+#[core::prelude::v1::test]
+fn a_parked_editor_returns_only_on_its_machine() {
+    if !isolated("saved_work::a_parked_editor_returns_only_on_its_machine") {
+        return;
+    }
+    scene("editor", |p, _, _, cx| {
+        let target = p.tabs.model.tabs()[0].session().target().clone();
+        let editor = p.workspace.composers[THREAD].update(cx, |c, _| c.park_editor());
+        p.tabs.lifecycle.editors.push((
+            local(),
+            target.clone(),
+            crate::ui::tab_lifecycle::EditorRecord::Memory(Box::new(editor)),
+        ));
+        assert!(p.parked_editor(&target).is_some());
+        p.machines.active = remote();
+        assert!(p.parked_editor(&target).is_none());
+        p.machines.active = local();
+        assert!(p.parked_editor(&target).is_some());
     });
 }
 
@@ -783,7 +880,7 @@ fn saving_and_switching_stay_within_budget() {
                 w.put_thread(
                     &format!("thread-{n}"),
                     thread_record(repo, &text, &[]),
-                    None,
+                    &Default::default(),
                 );
             }
         });
