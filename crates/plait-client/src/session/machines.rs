@@ -235,15 +235,67 @@ fn read(path: &Path, machine: &MachineId) -> Result<MachineWork, String> {
     Ok(document.work)
 }
 
-/// Replace one machine's file atomically. Blocking; the journal serializes it.
-pub(super) fn write(root: &Path, machine: &MachineId, work: &MachineWork) -> Result<(), String> {
-    work.validate()?;
-    let bytes = serde_json::to_vec(&Document {
+/// Where work that could not be saved when Plait had to quit is kept.
+pub fn recovery_directory(root: &Path) -> PathBuf {
+    directory(root).join("recovery")
+}
+
+/// Recovery files left by a quit that could not save, if any.
+pub fn recovery_files(root: &Path) -> Vec<PathBuf> {
+    fs::read_dir(recovery_directory(root))
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .filter(|path| path.extension().is_some_and(|e| e == "json"))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Keep one machine's unsaved work in its own new recovery file, with no
+/// size bound: used only when a quit cannot be cancelled and the normal save
+/// failed, so the work is never simply dropped. Blocking.
+pub(super) fn write_recovery(
+    root: &Path,
+    machine: &MachineId,
+    work: &MachineWork,
+) -> Result<PathBuf, String> {
+    let bytes = encode(machine, work)?;
+    let directory = recovery_directory(root);
+    fs::create_dir_all(&directory).map_err(|e| format!("Cannot keep unsaved work: {e}"))?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let path = directory.join(format!("{}-{stamp}.json", machine.as_str()));
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(&path)
+        .map_err(|e| format!("Cannot keep unsaved work: {e}"))?;
+    file.write_all(&bytes)
+        .and_then(|()| file.sync_all())
+        .and_then(|()| File::open(&directory)?.sync_all())
+        .map_err(|e| format!("Cannot keep unsaved work: {e}"))?;
+    Ok(path)
+}
+
+fn encode(machine: &MachineId, work: &MachineWork) -> Result<Vec<u8>, String> {
+    serde_json::to_vec(&Document {
         schema_version: SCHEMA,
         machine: machine.clone(),
         work: work.clone(),
     })
-    .map_err(|e| format!("Cannot encode saved machine work: {e}"))?;
+    .map_err(|e| format!("Cannot encode saved machine work: {e}"))
+}
+
+/// Replace one machine's file atomically. Blocking; the journal serializes it.
+pub(super) fn write(root: &Path, machine: &MachineId, work: &MachineWork) -> Result<(), String> {
+    work.validate()?;
+    let bytes = encode(machine, work)?;
     if bytes.len() > FILE_LIMIT {
         return Err(format!(
             "Saved work for this machine exceeds {} MiB. It is kept while Plait stays open; shorten or send drafts.",
@@ -423,6 +475,24 @@ mod tests {
         drop(journal);
         let (journal, _) = Journal::open(&root, "/host".into()).unwrap();
         assert_eq!(journal.take_machines()[&remote()], work);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A quit that cannot be cancelled keeps work the normal save refused in a
+    /// recovery file, whole, beside the journal.
+    #[test]
+    fn unsaved_work_is_kept_in_a_recovery_file() {
+        let root = root("recovery");
+        let (journal, _) = Journal::open(&root, "/host".into()).unwrap();
+        let work = huge(&MachineWork::default());
+        journal.queue_machine(&remote(), work.clone());
+        assert!(journal.flush().is_err());
+        let kept = journal.keep_unsaved().unwrap();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(journal.recovery_files(), kept);
+        let document: Document = serde_json::from_slice(&fs::read(&kept[0]).unwrap()).unwrap();
+        assert_eq!(document.machine, remote());
+        assert_eq!(document.work, work);
         fs::remove_dir_all(root).unwrap();
     }
 

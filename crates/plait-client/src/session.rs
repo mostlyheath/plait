@@ -500,6 +500,30 @@ impl Journal {
         crate::images::saved(&self.directory, ids.into_iter());
     }
 
+    /// After a save failed during a quit that cannot be cancelled: keep each
+    /// machine's unsaved work in a recovery file beside the journal. Returns the
+    /// files written. Blocking.
+    pub fn keep_unsaved(&self) -> Result<Vec<PathBuf>, String> {
+        let _written = self.written.lock().unwrap();
+        let unsaved: Vec<(MachineId, Arc<SavedMachine>)> = self
+            .machines
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, slot)| slot.queued > slot.written)
+            .map(|(machine, slot)| (machine.clone(), slot.work.clone()))
+            .collect();
+        unsaved
+            .iter()
+            .map(|(machine, saved)| machines::write_recovery(&self.directory, machine, &saved.work))
+            .collect()
+    }
+
+    /// Recovery files a quit left because it could not save.
+    pub fn recovery_files(&self) -> Vec<PathBuf> {
+        machines::recovery_files(&self.directory)
+    }
+
     /// Write each machine file with newer work, one writer per file. A failed
     /// write keeps that work queued and is reported; the others still save.
     fn flush_machines(&self) -> Result<(), String> {

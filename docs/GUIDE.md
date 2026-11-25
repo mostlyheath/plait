@@ -62,7 +62,7 @@ The client negotiates host protocol versions **1 through 7** per request and deg
 - **Before a switch,** Plait saves the open draft and the machine's tabs, then puts its workspace away. Each machine keeps its own tabs.
 - **Drafts from earlier versions** of Plait are copied once to This Mac on the first launch. An earlier version opening the same saved workspace still sees them.
 
-Each machine's saved work is its own file in the desktop state folder, under `desktop-machines/`, and holds up to 8 MiB. Past that, the work stays in memory with a notice, and Plait keeps a window open rather than close it without saving.
+Each machine's saved work is its own file in the desktop state folder, under `desktop-machines/`, and holds up to 8 MiB. Past that, the work stays in memory with a notice. Plait stays open, rather than close a window or quit, until it can save. If the system ends Plait anyway, for example at shutdown, the unsaved work is written whole to `desktop-machines/recovery/`, and the next launch tells you where it is.
 
 To add a remote machine, choose **Add machine…**:
 

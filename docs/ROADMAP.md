@@ -122,9 +122,10 @@ only if the host that accepted it is the one verified now. On the first
 launch, `desktop.json`'s older drafts are copied once, in the background load,
 into this computer's file. They stay in place for older builds, and each
 copied record is noted so it is not copied twice. A machine's file may hold up
-to 8 MiB. Past that, its work is kept in memory with a notice, and a close
-that cannot save stays open. Another model reviews the change independently
-before merge.
+to 8 MiB. Past that, its work is kept in memory with a notice. A close or a
+quit that cannot save stays open. A quit that cannot be cancelled, such as
+a system shutdown, writes the unsaved work to a recovery file. Another model
+reviews the change independently before merge.
 
 Client and host releases must be independently selectable and publishable.
 Compatibility is negotiated through protocol versions and capabilities, not

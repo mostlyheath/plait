@@ -655,6 +655,53 @@ fn work_past_the_file_bound_stays_in_memory() {
     });
 }
 
+/// A quit whose save fails is cancelled like a window close: the app stays
+/// open with the notice, and the unsaved work is still in memory.
+#[core::prelude::v1::test]
+fn a_quit_that_cannot_save_keeps_the_app_open() {
+    if !isolated("saved_work::a_quit_that_cannot_save_keeps_the_app_open") {
+        return;
+    }
+    let scratch = std::env::temp_dir().join(format!("plait-saved-quit-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    let mut h = Harness::new(&repo, None, 900., 600.);
+    h.connect(&repo, false);
+    h.update(|p, _, _| {
+        launch(p, &repo);
+        seed(p, &local(), |w| {
+            for n in 0..40 {
+                w.drafts.insert(
+                    format!("big-{n}"),
+                    draft_tab(&repo, &"x".repeat(250 * 1024)),
+                );
+            }
+        });
+    });
+    // The app's Quit, as from the menu with no window focused.
+    h.cx.update(crate::ui::quit_app);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while h
+        .window
+        .update(&mut h.cx, |p, _, _| p.session.closing)
+        .unwrap()
+    {
+        h.settle();
+        assert!(Instant::now() < deadline, "the failed save did not finish");
+    }
+    h.update(|p, _, _| {
+        let note = p.session.note.clone().unwrap_or_default();
+        assert!(
+            note.contains("kept open") && note.contains("exceeds"),
+            "{note}"
+        );
+        assert_eq!(work(p, &local()).drafts.len(), 40);
+        p.session.journal = None;
+        p.session.data = None;
+    });
+    drop(h);
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
 /// Older records are copied to this computer once, then edited there; the
 /// edit survives a relaunch and the older record stays for older builds.
 #[core::prelude::v1::test]

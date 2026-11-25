@@ -1725,7 +1725,20 @@ impl Render for Plait {
 /// Bind the default shortcuts and build the menu bar from the action table.
 pub fn menus(cx: &mut App) {
     actions::install(cx, &actions::KeyOverrides::new());
-    cx.on_action(|_: &Quit, cx| cx.quit());
+    cx.on_action(|_: &Quit, cx| quit_app(cx));
+}
+
+/// Quit through a window's close, which saves first and, if the save fails,
+/// stays open with a notice. GPUI's quit hook cannot cancel a quit, so only
+/// a quit with no window left to save goes straight to it.
+fn quit_app(cx: &mut App) {
+    for window in cx.windows() {
+        if let Some(handle) = window.downcast::<Plait>() {
+            let _ = handle.update(cx, |this, window, cx| this.close_desktop(true, window, cx));
+            return;
+        }
+    }
+    cx.quit();
 }
 
 /// What a plain folder does without: everything built on Git.

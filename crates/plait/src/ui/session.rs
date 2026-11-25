@@ -159,14 +159,25 @@ impl Plait {
                             }).ok().and_then(Result::ok).flatten();
                             cx.background_executor().spawn(async move {
                                 if let Some(tabs) = tabs && let Err(error) = tabs.write() { eprintln!("Plait tabs: {error}"); }
-                                if let Err(error) = journal.flush() { eprintln!("Plait workspace: {error}"); }
+                                // This quit cannot be cancelled (a user quit goes through
+                                // close_desktop, which can): keep what could not be saved.
+                                if let Err(error) = journal.flush() {
+                                    match journal.keep_unsaved() {
+                                        Ok(kept) => eprintln!("Plait workspace: {error} Unsaved work was kept in {kept:?}."),
+                                        Err(kept) => eprintln!("Plait workspace: {error} {kept}"),
+                                    }
+                                }
                             })
                         }).detach();
                         let selected = data.selected.clone();
                         this.saved_work.machines = journal.take_machines();
+                        let recovered = journal.recovery_files();
                         this.session.journal = Some(journal);
                         this.session.data = Some(data);
-                        this.session.note = None;
+                        // A quit that could not be cancelled kept unsaved work aside.
+                        this.session.note = recovered.first().and_then(|file| file.parent()).map(|folder| {
+                            format!("Work that could not be saved when Plait last quit is kept in {}.", folder.display())
+                        });
                         // Nothing was saved before the journal loaded: composers
                         // mounted earlier bind now, to what they load.
                         this.workspace.bindings.clear();
