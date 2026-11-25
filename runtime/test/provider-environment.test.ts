@@ -42,6 +42,15 @@ test('the auth context prefers the host\'s own variables and never answers host 
   assert.equal(await providerAuthContext(undefined).env('CONTEXT_SHELL'), undefined);
 });
 
+test('a host variable set to an empty or blank value is not replaced by the shell\'s', async t => {
+  process.env.CONTEXT_EMPTY = '';
+  process.env.CONTEXT_BLANK_HOST = '   ';
+  t.after(() => { delete process.env.CONTEXT_EMPTY; delete process.env.CONTEXT_BLANK_HOST; });
+  const context = providerAuthContext({ CONTEXT_EMPTY: 'shell', CONTEXT_BLANK_HOST: 'shell' });
+  assert.equal(await context.env('CONTEXT_EMPTY'), undefined);
+  assert.equal(await context.env('CONTEXT_BLANK_HOST'), undefined);
+});
+
 test('a login environment is published only with the registry that loaded it', async () => {
   const loads: (Record<string, string> | undefined)[] = [];
   let reading: Record<string, string> = { KEY: 'one' };

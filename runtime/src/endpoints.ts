@@ -93,10 +93,10 @@ export function addEndpoint(file: EndpointFile, id: string, change: Required<End
 
 export function updateEndpoint(file: EndpointFile, id: string, change: EndpointChange): void {
   const entry = existing(file, id);
-  // A key or header that reads the environment or runs a command was written for one server.
-  // Moving it to another over the socket would send that value there, so it is changed by hand.
-  if (change.baseUrl !== undefined && origin(change.baseUrl) !== origin(entry.baseUrl) && externalValues(entry)) {
-    fail('conflict', 'This endpoint\'s key or headers read an environment variable or run a command. Change its address in models.json.');
+  // Credentials Pi resolves for an entry were set up for one server. Moving the entry over the
+  // socket would send them to another, so only an entry with nothing but literal values moves here.
+  if (change.baseUrl !== undefined && origin(change.baseUrl) !== origin(entry.baseUrl) && !literalOnly(entry)) {
+    fail('conflict', 'This endpoint\'s credentials come from your environment, a command, or a sign-in. Change its address in models.json.');
   }
   if (change.name !== undefined) entry.name = change.name;
   if (change.baseUrl !== undefined) entry.baseUrl = change.baseUrl;
@@ -118,12 +118,16 @@ function origin(value: unknown): string | undefined {
 
 const values = (headers: unknown): unknown[] => object(headers) ? Object.values(headers) : [];
 
-/** The key, provider headers, model headers, and model-override headers Pi resolves for this endpoint. */
-function externalValues(entry: Json): boolean {
+/**
+ * Whether Pi resolves nothing for this entry beyond its literal text. Without a literal key, or
+ * with `oauth` (such as `"radius"`), Pi falls back to a provider resolver that reads the
+ * environment, so the entry is not literal even when no value is a template.
+ */
+function literalOnly(entry: Json): boolean {
+  if (entry.oauth !== undefined || typeof entry.apiKey !== 'string' || resolvesExternally(entry.apiKey)) return false;
   const models = Array.isArray(entry.models) ? entry.models.filter(object) : [];
   const overrides = object(entry.modelOverrides) ? Object.values(entry.modelOverrides).filter(object) : [];
-  return [entry.apiKey, ...values(entry.headers), ...[...models, ...overrides].flatMap(model => values(model.headers))]
-    .some(resolvesExternally);
+  return ![...values(entry.headers), ...[...models, ...overrides].flatMap(model => values(model.headers))].some(resolvesExternally);
 }
 
 function existing(file: EndpointFile, id: string): Json {

@@ -18,6 +18,18 @@ function useAuthContext(runtime: ModelRuntime, context: AuthContext): void {
 }
 
 /**
+ * The registry for one run in a detached runner, which starts with the service environment as
+ * the host does. When the run's provider is not authenticated, the login shell is read and the
+ * registry loaded again with it, so a run sees the same keys as the host's availability check.
+ */
+export async function loadRunModels(source: ProviderSource, provider: string, signal: AbortSignal): Promise<Registry> {
+  const loaded = await source.load(signal);
+  if (loaded.authenticated.has(provider) || signal.aborted || !source.readEnvironment) return loaded;
+  const login = await source.readEnvironment().catch(() => undefined);
+  return login && !signal.aborted ? source.load(signal, login) : loaded;
+}
+
+/**
  * Pi's own files: auth.json for credentials and models.json for custom endpoints, both in
  * Pi's agent directory. Each load reads them again and never refreshes catalogs over the network.
  */
@@ -34,11 +46,14 @@ export function piProviders(agentDir = getAgentDir(), read: EnvironmentReader = 
       // Create without the initial check, so availability is first computed with this context.
       const models = await ModelRuntime.create({ authPath, modelsPath, allowModelNetwork: false, signal, refreshOnCreate: false });
       useAuthContext(models, providerAuthContext(login));
-      await models.refresh({ allowNetwork: false, signal });
+      const refreshed = await models.refresh({ allowNetwork: false, signal });
       // An interrupted load has an incomplete authenticated set; keep the previous registry instead.
       if (signal?.aborted) throw new Error('Provider load timed out');
+      // Pi records a models.json parse error or a failed provider instead of rejecting, and loads
+      // what it can, so the caller decides whether such a registry may replace a working one.
+      const problem = models.getError() !== undefined || refreshed.errors.size > 0;
       return {
-        models,
+        models, problem,
         authenticated: new Set(models.getAvailableSnapshot().map(model => model.provider)),
         stored: async () => new Map((await models.listCredentials()).map(entry => [entry.providerId, entry.type])),
         settle: () => models.settleCredentialWrites(),

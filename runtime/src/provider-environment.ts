@@ -27,8 +27,9 @@ export function providerAuthContext(login: Record<string, string> | undefined): 
   const base = defaultProviderAuthContext();
   return {
     async env(name) {
-      const own = await base.env(name);
-      if (own !== undefined || !login || HOST_PRIVATE.test(name) || name.startsWith('AWS_') || AMBIENT.has(name)) return own;
+      // A variable the host sets, even to an empty value, is the host's answer; Pi treats blank as unset.
+      if (process.env[name] !== undefined) return base.env(name);
+      if (!login || HOST_PRIVATE.test(name) || name.startsWith('AWS_') || AMBIENT.has(name)) return undefined;
       const value = Object.hasOwn(login, name) ? login[name] : undefined;
       return typeof value === 'string' && value.trim() ? value : undefined;
     },

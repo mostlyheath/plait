@@ -9,6 +9,8 @@ import type { EndpointFile } from './endpoints.ts';
 /** One complete, immutable view of Pi's providers. A reload builds a new one and swaps it in. */
 export type Registry = {
   models: Models;
+  /** Pi loaded it with an error, such as a models.json it could not parse; a reload does not publish it. */
+  problem?: boolean;
   /** Providers with usable authentication, as the model catalog reports them. */
   authenticated: Set<string>;
   /** Which providers have a credential in Pi's store, and of what type. Never the credential. */
@@ -165,7 +167,7 @@ export class Providers {
   async handle(input: unknown): Promise<unknown> {
     const request = validate(input);
     switch (request.op) {
-      case 'reload_providers': await this.reload(await this.readEnvironment()); return { providers: await this.list() };
+      case 'reload_providers': return this.reloadRequest();
       case 'list_providers': return { providers: await this.list() };
       case 'start_sign_in': return { sign_in: await this.startSignIn(text(request, 'provider', 128), optional(request, 'method', 64)) };
       case 'sign_in_status': return { sign_in: this.signIns.status(identifier(request, 'sign_in_id')) };
@@ -197,7 +199,7 @@ export class Providers {
    */
   async adoptEnvironment(): Promise<void> {
     const reading = await this.readEnvironment();
-    if (!reading || this.closed) return;
+    if (typeof reading !== 'object' || this.closed) return;
     const next = this.reloading.then(() => this.closed || same(reading.env, this.environment) ? undefined : this.swap(reading));
     this.reloading = next.catch(() => {});
     await this.reloading;
@@ -207,19 +209,32 @@ export class Providers {
    * Reads the login shell. Reads can overlap and finish out of order; one that finishes after
    * a newer read succeeded is dropped, so it cannot restore a rotated or removed key.
    */
-  private async readEnvironment(): Promise<Reading | undefined> {
+  private async readEnvironment(): Promise<Reading | 'failed' | undefined> {
     if (!this.source.readEnvironment) return undefined;
     const ticket = ++this.started;
     const env = await this.source.readEnvironment().catch(() => undefined);
-    if (!env || ticket < this.newest) return undefined;
+    if (!env) return 'failed';
+    if (ticket < this.newest) return undefined;
     this.newest = ticket;
     return { ticket, env };
+  }
+
+  /**
+   * `reload_providers`: a failed shell read keeps the last environment and still reloads, and
+   * the reply says so, since a key rotated in the shell is not yet in use. Older clients ignore it.
+   */
+  private async reloadRequest() {
+    const reading = await this.readEnvironment();
+    await this.reload(typeof reading === 'object' ? reading : undefined);
+    const providers = await this.list();
+    return reading === 'failed' ? { providers, warning: 'login_environment_unavailable' } : { providers };
   }
 
   /** The login environment goes into the new registry, so both are published together or not at all. */
   private async swap(reading?: Reading): Promise<void> {
     const environment = reading?.env ?? this.environment;
     const registry = await this.source.load(AbortSignal.timeout(PI_DEADLINE_MS), environment).catch(() => fail('internal', 'Providers could not be reloaded. The previous list is still in use.'));
+    if (registry.problem) fail('conflict', 'Pi reported an error in models.json or a provider. The previous list is still in use.');
     this.retired.push(this.registry);
     if (this.retired.length > 8) this.retired.shift();
     this.registry = registry; this.environment = environment;

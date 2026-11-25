@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
@@ -362,18 +361,39 @@ test('models.json key templates resolve from the login shell, and no child proce
   // Host plumbing never comes from a shell, even when a template names it.
   assert.equal((await f.provider('leak'))?.authenticated, false);
 
-  // The process environment is unchanged, so a Git hook started by a host helper cannot read the key.
+  // The process environment is unchanged; worktrees.test.ts checks a real worktree hook.
   assert.deepEqual([process.env.LAB_KEY, process.env.LAB_TEAM, process.env.PLAIT_HOST_EXE], [undefined, undefined, undefined]);
-  const repo = await mkdtemp(join(sandbox, 'repo-'));
-  const git = (...args: string[]) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: repo, stdio: 'pipe' });
-  git('init', '-q'); git('commit', '-q', '--allow-empty', '-m', 'start');
-  const dump = join(sandbox, `hook-${process.pid}.env`);
-  await writeFile(join(repo, '.git', 'hooks', 'post-checkout'), `#!/bin/sh\nenv > '${dump}'\n`, { mode: 0o755 });
-  git('worktree', 'add', '-q', join(sandbox, `tree-${process.pid}`));
-  const hookEnv = await readFile(dump, 'utf8');
-  assert.match(hookEnv, /^PATH=/m);
-  assert(!hookEnv.includes(KEY) && !hookEnv.includes('LAB_TEAM'));
+
+  // A models.json that Pi cannot parse is not published: the working registry stays in use.
+  await writeFile(f.models, '{ "providers": ');
+  assert.equal((await f.call({ op: 'reload_providers' })).error?.code, 'conflict');
+  assert.equal((await f.provider('lab'))?.authenticated, true);
+  assert.equal((await f.holder.models.getAuth('lab'))?.auth.apiKey, KEY);
   f.noSecrets();
+});
+
+test('a detached run reads the login shell for a key the service environment lacks', async t => {
+  const endpoint = await server(t, (_, response) => { response.statusCode = 500; response.end(); });
+  const agent = await mkdtemp(join(sandbox, 'agent-'));
+  await writeFile(join(agent, 'models.json'), JSON.stringify({ providers: {
+    lab: { baseUrl: endpoint.url, api: 'openai-completions', apiKey: '$RUN_KEY', models: [{ id: 'a' }] },
+    plain: { baseUrl: endpoint.url, api: 'openai-completions', apiKey: 'none', models: [{ id: 'b' }] },
+  } }));
+  let reads = 0;
+  const source = piProviders(agent, async () => { reads += 1; return { RUN_KEY: KEY }; });
+  const { loadRunModels } = await import('../src/pi-providers.ts');
+  const loaded = await loadRunModels(source, 'lab', AbortSignal.timeout(5000));
+  assert.equal(loaded.authenticated.has('lab'), true);
+  // The run's model request carries the shell's key; the reply itself does not matter here.
+  const model = loaded.models.getProvider('lab')!.getModels()[0]!;
+  await loaded.models.complete(model, { messages: [{ role: 'user', content: 'hi', timestamp: Date.now() }] }).catch(() => undefined);
+  assert.equal(endpoint.seen.at(-1), `Bearer ${KEY}`);
+  assert.equal(process.env.RUN_KEY, undefined);
+  assert.equal(reads, 1);
+  // A provider usable without the shell, or a stopped run, does not start one.
+  assert.equal((await loadRunModels(source, 'plain', AbortSignal.timeout(5000))).authenticated.has('plain'), true);
+  await loadRunModels(source, 'lab', AbortSignal.abort()).catch(() => undefined);
+  assert.equal(reads, 1);
 });
 
 test('built-in provider keys come from the login shell, and the host\'s own value wins', async t => {
@@ -423,9 +443,9 @@ test('an older login-shell read never replaces a newer one, in either completion
     const restored = f.call({ op: 'reload_providers' });
     await settled(shell, 1); shell.answer(0, { LAB_KEY: KEY });
     await restored;
-    const failed = f.call({ op: 'reload_providers' });
+    const failed = f.call<{ warning?: string }>({ op: 'reload_providers' });
     await settled(shell, 1); shell.answer(0, undefined);
-    assert.equal((await failed).ok, true);
+    assert.deepEqual([(await failed).ok, (await failed).result.warning], [true, 'login_environment_unavailable']);
     assert.equal((await f.holder.models.getAuth('lab'))?.auth.apiKey, KEY);
     f.noSecrets();
   }
@@ -448,5 +468,18 @@ test('an endpoint whose key or headers read the environment keeps its origin ove
   assert.equal((await f.call({ op: 'update_endpoint', id: 'plain', base_url: 'http://127.0.0.1:8/v1' })).ok, true);
   assert.equal((await json(f.models)).providers.keyed.baseUrl, 'http://127.0.0.1:9/api/v1');
   f.noSecrets();
+
+  // With no template at all, a sign-in entry or one without a literal key still resolves a
+  // credential through Pi (Radius reads RADIUS_API_KEY), so it cannot move either.
+  const radius = await host(t, agent => writeFile(join(agent, 'models.json'), JSON.stringify({ providers: {
+    lab: { baseUrl: 'http://127.0.0.1:9/v1', oauth: 'radius' },
+    bare: { baseUrl: 'http://127.0.0.1:9/v1', api: 'openai-completions', models: [{ id: 'a' }] },
+  } })), async () => ({ RADIUS_API_KEY: KEY }));
+  const file = await readFile(radius.models, 'utf8');
+  for (const id of ['lab', 'bare']) {
+    assert.equal((await radius.call({ op: 'update_endpoint', id, base_url: 'https://elsewhere.example/v1' })).error?.code, 'conflict', id);
+  }
+  assert.equal(await readFile(radius.models, 'utf8'), file);
+  radius.noSecrets();
 });
 
