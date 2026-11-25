@@ -109,6 +109,9 @@ check_rust() {
 
 check_runtime() {
     runtime_packages
+    # The dogfood test runs Cargo offline in the command sandbox, so every
+    # locked crate must already be downloaded, as the Rust half would have.
+    cargo fetch --locked
     # The runtime tests start this host binary.
     cargo build --locked -p plait-host
     (
