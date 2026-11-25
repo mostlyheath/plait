@@ -108,7 +108,8 @@ pub(super) struct HarnessRow {
     pub(super) default_detail: SharedString,
     /// Settings → Agents: why the harness cannot be the default now, as hover text.
     pub(super) unstartable: Option<SharedString>,
-    /// The harness needs a download the person starts from Settings → Agents.
+    /// The harness needs a download the person starts: from Settings → Agents,
+    /// the new thread's harness list, or the command palette.
     pub(super) setup: bool,
     /// The version the host can install, offered while the harness is not installed.
     pub(super) installable: Option<SharedString>,
@@ -268,16 +269,13 @@ pub(super) fn thread_items(row: &HarnessRow) -> Vec<Item> {
 }
 
 /// The harness list a new thread chooses from: Pi, then every harness the host
-/// lists. One that cannot start a thread is listed, disabled, with its state.
+/// lists. One that needs setup is offered to set it up; any other that cannot
+/// start a thread is listed, disabled, with its state.
 pub(super) fn harness_items(rows: &[HarnessRow], current: HarnessId) -> Vec<Item> {
-    let item = |id: HarnessId, name: SharedString, detail: SharedString| {
-        let item = Item::new(
-            format!("harness\u{1f}{name}"),
-            name,
-            Command::DraftHarness(id),
-        )
-        .detail(detail)
-        .section("Agent harnesses");
+    let item = |id: HarnessId, name: SharedString, detail: SharedString, command: Command| {
+        let item = Item::new(format!("harness\u{1f}{name}"), name, command)
+            .detail(detail)
+            .section("Agent harnesses");
         match harness_glyph(id) {
             Some(glyph) => item.glyph(glyph, colors().text),
             None => item,
@@ -292,7 +290,12 @@ pub(super) fn harness_items(rows: &[HarnessRow], current: HarnessId) -> Vec<Item
     };
     // An older host lists none; every thread runs in Pi.
     if !rows.iter().any(|row| row.id == HarnessId::Pi) {
-        let pi = item(HarnessId::Pi, "Pi".into(), "Built into the host".into());
+        let pi = item(
+            HarnessId::Pi,
+            "Pi".into(),
+            "Built into the host".into(),
+            Command::DraftHarness(HarnessId::Pi),
+        );
         let mut items = vec![current_badge(pi, HarnessId::Pi)];
         items.extend(
             rows.iter()
@@ -307,11 +310,28 @@ pub(super) fn harness_items(rows: &[HarnessRow], current: HarnessId) -> Vec<Item
 
 fn harness_item(
     row: &HarnessRow,
-    item: &impl Fn(HarnessId, SharedString, SharedString) -> Item,
+    item: &impl Fn(HarnessId, SharedString, SharedString, Command) -> Item,
     current: &impl Fn(Item, HarnessId) -> Item,
 ) -> Item {
     let detail = row.note.clone().unwrap_or_else(|| row.version.clone());
-    let listed = item(row.id, row.name.clone(), detail);
+    // Setup is the only way forward for this harness, so choosing it starts
+    // setup rather than leaving a dead row. The host's note, shown as the
+    // detail, says what setup downloads before the person chooses it.
+    if row.setup {
+        return item(
+            row.id,
+            row.name.clone(),
+            detail,
+            Command::SetUpHarness(row.id),
+        )
+        .badge(row.state.clone(), colors().amber);
+    }
+    let listed = item(
+        row.id,
+        row.name.clone(),
+        detail,
+        Command::DraftHarness(row.id),
+    );
     if row.startable() {
         return current(listed, row.id);
     }
@@ -321,6 +341,26 @@ fn harness_item(
         row.state.clone()
     };
     listed.badge(badge, colors().amber).enabled(false)
+}
+
+/// Command palette rows that set up each harness that needs it, beside the
+/// providers' sign-in rows.
+pub(super) fn setup_items(rows: &[HarnessRow]) -> Vec<Item> {
+    rows.iter()
+        .filter(|row| row.setup)
+        .map(|row| {
+            let item = Item::new(
+                format!("harness-setup\u{1f}{}", row.name),
+                format!("Set up {} threads", row.name),
+                Command::SetUpHarness(row.id),
+            )
+            .section("Agent harnesses");
+            match &row.note {
+                Some(note) => item.detail(note.clone()),
+                None => item,
+            }
+        })
+        .collect()
 }
 
 /// The harness a snapshot's thread runs in. Hosts before version 4 run only Pi.
@@ -1288,7 +1328,8 @@ impl Plait {
 mod tests {
     // Named imports: a glob would bring in GPUI's own `test` attribute.
     use super::{
-        HarnessId, Harnesses, HarnessesView, ThreadHarness, harness_items, mode_line, thread_items,
+        Command, HarnessId, Harnesses, HarnessesView, ThreadHarness, harness_items, mode_line,
+        setup_items, thread_items,
     };
 
     fn sample() -> Harnesses {
@@ -1443,7 +1484,7 @@ mod tests {
     }
 
     #[test]
-    fn a_harness_that_needs_setup_offers_setup_and_nothing_else() {
+    fn a_harness_that_needs_setup_offers_setup_wherever_it_is_chosen() {
         let view = HarnessesView::new(claude_list("setup_required", Some("Set up first.")));
         let claude = &view.rows[1];
         assert!(claude.setup && !claude.ready && !claude.startable());
@@ -1464,9 +1505,15 @@ mod tests {
             claude.blocked.as_deref(),
             Some("Claude Code: needs setup. Set up first.")
         );
+        // The new thread's harness list offers setup, saying what it downloads.
         let items = harness_items(&view.rows, HarnessId::Pi);
         assert_eq!(items[1].title.as_ref(), "Claude Code");
-        assert!(!items[1].enabled);
+        assert!(items[1].enabled, "setup can be started from the list");
+        assert!(matches!(
+            items[1].command,
+            Command::SetUpHarness(HarnessId::Claude)
+        ));
+        assert_eq!(items[1].detail.as_ref(), "Set up first.");
         assert_eq!(
             items[1].glyph.map(|(glyph, _)| glyph),
             Some("harness-claude")
@@ -1475,12 +1522,28 @@ mod tests {
             items[1].badge.as_ref().map(|(badge, _)| badge.as_ref()),
             Some("Needs setup")
         );
+        // So does the command palette.
+        let setup = setup_items(&view.rows);
+        assert_eq!(setup.len(), 1);
+        assert_eq!(setup[0].title.as_ref(), "Set up Claude Code threads");
+        assert_eq!(setup[0].detail.as_ref(), "Set up first.");
+        assert!(matches!(
+            setup[0].command,
+            Command::SetUpHarness(HarnessId::Claude)
+        ));
 
         let view = HarnessesView::new(claude_list("ready", None));
         let claude = &view.rows[1];
         assert!(claude.ready && !claude.setup && claude.startable() && claude.has_path());
         assert_eq!(claude.default_detail.as_ref(), "Decides itself.");
         assert_eq!(thread_items(claude).len(), 1);
+        // A ready harness is chosen for the draft, and needs no setup row.
+        let items = harness_items(&view.rows, HarnessId::Pi);
+        assert!(matches!(
+            items[1].command,
+            Command::DraftHarness(HarnessId::Claude)
+        ));
+        assert!(setup_items(&view.rows).is_empty());
     }
 
     #[test]

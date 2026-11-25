@@ -34,6 +34,9 @@ pub(super) enum Command {
     HarnessModel(HarnessId, ModelChoice),
     /// Open Settings → Agents, where harnesses are listed.
     HarnessSettings,
+    /// Open Settings → Agents and set up a harness there, where its progress
+    /// and any failure are shown.
+    SetUpHarness(HarnessId),
     Thinking {
         thread_id: String,
         epoch: u64,
@@ -86,6 +89,7 @@ impl Clone for Command {
             Self::Model(choice) => Self::Model(choice.clone()),
             Self::HarnessModel(id, choice) => Self::HarnessModel(*id, choice.clone()),
             Self::HarnessSettings => Self::HarnessSettings,
+            Self::SetUpHarness(id) => Self::SetUpHarness(*id),
             Self::Thinking {
                 thread_id,
                 epoch,
@@ -308,6 +312,7 @@ impl Plait {
                     .section("Providers")
                 }),
         );
+        items.extend(super::harnesses::setup_items(self.harness_rows()));
         items
     }
 
@@ -500,6 +505,15 @@ impl Plait {
             Command::HarnessSettings => {
                 self.show_settings(true, window, cx);
                 self.settings_tab = SettingsTab::Agents;
+            }
+            Command::SetUpHarness(id) => {
+                self.show_settings(true, window, cx);
+                self.settings_tab = SettingsTab::Agents;
+                // The list can change while the menu is open; a harness set
+                // up meanwhile is not downloaded again.
+                if self.harness_row(id).is_some_and(|row| row.setup) {
+                    self.set_up_harness(id, cx);
+                }
             }
             Command::DraftProject(path) => self.choose_draft_project(path, window, cx),
             Command::IssueToThread(id) => self.add_issue_to_thread(id, window, cx),

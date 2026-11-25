@@ -3811,8 +3811,30 @@ fn claude_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
     capture_both(harness, &format!("composer-claude-approval-{suffix}"));
     harness.update(|plait, window, cx| plait.open_thread_permissions(window, cx));
     capture_both(harness, &format!("thread-permissions-claude-{suffix}"));
+    // Before setup, a new thread's harness list offers it.
     harness.update(|plait, window, cx| {
         plait.close_overlay(true, window, cx);
+        plait.inject_harnesses(Some(claude_harnesses("setup_required", Some(CLAUDE_SETUP))));
+        plait.open_draft(window, cx);
+        plait.open_draft_harnesses(window, cx);
+    });
+    capture_both(harness, &format!("draft-harnesses-claude-setup-{suffix}"));
+    harness.update(|plait, window, cx| {
+        plait.close_overlay(true, window, cx);
+        // Choosing it opens Settings → Agents, where the setup shows.
+        plait.run_command(
+            super::commands::Command::SetUpHarness(HarnessId::Claude),
+            None,
+            window,
+            cx,
+        );
+        assert!(plait.settings_open);
+        assert_eq!(plait.settings_tab, SettingsTab::Agents);
+        // The draft never moves to a harness that cannot start a thread.
+        assert_eq!(plait.draft_harness(), HarnessId::Pi);
+        plait.show_settings(false, window, cx);
+        plait.settings_tab = SettingsTab::default();
+        plait.discard_draft(window, cx);
         plait.inject_harnesses(None);
     });
     harness.connect(repository, false);
