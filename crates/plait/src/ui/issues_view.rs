@@ -609,9 +609,12 @@ impl Plait {
             .map(|(index, issue)| self.issue_row(index, issue, cx))
             .collect::<Vec<_>>();
         let empty = view.issues.is_empty() && view.list == Load::Idle && view.cache.is_some();
+        // min_w_0 lets the column shrink to its pane, so long titles truncate
+        // instead of widening the list under the detail pane.
         column()
             .gap_2()
             .min_h_0()
+            .min_w_0()
             .flex_1()
             .children(self.issues.search.clone())
             .child(filters)
@@ -620,6 +623,7 @@ impl Plait {
                     .id("issue-list")
                     .flex_1()
                     .min_h_0()
+                    .min_w_0()
                     .overflow_y_scroll()
                     .gap_px()
                     .children(rows)
@@ -915,6 +919,7 @@ impl Plait {
                             .flex_shrink_0()
                             .flex()
                             .min_h_0()
+                            .overflow_hidden()
                             .child(self.issue_list(cx)),
                     )
                     .children(detail),
