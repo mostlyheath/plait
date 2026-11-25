@@ -508,6 +508,18 @@ impl Plait {
         let Some(key) = self.state.checkout_key() else {
             return false;
         };
+        // A thread is bound only to its own checkout. While the window still
+        // shows another one, wait for the thread's checkout to load.
+        if self
+            .host
+            .connection
+            .threads()
+            .iter()
+            .find(|thread| thread.id == id)
+            .is_some_and(|thread| thread.checkout != key.root)
+        {
+            return false;
+        }
         match self.host.bind_checkout(&id, key) {
             Ok(()) => true,
             Err(error) => {

@@ -7104,6 +7104,61 @@ fn sending_stops_for_a_replaced_checkout() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+/// A thread is bound only to its own checkout; a replaced checkout still warns.
+#[core::prelude::v1::test]
+fn selected_thread_binds_only_its_own_checkout() {
+    if !isolated("selected_thread_binds_only_its_own_checkout") {
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("plait-bind-own-{}", std::process::id()));
+    let repository = fixture_repository(&root);
+    let mut harness = Harness::new(&repository, None, 900., 600.);
+    harness.connect(&repository, false);
+    harness.update(|plait, _, _| {
+        let key = plait.state.checkout_key().unwrap().clone();
+        let elsewhere = ThreadSummary {
+            id: "worktree-thread".into(),
+            checkout: key.root.with_file_name("plait-worktree"),
+            ..Default::default()
+        };
+        let here = ThreadSummary {
+            id: "main-thread".into(),
+            checkout: key.root.clone(),
+            ..Default::default()
+        };
+        plait
+            .host
+            .connection
+            .threads_mut()
+            .extend([elsewhere, here]);
+        plait.host.thread.selected = Some("worktree-thread".into());
+        assert!(!plait.bind_selected_checkout());
+        assert!(plait.host.expected_checkout("worktree-thread").is_none());
+        plait.host.thread.selected = Some("main-thread".into());
+        assert!(plait.bind_selected_checkout());
+        assert_eq!(plait.host.expected_checkout("main-thread"), Some(&key));
+        // The same path with another directory behind it still warns.
+        let mut replaced = key.clone();
+        replaced.inode += 1;
+        plait.host.thread.selected = Some("replaced-thread".into());
+        plait.host.connection.threads_mut().push(ThreadSummary {
+            id: "replaced-thread".into(),
+            checkout: key.root.clone(),
+            ..Default::default()
+        });
+        plait
+            .host
+            .bind_checkout("replaced-thread", &replaced)
+            .unwrap();
+        assert!(!plait.bind_selected_checkout());
+        assert_eq!(plait.notice.as_deref(), Some("Checkout identity changed."));
+        plait.host.thread.selected = None;
+        plait.host.connection.threads_mut().clear();
+    });
+    drop(harness);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[core::prelude::v1::test]
 fn admission_refreshes_stored_checkout_identity() {
     if !isolated("admission_refreshes_stored_checkout_identity") {
