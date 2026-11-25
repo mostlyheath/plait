@@ -36,6 +36,8 @@ where the host is.
 Plait is written in Rust and drawn with [GPUI](https://www.gpui.rs/). There is
 no web view.
 
+Follow one message from Send to Undo in the [system walkthrough](docs/WALKTHROUGH.md).
+
 ## What you get
 
 - **Work that outlives the window.** The host owns each run, its history, and

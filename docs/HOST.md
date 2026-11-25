@@ -169,7 +169,9 @@ Message roles: `user`, `assistant`. Tool statuses: `running`, `done`, `error`,
 `{"id":"HOST_UUID","tool_id":"STABLE_ID","kind":"edit","summary":"Change src/main.rs","details":"Full exact JSON tool arguments","dirty_paths":["notes.txt"],"risk":"Pre-existing dirty paths are protected."}`.
 `details` is never clipped: tool arguments over 16384 bytes are rejected.
 Approval kind is `edit` or `command`. Approval is bound to one tool call; it is
-not blanket permission. Stop and restart revoke pending approvals.
+not blanket permission. Stop and restart revoke pending approvals, except
+that a detached Pi runner (off by default, `PLAIT_DETACHED_RUNNERS=1`) that
+survives a host restart keeps its approval wait.
 Messages: latest 100, 4096 characters each. Tools: latest 50, 4096 characters
 per input/output. Live text: latest 16384 characters. These text budgets count
 UTF-16 code units; clipping keeps whole Unicode code points and does not increase

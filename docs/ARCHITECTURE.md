@@ -5,6 +5,8 @@ The desktop is Rust and GPUI; the host is Rust with a TypeScript runtime
 sidecar. [HOST.md](HOST.md) defines the host protocol, persistence, safety
 rules, and operation details. [REMOTE.md](REMOTE.md) covers remote setup.
 
+The [system walkthrough](WALKTHROUGH.md) follows a message across these boundaries.
+
 ## Crate boundaries
 
 The Rust code is split into crates with a checked dependency direction:
@@ -69,13 +71,12 @@ configuration and hooks. Network Git operations use the host's credentials.
 The permitted writes are listed in [HOST.md](HOST.md) and
 [ROADMAP.md](ROADMAP.md).
 
-Today the desktop still uses its local backend for this Mac's Git and file
-reads and writes. **Planned:** route local and remote checkouts through the
-same host operations, with the local backend as a fallback for an older host
-until the speed check permits its removal. A checkout watcher is also planned:
-it will publish debounced status changes so visible views refresh and hidden
-views become stale. See [HOST-FIRST.md](HOST-FIRST.md) for the migration and
-its limits.
+Local and remote checkouts go through the same host operations: the desktop's
+only backend is the host (`crates/plait-client/src/state/backend.rs`), so this
+Mac's Git and file reads and writes also go through its local host. The host's
+checkout watcher (`runtime/src/runtime.ts`) publishes status changes, so
+visible views refresh and hidden views become stale. See
+[HOST-FIRST.md](HOST-FIRST.md) for the migration and its limits.
 
 ## Connections
 
