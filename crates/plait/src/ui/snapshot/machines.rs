@@ -612,3 +612,63 @@ fn switching_machines_puts_the_previous_tabs_away() {
     drop(h);
     std::fs::remove_dir_all(scratch).unwrap();
 }
+
+/// Folding a project on one machine leaves the same path open on another (#132).
+#[core::prelude::v1::test]
+fn folded_projects_stay_with_their_machine() {
+    if !isolated("machines::folded_projects_stay_with_their_machine") {
+        return;
+    }
+    let scratch = std::env::temp_dir().join(format!("plait-same-fold-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    let mut h = Harness::new(&repo, None, 900., 600.);
+    h.connect(&repo, false);
+    h.update(|p, _, _| {
+        let local = p.machines.active.clone();
+        p.set_project_collapsed(repo.clone(), true);
+        assert!(p.project_collapsed(&repo));
+        p.machines.active = plait_client::machines::MachineId::new("workstation").unwrap();
+        assert!(!p.project_collapsed(&repo));
+        p.machines.active = local;
+        assert!(p.project_collapsed(&repo));
+        p.set_project_collapsed(repo.clone(), false);
+    });
+    drop(h);
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
+/// Switching machines saves the outgoing workspace while its locality still
+/// applies, and the next host is not asked about the folder carried over from
+/// the previous machine (#132).
+#[core::prelude::v1::test]
+fn a_switch_saves_and_probes_only_what_belongs_to_each_machine() {
+    if !isolated("machines::a_switch_saves_and_probes_only_what_belongs_to_each_machine") {
+        return;
+    }
+    let scratch = std::env::temp_dir().join(format!("plait-switch-save-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    let mut h = Harness::new(&repo, None, 900., 600.);
+    h.connect(&repo, false);
+    h.update(|p, window, cx| {
+        let local = p.machines.active.clone();
+        let remote = plait_client::machines::MachineId::new("workstation").unwrap();
+        p.session.data = Some(plait_client::session::Session::empty("/host".into()));
+        assert_eq!(p.probed_checkout(), Some(repo.clone()));
+        // On the remote machine, with one of its folders open.
+        let client = p.host_client();
+        p.use_machine_client(client, remote, false, window, cx);
+        // The folder still open is this computer's, carried over: not probed.
+        assert_eq!(p.probed_checkout(), None);
+        p.host_workspace.checkout_carried = false;
+        p.host.creation.checkout = "/srv/remote-project".into();
+        // Switching home saves the remote folder as the remote's, not as this
+        // computer's restored folder.
+        p.session.data.as_mut().unwrap().checkout = None;
+        let client = p.host_client();
+        p.use_machine_client(client, local, true, window, cx);
+        assert_eq!(p.session.data.as_ref().unwrap().checkout, None);
+        p.session.data = None;
+    });
+    drop(h);
+    std::fs::remove_dir_all(scratch).unwrap();
+}

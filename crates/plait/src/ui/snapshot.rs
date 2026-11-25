@@ -7371,7 +7371,7 @@ fn navigation_rows_are_cached_and_invalidated() {
             p.navigation.archived = true;
             assert_eq!(p.filtered_threads(cx).len(), 2);
             assert_eq!(p.navigation.row_recomputations(), count + 2);
-            p.navigation.collapsed.insert(repository.clone());
+            p.set_project_collapsed(repository.clone(), true);
             p.navigation.invalidate_rows();
             let rows = p.navigation_rows(cx);
             assert!(

@@ -88,7 +88,8 @@ pub(super) struct View {
     pub removal: plait_client::worktree_removal::Removal,
     /// The project whose view asked for `removal`: one window has one removal
     /// state, and another project's Worktrees tab must not show or resend it.
-    pub removal_project: Option<PathBuf>,
+    /// The machine and project a removal was asked in; its result shows only there.
+    pub removal_project: Option<(plait_client::machines::MachineId, PathBuf)>,
     /// One inventory at a time: its helper and Git reads run to the end even
     /// when their result is retired, so overlapping refreshes would stack.
     pub reading: bool,
@@ -350,7 +351,13 @@ impl Plait {
     /// Whether the visible Worktrees tab is the project that asked for removal.
     pub(super) fn removal_here(&self) -> bool {
         self.worktrees_visible()
-            && self.worktrees.removal_project.as_deref() == Some(self.visible_project_checkout())
+            && self
+                .worktrees
+                .removal_project
+                .as_ref()
+                .is_some_and(|(machine, project)| {
+                    *machine == self.machines.active && project == self.visible_project_checkout()
+                })
     }
     pub(super) fn worktrees_visible(&self) -> bool {
         self.tabs

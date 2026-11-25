@@ -306,7 +306,7 @@ pub(super) fn walk(h: &mut Harness, repository: &Path, suffix: &str) {
     });
     h.capture(&format!("cards-archived-{suffix}"));
     h.update(|p, _, _| {
-        p.navigation.collapsed.insert(repository.into());
+        p.set_project_collapsed(repository.into(), true);
         p.navigation.invalidate_rows();
     });
     h.capture(&format!("cards-folded-{suffix}"));
@@ -327,14 +327,14 @@ pub(super) fn walk(h: &mut Harness, repository: &Path, suffix: &str) {
     if suffix == "narrow" {
         let project = item(h, 0).center();
         click(h, project, MouseButton::Left);
-        h.update(|p, _, _| assert!(p.navigation.collapsed.contains(repository)));
+        h.update(|p, _, _| assert!(p.project_collapsed(repository)));
         h.draw();
         h.keystroke("enter");
         // GPUI activates a button when the pressed key is released.
         h.pointer(PlatformInput::KeyUp(KeyUpEvent {
             keystroke: Keystroke::parse("enter").unwrap(),
         }));
-        h.update(|p, _, _| assert!(!p.navigation.collapsed.contains(repository)));
+        h.update(|p, _, _| assert!(!p.project_collapsed(repository)));
         for _ in 0..18 {
             h.draw();
             h.keystroke("down");

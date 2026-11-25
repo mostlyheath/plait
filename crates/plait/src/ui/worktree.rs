@@ -316,7 +316,7 @@ impl Plait {
             .map(|choice| PromptButton::Other(choice.label().into()))
             .collect();
         buttons.push(PromptButton::Cancel("Cancel".into()));
-        self.worktrees.removal_project = Some(project);
+        self.worktrees.removal_project = Some((self.machines.active.clone(), project));
         let answer = window.prompt(
             PromptLevel::Warning,
             "Remove this worktree?",
@@ -358,6 +358,7 @@ impl Plait {
         }
         self.worktree_busy = true;
         let request = attempt.request.clone();
+        let machine = self.machines.active.clone();
         let client = self.host_client();
         let task = cx
             .background_executor()
@@ -366,16 +367,21 @@ impl Plait {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
                 this.worktree_busy = false;
-                this.settle_worktree_removal(&attempt, result, cx);
+                this.settle_worktree_removal(&attempt, &machine, result, cx);
             });
         })
         .detach();
     }
     /// Removal here must leave the sidebar and composer where the sidebar's own
     /// Remove leaves them: the folder is gone, not merely re-listed.
+    /// `machine` is the one the removal was sent to. The reply always settles
+    /// the removal record, but the lists change only for a verified, current
+    /// host on that machine: after a switch the same path is another folder,
+    /// and after a reconnect the host is not checked yet (#132).
     pub(super) fn settle_worktree_removal(
         &mut self,
         attempt: &plait_client::worktree_removal::Attempt,
+        machine: &plait_client::machines::MachineId,
         result: Result<worktree::Operation, host::Error>,
         cx: &mut Context<Self>,
     ) {
@@ -393,10 +399,20 @@ impl Plait {
         {
             return;
         }
+        let here = attempt.host == self.tabs.host
+            && *machine == self.machines.active
+            && self.host_verified_here();
+        if !here {
+            return cx.notify();
+        }
         if !self.worktrees_visible()
-            && attempt.host == self.tabs.host
-            && self.worktrees.removal_project.as_deref()
-                == Some(self.project_of(self.visible_project_checkout()))
+            && self
+                .worktrees
+                .removal_project
+                .as_ref()
+                .is_some_and(|(_, project)| {
+                    project == self.project_of(self.visible_project_checkout())
+                })
         {
             self.notice = self.worktrees.removal.message.clone();
         }
