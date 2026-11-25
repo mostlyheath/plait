@@ -86,6 +86,107 @@ fn set_light(harness: &mut Harness, light: Option<bool>) {
     });
 }
 
+fn setup_long_model(harness: &mut Harness, repository: &Path) {
+    setup_base_thread(harness, repository, "Claude Sonnet");
+    harness.update(|plait, _, cx| {
+        let mut catalog = sample_harnesses("ready", None);
+        let model = catalog
+            .harnesses
+            .iter_mut()
+            .find(|harness| harness.id == HarnessId::Codex)
+            .unwrap()
+            .models
+            .as_mut()
+            .unwrap()
+            .first_mut()
+            .unwrap();
+        model.name = "Sample Codex model with a long display name".into();
+        plait.inject_harnesses(Some(catalog));
+        let snapshot = Arc::make_mut(plait.host.thread.snapshot.as_mut().unwrap());
+        snapshot.status = ThreadStatus::Idle;
+        snapshot.model = codex_choice();
+        snapshot.harness = Some(ThreadHarness {
+            id: HarnessId::Codex,
+            version: Some("0.170.0".into()),
+            mode: Some("full_access".into()),
+            reported: Some("full_access".into()),
+        });
+        snapshot.usage = Some(Usage {
+            input: 12_400,
+            output: 1_800,
+            cache_read: 141_800,
+            cache_write: 0,
+            reasoning: Some(900),
+            total: 156_000,
+            context_used: Some(156_000),
+            context_window: Some(200_000),
+        });
+        plait.sync_thread_harness();
+        plait.sync_composer(cx);
+    });
+}
+
+fn settings_row_scene(h: &mut Harness, repository: &Path, suffix: &str) {
+    setup_long_model(h, repository);
+    let mut sidebar = None;
+    if suffix == "narrow" {
+        // Leave the minimum conversation width beside a fully expanded sidebar.
+        h.update(|p, _, _| sidebar = p.preferences.value.sidebar_width.replace(480));
+    }
+    capture_both(h, &format!("box-wrap-{suffix}"));
+    #[cfg(debug_assertions)]
+    assert_settings_row(h);
+    if suffix == "narrow" {
+        h.update(|p, _, _| p.preferences.value.sidebar_width = sidebar);
+    }
+}
+
+#[cfg(debug_assertions)]
+fn assert_settings_row(h: &mut Harness) {
+    let frame = h.draw_a11y();
+    let bounds = |id: &str| {
+        frame
+            .nodes
+            .iter()
+            .find(|n| n.path.ends_with(id))
+            .unwrap_or_else(|| panic!("missing {id}"))
+            .bounds
+    };
+    let send = bounds("composer-send");
+    let mut right = px(0.);
+    for id in [
+        "thread-harness",
+        "thread-model",
+        "thread-thinking",
+        "thread-permissions",
+        "thread-usage",
+        "composer-send",
+    ] {
+        let chip = bounds(id);
+        assert!(
+            (chip.center().y - send.center().y).abs() <= px(1.),
+            "{id}: {chip:?}, Send: {send:?}"
+        );
+        assert!(
+            chip.left() >= right && chip.size.width >= px(12.),
+            "{id}: {chip:?}"
+        );
+        right = chip.right();
+    }
+    h.update(|_, w, _| assert!(right <= w.viewport_size().width));
+}
+
+#[core::prelude::v1::test]
+fn settings_row_stays_on_one_line() {
+    if !isolated("step21::settings_row_stays_on_one_line") {
+        return;
+    }
+    let root = fixture_repository(&PathBuf::from(std::env::var_os(SCENE_HOME).unwrap()));
+    let output = std::env::var_os("PLAIT_SNAPSHOT_DIR").map(PathBuf::from);
+    let mut h = this_turn::harness(&root, output.as_deref(), 900., 600.);
+    settings_row_scene(&mut h, &root, "narrow");
+}
+
 pub(super) fn walk(harness: &mut Harness, repository: &Path, suffix: &str) {
     // --- Message box scenes ---
     setup_base_thread(harness, repository, "Claude Sonnet");
@@ -160,45 +261,7 @@ pub(super) fn walk(harness: &mut Harness, repository: &Path, suffix: &str) {
     });
     harness.capture(&format!("box-mode-differs-{suffix}"));
 
-    // Wrapping settings row with long model name, Full access in sand, and context usage.
-    setup_base_thread(harness, repository, "Claude Sonnet");
-    harness.update(|plait, _, cx| {
-        let mut catalog = sample_harnesses("ready", None);
-        let model = catalog
-            .harnesses
-            .iter_mut()
-            .find(|harness| harness.id == HarnessId::Codex)
-            .unwrap()
-            .models
-            .as_mut()
-            .unwrap()
-            .first_mut()
-            .unwrap();
-        model.name = "Sample Codex model with a long display name".into();
-        plait.inject_harnesses(Some(catalog));
-        let snapshot = Arc::make_mut(plait.host.thread.snapshot.as_mut().unwrap());
-        snapshot.status = ThreadStatus::Idle;
-        snapshot.model = codex_choice();
-        snapshot.harness = Some(ThreadHarness {
-            id: HarnessId::Codex,
-            version: Some("0.170.0".into()),
-            mode: Some("full_access".into()),
-            reported: Some("full_access".into()),
-        });
-        snapshot.usage = Some(Usage {
-            input: 12_400,
-            output: 1_800,
-            cache_read: 141_800,
-            cache_write: 0,
-            reasoning: Some(900),
-            total: 156_000,
-            context_used: Some(156_000),
-            context_window: Some(200_000),
-        });
-        plait.sync_thread_harness();
-        plait.sync_composer(cx);
-    });
-    harness.capture(&format!("box-wrap-{suffix}"));
+    settings_row_scene(harness, repository, suffix);
 
     // --- Changed-files strip scenes ---
     setup_base_thread(harness, repository, "Claude Sonnet");

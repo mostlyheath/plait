@@ -320,11 +320,11 @@ impl Plait {
         let stop_composer = composer.clone();
         let send_composer = composer.clone();
         let show_stop = busy && (is_blank || !queue_enabled);
+        // The settings give up label width first. Send and Stop keep their hit targets.
         let left_controls = row()
-            .flex_wrap()
+            .flex_1()
             .items_center()
             .gap_x_1()
-            .gap_y_1()
             .min_w_0()
             .children(parts.left);
         let right_controls = row()
@@ -384,13 +384,12 @@ impl Plait {
                 )
             });
         let settings_row = row()
-            .flex_wrap()
+            .whitespace_nowrap()
             .w_full()
             .min_w_0()
             .items_center()
             .justify_between()
             .gap_x_2()
-            .gap_y_1()
             .pl(px(8.))
             .pr(px(6.))
             .pt(px(4.))
@@ -459,6 +458,17 @@ impl Plait {
         }
     }
 
+    fn compact_thread_controls(&self) -> bool {
+        use super::panels::Panel;
+        // A wide window can still have a narrow conversation alongside the panel.
+        let review = if self.panel_is_open() {
+            self.panel_width(Panel::Review)
+        } else {
+            0.
+        };
+        self.sheet_width() - review < 600.
+    }
+
     pub(super) fn thread_message_box_parts(&self, cx: &mut Context<Self>) -> MessageBoxParts {
         let Some(snapshot) = &self.host.thread.snapshot else {
             return MessageBoxParts::default();
@@ -476,6 +486,7 @@ impl Plait {
         let pi = harness_of(snapshot) == HarnessId::Pi;
         // A harness thread runs under the harness's own mode; Plait's approvals are Pi's.
         let mode = harness.and_then(|line| line.mode.as_ref());
+        let compact = self.compact_thread_controls();
         let mut left = Vec::new();
         if let Some((label, tip)) = match harness {
             // With no Permissions chip to carry it, the logo's hover
@@ -495,8 +506,15 @@ impl Plait {
         left.push(
             locked(
                 box_control(button("thread-model", ""))
+                    .min_w(px(54.))
                     .max_w(px(240.))
                     .flex_shrink_1()
+                    // Give the permission mode its natural width before fitting the model.
+                    .when(compact, |el| el.flex_1())
+                    .when(reason.is_none(), |el| {
+                        let name = model_name.clone();
+                        el.tooltip(move |_, cx| cx.new(|_| TextTooltip(name.clone())).into())
+                    })
                     .aria_label(format!("Change thread model: {model_name}"))
                     .aria_description(reason.unwrap_or("Choose a model for the next run."))
                     .child(
@@ -535,7 +553,7 @@ impl Plait {
         if let Some(mode) = mode {
             if let Some(chip) = self.thread_permissions(mode).and_then(|permissions| {
                 let full_access = is_full_access_mode(&permissions.current, &mode.label);
-                self.permissions_chip("thread-permissions", permissions, cx)
+                self.permissions_chip("thread-permissions", permissions, !compact, cx)
                     .map(|chip| {
                         box_control(chip).when(full_access, |el| el.text_color(rgb(colors().amber)))
                     })
@@ -556,8 +574,14 @@ impl Plait {
                 ContextPressure::High => colors().amber,
                 ContextPressure::NearlyFull => colors().red,
             };
+            let label = if compact {
+                format!("{}%", usage.percent)
+            } else {
+                usage.label.clone()
+            };
             right.push(
-                box_control(button("thread-usage", usage.label.clone()))
+                box_control(button("thread-usage", label))
+                    .aria_label(usage.label.clone())
                     .text_color(rgb(tint))
                     .aria_description(detail.clone())
                     .tooltip(move |_, cx| cx.new(|_| TextTooltip(detail.clone())).into())

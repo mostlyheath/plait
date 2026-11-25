@@ -359,6 +359,7 @@ impl Plait {
         self.workspace.file_viewer.path = bookmark.files.path.as_ref().map(Into::into);
         self.workspace.file_viewer.root = self.file_root();
         self.workspace.file_viewer.reveal = Some(bookmark.files.line as usize);
+        self.workspace.changed_patch = Default::default();
         self.workspace.restore_pending = [true; 4];
         self.workspace.restore = Some(bookmark);
     }
@@ -445,7 +446,7 @@ impl Plait {
                         });
                     }
                 } else {
-                    self.notice = Some("The patch changed. Showing its current contents without the old selection.".into());
+                    self.workspace.changed_patch = std::sync::Arc::downgrade(diff);
                 }
             }
             self.workspace.restore_pending[1] = false;

@@ -39,6 +39,7 @@ impl Plait {
         &self,
         id: &'static str,
         permissions: Permissions,
+        show_caption: bool,
         cx: &mut Context<Self>,
     ) -> Option<Control> {
         let row = self.harness_row(permissions.harness)?;
@@ -52,14 +53,23 @@ impl Plait {
         let tip = permissions.tip.clone();
         let blocked = permissions.blocked;
         let permissions = Rc::new(permissions);
+        let name = format!("Permissions: {label}");
         Some(
-            menu_chip(id, Some("Permissions"), None, label, tip, blocked)
-                .relative()
-                .child(self.anchor_probe(id))
-                .on_activate(cx, move |this, window, cx| {
-                    this.anchor_next(id);
-                    this.open_permissions(&permissions, window, cx)
-                }),
+            menu_chip(
+                id,
+                show_caption.then_some("Permissions"),
+                None,
+                label,
+                tip,
+                blocked,
+            )
+            .aria_label(name)
+            .relative()
+            .child(self.anchor_probe(id))
+            .on_activate(cx, move |this, window, cx| {
+                this.anchor_next(id);
+                this.open_permissions(&permissions, window, cx)
+            }),
         )
     }
 
