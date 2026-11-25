@@ -93,14 +93,7 @@ check_rust() {
     fi
     runtime_packages
     cargo clippy --locked "${packages[@]}" --all-targets -- -D warnings
-    # nextest runs the test binaries side by side, each test in its own process.
-    # It does not run doctests, so those run separately. Without it, cargo test runs both.
-    if cargo nextest --version > /dev/null 2>&1; then
-        cargo nextest run --locked "${packages[@]}" --no-fail-fast
-        cargo test --locked "${packages[@]}" --doc
-    else
-        cargo test --locked "${packages[@]}"
-    fi
+    cargo test --locked "${packages[@]}"
     # CI's package job builds and tests the release binaries itself, beside this one.
     if [[ -z ${PLAIT_CHECK_SKIP_RELEASE:-} ]]; then
         cargo build --locked --release "${packages[@]}"
