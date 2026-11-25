@@ -1,8 +1,9 @@
 # Automations
 
-**Proposed design; not implemented, and the host contract is not agreed yet.**
-The product decisions below were made by the project owner. The host contract
-section is a sketch: it needs a compatibility review before anything is built.
+**Agreed design; not implemented yet.** The project owner agreed the product
+decisions and the host contract below. Each pull request that changes storage
+or the protocol still needs its independent review (see
+[Contributing](../CONTRIBUTING.md)).
 Tracked in [#13](https://github.com/mostlyheath/plait/issues/13).
 
 An automation is a thread that runs on a schedule. You give it instructions
@@ -11,7 +12,7 @@ Results arrive the way any thread's do: an unread mark and an alert.
 
 ## What a person sees
 
-The sidebar has two lists: **Projects**, as today, and **Automations**. Each
+The sidebar has a second section, **Automations**, below **Projects**. Each
 automation is one thread with a card that shows its name, where it works, its
 next run, and how its last run ended.
 
@@ -104,7 +105,7 @@ before it runs.
 - **Pause** and **Delete** stop an active run through the existing Stop and
   cleanup path.
 
-## Host contract (sketch, needs agreement)
+## Host contract
 
 The host owns automations. The desktop is a client of them, like threads.
 
@@ -161,10 +162,8 @@ execution keep their existing gates.
 - With the desktop closed, a Pi edit-and-command run completes under a
   scripted provider. The desktop reconnects to the same history.
 
-## Open questions
+## Decided
 
-1. **One worktree per automation**, as above, or a fresh worktree per run?
-   One worktree matches "each run is a turn": the agent continues its own
-   work. Fresh worktrees isolate runs but leave one branch per run to review.
-2. **Where the Automations list sits:** a second section under Projects, or a
-   switch at the top of the sidebar?
+- **One worktree per automation,** not one per run. Each run continues the
+  automation's own work, and there is one branch to review.
+- **Automations is a second sidebar section** below Projects, not a switch.
