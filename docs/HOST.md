@@ -894,11 +894,15 @@ login shell, read the same way as a trusted command's environment (see
   the worktree helper) does not receive them because of this lookup. Trusted
   commands, trusted MCP servers, Codex, and Claude Code read the login shell
   themselves, as described in their sections.
-- **Detached runs.** A detached Pi runner starts with the service environment
-  too. Each run reads the login shell once and loads its registry with the
-  same lookup as the host, so it resolves the same credential the host's
-  availability check found, again without writing to its process environment.
-  This adds one login-shell read to the start of each detached run.
+- **Detached runs.** A detached Pi runner does not read the login shell. When
+  the host starts one, it resolves the run's provider with its current registry,
+  records the login-shell values that resolution used, and sends only those in
+  the runner's `start` frame, bound to the provider and its server's origin.
+  The runner resolves keys with exactly those values, so it uses the same
+  credential as the host. It keeps them in memory only: not in its arguments,
+  environment, manifest, log, or replayed events. If the provider's server no
+  longer matches when the runner loads, the run fails and asks to send the
+  message again.
 - **Precedence.** A variable the host process has wins over the shell's, even
   when it is set to an empty or blank value, which Pi treats as unset.
   `PLAIT_`-prefixed names are never answered from the shell. Neither are the
@@ -1058,10 +1062,14 @@ Pi's `models.json`:
   `"radius"`, Pi resolves a credential through a provider resolver that reads
   the environment, so those entries cannot move either. Such credentials were
   set up for one server; change the address in `models.json` itself. A new path
-  on the same origin can still be set. Pi uses a credential stored for the entry
-  in `auth.json` before its own `apiKey`, so that credential counts too: it must
-  be a literal API key with no extra environment values, as `set_provider_key`
-  stores one, or absent. A `key` sent in the same request replaces it.
+  on the same origin can still be set.
+- **A saved key is bound to its server.** Pi uses a credential stored for an
+  entry in `auth.json` before the entry's own `apiKey`. When `update_endpoint`
+  moves an entry to another origin, the host removes that credential, or
+  replaces it with the request's `key`, first, and only then writes the new
+  address. If that fails, the reply is an error and the entry keeps its old
+  address, so a saved key is never sent to a new server. `add_endpoint` likewise
+  removes a credential left under the new entry's ID before writing the entry.
 - Built-in providers cannot be edited or removed here. `remove_endpoint` deletes
   the stored key first, then the entry.
 - With `key`, `add_endpoint` and `update_endpoint` save the entry first. If

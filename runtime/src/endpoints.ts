@@ -92,14 +92,15 @@ export function addEndpoint(file: EndpointFile, id: string, change: Required<End
 }
 
 /**
- * `stored` is the raw credential Pi keeps for the entry in auth.json, which Pi uses before the
- * entry's own key; undefined when there is none.
+ * Applies the change to the file in memory and says whether the entry moves to another origin,
+ * where its stored credential must not follow it.
  */
-export function updateEndpoint(file: EndpointFile, id: string, change: EndpointChange, stored?: unknown): void {
+export function updateEndpoint(file: EndpointFile, id: string, change: EndpointChange): boolean {
   const entry = existing(file, id);
-  // Credentials Pi resolves for an entry were set up for one server. Moving the entry over the
-  // socket would send them to another, so only an entry with nothing but literal values moves here.
-  if (change.baseUrl !== undefined && origin(change.baseUrl) !== origin(entry.baseUrl) && !(literalOnly(entry) && literalCredential(stored))) {
+  const moved = change.baseUrl !== undefined && origin(change.baseUrl) !== origin(entry.baseUrl);
+  // A key or header that reads the environment or runs a command, or a sign-in, was set up for
+  // one server and lives in models.json, so only an entry with literal values moves here.
+  if (moved && !literalOnly(entry)) {
     fail('conflict', 'This endpoint\'s credentials come from your environment, a command, or a sign-in. Change its address in models.json.');
   }
   if (change.name !== undefined) entry.name = change.name;
@@ -109,6 +110,7 @@ export function updateEndpoint(file: EndpointFile, id: string, change: EndpointC
     // A model that stays keeps the fields written for it by hand, such as its context window.
     entry.models = change.modelIds.map(model => models.find(item => item.id === model) ?? { id: model });
   }
+  return moved;
 }
 
 export function removeEndpoint(file: EndpointFile, id: string): void {
@@ -132,13 +134,6 @@ function literalOnly(entry: Json): boolean {
   const models = Array.isArray(entry.models) ? entry.models.filter(object) : [];
   const overrides = object(entry.modelOverrides) ? Object.values(entry.modelOverrides).filter(object) : [];
   return ![...values(entry.headers), ...[...models, ...overrides].flatMap(model => values(model.headers))].some(resolvesExternally);
-}
-
-/** A stored credential that is a literal key, as `set_provider_key` writes one, or none at all. */
-function literalCredential(stored: unknown): boolean {
-  if (stored === undefined) return true;
-  if (!object(stored) || stored.type !== 'api_key' || typeof stored.key !== 'string' || resolvesExternally(stored.key)) return false;
-  return stored.env === undefined || (object(stored.env) && Object.keys(stored.env).length === 0);
 }
 
 function existing(file: EndpointFile, id: string): Json {

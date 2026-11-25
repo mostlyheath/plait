@@ -58,6 +58,42 @@ for (const mode of ['finish', 'stop', 'reattach', 'kill'] as const) test(`runner
   }
 });
 
+test('provider values in a start frame stay in the runner\'s memory', async t => {
+  const { readdir, readFile } = await import('node:fs/promises');
+  const sentinel = 'sk-START_FRAME_SENTINEL_DO_NOT_LEAK';
+  const { root, base } = await setup(t); const lease = await acquireCheckout(root);
+  const previous = process.env.PLAIT_RUNNER_TEST_TURNS; process.env.PLAIT_RUNNER_TEST_TURNS = '1';
+  const events: Event[] = [];
+  const supervisor = new RunnerSupervisor({ store: base, onEvent: event => { events.push(event); } });
+  let pid = 0;
+  try {
+    const gate = join(base, 'gate');
+    const binding = { provider: 'lab', origin: 'https://lab.example', values: { LAB_KEY: sentinel } };
+    const run = await supervisor.launch({ threadId: 'thread', requestId: 'request', lease, payload: { kind: 'test', gate, provider_environment: binding } }); pid = run.pid;
+    await waitFor(() => events.some(event => event.type === 'approval_needed'));
+    // While it runs: neither its arguments nor its environment hold the value.
+    for (const part of ['cmdline', 'environ']) {
+      const text = await readFile(`/proc/${pid}/${part}`, 'utf8').catch(() => '');
+      // Linux exposes both; elsewhere the registry and event checks below still apply.
+      if (process.platform === 'linux') assert(text.length > 0, part);
+      assert(!text.includes(sentinel) && !text.includes('LAB_KEY'), part);
+    }
+    supervisor.approve('approval', true); await writeFile(gate, 'open');
+    await waitFor(() => events.some(event => event.type === 'finished'));
+    // Nor do the manifest, the log, or any other registry file, nor any replayed event.
+    const registry = new RunnerRegistry(base);
+    for (const name of await readdir(registry.directory)) {
+      const text = await readFile(join(registry.directory, name), 'utf8').catch(() => '');
+      assert(!text.includes(sentinel), name);
+    }
+    assert(!JSON.stringify(events).includes(sentinel));
+    pid = 0;
+  } finally {
+    supervisor.detach(); if (pid) { try { process.kill(pid, 'SIGKILL'); } catch {} }
+    await lease.close(); if (previous === undefined) delete process.env.PLAIT_RUNNER_TEST_TURNS; else process.env.PLAIT_RUNNER_TEST_TURNS = previous;
+  }
+});
+
 test('runner exits without attach and start', async t => {
   const { root, base } = await setup(t); const lease = await acquireCheckout(root); const registry = new RunnerRegistry(base);
   const runId = 'orphan';

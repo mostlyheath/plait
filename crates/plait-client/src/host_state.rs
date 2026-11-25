@@ -267,6 +267,10 @@ impl HostState {
                 Some("Save not confirmed. Reconnect will reload the saved default.".into());
         }
         self.connection.saving = false;
+        // A catalog reload in flight answers the old connection and is dropped, so it must not
+        // block the next one; the new connection's catalog is current for no known revision.
+        self.connection.catalog_refresh = None;
+        self.connection.catalog_providers_revision = 0;
         self.thread.disconnected();
         self.submissions.disconnected();
         self.creation.disconnected();
@@ -754,6 +758,19 @@ mod tests {
         state.connection.finish_catalog_refresh(2, true);
         state.connection.providers_revision = 0;
         assert_eq!(state.connection.begin_catalog_refresh(), Some(0));
+    }
+
+    #[test]
+    fn a_reconnect_during_a_catalog_reload_does_not_stop_later_reloads() {
+        let mut state = HostState::new(PathBuf::from("/repo"));
+        assert!(state.apply_status(0, status(None, vec![])));
+        state.connection.providers_revision = 1;
+        assert_eq!(state.connection.begin_catalog_refresh(), Some(1));
+        // The reply to that reload never arrives: its connection is gone.
+        let epoch = state.reconnect();
+        assert!(state.apply_status(epoch, status(None, vec![])));
+        state.connection.providers_revision = 2;
+        assert_eq!(state.connection.begin_catalog_refresh(), Some(2));
     }
 
     fn status(default: Option<ModelChoice>, models: Vec<crate::host::Model>) -> Status {

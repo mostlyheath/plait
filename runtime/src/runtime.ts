@@ -49,6 +49,7 @@ import { customTitle } from './text.ts';
 import { RunAuthorization } from './authorization.ts';
 import { InteractiveApproval, automaticApproval } from './approval.ts';
 import type { Providers } from './providers.ts';
+import { providerOrigin } from './provider-environment.ts';
 import { commandPolicy, commandPolicyOperation } from './command/policy.ts';
 import type { TemplateEntry } from './templates.ts';
 import { CODEX_MODES, CODEX_PROVIDER, CodexHarness, PI_ENTRY, codexEffort, codexLevels } from './harness.ts';
@@ -982,6 +983,11 @@ export class Runtime {
     const testPayload = this.detachedTestPayload(snapshot, text);
     if (testPayload) return this.startDetached(snapshot, requestId, mode, accept, testPayload);
     if (process.env.PLAIT_DETACHED_RUNNERS === '1' && selected.kind === 'pi') {
+      // The run resolves its provider with exactly the shell values this registry used.
+      const provider = snapshot.model.provider;
+      const binding = this.providers
+        ? await this.providers.bindingFor(provider)
+        : { provider, origin: providerOrigin(this.models.getProvider(provider)?.baseUrl), values: {} };
       return this.startDetached(snapshot, requestId, mode, accept, root => {
         const policy = commandPolicy(this.store, snapshot.checkout, root);
         return {
@@ -998,6 +1004,7 @@ export class Runtime {
           approval_mode: mode === 'auto' ? 'auto' : 'manual',
           ...(policy ? { command_policy: policy } : {}),
           root_identity: root,
+          provider_environment: binding,
         };
       });
     }

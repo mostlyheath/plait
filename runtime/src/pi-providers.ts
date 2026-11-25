@@ -3,8 +3,8 @@ import type { AuthContext } from '@earendil-works/pi-ai';
 import { ModelRuntime, SettingsManager, getAgentDir } from '@earendil-works/pi-coding-agent';
 import { builtinProviders } from '@earendil-works/pi-ai/providers/all';
 import type { ProviderSource, Registry } from './providers.ts';
-import { providerAuthContext, readLoginEnvironment } from './provider-environment.ts';
-import type { EnvironmentReader } from './provider-environment.ts';
+import { providerAuthContext, providerOrigin, readLoginEnvironment } from './provider-environment.ts';
+import type { EnvironmentReader, ProviderBinding } from './provider-environment.ts';
 
 /**
  * Pi 1.5.2's ModelRuntime builds its Models without an auth context, so Pi would resolve keys
@@ -18,14 +18,17 @@ function useAuthContext(runtime: ModelRuntime, context: AuthContext): void {
 }
 
 /**
- * The registry for one run in a detached runner, which starts with the service environment as
- * the host does. It always resolves keys with the login shell, as the host does: deciding from
- * whether a provider already looks usable would let the runner pick a different credential.
+ * The registry for one detached run. The runner does not read the login shell itself: it
+ * resolves keys with exactly the values the host's registry used for the run's provider, so
+ * the host and the run agree on the credential by construction.
  */
-export async function loadRunModels(source: ProviderSource, signal: AbortSignal): Promise<Registry> {
-  const login = await source.readEnvironment?.().catch(() => undefined);
-  signal.throwIfAborted();
-  return source.load(signal, login);
+export async function loadRunModels(source: ProviderSource, binding: ProviderBinding, signal: AbortSignal): Promise<Registry> {
+  const loaded = await source.load(signal, binding.values);
+  const provider = loaded.models.getProvider(binding.provider);
+  if (!provider || providerOrigin(provider.baseUrl) !== binding.origin) {
+    throw new Error('This provider\'s server changed after the run was accepted. Send the message again.');
+  }
+  return loaded;
 }
 
 /**

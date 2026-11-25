@@ -11,6 +11,8 @@ import type { CommandPolicy } from '../command/policy.ts';
 import type { ImageData, ImageRef } from '../images.ts';
 import { fingerprint, nameKey } from '../mcp/tools.ts';
 import { loadRunModels, piProviders } from '../pi-providers.ts';
+import { validBinding } from '../provider-environment.ts';
+import type { ProviderBinding } from '../provider-environment.ts';
 import { failure, type InputRecord, type Snapshot, type ThinkingLevel } from '../protocol.ts';
 import { capture, RECORD_FAILED, type Made } from '../records.ts';
 import { resourceFailure } from '../run-capacity.ts';
@@ -39,6 +41,8 @@ export type PiTurnStartPayload = {
   command_policy?: CommandPolicy;
   root_identity: FileIdentity;
   agent_dir?: string;
+  /** The host's login-shell values for this run's provider. Held in memory only. */
+  provider_environment?: ProviderBinding;
 };
 
 type PlacedEntry = { request_id: string; entry: number };
@@ -262,13 +266,13 @@ export class RunnerTurnSink implements TurnSink {
   }
 }
 
-async function loadPiModels(store: string, agentDir: string | undefined, signal: AbortSignal): Promise<TestProviderOverride> {
+async function loadPiModels(store: string, agentDir: string | undefined, binding: ProviderBinding, signal: AbortSignal): Promise<TestProviderOverride> {
   // Test-only provider injection requires both PLAIT_TEST_SCENARIO and PLAIT_RUNNER_TEST_TURNS=1.
   if (process.env.PLAIT_RUNNER_TEST_TURNS === '1' && process.env.PLAIT_TEST_SCENARIO) {
     const mod = await importTestSupport<typeof import('../../test/support/runner-test-provider.ts')>('runner-test-provider.ts');
     return mod.loadTestProvider(store, process.env.PLAIT_TEST_SCENARIO);
   }
-  const loaded = await loadRunModels(piProviders(agentDir), signal);
+  const loaded = await loadRunModels(piProviders(agentDir), binding, signal);
   return { models: loaded.models };
 }
 
@@ -412,7 +416,10 @@ export function createPiTurn(): RunnerTurn {
 
         if (authorization.signal.aborted) return { status: 'stopped' };
 
-        const provider = await loadPiModels(store, payload.agent_dir, authorization.signal);
+        // The host always sends the binding; without it the run could pick another credential.
+        const binding = payload.provider_environment;
+        if (!validBinding(binding, payload.model.provider)) throw new Error('The run is missing its provider environment.');
+        const provider = await loadPiModels(store, payload.agent_dir, binding, authorization.signal);
         if (authorization.signal.aborted) return { status: 'stopped' };
 
         const header = await runHeader(payload.checkout, payload.vcs);

@@ -383,26 +383,53 @@ test('a detached run resolves keys exactly as the host does', async t => {
   // The service has an Anthropic key; the shell adds a token, which Pi prefers.
   process.env.ANTHROPIC_API_KEY = 'service-key';
   t.after(() => { delete process.env.ANTHROPIC_API_KEY; });
-  const login = { RUN_TEAM: 'blue', ANTHROPIC_AUTH_TOKEN: 'shell-token' };
-  const source = piProviders(agent, async () => ({ ...login }));
+  const login = { RUN_TEAM: 'blue', ANTHROPIC_AUTH_TOKEN: 'shell-token', UNUSED_SECRET: 'unused' };
   const { loadRunModels } = await import('../src/pi-providers.ts');
-
-  const hostRegistry = await source.load(AbortSignal.timeout(5000), login);
-  const run = await loadRunModels(source, AbortSignal.timeout(5000));
-  const auth = async (models: typeof run.models) => {
-    const resolved = await models.getAuth('anthropic');
+  // The runner never reads the shell itself.
+  let runnerReads = 0;
+  const runner = piProviders(agent, async () => { runnerReads += 1; return { ...login }; });
+  const auth = async (models: Awaited<ReturnType<typeof loadRunModels>>['models'], id: string) => {
+    const resolved = await models.getAuth(id);
     return { apiKey: resolved?.auth.apiKey, headers: resolved?.auth.headers, source: resolved?.source };
   };
-  assert.deepEqual(await auth(run.models), await auth(hostRegistry.models));
-  assert.equal((await auth(run.models)).source, 'ANTHROPIC_AUTH_TOKEN');
+  const host = async (read: () => Promise<Record<string, string> | undefined>) => {
+    const source = piProviders(agent, read);
+    const registry = await source.load();
+    const holder = { models: registry.models, authenticated: registry.authenticated };
+    const providers = new Providers(holder, source, registry);
+    t.after(() => providers.close());
+    await providers.adoptEnvironment();
+    return { providers, get models() { return holder.models; } };
+  };
 
-  // The run's model request carries the shell's header; the reply itself does not matter here.
-  const model = run.models.getProvider('lab')!.getModels()[0]!;
-  await run.models.complete(model, { messages: [{ role: 'user', content: 'hi', timestamp: Date.now() }] }).catch(() => undefined);
+  // The host prefers the shell's token; the run gets only the values that resolution used.
+  const shell = await host(async () => ({ ...login }));
+  const binding = await shell.providers.bindingFor('anthropic');
+  assert.deepEqual(binding.values, { ANTHROPIC_AUTH_TOKEN: 'shell-token' });
+  const run = await loadRunModels(runner, binding, AbortSignal.timeout(5000));
+  assert.deepEqual(await auth(run.models, 'anthropic'), await auth(shell.models, 'anthropic'));
+  assert.equal((await auth(run.models, 'anthropic')).source, 'ANTHROPIC_AUTH_TOKEN');
+
+  // A host whose shell read failed uses the service key, and so does its run.
+  const failed = await host(async () => undefined);
+  const plain = await failed.providers.bindingFor('anthropic');
+  assert.deepEqual(plain.values, {});
+  const plainRun = await loadRunModels(runner, plain, AbortSignal.timeout(5000));
+  assert.deepEqual(await auth(plainRun.models, 'anthropic'), await auth(failed.models, 'anthropic'));
+  assert.equal((await auth(plainRun.models, 'anthropic')).apiKey, 'service-key');
+
+  // A literal-key endpoint's shell-only header reaches the run's model request.
+  const lab = await shell.providers.bindingFor('lab');
+  assert.deepEqual([lab.values, lab.origin], [{ RUN_TEAM: 'blue' }, new URL(endpoint.url).origin]);
+  const labRun = await loadRunModels(runner, lab, AbortSignal.timeout(5000));
+  const model = labRun.models.getProvider('lab')!.getModels()[0]!;
+  await labRun.models.complete(model, { messages: [{ role: 'user', content: 'hi', timestamp: Date.now() }] }).catch(() => undefined);
   assert.equal(seen.at(-1), 'blue');
+
+  // Values bound to another server are refused, and none of this touched the environment.
+  await assert.rejects(loadRunModels(runner, { ...lab, origin: 'https://elsewhere.example' }, AbortSignal.timeout(5000)), /server changed/);
+  assert.equal(runnerReads, 0);
   assert.deepEqual([process.env.RUN_TEAM, process.env.ANTHROPIC_AUTH_TOKEN], [undefined, undefined]);
-  // A stopped run does not load.
-  await assert.rejects(loadRunModels(source, AbortSignal.abort()));
 });
 
 test('built-in provider keys come from the login shell, and the host\'s own value wins', async t => {
@@ -491,21 +518,37 @@ test('an endpoint whose key or headers read the environment keeps its origin ove
   assert.equal(await readFile(radius.models, 'utf8'), file);
   radius.noSecrets();
 
-  // Pi uses a credential stored in auth.json before the entry's own literal key.
+  // A stored credential is bound to its server: moving the endpoint forgets it.
   const stored = await host(t, async agent => {
     await writeFile(join(agent, 'models.json'), JSON.stringify({ providers: {
       templated: { baseUrl: 'http://127.0.0.1:9/v1', api: 'openai-completions', apiKey: 'none', models: [{ id: 'a' }] },
       literal: { baseUrl: 'http://127.0.0.1:9/v1', api: 'openai-completions', apiKey: 'none', models: [{ id: 'a' }] },
     } }));
-    await writeFile(join(agent, 'auth.json'), JSON.stringify({ templated: { type: 'api_key', key: '$SHELL_ONLY_KEY' } }), { mode: 0o600 });
+    // Pi would use these before the entries' own keys; one names a variable only the shell has.
+    await writeFile(join(agent, 'auth.json'), JSON.stringify({ templated: { type: 'api_key', key: '$SHELL_ONLY_KEY' }, orphan: { type: 'api_key', key: KEY } }), { mode: 0o600 });
   }, async () => ({ SHELL_ONLY_KEY: KEY }));
-  const before2 = await readFile(stored.models, 'utf8');
-  assert.equal((await stored.call({ op: 'update_endpoint', id: 'templated', base_url: 'https://elsewhere.example/v1' })).error?.code, 'conflict');
-  assert.equal(await readFile(stored.models, 'utf8'), before2);
-  // A key set here is stored as literal text and moves with the entry, as does a key sent with the move.
-  assert.equal((await stored.call({ op: 'set_provider_key', provider: 'literal', key: '$NOT_A_VARIABLE' })).ok, true);
-  assert.equal((await stored.call({ op: 'update_endpoint', id: 'literal', base_url: 'http://127.0.0.1:8/v1' })).ok, true);
-  assert.equal((await stored.call({ op: 'update_endpoint', id: 'templated', base_url: 'http://127.0.0.1:8/v1', key: NEXT_KEY })).ok, true);
+  const moved = await stored.call({ op: 'update_endpoint', id: 'templated', base_url: 'http://127.0.0.1:8/v1' });
+  assert.equal(moved.ok, true, JSON.stringify(moved.error));
+  assert.equal((await json(stored.auth)).templated, undefined);
+  assert.equal((await stored.holder.models.getAuth('templated'))?.auth.apiKey, 'none');
+
+  // A key sent with the move replaces the stored one before the new address is published.
+  assert.equal((await stored.call({ op: 'set_provider_key', provider: 'literal', key: KEY })).ok, true);
+  assert.equal((await stored.call({ op: 'update_endpoint', id: 'literal', base_url: 'http://127.0.0.1:7/v1', key: NEXT_KEY })).ok, true);
+  assert.deepEqual([(await json(stored.models)).providers.literal.baseUrl, (await stored.holder.models.getAuth('literal'))?.auth.apiKey], ['http://127.0.0.1:7/v1', NEXT_KEY]);
+
+  // If the replacement cannot be stored, the original address stays, with the key it had.
+  await chmod(stored.auth, 0o400); await chmod(stored.agent, 0o500);
+  try {
+    assert.notEqual((await stored.call({ op: 'update_endpoint', id: 'literal', base_url: 'http://127.0.0.1:6/v1', key: KEY })).ok, true);
+  } finally { await chmod(stored.agent, 0o700); await chmod(stored.auth, 0o600); }
+  assert.equal((await json(stored.models)).providers.literal.baseUrl, 'http://127.0.0.1:7/v1');
+  assert.equal((await stored.holder.models.getAuth('literal'))?.auth.apiKey, NEXT_KEY);
+
+  // A new endpoint does not inherit a credential left under its ID.
+  assert.equal((await stored.call({ op: 'add_endpoint', id: 'orphan', name: 'Orphan', base_url: 'http://127.0.0.1:5/v1', model_ids: ['a'] })).ok, true);
+  assert.equal((await json(stored.auth)).orphan, undefined);
+  assert.equal((await stored.holder.models.getAuth('orphan'))?.auth.apiKey, 'none');
   stored.noSecrets();
 });
 

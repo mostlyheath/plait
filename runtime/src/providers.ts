@@ -1,10 +1,12 @@
-import { chmod, readFile, stat } from 'node:fs/promises';
+import { chmod, stat } from 'node:fs/promises';
 import type { AuthPrompt, LoginOptions, Models, Provider } from '@earendil-works/pi-ai';
 import { HostError, PROTOCOL_VERSIONS, fail } from './protocol.ts';
 import { SignIns } from './sign-in.ts';
 import type { SignInLimits } from './sign-in.ts';
 import { addEndpoint, checkEndpoint, readEndpoints, removeEndpoint, renderEndpoints, updateEndpoint, writeEndpoints } from './endpoints.ts';
 import type { EndpointFile } from './endpoints.ts';
+import { providerOrigin, shellValuesUsed } from './provider-environment.ts';
+import type { ProviderBinding } from './provider-environment.ts';
 
 /** One complete, immutable view of Pi's providers. A reload builds a new one and swaps it in. */
 export type Registry = {
@@ -247,6 +249,16 @@ export class Providers {
     this.published?.();
   }
 
+  /**
+   * What a detached run of `providerId` needs to resolve the same credential as this registry:
+   * the login-shell values its resolution used, bound to the provider and its server's origin.
+   */
+  async bindingFor(providerId: string): Promise<ProviderBinding> {
+    const models = this.registry.models;
+    const values = await shellValuesUsed(() => models.getAuth(providerId, { signal: AbortSignal.timeout(PI_DEADLINE_MS) }).catch(() => undefined));
+    return { provider: providerId, origin: providerOrigin(models.getProvider(providerId)?.baseUrl), values };
+  }
+
   /** The provider list, for `list_providers` and for any reply that later wants to include it. */
   async list(): Promise<ProviderView[]> {
     const stored = await this.registry.stored();
@@ -371,6 +383,9 @@ export class Providers {
     if (this.source.builtin.has(id) || this.registry.models.getProvider(id)) fail('conflict', 'A provider with that ID already exists.');
     const file = await readEndpoints(this.modelsPath());
     addEndpoint(file, id, change);
+    // A credential left in auth.json under this ID belongs to an earlier server, and Pi would
+    // use it before the new entry's key; it goes before the entry is published.
+    if ((await this.registry.stored()).has(id)) await this.forget(id);
     await this.commit(file, () => this.lists(id, change.modelIds));
     return key === undefined ? this.one(id) : this.setKey(id, key);
   }
@@ -381,31 +396,18 @@ export class Providers {
     const baseUrl = request.base_url === undefined ? undefined : endpointUrl(text(request, 'base_url', 2048));
     const models = request.model_ids === undefined ? undefined : modelIds(request);
     const key = request.key === undefined ? undefined : text(request, 'key', SECRET_LIMIT);
-    if (name !== undefined || baseUrl !== undefined || models !== undefined) {
-      const file = await readEndpoints(this.modelsPath());
-      // A key sent with this request replaces the stored credential, so only an existing one counts.
-      const stored = baseUrl !== undefined && key === undefined ? await this.storedCredential(id) : undefined;
-      updateEndpoint(file, id, { name, baseUrl, modelIds: models }, stored);
+    if (name === undefined && baseUrl === undefined && models === undefined) return key === undefined ? this.one(id) : this.setKey(id, key);
+    const file = await readEndpoints(this.modelsPath());
+    const moved = updateEndpoint(file, id, { name, baseUrl, modelIds: models });
+    if (!moved) {
       await this.commit(file, () => this.lists(id, models));
+      return key === undefined ? this.one(id) : this.setKey(id, key);
     }
-    return key === undefined ? this.one(id) : this.setKey(id, key);
-  }
-
-  /**
-   * The raw credential Pi stored for `id` in auth.json, read only to tell a literal key from one
-   * that names a variable or runs a command. A file that cannot be read counts as not literal.
-   */
-  private async storedCredential(id: string): Promise<unknown> {
-    const path = this.source.authPath;
-    if (!path) return undefined;
-    let text: string;
-    try { text = await readFile(path, 'utf8'); } catch (error) {
-      return (error as NodeJS.ErrnoException).code === 'ENOENT' ? undefined : 'unreadable';
-    }
-    try {
-      const data: unknown = JSON.parse(text.replace(/^\uFEFF/, ''));
-      return typeof data === 'object' && data !== null && Object.hasOwn(data, id) ? (data as Record<string, unknown>)[id] : undefined;
-    } catch { return 'unreadable'; }
+    // A stored credential is bound to its server. It is replaced or removed before the new
+    // address is published, so a failure leaves the old address, never the old key at the new one.
+    if (key === undefined) await this.forget(id); else await this.setKey(id, key);
+    await this.commit(file, () => this.lists(id, models));
+    return this.one(id);
   }
 
   private async removeEndpoint(value: string): Promise<string> {
