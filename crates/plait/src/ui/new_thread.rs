@@ -43,6 +43,8 @@ pub(super) struct Draft {
     pub(super) sending: Option<Sending>,
     /// Why the last send did not create a thread.
     pub(super) error: Option<String>,
+    /// Where this draft saves, set when it is created or mounted (#132).
+    pub(super) binding: Option<super::saved_work::Binding>,
 }
 
 /// A first message waiting for its thread to be created.
@@ -136,15 +138,14 @@ impl Plait {
     fn draft_composer(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<Composer> {
         let composer = cx.new(|cx| Composer::new(window, cx));
         let draft = self
-            .session
-            .data
-            .as_ref()
-            .and_then(|data| {
-                data.draft_tab(self.draft.id.as_deref()?, &self.host.creation.checkout)
-            })
+            .draft
+            .id
+            .as_deref()
+            .and_then(|id| self.saved_draft(id, &self.host.creation.checkout))
             .map(|tab| &tab.draft)
             .unwrap_or(&self.draft.saved)
             .clone();
+        self.bind_draft();
         {
             composer.update(cx, |composer, cx| {
                 composer.restore_draft(draft.text, draft.revision, draft.submitted, cx);
@@ -373,6 +374,9 @@ impl Plait {
     pub(super) fn draft_blocked(&self) -> Option<String> {
         if !self.tab_identity_current() {
             return Some("Checking the reconnected host…".into());
+        }
+        if let Some(reason) = self.draft_send_refusal() {
+            return Some(reason);
         }
         if self.draft_pending() {
             // Sending again retries the same creation.

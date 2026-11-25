@@ -70,6 +70,7 @@ mod panel;
 mod pickers;
 mod quote_selection;
 mod running_mark;
+mod saved_work;
 mod settings_modal;
 mod sheet;
 mod showcase;
@@ -703,6 +704,29 @@ struct Harness {
     _host: Option<test_host::TestHost>,
 }
 
+/// The newest saved draft for `checkout` in any namespace of `saved`.
+pub(super) fn saved_draft_for(
+    machines: &std::collections::BTreeMap<
+        plait_client::machines::MachineId,
+        plait_client::session::MachineWork,
+    >,
+    checkout: &Path,
+) -> Option<plait_client::session::Draft> {
+    machines
+        .values()
+        .flat_map(|work| work.drafts.values())
+        .find(|tab| tab.checkout == checkout)
+        .map(|tab| tab.draft.clone())
+}
+
+/// The verified host identity scenes connect as.
+pub(super) fn fixture_host() -> plait_client::tabs::HostKey {
+    plait_client::tabs::HostKey {
+        id: "fixture-host".into(),
+        store: "/store".into(),
+    }
+}
+
 impl Harness {
     fn new(repository: &Path, output: Option<&Path>, width: f32, height: f32) -> Self {
         Self::with_host(
@@ -928,7 +952,8 @@ impl Harness {
                     ..Default::default()
                 },
             ];
-            plait.tabs = Default::default();
+            plait.reset_tabs_for_test();
+            plait.verify_identity_for_test(fixture_host());
             assert!(plait.open_thread_tab(THREAD.into(), checkout.clone(), cx));
             plait.refresh_tab_rows();
             // Mirror select_host_thread without opening a socket.
@@ -1285,7 +1310,7 @@ fn desktop_recovery_does_not_rebind_saved_work_or_clear_a_newer_revision() {
             composer.restore_draft("first".into(), 7, Some(("first".into(), 6)), cx);
         });
         plait.capture_session(cx);
-        let saved = plait.session.data.as_ref().unwrap().threads[THREAD].clone();
+        let saved = plait.test_saved_threads()[THREAD].clone();
         plait.host.connection.threads_mut()[0].checkout = "/a-different-checkout".into();
         let snapshot = Arc::make_mut(plait.host.thread.snapshot.as_mut().unwrap());
         snapshot.checkout = plait.host.connection.threads()[0].checkout.clone();
@@ -1304,7 +1329,7 @@ fn desktop_recovery_does_not_rebind_saved_work_or_clear_a_newer_revision() {
             .insert(THREAD.into(), composer.clone());
         plait.capture_session(cx);
         plait.record_snapshot(cx);
-        assert_eq!(plait.session.data.as_ref().unwrap().threads[THREAD], saved);
+        assert_eq!(plait.test_saved_threads()[THREAD], saved);
         assert!(!plait.session_accepts_thread(THREAD));
         assert!(plait.host.submissions.pending(THREAD).is_some());
         // Only the matching identity can reconcile the accepted request, not a reused thread ID.
@@ -1798,13 +1823,7 @@ fn a_creation_reply_lands_only_on_the_draft_that_sent_it() {
         assert_eq!(plait.host.thread.selected.as_deref(), Some(THREAD));
         assert!(
             !plait.workspace.composers.contains_key("thr_left")
-                && plait
-                    .session
-                    .data
-                    .as_ref()
-                    .unwrap()
-                    .threads
-                    .contains_key("thr_left"),
+                && plait.test_saved_threads().contains_key("thr_left"),
             "a hidden creation retains recovery data, not a composer"
         );
         assert_eq!(
@@ -5337,9 +5356,7 @@ fn project_switching_keeps_each_draft_and_rejects_the_old_watch() {
             "Original draft"
         );
         assert_eq!(
-            plait.session.data.as_ref().unwrap().threads["other-thread"]
-                .draft
-                .text,
+            plait.test_saved_threads()["other-thread"].draft.text,
             "Separate draft"
         );
         assert_eq!(plait.host.connection.threads().len(), 3);
@@ -5828,21 +5845,32 @@ fn image_drafts_survive_reopen_and_refusal_keeps_the_draft() {
     let (directory, host) = plait_client::session::locations().unwrap();
     let (journal, mut saved) =
         plait_client::session::Journal::open(&directory, host.clone()).unwrap();
+    let mut machines = Default::default();
     harness.update(|plait, _, cx| {
         plait.capture_session(cx);
         saved = plait.session.data.as_ref().unwrap().clone();
         saved.host_store = host.clone();
+        machines = plait.saved_work.machines.clone();
     });
     journal.queue(saved);
+    for (machine, work) in machines {
+        journal.queue_machine(&machine, work);
+    }
     journal.flush().unwrap();
     drop(journal);
-    let (_, reopened) = plait_client::session::Journal::open(&directory, host).unwrap();
-    let draft = &reopened.threads[THREAD].draft;
+    let (journal, _) = plait_client::session::Journal::open(&directory, host).unwrap();
+    let reopened = journal.take_machines();
+    let draft = &reopened
+        .values()
+        .flat_map(|work| &work.threads)
+        .find(|saved| saved.id == THREAD)
+        .unwrap()
+        .thread
+        .draft;
     assert_eq!(draft.text, "Keep this draft");
     assert_eq!(draft.images, std::slice::from_ref(&reference));
     assert_eq!(plait_client::images::local(&reference).unwrap(), bytes);
-    let (checkout, new_draft) = reopened.new_draft.as_ref().unwrap();
-    assert_eq!(checkout, &repository);
+    let new_draft = saved_draft_for(&reopened, &repository).unwrap();
     assert_eq!(new_draft.text, "New image draft");
     assert_eq!(new_draft.images, std::slice::from_ref(&reference));
     let _ = std::fs::remove_dir_all(root);
@@ -6442,12 +6470,11 @@ fn image_drafts_stay_with_their_checkout() {
         plait.capture_session(cx);
     });
     journal.flush().unwrap();
-    let saved: plait_client::session::Session =
-        serde_json::from_slice(&std::fs::read(directory.join("desktop.json")).unwrap()).unwrap();
-    assert_eq!(saved.new_draft_for(&a).unwrap().text, "Draft for A");
-    assert_eq!(saved.new_draft_for(&b).unwrap().text, "Draft for B");
+    let saved = plait_client::session::read_machines(&directory).unwrap();
+    assert_eq!(saved_draft_for(&saved, &a).unwrap().text, "Draft for A");
+    assert_eq!(saved_draft_for(&saved, &b).unwrap().text, "Draft for B");
     assert_eq!(
-        saved.new_draft_for(&b).unwrap().images,
+        saved_draft_for(&saved, &b).unwrap().images,
         &[fixture[1].0.clone()]
     );
     // Discard must queue its own save, without another edit or close event.
@@ -6461,10 +6488,9 @@ fn image_drafts_stay_with_their_checkout() {
         harness.settle();
         std::thread::sleep(Duration::from_millis(5));
     }
-    let saved: plait_client::session::Session =
-        serde_json::from_slice(&std::fs::read(directory.join("desktop.json")).unwrap()).unwrap();
-    assert!(saved.new_draft_for(&a).is_none());
-    assert!(saved.new_draft_for(&b).is_some());
+    let saved = plait_client::session::read_machines(&directory).unwrap();
+    assert!(saved_draft_for(&saved, &a).is_none());
+    assert!(saved_draft_for(&saved, &b).is_some());
     assert!(directory.join("images").join(&fixture[1].0.id).exists());
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -6609,6 +6635,11 @@ fn accepted_wait(
                 when_busy: None,
             },
         );
+        // Accepted by this machine's host, as its reply would have recorded.
+        plait
+            .saved_work
+            .accepted_by
+            .insert(request_id.into(), fixture_host());
         plait.sync_composer(cx);
     });
     checkout
@@ -6831,9 +6862,7 @@ fn thread_workspace_preserves_selection_and_reconnect_resets() {
         assert_eq!(plait.workspace.live_scroll.item_count(), 0);
         assert!(plait.workspace.expanded_live_tools.is_empty());
         assert_eq!(
-            plait.session.data.as_ref().unwrap().threads[THREAD]
-                .draft
-                .text,
+            plait.test_saved_threads()[THREAD].draft.text,
             "Keep this draft"
         );
         assert!(plait.workspace.composers.contains_key("second-thread"));

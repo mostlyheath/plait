@@ -45,7 +45,7 @@ pub(super) struct ThreadControls {
     pub(super) usage_open: bool,
     /// Approval choices made this session, by thread. `None` is an explicit
     /// return to the default, so it shadows an older saved choice.
-    approvals: HashMap<String, Option<ApprovalMode>>,
+    pub(super) approvals: HashMap<String, Option<ApprovalMode>>,
     /// A harness mode change waiting on the host's reply.
     mode: Option<ModeRequest>,
 }

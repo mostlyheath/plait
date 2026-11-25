@@ -269,9 +269,7 @@ impl Plait {
     /// Whether the selected machine's host identity was verified on this
     /// connection. Not during a switch, a reconnect, or before the first check.
     pub(super) fn host_verified_here(&self) -> bool {
-        self.tabs.identity.verified
-            && self.tab_identity_current()
-            && self.tabs.identity.machine.as_ref() == Some(&self.machines.active)
+        self.verified_host().is_some()
     }
 
     /// The open folder, unless it was carried over from the previous machine:
@@ -288,6 +286,19 @@ impl Plait {
         self.tabs.identity.verified = true;
         self.tabs.identity.verified_epoch = Some(self.host.connection.epoch);
         self.tabs.identity.machine = Some(self.machines.active.clone());
+    }
+
+    /// Saved draft folders the selected machine's host is asked to identify:
+    /// only the current machine's, and the open folder unless it was carried
+    /// over from the previous machine.
+    pub(super) fn probed_roots(&self) -> Vec<PathBuf> {
+        let mut roots: Vec<PathBuf> = self
+            .saved_drafts()
+            .into_iter()
+            .map(|(_, tab)| tab.checkout.clone())
+            .collect();
+        roots.extend(self.probed_checkout());
+        roots
     }
 
     pub(super) fn tab_identity_current(&self) -> bool {
@@ -316,7 +327,6 @@ impl Plait {
             .map(|t| t.checkout.clone())
             .collect();
         roots.extend(self.lists().opened.iter().cloned());
-        roots.extend(self.probed_checkout());
         roots.extend(
             self.tabs
                 .model
@@ -324,11 +334,7 @@ impl Plait {
                 .iter()
                 .map(|t| t.session().target().checkout().root.clone()),
         );
-        if let Some(data) = &self.session.data {
-            roots.extend(data.draft_tabs.values().map(|tab| tab.checkout.clone()));
-            roots.extend(data.new_drafts.keys().cloned());
-            roots.extend(data.new_draft.as_ref().map(|(root, _)| root.clone()));
-        }
+        roots.extend(self.probed_roots());
         roots.sort();
         roots.dedup();
         let client = self.host_client();
@@ -431,7 +437,7 @@ impl Plait {
             self.tabs
                 .lifecycle
                 .verify_pending(&previous, &host, &checkouts);
-            for (target, _) in &mut self.tabs.lifecycle.editors {
+            for (_, target, _) in &mut self.tabs.lifecycle.editors {
                 let checkout = match target {
                     TabTarget::Existing { checkout, .. }
                     | TabTarget::Draft { checkout, .. }
@@ -469,6 +475,10 @@ impl Plait {
             .into_iter()
             .filter_map(|c| c.directory.map(|d| (c.root, d)))
             .collect();
+        // The owner is verified: copy older records and provisional work to its
+        // namespace in memory now, so restore below sees them. The disk write
+        // stays debounced on the background executor.
+        self.capture_session(cx);
         if self.host.connection.connected {
             let result = self
                 .tabs

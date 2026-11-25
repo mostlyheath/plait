@@ -30,7 +30,9 @@ pub(super) struct Lifecycle {
     pub hydrating: bool,
     hydrate_generation: u64,
     pending: std::collections::VecDeque<Intent>,
-    pub editors: Vec<(TabTarget, EditorRecord)>,
+    /// Parked editors, by the machine they were typed on and their tab: two
+    /// machine entries can name the same host, so the target alone is not enough.
+    pub editors: Vec<(plait_client::machines::MachineId, TabTarget, EditorRecord)>,
     pub drafts: std::collections::BTreeMap<String, super::new_thread::Draft>,
 }
 
@@ -47,7 +49,7 @@ impl Lifecycle {
                 *checkout = key.clone();
             }
         };
-        for (target, _) in &mut self.editors {
+        for (_, target, _) in &mut self.editors {
             update(target);
         }
         for intent in &mut self.pending {
@@ -157,6 +159,7 @@ impl Plait {
             .visible_composer()
             .cloned()
             .map(|c| c.update(cx, |c, _| c.park_editor()));
+        let machine = self.machines.active.clone();
         self.capture_session(cx);
         let bookmark = self.capture_tab_bookmark(Some(window), cx);
         let record = match BookmarkRecord::capture(&bookmark) {
@@ -176,8 +179,8 @@ impl Plait {
                 .lifecycle
                 .editors
                 .iter()
-                .filter(|(old, _)| old != &target)
-                .map(|(_, e)| match e {
+                .filter(|(m, old, _)| !(m == &machine && old == &target))
+                .map(|(_, _, e)| match e {
                     EditorRecord::Memory(e) => e.retained_bytes(),
                     EditorRecord::Stored(_) => 0,
                 })
@@ -188,7 +191,7 @@ impl Plait {
                 return;
             }
             if let Some(editor) = editor {
-                self.remember_editor(target, EditorRecord::Memory(Box::new(editor)), cx);
+                self.remember_editor(machine, target, EditorRecord::Memory(Box::new(editor)), cx);
             }
             let result = self.tabs.model.save_bookmark(active, record);
             if self.tab_error(result) {
@@ -231,7 +234,9 @@ impl Plait {
                     }
                     Ok(editor) => {
                         // Edits made while flushing belong to a newer save boundary.
-                        if this.tabs.model.active() != Some(active) {
+                        if this.tabs.model.active() != Some(active)
+                            || this.machines.active != machine
+                        {
                             return;
                         }
                         if this.capture_tab_bookmark(Some(window), cx) != bookmark {
@@ -239,7 +244,7 @@ impl Plait {
                             return;
                         }
                         if let Some(editor) = editor {
-                            this.remember_editor(target, EditorRecord::Stored(editor), cx);
+                            this.remember_editor(machine, target, EditorRecord::Stored(editor), cx);
                         }
                         let result = this.tabs.model.save_bookmark(active, record);
                         if this.tab_error(result) {
@@ -252,22 +257,31 @@ impl Plait {
         .detach();
     }
 
-    fn remember_editor(&mut self, target: TabTarget, editor: EditorRecord, cx: &mut Context<Self>) {
+    fn remember_editor(
+        &mut self,
+        machine: plait_client::machines::MachineId,
+        target: TabTarget,
+        editor: EditorRecord,
+        cx: &mut Context<Self>,
+    ) {
+        let same = |m: &plait_client::machines::MachineId, old: &TabTarget| {
+            *m == machine && *old == target
+        };
         let retired: Vec<_> = self
             .tabs
             .lifecycle
             .editors
             .iter()
-            .filter_map(|(old, editor)| match editor {
-                EditorRecord::Stored(name) if old == &target => Some(name.clone()),
+            .filter_map(|(m, old, editor)| match editor {
+                EditorRecord::Stored(name) if same(m, old) => Some(name.clone()),
                 _ => None,
             })
             .collect();
         self.tabs
             .lifecycle
             .editors
-            .retain(|(old, _)| old != &target);
-        self.tabs.lifecycle.editors.push((target, editor));
+            .retain(|(m, old, _)| !same(m, old));
+        self.tabs.lifecycle.editors.push((machine, target, editor));
         if let Some(journal) = self.session.journal.clone() {
             cx.background_executor()
                 .spawn(async move {
@@ -299,6 +313,12 @@ impl Plait {
             .connection
             .connected
             .then_some(self.host.connection.epoch);
+        // The current machine's saved drafts, read before the tab model changes.
+        let saved_drafts: Vec<(String, std::path::PathBuf)> = self
+            .saved_drafts()
+            .into_iter()
+            .map(|(id, tab)| (id, tab.checkout.clone()))
+            .collect();
         let result = match intent {
             Intent::Open(target) => self.tabs.model.open(target, connection).map(|_| ()),
             Intent::Activate(id) => self.tabs.model.activate(id),
@@ -317,17 +337,25 @@ impl Plait {
                             .as_ref()
                             .is_some_and(|c| !c.read(cx).is_empty())
                     } else {
-                        self.session
-                            .data
-                            .as_ref()
-                            .and_then(|s| s.draft_tab(draft_id, &checkout.root))
-                            .is_some_and(|tab| tab.creation.is_some() || !tab.draft.text.is_empty() || !tab.draft.images.is_empty())
+                        // A parked draft's text may not be saved yet: it counts too.
+                        self.tabs.lifecycle.drafts.get(draft_id).is_some_and(|parked| {
+                            parked.pending.is_some()
+                                || !parked.saved.text.is_empty()
+                                || !parked.saved.images.is_empty()
+                        }) || self
+                            .saved_draft(draft_id, &checkout.root)
+                            .is_some_and(|tab| !plait_client::session::draft_is_empty(tab))
                     }
                 });
                 let draft = self.tabs.model.get(id).and_then(|tab| match tab.session().target() { TabTarget::Draft { id, .. } => Some(id.clone()), _ => None });
                 let result = self.tabs.model.close(id, nonempty);
                 if result.is_ok() && !nonempty && let Some(draft) = draft {
-                    if let Some(data) = &mut self.session.data { data.clear_draft_tab(&draft); }
+                    // Empty-draft cleanup: only a stored record that is empty, for its own machine.
+                    let machine = self.tabs.lifecycle.drafts.get(&draft).and_then(|d| d.binding.clone()).map(|b| b.machine)
+                        .unwrap_or_else(|| self.machines.active.clone());
+                    let mut works = std::collections::BTreeMap::new();
+                    super::saved_work::touch(&mut works, &self.saved_work.machines, &machine).discard_empty_draft(&draft);
+                    self.store_machine_work(works);
                     self.tabs.lifecycle.drafts.remove(&draft);
                 }
                 result
@@ -353,19 +381,18 @@ impl Plait {
                     TabTarget::Draft {
                         id: draft_id,
                         checkout,
-                    } => self
-                        .session
-                        .data
-                        .as_ref()
-                        .and_then(|s| s.draft_tab(draft_id, &checkout.root))
-                        .map(|_| connection),
+                    } => saved_drafts
+                        .iter()
+                        .any(|(id, root)| id == draft_id && *root == checkout.root)
+                        .then_some(connection),
                 }),
             }
             .and_then(|opened| {
                 if opened.is_none() && matches!(action, TabNavigation::Reopen) {
-                    let fallback = self.session.data.as_ref().and_then(|data| data.draft_tabs.iter().find(|(id, tab)| {
-                        (tab.creation.is_some() || !tab.draft.text.is_empty() || !tab.draft.images.is_empty()) && !self.tabs.model.tabs().iter().any(|open| matches!(open.session().target(), TabTarget::Draft { id: open_id, .. } if open_id == *id))
-                    }).map(|(id, tab)| TabTarget::Draft { id: id.clone(), checkout: self.tab_checkout(tab.checkout.clone()) }));
+                    // Only the current machine's drafts can reopen here.
+                    let fallback = self.saved_drafts().into_iter().find(|(id, tab)| {
+                        !plait_client::session::draft_is_empty(tab) && !self.tabs.model.tabs().iter().any(|open| matches!(open.session().target(), TabTarget::Draft { id: open_id, .. } if open_id == id))
+                    }).map(|(id, tab)| TabTarget::Draft { id, checkout: self.tab_checkout(tab.checkout.clone()) });
                     if let Some(target) = fallback { self.tabs.model.open(target, connection)?; }
                 }
                 Ok(())
@@ -437,6 +464,16 @@ impl Plait {
         self.state.repository.park_view();
     }
 
+    /// The parked editor for `target` on the selected machine only.
+    pub(super) fn parked_editor(&self, target: &TabTarget) -> Option<EditorRecord> {
+        self.tabs
+            .lifecycle
+            .editors
+            .iter()
+            .find(|(m, t, _)| *m == self.machines.active && t == target)
+            .map(|(_, _, e)| e.clone())
+    }
+
     pub(super) fn hydrate_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.worktrees_visible() {
             return;
@@ -455,13 +492,7 @@ impl Plait {
         let target = tab.session().target().clone();
         let record = tab.session().bookmark().clone();
         self.workspace.opened_turns = tab.session().opened_turns().clone();
-        let editor = self
-            .tabs
-            .lifecycle
-            .editors
-            .iter()
-            .find(|(t, _)| t == &target)
-            .map(|(_, e)| e.clone());
+        let editor = self.parked_editor(&target);
         if matches!(record, BookmarkRecord::Inline { .. })
             && !matches!(editor, Some(EditorRecord::Stored(_)))
         {
@@ -548,14 +579,16 @@ impl Plait {
     }
 
     fn retire_editor_cache(&mut self, cx: &mut Context<Self>) {
-        // Closed drafts without an in-flight creation can be restored from the journal.
+        // Closed drafts without an in-flight creation can be restored from the
+        // journal: saving first makes that true for a parked draft's latest text.
+        self.capture_session(cx);
         self.tabs.lifecycle.drafts.retain(|id, draft| {
             draft.pending.is_some() || self.tabs.model.tabs().iter().any(|tab| {
                 matches!(tab.session().target(), TabTarget::Draft { id: open, .. } if open == id)
             }) || self.session.data.is_none() && (!draft.saved.text.is_empty() || !draft.saved.images.is_empty())
         });
         let mut removed = Vec::new();
-        self.tabs.lifecycle.editors.retain(|(target, editor)| {
+        self.tabs.lifecycle.editors.retain(|(_, target, editor)| {
             if self.tabs.model.retains_target(target) {
                 return true;
             }

@@ -36,9 +36,7 @@ for evidence and limits.
 
 - Show several independent machines in one sidebar. Hosts report a
   fingerprint per project and the client can group copies across machines;
-  no view uses it yet. Client state still keyed by a path without its machine
-  comes first. See [#133](https://github.com/mostlyheath/plait/issues/133)
-  and [#132](https://github.com/mostlyheath/plait/issues/132).
+  no view uses it yet. See [#133](https://github.com/mostlyheath/plait/issues/133).
 - Update Linux hosts in place, from the machine and from the Mac. Prebuilt
   Linux hosts are published with each release and install from the Mac.
 - Complete independent client and host releases and update flows.
@@ -101,6 +99,33 @@ recovery keeps its earlier inference for them. The change adds a column and two
 triggers that fill it. The triggers are stored in the schema, so writes made by
 an older build after a rollback are marked too, and those writes still succeed.
 Another model reviews it independently before merge.
+
+**Per-machine saved work (agreed).** The owner agreed this change to the
+desktop's saved workspace on 2026-11-25, for
+[#132](https://github.com/mostlyheath/plait/issues/132). The same day the owner
+amended it: saved work is keyed by the machine entry the person selected in
+Plait, not by the verified host identity, and kept in one file per machine
+([design](https://github.com/mostlyheath/plait/issues/132#issuecomment-7153471382),
+amended below it). What a person types while a machine is selected belongs to
+that machine from the start.
+
+Each machine's unsent drafts and thread work are kept in their own file under
+`desktop-machines/`, beside `desktop.json`. Thread work is keyed by thread ID
+and folder, and includes waiting messages and the thread's approval choice.
+Older builds never read or write these files. The window shows only the
+selected machine's work. Writes go to memory first, then a debounced
+background write of only the changed machine's file, one writer per file.
+
+Sending, and settling saved waiting messages from host receipts, require the
+selected machine's host identity to be verified. Receipts settle a message
+only if the host that accepted it is the one verified now. On the first
+launch, `desktop.json`'s older drafts are copied once, in the background load,
+into this computer's file. They stay in place for older builds, and each
+copied record is noted so it is not copied twice. A machine's file may hold up
+to 8 MiB. Past that, its work is kept in memory with a notice. A close or a
+quit that cannot save stays open. A quit that cannot be cancelled, such as
+a system shutdown, writes the unsaved work to a recovery file. Another model
+reviews the change independently before merge.
 
 Client and host releases must be independently selectable and publishable.
 Compatibility is negotiated through protocol versions and capabilities, not

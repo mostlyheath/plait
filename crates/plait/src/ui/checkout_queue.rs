@@ -246,16 +246,23 @@ impl Plait {
         }
     }
     fn inspect_checkout_waits(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(checkout) = self
+        let Some(summary) = self
             .host
             .connection
             .threads()
             .iter()
             .find(|thread| thread.id == id)
-            .map(|thread| thread.checkout.clone())
+            .cloned()
         else {
             return;
         };
+        // Receipts settle saved Waits only from this machine's verified host,
+        // for this folder's sends (#132).
+        if !self.may_reconcile(&summary) {
+            return;
+        }
+        let checkout = summary.checkout.clone();
+        let asked_host = self.verified_host().cloned();
         self.admission.inspecting.insert(id.clone());
         let request = Request::CheckoutQueue {
             thread_id: id.clone(),
@@ -271,39 +278,59 @@ impl Plait {
                 if !reply.verified(&id, &checkout) {
                     return;
                 }
-                let waits = this
-                    .host
-                    .submissions
-                    .accepted(&id)
-                    .iter()
-                    .filter(|pending| pending.checkout_wait)
-                    .map(|pending| pending.request_id.clone())
-                    .collect::<Vec<_>>();
-                let mut notes = Vec::new();
-                for request_id in waits {
-                    let receipt = reply.waiters.iter().find(|w| w.request_id == request_id);
-                    match receipt.map(|w| (w.state, w.error.as_ref())) {
-                        Some((checkout_queue::State::Waiting | checkout_queue::State::Held, _)) => {
-                        }
-                        Some((checkout_queue::State::Failed, reason)) => notes.push(format!(
-                            "Not run. {}{}",
-                            reason.map_or("", |reason| reason.message.as_str()),
-                            this.restore_unstarted_wait(&id, &request_id, cx)
-                        )),
-                        Some((checkout_queue::State::Cancelled, _)) => notes.push(format!(
-                            "Cancelled. Your waiting message will not run.{}",
-                            this.restore_unstarted_wait(&id, &request_id, cx)
-                        )),
-                        // Started, or older than the receipts the host keeps: it is history now.
-                        _ => this.host.submissions.forget_accepted(&id, &request_id),
-                    }
-                }
-                if !notes.is_empty() {
-                    this.set_thread_notice(id, notes.join(" "), true);
-                }
-                this.capture_session(cx);
-                cx.notify();
+                this.apply_checkout_receipts(&summary, asked_host.as_ref(), &reply, cx);
             },
         );
+    }
+
+    /// Settle this thread's saved Waits from a verified receipt list. Only a
+    /// Wait accepted by the host verified now, the same one the request was
+    /// asked of, is settled; any other is kept as it is (#132).
+    pub(super) fn apply_checkout_receipts(
+        &mut self,
+        summary: &plait_client::host::ThreadSummary,
+        asked_host: Option<&plait_client::tabs::HostKey>,
+        reply: &checkout_queue::Reply,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(host) = self.verified_host().cloned() else {
+            return;
+        };
+        if asked_host != Some(&host) || !self.may_reconcile(summary) {
+            return;
+        }
+        let id = summary.id.clone();
+        let waits = self
+            .host
+            .submissions
+            .accepted(&id)
+            .iter()
+            .filter(|pending| pending.checkout_wait)
+            .filter(|pending| self.saved_work.accepted_by.get(&pending.request_id) == Some(&host))
+            .map(|pending| pending.request_id.clone())
+            .collect::<Vec<_>>();
+        let mut notes = Vec::new();
+        for request_id in waits {
+            let receipt = reply.waiters.iter().find(|w| w.request_id == request_id);
+            match receipt.map(|w| (w.state, w.error.as_ref())) {
+                Some((checkout_queue::State::Waiting | checkout_queue::State::Held, _)) => {}
+                Some((checkout_queue::State::Failed, reason)) => notes.push(format!(
+                    "Not run. {}{}",
+                    reason.map_or("", |reason| reason.message.as_str()),
+                    self.restore_unstarted_wait(&id, &request_id, cx)
+                )),
+                Some((checkout_queue::State::Cancelled, _)) => notes.push(format!(
+                    "Cancelled. Your waiting message will not run.{}",
+                    self.restore_unstarted_wait(&id, &request_id, cx)
+                )),
+                // Started, or older than the receipts the host keeps: it is history now.
+                _ => self.host.submissions.forget_accepted(&id, &request_id),
+            }
+        }
+        if !notes.is_empty() {
+            self.set_thread_notice(id, notes.join(" "), true);
+        }
+        self.capture_session(cx);
+        cx.notify();
     }
 }

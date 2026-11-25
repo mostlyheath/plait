@@ -16,7 +16,7 @@ pub(super) fn install(harness: &mut Harness, count: usize) {
 fn install_projects(harness: &mut Harness, count: usize, projects: bool) {
     harness.update(move |plait, _, _| {
         show_tabs(plait);
-        plait.tabs = Default::default();
+        plait.reset_tabs_for_test();
         let template = plait
             .host
             .connection
@@ -139,7 +139,7 @@ pub(super) fn walk(
     });
     h.capture(&format!("tabs-no-sidebar-{suffix}"));
     h.update(|p, _, _| {
-        p.tabs = Default::default();
+        p.reset_tabs_for_test();
         p.host.select(None);
         p.draft.open = false;
         p.sidebar = true;
@@ -576,13 +576,8 @@ pub(super) fn journal_limit() {
     journal.flush().unwrap();
     let last_good = std::fs::read(directory.join("desktop.json")).unwrap();
     h.update(|p, w, cx| {
-        let data = p.session.data.as_mut().unwrap();
-        let mut thread = data.threads[THREAD].clone();
-        thread.draft.text = "x".repeat(256 * 1024);
-        for summary in p.host.connection.threads().iter().skip(1) {
-            data.threads.insert(summary.id.clone(), thread.clone());
-        }
-        journal.queue(data.clone());
+        fill_journal(p);
+        journal.queue(p.session.data.clone().unwrap());
         p.capture_session(cx);
         let next = p.tabs.model.tabs()[1].id();
         p.request_tab(super::super::tab_lifecycle::Intent::Activate(next), w, cx);
@@ -593,17 +588,16 @@ pub(super) fn journal_limit() {
         assert_eq!(p.host.thread.selected.as_deref(), Some(THREAD));
         assert_eq!(p.workspace.composers.len(), 1);
         assert!(p.notice.as_deref().unwrap().contains("could not be saved"));
-        assert_eq!(p.session.data.as_ref().unwrap().threads.len(), 20);
+        // Kept in memory although the file could not take it: the 19 listed
+        // threads and the fillers; the open thread had nothing to keep.
+        assert_eq!(p.test_saved_threads().len(), 39);
         assert_eq!(
-            p.session.data.as_ref().unwrap().threads["tab-thread-19"]
-                .draft
-                .text
-                .len(),
+            p.test_saved_threads()["tab-thread-19"].draft.text.len(),
             256 * 1024
         );
         assert!(p.workspace.composers[THREAD].read(cx).text().is_empty());
     });
-    assert!(journal.flush().unwrap_err().contains("exceeds 4 MiB"));
+    assert!(journal.flush().unwrap_err().contains("exceeds"));
     assert_eq!(
         std::fs::read(directory.join("desktop.json")).unwrap(),
         last_good
@@ -772,15 +766,10 @@ pub(super) fn journal_limit_saves_tabs() {
         p.tabs.persistence.writable = true;
         p.tabs.persistence.path = Some(saved_path.clone());
         p.tabs.persistence.window = Some(w.window_handle());
-        let data = p.session.data.as_mut().unwrap();
-        let mut thread = data.threads[THREAD].clone();
-        thread.draft.text = "x".repeat(256 * 1024);
-        for summary in p.host.connection.threads().iter().skip(1) {
-            data.threads.insert(summary.id.clone(), thread.clone());
-        }
-        journal.queue(data.clone());
+        fill_journal(p);
+        journal.queue(p.session.data.clone().unwrap());
     });
-    assert!(journal.flush().unwrap_err().contains("exceeds 4 MiB"));
+    assert!(journal.flush().unwrap_err().contains("exceeds"));
     h.window
         .update(&mut h.cx, |p, w, cx| {
             p.flush_tab_preferences(Some(w), cx).unwrap()
@@ -928,4 +917,41 @@ pub(super) fn restore_beneath_settings() {
     drop(h);
     drop(journal);
     std::fs::remove_dir_all(scratch).unwrap();
+}
+
+/// Fill the current machine's saved thread work past the journal's size limit.
+fn fill_journal(p: &mut Plait) {
+    let summaries = p.host.connection.threads().to_vec();
+    let thread = |checkout: &std::path::Path| plait_client::session::Thread {
+        checkout: checkout.to_owned(),
+        model: summaries[0].model.clone(),
+        title: String::new(),
+        draft: plait_client::session::Draft {
+            text: "x".repeat(256 * 1024),
+            ..Default::default()
+        },
+        pending: None,
+        pending_submissions: Vec::new(),
+        queued_submissions: Vec::new(),
+        approval: None,
+    };
+    let machine = p.machines.active.clone();
+    let mut work = p
+        .saved_work
+        .machines
+        .get(&machine)
+        .cloned()
+        .unwrap_or_default();
+    for summary in summaries.iter().skip(1) {
+        work.put_thread(&summary.id, thread(&summary.checkout), &Default::default());
+    }
+    // Unlisted threads, to pass the machine file's size limit.
+    for n in 0..20 {
+        work.put_thread(
+            &format!("filler-{n}"),
+            thread(&summaries[0].checkout),
+            &Default::default(),
+        );
+    }
+    p.store_machine_work([(machine, work)].into_iter().collect());
 }

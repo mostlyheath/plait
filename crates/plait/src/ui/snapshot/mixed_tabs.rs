@@ -14,7 +14,7 @@ fn closing_drafts_selects_worktrees_on_either_side() {
             let mut h = Harness::new(&repo, None, 900., 600.);
             h.connect(&repo, false);
             h.update(|p, w, cx| {
-                p.tabs = Default::default();
+                p.reset_tabs_for_test();
                 p.park_workspace(cx);
                 p.session.data = Some(plait_client::session::Session::empty("/host".into()));
                 p.host.connection.connected = false;
@@ -49,7 +49,7 @@ fn closing_drafts_selects_worktrees_on_either_side() {
                 assert!(p.draft.id.is_none() && p.draft.composer.is_none());
                 let kept = usize::from(action == "close-text");
                 assert_eq!(p.tabs.model.closed_len(), kept);
-                assert_eq!(p.session.data.as_ref().unwrap().draft_tabs.len(), kept);
+                assert_eq!(p.test_saved_drafts().len(), kept);
                 // Neither draft action is allowed to erase or close a project tab.
                 p.discard_draft(w, cx);
                 p.escape_draft(w, cx);

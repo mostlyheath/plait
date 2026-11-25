@@ -54,9 +54,12 @@ pub(super) struct Persistence {
     save: Option<Task<()>>,
     error: Option<String>,
     gate: Arc<WriteGate>,
+    /// The machine `gate` writes for, and the other machines' writers.
+    gate_machine: plait_client::machines::MachineId,
+    gates: std::collections::HashMap<plait_client::machines::MachineId, Arc<WriteGate>>,
 }
 #[derive(Default)]
-struct WriteGate {
+pub(super) struct WriteGate {
     revision: AtomicU64,
     serial: Mutex<()>,
     last: Mutex<Option<Vec<u8>>>,
@@ -75,6 +78,18 @@ pub(super) struct SaveRequest {
 impl Persistence {
     pub(super) fn save_revision(&self) -> u64 {
         self.gate.revision.load(Ordering::Acquire)
+    }
+
+    /// This machine's tab writer, to watch its revision after a switch.
+    pub(super) fn tab_writer(&self) -> Arc<WriteGate> {
+        self.gate.clone()
+    }
+}
+
+#[cfg(test)]
+impl WriteGate {
+    pub(super) fn revision(&self) -> u64 {
+        self.revision.load(Ordering::Acquire)
     }
 }
 impl SaveRequest {
@@ -245,9 +260,9 @@ impl Plait {
         .detach();
     }
 
-    /// Another machine's tabs are its own: save these where they belong, then
-    /// start empty until the new machine's tabs are read from its host.
-    pub(super) fn switch_machine_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Save this machine's tab document where it belongs, with this machine's
+    /// writer. Runs while it is still selected, so its own drafts are listed.
+    pub(super) fn flush_machine_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(request) = self.flush_tab_preferences(Some(window), cx) {
             cx.background_executor()
                 .spawn(async move {
@@ -255,8 +270,20 @@ impl Plait {
                 })
                 .detach();
         }
+    }
+
+    /// Another machine's tabs are its own: start empty until the new machine's
+    /// tabs are read from its host. `flush_machine_tabs` saved these first.
+    pub(super) fn switch_machine_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.tabs.model = tabs::WindowTabs::new(super::tabs::fresh_window_id());
         let state = &mut self.tabs.persistence;
+        // Each machine's tab document has one writer and revision, reused when
+        // the window returns to it: another machine's saves cannot make its
+        // pending write stand down, and it never has two writers (#132).
+        let previous = std::mem::take(&mut state.gate);
+        state.gates.insert(state.gate_machine.clone(), previous);
+        state.gate_machine = self.machines.active.clone();
+        state.gate = state.gates.remove(&state.gate_machine).unwrap_or_default();
         state.host_generation += 1;
         state.host_loaded = false;
         state.host_loading = false;
@@ -319,14 +346,12 @@ impl Plait {
         .detach();
     }
 
-    fn recoverable_tab_drafts(&self) -> Vec<TabTarget> {
-        let Some(data) = &self.session.data else {
-            return Vec::new();
-        };
-        data.draft_tabs
-            .iter()
+    /// Only the current machine's drafts can return as tabs here.
+    pub(super) fn recoverable_tab_drafts(&self) -> Vec<TabTarget> {
+        self.saved_drafts()
+            .into_iter()
             .map(|(id, tab)| TabTarget::Draft {
-                id: id.clone(),
+                id,
                 checkout: self.tab_checkout(tab.checkout.clone()),
             })
             .collect()
@@ -444,15 +469,8 @@ impl Plait {
                 continue;
             };
             if !self
-                .session
-                .data
-                .as_ref()
-                .and_then(|s| s.draft_tab(id, &checkout.root))
-                .is_some_and(|tab| {
-                    tab.creation.is_some()
-                        || !tab.draft.text.is_empty()
-                        || !tab.draft.images.is_empty()
-                })
+                .saved_draft(id, &checkout.root)
+                .is_some_and(|tab| !plait_client::session::draft_is_empty(tab))
             {
                 continue;
             }
@@ -493,30 +511,30 @@ impl Plait {
             .collect();
         kept.extend(self.draft.id.clone());
         kept.extend(self.tabs.lifecycle.drafts.keys().cloned());
-        let Some(data) = &mut self.session.data else {
-            return;
-        };
-        let unopened: Vec<String> = data
-            .draft_tabs
-            .iter()
-            .filter(|(id, tab)| {
-                !kept.contains(*id)
-                    && tab.creation.is_none()
-                    && tab.draft.creation.is_none()
-                    && tab.draft.text.is_empty()
-                    && tab.draft.images.is_empty()
+        // Empty-record cleanup, only in this machine's work, and only where the
+        // stored record itself is empty.
+        let machine = self.machines.active.clone();
+        let unopened: Vec<String> = self
+            .current_work()
+            .map(|work| {
+                work.drafts
+                    .iter()
+                    .filter(|(id, tab)| {
+                        !kept.contains(*id) && plait_client::session::draft_is_empty(tab)
+                    })
+                    .map(|(id, _)| id.clone())
+                    .collect()
             })
-            .map(|(id, _)| id.clone())
-            .collect();
+            .unwrap_or_default();
         if unopened.is_empty() {
             return;
         }
+        let mut works = std::collections::BTreeMap::new();
+        let work = super::saved_work::touch(&mut works, &self.saved_work.machines, &machine);
         for id in &unopened {
-            data.clear_draft_tab(id);
+            work.discard_empty_draft(id);
         }
-        if let Some(journal) = &self.session.journal {
-            journal.queue(data.clone());
-        }
+        self.store_machine_work(works);
         self.schedule_session_save(false, cx);
     }
 

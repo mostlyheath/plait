@@ -5,9 +5,12 @@
 
 mod blobs;
 mod drafts;
+mod machines;
 use crate::host::ModelChoice;
 use crate::host_state::PendingSubmit;
+use crate::machines::MachineId;
 pub use drafts::{DraftSettings, DraftTab, DraftTabCreation};
+pub use machines::{MachineWork, SavedThread, draft_is_empty, read_all as read_machines};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -200,49 +203,58 @@ impl Session {
             crate::images::validate_message(&draft.images)?;
         }
         for (id, thread) in &self.threads {
-            crate::images::validate_message(&thread.draft.images)?;
-            if !identifier(id)
-                || !thread.checkout.is_absolute()
-                || thread.title.len() > 1024
-                || thread.draft.text.len() > 256 * 1024
-                || thread
-                    .draft
-                    .submitted
-                    .as_ref()
-                    .is_some_and(|(text, _)| text.len() > crate::host::REQUEST_LIMIT)
-            {
-                return Err("Saved thread or draft exceeds its limits.".into());
-            }
-            if thread.queued_submissions.len() > 16
-                || thread.pending_submissions.len() + usize::from(thread.pending.is_some()) > 16
-            {
-                return Err("Saved thread has too many pending submissions.".into());
-            }
-            let mut seen = std::collections::HashSet::new();
-            for pending in thread
-                .pending
-                .iter()
-                .chain(&thread.pending_submissions)
-                .chain(&thread.queued_submissions)
-            {
-                crate::images::validate_message(&pending.images)?;
-                let request =
-                    crate::host::Request::submit_bound(id, &pending.request_id, &pending.text);
-                if !seen.insert(&pending.request_id)
-                    || !identifier(&pending.request_id)
-                    || (pending.text.trim().is_empty() && pending.images.is_empty())
-                    || serde_json::to_vec(&request)
-                        .map_err(|e| e.to_string())?
-                        .len()
-                        + 1
-                        > crate::host::REQUEST_LIMIT
-                {
-                    return Err("Saved submission is invalid. It was not sent.".into());
-                }
-            }
+            validate_thread(id, thread, LEGACY_TEXT_LIMIT)?;
         }
         Ok(())
     }
+}
+
+/// One saved thread's limits, wherever it is kept.
+/// The text limit desktop.json keeps for older builds; machine files are
+/// bounded by their file size instead (#132).
+pub(super) const LEGACY_TEXT_LIMIT: usize = 256 * 1024;
+
+pub(super) fn validate_thread(id: &str, thread: &Thread, text_limit: usize) -> Result<(), String> {
+    crate::images::validate_message(&thread.draft.images)?;
+    if !identifier(id)
+        || !thread.checkout.is_absolute()
+        || thread.title.len() > 1024
+        || thread.draft.text.len() > text_limit
+        || thread
+            .draft
+            .submitted
+            .as_ref()
+            .is_some_and(|(text, _)| text.len() > crate::host::REQUEST_LIMIT)
+    {
+        return Err("Saved thread or draft exceeds its limits.".into());
+    }
+    if thread.queued_submissions.len() > 16
+        || thread.pending_submissions.len() + usize::from(thread.pending.is_some()) > 16
+    {
+        return Err("Saved thread has too many pending submissions.".into());
+    }
+    let mut seen = std::collections::HashSet::new();
+    for pending in thread
+        .pending
+        .iter()
+        .chain(&thread.pending_submissions)
+        .chain(&thread.queued_submissions)
+    {
+        crate::images::validate_message(&pending.images)?;
+        let request = crate::host::Request::submit_bound(id, &pending.request_id, &pending.text);
+        if !seen.insert(&pending.request_id)
+            || !identifier(&pending.request_id)
+            || (pending.text.trim().is_empty() && pending.images.is_empty())
+            || serde_json::to_vec(&request)
+                .map_err(|e| e.to_string())?
+                .len()
+                + 1
+                > crate::host::REQUEST_LIMIT
+        {
+            return Err("Saved submission is invalid. It was not sent.".into());
+        }
+    }
+    Ok(())
 }
 
 fn identifier(value: &str) -> bool {
@@ -315,6 +327,35 @@ pub struct Journal {
     _lease: Lease,
     queued: Mutex<(u64, Arc<Saved>)>,
     written: Mutex<u64>,
+    /// Each machine's file has its own revision gate, kept for the journal's
+    /// life so switching away and back reuses the same writer.
+    machines: Mutex<BTreeMap<MachineId, MachineSlot>>,
+    /// Image references in the last durable `desktop.json`.
+    durable: Mutex<Vec<String>>,
+    loaded: Mutex<Option<BTreeMap<MachineId, MachineWork>>>,
+}
+
+/// One machine's queued work and what was last written durably.
+struct MachineSlot {
+    queued: u64,
+    written: u64,
+    work: Arc<SavedMachine>,
+    /// Image references in the machine's last durable file.
+    durable: Vec<String>,
+}
+
+struct SavedMachine {
+    work: MachineWork,
+    _images: crate::images::Pins,
+}
+impl SavedMachine {
+    fn new(directory: &Path, work: MachineWork) -> Arc<Self> {
+        let pins = crate::images::Pins::new(directory, work.image_ids().map(str::to_owned));
+        Arc::new(Self {
+            work,
+            _images: pins,
+        })
+    }
 }
 
 impl Journal {
@@ -392,16 +433,139 @@ impl Journal {
         if session.host_store != host_store {
             return Err("Saved workspace belongs to another host store. Use a separate PLAIT_DESKTOP_STATE_DIR; nothing was sent or overwritten.".into());
         }
-        crate::images::saved(directory, session.image_ids().map(str::to_owned));
+        let mut machines = machines::read_all(directory)?;
+        // Once, in this background load: copy `desktop.json`'s older records to
+        // this computer's own machine file. They stay in place for older builds.
+        // Older builds may keep a draft only in `new_draft` or `new_drafts`:
+        // normalize a copy into draft tabs first, so those are copied too. The
+        // loaded fields stay exactly as written, for older builds.
+        let mut legacy = session.clone();
+        legacy.import_legacy_drafts();
+        let imported = if legacy.draft_tabs.is_empty() && legacy.threads.is_empty() {
+            false
+        } else {
+            machines
+                .entry(MachineId::default())
+                .or_default()
+                .import_legacy(&legacy.draft_tabs, &legacy.threads)
+        };
+        let slots = machines
+            .iter()
+            .map(|(machine, work)| {
+                let durable = work.image_ids().map(str::to_owned).collect();
+                let written = u64::from(!(imported && *machine == MachineId::default()));
+                let slot = MachineSlot {
+                    queued: 1,
+                    written,
+                    work: SavedMachine::new(directory, work.clone()),
+                    durable,
+                };
+                (machine.clone(), slot)
+            })
+            .collect();
+        // Before the sweep: images an older build swept come back from backup.
+        machines::restore_images(directory, &machines);
+        let durable: Vec<String> = session.image_ids().map(str::to_owned).collect();
         let saved = Saved::new(directory, session.clone());
         let journal = Self {
             directory: directory.to_owned(),
             _lease: lease,
             queued: Mutex::new((0, saved)),
             written: Mutex::new(0),
+            machines: Mutex::new(slots),
+            durable: Mutex::new(durable),
+            loaded: Mutex::new(Some(machines)),
         };
+        journal.publish_images();
         crate::images::sweep(directory)?;
         Ok((Arc::new(journal), session))
+    }
+
+    /// Each machine's saved work as loaded, once.
+    pub fn take_machines(&self) -> BTreeMap<MachineId, MachineWork> {
+        self.loaded.lock().unwrap().take().unwrap_or_default()
+    }
+
+    /// No file access. Call after a state transition, never from render.
+    pub fn queue_machine(&self, machine: &MachineId, work: MachineWork) {
+        let work = SavedMachine::new(&self.directory, work);
+        let mut machines = self.machines.lock().unwrap();
+        let slot = machines
+            .entry(machine.clone())
+            .or_insert_with(|| MachineSlot {
+                queued: 0,
+                written: 0,
+                work: work.clone(),
+                durable: Vec::new(),
+            });
+        slot.queued += 1;
+        slot.work = work;
+    }
+
+    /// Durable image references: `desktop.json`'s and every machine file's.
+    /// Backups of images no machine file refers to any more are removed.
+    fn publish_images(&self) {
+        let mut ids: Vec<String> = self.durable.lock().unwrap().clone();
+        let mut machine_ids = std::collections::HashSet::new();
+        for slot in self.machines.lock().unwrap().values() {
+            machine_ids.extend(slot.durable.iter().cloned());
+        }
+        machines::sweep_backups(&self.directory, &machine_ids);
+        ids.extend(machine_ids);
+        crate::images::saved(&self.directory, ids.into_iter());
+    }
+
+    /// After a save failed during a quit that cannot be cancelled: keep each
+    /// machine's unsaved work in a recovery file beside the journal. Returns the
+    /// files written. Blocking.
+    pub fn keep_unsaved(&self) -> Result<Vec<PathBuf>, String> {
+        let _written = self.written.lock().unwrap();
+        let unsaved: Vec<(MachineId, Arc<SavedMachine>)> = self
+            .machines
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, slot)| slot.queued > slot.written)
+            .map(|(machine, slot)| (machine.clone(), slot.work.clone()))
+            .collect();
+        unsaved
+            .iter()
+            .map(|(machine, saved)| machines::write_recovery(&self.directory, machine, &saved.work))
+            .collect()
+    }
+
+    /// Recovery files a quit left because it could not save.
+    pub fn recovery_files(&self) -> Vec<PathBuf> {
+        machines::recovery_files(&self.directory)
+    }
+
+    /// Write each machine file with newer work, one writer per file. A failed
+    /// write keeps that work queued and is reported; the others still save.
+    fn flush_machines(&self) -> Result<(), String> {
+        let pending: Vec<(MachineId, u64, Arc<SavedMachine>)> = self
+            .machines
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, slot)| slot.queued > slot.written)
+            .map(|(machine, slot)| (machine.clone(), slot.queued, slot.work.clone()))
+            .collect();
+        let mut failure = None;
+        for (machine, revision, saved) in pending {
+            let written = machines::write(&self.directory, &machine, &saved.work)
+                .and_then(|()| machines::back_up_images(&self.directory, &saved.work));
+            match written {
+                Ok(()) => {
+                    let mut machines = self.machines.lock().unwrap();
+                    if let Some(slot) = machines.get_mut(&machine) {
+                        slot.written = slot.written.max(revision);
+                        slot.durable = saved.work.image_ids().map(str::to_owned).collect();
+                    }
+                }
+                Err(error) => failure = Some(error),
+            }
+        }
+        failure.map_or(Ok(()), Err)
     }
 
     /// No file access. Call after a state transition, never from render.
@@ -415,9 +579,12 @@ impl Journal {
     /// Flush the newest queued state. Submission callers must await success first.
     pub fn flush(&self) -> Result<(), String> {
         let mut written = self.written.lock().unwrap();
+        let machines = self.flush_machines();
         let (revision, saved) = self.queued.lock().unwrap().clone();
         if revision <= *written {
-            return crate::images::sweep(&self.directory);
+            self.publish_images();
+            crate::images::sweep(&self.directory)?;
+            return machines;
         }
         let session = &saved.session;
         session.validate()?;
@@ -448,9 +615,11 @@ impl Journal {
                 "Workspace save failed: {error}. Submission was not sent."
             ));
         }
-        crate::images::saved(&self.directory, session.image_ids().map(str::to_owned));
+        *self.durable.lock().unwrap() = session.image_ids().map(str::to_owned).collect();
         *written = revision;
-        crate::images::sweep(&self.directory)
+        self.publish_images();
+        crate::images::sweep(&self.directory)?;
+        machines
     }
 }
 

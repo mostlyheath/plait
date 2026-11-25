@@ -52,7 +52,17 @@ The client negotiates host protocol versions **1 through 7** per request and deg
 
 ## Machines
 
-**Settings → Machines** selects which machine's host this window works with: **This Mac**, or another Mac or Linux machine over **SSH** or **Tailscale**. Each window works with one machine at a time; showing projects from several machines in one sidebar is planned ([Host-first Plait](HOST-FIRST.md)). The open folder belongs to the machine it was chosen on: after a switch, the window opens one of the new machine's projects and never lists or saves the other machine's folder as its own. Folding a project folds it only on that machine. A worktree removal that finishes after a switch or a reconnect changes the lists, and shows its result, only on the machine it ran on, once that machine's host is checked. Unsent drafts and saved thread work are not yet kept per machine ([#132](https://github.com/mostlyheath/plait/issues/132)).
+**Settings → Machines** selects which machine's host this window works with: **This Mac**, or another Mac or Linux machine over **SSH** or **Tailscale**. Each window works with one machine at a time; showing projects from several machines in one sidebar is planned ([Host-first Plait](HOST-FIRST.md)). The open folder belongs to the machine it was chosen on: after a switch, the window opens one of the new machine's projects and never lists or saves the other machine's folder as its own. Folding a project folds it only on that machine. A worktree removal that finishes after a switch or a reconnect changes the lists, and shows its result, only on the machine it ran on, once that machine's host is checked.
+
+**Saved work per machine.** Unsent work belongs to the machine entry selected in Plait when you typed it:
+
+- **Unsent drafts, thread message boxes, waiting messages and a thread's approval choice** are saved for that machine and shown only while it is selected. A thread with the same ID on another machine, or in another folder, neither shows nor changes them. Reinstalling a machine's host keeps its saved work, because the work belongs to the machine entry, not to that host's identity.
+- **Typing is always saved,** including during a switch or a reconnect, or while the machine's host is still being checked.
+- **Sending waits** until the selected machine's host has been checked, and sends only a draft written for that machine. This includes Retry, Wait and **Own worktree**. A waiting message is settled by host receipts only from the host that accepted it.
+- **Before a switch,** Plait saves the open draft and the machine's tabs, then puts its workspace away. Each machine keeps its own tabs.
+- **Drafts from earlier versions** of Plait are copied once to This Mac on the first launch. An earlier version opening the same saved workspace still sees them.
+
+Each machine's saved work is its own file in the desktop state folder, under `desktop-machines/`, and holds up to 8 MiB. Past that, the work stays in memory with a notice. Plait stays open, rather than close a window or quit, until it can save. If the system ends Plait anyway, for example at shutdown, the unsaved work is written whole to `desktop-machines/recovery/`, and the next launch tells you where it is.
 
 To add a remote machine, choose **Add machine…**:
 
