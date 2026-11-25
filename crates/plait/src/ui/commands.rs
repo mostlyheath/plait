@@ -30,6 +30,10 @@ pub(super) enum Command {
     NewThread(ModelChoice),
     /// A model chosen in the model picker. The picker's purpose gives it meaning.
     Model(ModelChoice),
+    NamingModel {
+        choice: ModelChoice,
+        epoch: u64,
+    },
     /// A model of a harness other than Pi, chosen in the model picker.
     HarnessModel(HarnessId, ModelChoice),
     /// Open Settings → Agents, where harnesses are listed.
@@ -87,6 +91,10 @@ impl Clone for Command {
             Self::BrowseRemote(path) => Self::BrowseRemote(path.clone()),
             Self::NewThread(choice) => Self::NewThread(choice.clone()),
             Self::Model(choice) => Self::Model(choice.clone()),
+            Self::NamingModel { choice, epoch } => Self::NamingModel {
+                choice: choice.clone(),
+                epoch: *epoch,
+            },
             Self::HarnessModel(id, choice) => Self::HarnessModel(*id, choice.clone()),
             Self::HarnessSettings => Self::HarnessSettings,
             Self::SetUpHarness(id) => Self::SetUpHarness(*id),
@@ -545,6 +553,7 @@ impl Plait {
                 self.choose_draft_harness(HarnessId::Pi, cx);
                 self.choose_draft_model(HarnessId::Pi, choice, cx);
             }
+            Command::NamingModel { choice, epoch } => self.choose_naming_model(choice, epoch, cx),
             Command::Model(choice) => match purpose {
                 Some(ModelPurpose::NewThread) => self.choose_draft_model(HarnessId::Pi, choice, cx),
                 Some(ModelPurpose::DefaultModel) => self.choose_default_model(choice, window, cx),

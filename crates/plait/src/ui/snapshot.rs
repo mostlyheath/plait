@@ -64,6 +64,7 @@ mod mcp;
 mod message_box;
 mod messages;
 mod mixed_tabs;
+mod naming;
 mod overview;
 mod panel;
 mod pickers;
@@ -2449,6 +2450,7 @@ fn walk(output: Option<&Path>) {
         message_box::walk(&mut harness, &repository, suffix);
         step21::walk(&mut harness, &repository, suffix);
         settings_modal::walk(&mut harness, &repository, suffix);
+        naming::walk(&mut harness, &repository, suffix);
         settings_walk(&mut harness, &repository, suffix);
         settings_controls_walk(&mut harness, &repository, suffix);
         mcp::mcp_walk(&mut harness, &repository, suffix);

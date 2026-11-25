@@ -143,7 +143,19 @@ documented programmatic interfaces and translate events into that model;
 threads retain their harness identity and history. Each harness keeps its own
 authentication, configuration, and session files. Plait adds no instructions
 or tools to Codex or Claude Code, does not read their credentials, and does not
-make unrequested model calls or send telemetry.
+make unrequested model calls or send telemetry. Optional thread naming is a
+separate, explicitly enabled model call through the host's provider catalog;
+it does not use either harness's conversation or credentials.
+
+**Thread naming (agreed).** Settings → New threads has host-owned automatic
+naming and a separate provider/model choice, including custom local endpoints.
+Choosing a model enables naming; an unconfigured host makes no naming calls.
+Only the first newly accepted message is summarized, in the background, without
+tools, files, or images. A failed or interrupted call keeps the prompt-based
+name, with no retry or fallback provider. Existing conversations and names the
+person chose are not replaced. Settings changes cancel pending naming work.
+The existing title field and older reply shapes stay unchanged; separate
+settings operations let an older host refuse this feature cleanly.
 
 Pi uses Plait's approval and command policy; other harnesses use their own
 permission and sandbox modes, which the UI must identify accurately. The host
