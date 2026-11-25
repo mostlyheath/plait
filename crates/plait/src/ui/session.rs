@@ -391,7 +391,6 @@ impl Plait {
         self.capture_open_draft(&mut works, cx);
         self.capture_parked_drafts(&mut works);
         self.capture_threads(&mut works, cx);
-        self.capture_commit_message(&mut works, cx);
         let (mut changed, mut removed_image) = self.store_machine_work(works);
         // desktop.json keeps only the window's folder and selection; its older
         // records stay as they are for older builds.
@@ -455,26 +454,6 @@ impl Plait {
         super::saved_work::touch(works, &self.saved_work.machines, &binding.machine)
             .drafts
             .insert(id.clone(), tab);
-    }
-
-    /// The commit field's message, under the thread and folder it is for.
-    fn capture_commit_message(&mut self, works: &mut BTreeMap<MachineId, MachineWork>, cx: &App) {
-        let text = self.workspace.commit_message.read(cx).text().to_owned();
-        if self.workspace.commit_owner.is_none() {
-            if text.is_empty() {
-                return;
-            }
-            self.workspace.commit_owner = Some((
-                self.host.thread.selected.clone().unwrap_or_default(),
-                self.host.creation.checkout.clone(),
-            ));
-        }
-        let (thread, checkout) = self.workspace.commit_owner.clone().unwrap();
-        let machine = self.machines.active.clone();
-        let work = super::saved_work::touch(works, &self.saved_work.machines, &machine);
-        if work.commit_message(&thread, &checkout) != text {
-            work.set_commit_message(&thread, &checkout, &text);
-        }
     }
 
     /// Drafts parked behind other tabs, into their machines' work, so a parked

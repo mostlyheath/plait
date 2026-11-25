@@ -857,7 +857,13 @@ fn a_quit_that_cannot_save_keeps_the_app_open() {
                 note.contains("kept open") && note.contains("exceeds"),
                 "{note}"
             );
-            assert_eq!(work(p, &local()).drafts.len(), 40);
+            // Every draft keeps its exact text, not just its slot.
+            let work = work(p, &local());
+            assert_eq!(work.drafts.len(), 40);
+            let expected = "x".repeat(250 * 1024);
+            for n in 0..40 {
+                assert_eq!(work.drafts[&format!("big-{n}")].draft.text, expected);
+            }
             p.session.journal = None;
             p.session.data = None;
         })
@@ -869,47 +875,6 @@ fn a_quit_that_cannot_save_keeps_the_app_open() {
     );
     drop(h);
     std::fs::remove_dir_all(scratch).unwrap();
-}
-
-/// #174 round 3, finding 1: two machine entries naming one host share its tab
-/// document, but each keeps its own unsent commit message.
-#[core::prelude::v1::test]
-fn each_machine_entry_keeps_its_commit_message() {
-    if !isolated("saved_work::each_machine_entry_keeps_its_commit_message") {
-        return;
-    }
-    scene("commit", |p, repo, window, cx| {
-        let bookmark = Default::default;
-        p.restore_tab_bookmark(bookmark(), window, cx);
-        let field = p.workspace.commit_message.clone();
-        field.update(cx, |f, cx| f.set_text("A's commit message", cx));
-        p.capture_session(cx);
-        switch(p, remote(), false, repo, window, cx);
-        p.verify_identity_for_test(fixture_host());
-        p.host.thread.selected = Some(THREAD.into());
-        p.restore_tab_bookmark(bookmark(), window, cx);
-        let field = p.workspace.commit_message.clone();
-        assert_eq!(field.read(cx).text(), "");
-        field.update(cx, |f, cx| f.set_text("B's commit message", cx));
-        p.capture_session(cx);
-        switch(p, local(), true, repo, window, cx);
-        p.verify_identity_for_test(fixture_host());
-        p.host.thread.selected = Some(THREAD.into());
-        p.restore_tab_bookmark(bookmark(), window, cx);
-        assert_eq!(
-            p.workspace.commit_message.read(cx).text(),
-            "A's commit message"
-        );
-        relaunch(p, repo, cx);
-        assert_eq!(
-            work(p, &local()).commit_message(THREAD, repo),
-            "A's commit message"
-        );
-        assert_eq!(
-            work(p, &remote()).commit_message(THREAD, repo),
-            "B's commit message"
-        );
-    });
 }
 
 /// Older records are copied to this computer once, then edited there; the

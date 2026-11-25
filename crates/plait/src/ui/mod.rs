@@ -333,9 +333,6 @@ impl Plait {
         window.focus(&focus, cx);
         let commit_message =
             cx.new(|cx| text_field::TextField::new("Commit message", "Commit message", cx));
-        // An unsent commit message saves like a draft, to the machine's file.
-        cx.observe(&commit_message, |this, _, cx| this.capture_session(cx))
-            .detach();
         let mut this = Self {
             tabs: Default::default(),
             state,

@@ -61,9 +61,6 @@ pub(super) struct ThreadWorkspace {
     pub(super) commit_scroll: UniformListScrollHandle,
     /// The commit message in Changes. Kept across view switches until it commits.
     pub(super) commit_message: Entity<text_field::TextField>,
-    /// The thread and folder the commit field holds a message for, once set:
-    /// its text saves to that key in the machine file (#132).
-    pub(super) commit_owner: Option<(String, std::path::PathBuf)>,
     pub(super) tab: Workspace,
     pub(super) file_viewer: file_view::FileViewer,
     pub(super) conversation_find: conversation_find::ConversationFind,
@@ -81,7 +78,6 @@ impl ThreadWorkspace {
             restore_pending: [false; 4],
             changed_patch: Default::default(),
             cancelled: Arc::default(),
-            commit_owner: None,
             composers: HashMap::new(),
             bindings: HashMap::new(),
             host_watch: None,

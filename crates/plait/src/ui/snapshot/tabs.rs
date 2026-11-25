@@ -818,12 +818,10 @@ pub(super) fn stored_views() {
         p.tabs.persistence.writable = true;
         p.tabs.persistence.path = Some(saved_path.clone());
         p.tabs.persistence.window = Some(w.window_handle());
-        // Many expanded tool cards do not fit an inline bookmark. (A commit
-        // message no longer rides in the bookmark; it is saved per machine.)
-        p.workspace.expanded_live_tools = (0..300)
-            .map(|n| format!("x-tool-{n:04}-{}", "x".repeat(24)))
-            .collect();
-        let _ = cx;
+        // A long commit message does not fit an inline bookmark.
+        p.workspace
+            .commit_message
+            .update(cx, |f, cx| f.set_text(&"x".repeat(9000), cx));
     });
     let views = || {
         std::fs::read_dir(session.join("tabs"))
@@ -846,10 +844,9 @@ pub(super) fn stored_views() {
     assert_eq!(views(), 1);
     // A changed view replaces the record it supersedes.
     h.update(|p, _, cx| {
-        p.workspace.expanded_live_tools = (0..300)
-            .map(|n| format!("y-tool-{n:04}-{}", "y".repeat(24)))
-            .collect();
-        let _ = cx;
+        p.workspace
+            .commit_message
+            .update(cx, |f, cx| f.set_text(&"y".repeat(9000), cx));
     });
     h.window
         .update(&mut h.cx, |p, w, cx| {
