@@ -58,6 +58,7 @@ mod tests {
         let error = super::super::HostError {
             code: "invalid_request".into(),
             message: "unknown".into(),
+            outcome: None,
             retry_after_seconds: None,
         };
         assert!(info_result(Err(Error::Rejected(error))).unwrap().is_none());

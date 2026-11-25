@@ -1,5 +1,6 @@
 //! Additive, bounded Linear host operations.
 use super::{Client, Error};
+use base64::Engine;
 use std::path::PathBuf;
 
 pub use plait_protocol::host::linear::*;
@@ -456,15 +457,155 @@ pub enum WriteFailure {
     /// The host's reply was lost. Retrying with the same request ID is safe:
     /// the host returns its saved outcome instead of sending twice.
     Lost,
-    /// Refused or not sent. Retrying the same request may send it again.
+    /// Refused or not sent, as the host recorded it: nothing was written.
     Refused(Rejection),
+    /// Refused without a recorded outcome, such as a request the host found
+    /// malformed before looking at its receipt: an earlier request under the
+    /// same ID may still have been written, so the ID is kept.
+    Undecided(Rejection),
+    /// The issue changed in Linear since it was read; nothing was sent.
+    Changed,
+    /// The request ID already carries other text. `earlier` is what became
+    /// of that earlier request, as the host recorded it.
+    Conflict { earlier: Earlier },
 }
+
+/// The outcome of an earlier request under the same ID.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Earlier {
+    /// Not sent or refused: nothing was written.
+    NothingWritten,
+    Accepted,
+    /// Sent with no answer, or not said: Linear may have applied it.
+    Unknown,
+}
+
 pub fn write_failure(error: &Error) -> WriteFailure {
-    match error {
-        Error::Rejected(e) if e.code == "linear_write_unknown" => WriteFailure::Unknown,
-        Error::Transport(_) | Error::Protocol(_) => WriteFailure::Lost,
-        Error::Rejected(_) => WriteFailure::Refused(classify(error, false)),
+    let Error::Rejected(e) = error else {
+        return WriteFailure::Lost;
+    };
+    match (e.code.as_str(), e.outcome.as_deref()) {
+        ("linear_write_unknown", _) | (_, Some("unknown")) if e.code != "conflict" => {
+            WriteFailure::Unknown
+        }
+        ("linear_issue_changed", _) => WriteFailure::Changed,
+        ("conflict", outcome) => WriteFailure::Conflict {
+            earlier: match outcome {
+                Some("not_sent" | "rejected") => Earlier::NothingWritten,
+                Some("accepted") => Earlier::Accepted,
+                _ => Earlier::Unknown,
+            },
+        },
+        (_, Some("not_sent" | "rejected")) => WriteFailure::Refused(classify(error, false)),
+        _ => WriteFailure::Undecided(classify(error, false)),
     }
+}
+
+fn issue_write(v: &IssueWrite) -> bool {
+    v.outcome == "accepted"
+        && opt(&v.warning, 2048)
+        && oid(&v.issue_id)
+        && v.identifier.as_deref().is_none_or(identifier)
+        && v.issue.as_ref().is_none_or(detail)
+}
+/// Creates an issue in `team_id`, on a person's explicit action. The host
+/// derives the new issue's id from `request_id`, so a retry cannot make two.
+pub fn create_issue(
+    c: &Client,
+    team_id: String,
+    title: String,
+    description: Option<String>,
+    state_id: Option<String>,
+    request_id: String,
+) -> Result<IssueWrite, Error> {
+    let v: IssueWrite = send(
+        c,
+        &Request::LinearCreateIssue {
+            team_id: team_id.clone(),
+            title,
+            description,
+            state_id,
+            request_id,
+        },
+    )?;
+    let ok = issue_write(&v)
+        && v.issue_id.is_some()
+        && v.issue.as_ref().is_none_or(|d| {
+            d.summary.team_id == team_id && Some(&d.summary.id) == v.issue_id.as_ref()
+        });
+    checked(v, ok)
+}
+/// Changes an issue's title or description, on a person's explicit action.
+/// The host refuses with `linear_issue_changed` when the issue is no longer
+/// at `expected_updated_at`.
+pub fn update_issue(
+    c: &Client,
+    issue_id: String,
+    expected_updated_at: String,
+    title: Option<String>,
+    description: Option<String>,
+    request_id: String,
+) -> Result<IssueWrite, Error> {
+    let v: IssueWrite = send(
+        c,
+        &Request::LinearUpdateIssue {
+            issue_id: issue_id.clone(),
+            expected_updated_at,
+            title,
+            description,
+            request_id,
+        },
+    )?;
+    let ok = issue_write(&v) && v.issue.as_ref().is_none_or(|d| d.summary.id == issue_id);
+    checked(v, ok)
+}
+/// An issue's exact title and description, for an edit that must not lose text.
+pub fn get_issue_text(c: &Client, issue_id: String) -> Result<IssueText, Error> {
+    let v: IssueText = send(
+        c,
+        &Request::LinearGetIssueText {
+            issue_id: issue_id.clone(),
+        },
+    )?;
+    let ok = id(&v.issue_id)
+        && text(&v.updated_at, 64)
+        && v.title.is_some() == v.editable
+        && v.description.is_some() == v.editable
+        && v.title.as_ref().is_none_or(|t| t.chars().count() <= 512)
+        && v.description.as_ref().is_none_or(|d| d.len() <= 32 * 1024);
+    checked(v, ok)
+}
+/// An image from Linear's file storage, read through the host in chunks. Only
+/// a PNG or JPEG within the thread image bounds is returned.
+pub fn read_image(c: &Client, url: &str) -> Result<Vec<u8>, Error> {
+    let mut bytes = Vec::new();
+    loop {
+        let part: ImagePart = send(
+            c,
+            &Request::LinearReadImage {
+                url: url.to_owned(),
+                offset: bytes.len(),
+            },
+        )?;
+        let chunk = base64::engine::general_purpose::STANDARD
+            .decode(&part.data)
+            .map_err(|_| invalid())?;
+        let valid = part.url == url
+            && part.offset == bytes.len()
+            && part.size <= crate::images::IMAGE_BYTES
+            && !chunk.is_empty()
+            && chunk.len() <= crate::images::READ_CHUNK
+            && bytes.len() + chunk.len() <= part.size;
+        if !valid {
+            return Err(invalid());
+        }
+        bytes.extend(chunk);
+        if bytes.len() == part.size {
+            break;
+        }
+    }
+    crate::images::inspect(&bytes).map_err(Error::Protocol)?;
+    Ok(bytes)
 }
 
 #[cfg(test)]
@@ -613,7 +754,45 @@ mod write_tests {
             retry_after_seconds: None,
             code: code.into(),
             message: "ignored".into(),
+            outcome: None,
         })
+    }
+
+    /// The error envelopes the host sends, decoded the way the client decodes them.
+    fn envelope(json: serde_json::Value) -> Error {
+        Error::Rejected(serde_json::from_value(json).expect("a host error decodes"))
+    }
+
+    #[test]
+    fn typed_write_errors_decode_with_their_outcomes() {
+        let stale = envelope(serde_json::json!({"code": "linear_issue_changed",
+            "message": "changed", "outcome": "not_sent"}));
+        assert_eq!(write_failure(&stale), WriteFailure::Changed);
+        let unknown = envelope(serde_json::json!({"code": "linear_write_unknown",
+            "message": "unconfirmed", "outcome": "unknown"}));
+        assert_eq!(write_failure(&unknown), WriteFailure::Unknown);
+        let limited = envelope(serde_json::json!({"code": "linear_rate_limited",
+            "message": "wait", "retry_after_seconds": 7, "outcome": "rejected"}));
+        assert_eq!(
+            write_failure(&limited),
+            WriteFailure::Refused(Rejection::RateLimited(Some(7)))
+        );
+        // Refused before the host looked at its receipt: not a recorded outcome.
+        let malformed = envelope(serde_json::json!({"code": "invalid_request",
+            "message": "title is too long."}));
+        assert_eq!(
+            write_failure(&malformed),
+            WriteFailure::Undecided(Rejection::Other)
+        );
+        for (outcome, earlier) in [
+            ("accepted", Earlier::Accepted),
+            ("rejected", Earlier::NothingWritten),
+            ("unknown", Earlier::Unknown),
+        ] {
+            let conflict = envelope(serde_json::json!({"code": "conflict",
+                "message": "used", "outcome": outcome}));
+            assert_eq!(write_failure(&conflict), WriteFailure::Conflict { earlier });
+        }
     }
 
     #[test]
@@ -626,9 +805,10 @@ mod write_tests {
             write_failure(&Error::Transport("closed".into())),
             WriteFailure::Lost
         );
+        // Without a recorded outcome a refusal settles nothing about the request.
         assert_eq!(
             write_failure(&rejected("linear_offline")),
-            WriteFailure::Refused(Rejection::Offline)
+            WriteFailure::Undecided(Rejection::Offline)
         );
     }
 

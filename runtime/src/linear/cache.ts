@@ -126,6 +126,13 @@ export class LinearCache {
         touched_seq INTEGER NOT NULL DEFAULT 0
       );
       CREATE INDEX IF NOT EXISTS linear_writes_recent ON linear_writes(created_at DESC);
+      CREATE TABLE IF NOT EXISTS linear_cache_images(
+        url TEXT PRIMARY KEY,
+        credential TEXT NOT NULL,
+        bytes BLOB NOT NULL,
+        cached_at INTEGER NOT NULL,
+        used_at INTEGER NOT NULL
+      );
     `);
     for (const table of ['linear_cache_pages', 'linear_cache_details', 'linear_writes']) {
       if (!this.db.prepare(`PRAGMA table_info(${table})`).all().some(row => row.name === 'touched_seq')) {
@@ -429,6 +436,37 @@ export class LinearCache {
       this.db.prepare('DELETE FROM linear_cache_details').run();
       this.db.prepare('DELETE FROM linear_cache_aliases').run();
       this.db.prepare('DELETE FROM linear_writes').run();
+      this.db.prepare('DELETE FROM linear_cache_images').run();
+    });
+  }
+
+  /** A cached image's bytes from `offset`, at most `length` of them, or null.
+   * Only an entry read with `credential`, the current sign-in, is returned. */
+  readImage(url: string, credential: string, offset: number, length: number, now: number): { size: number; chunk: Buffer } | null {
+    const row = this.db.prepare(
+      'SELECT length(bytes) AS size, substr(bytes,?,?) AS chunk FROM linear_cache_images WHERE url=? AND credential=?',
+    ).get(offset + 1, length, url, credential);
+    if (!row) return null;
+    this.db.prepare('UPDATE linear_cache_images SET used_at=? WHERE url=?').run(now, url);
+    return { size: Number(row.size), chunk: Buffer.from(row.chunk as Uint8Array) };
+  }
+
+  /** Keeps at most `count` images and `bytes` in all, forgetting the least recently read. */
+  saveImage(url: string, credential: string, bytes: Buffer, now: number, count: number, total: number): void {
+    this.transaction(() => {
+      // Another sign-in's images are never kept beside this one's.
+      this.db.prepare('DELETE FROM linear_cache_images WHERE credential<>?').run(credential);
+      this.db.prepare(`INSERT INTO linear_cache_images(url, credential, bytes, cached_at, used_at) VALUES(?,?,?,?,?)
+        ON CONFLICT(url) DO UPDATE SET credential=excluded.credential, bytes=excluded.bytes,
+          cached_at=excluded.cached_at, used_at=excluded.used_at`)
+        .run(url, credential, bytes, now, now);
+      const rows = this.db.prepare('SELECT url, length(bytes) AS size FROM linear_cache_images ORDER BY used_at DESC, url').all();
+      let kept = 0; let used = 0;
+      for (const row of rows) {
+        const size = Number(row.size);
+        if (kept < count && used + size <= total) { kept += 1; used += size; continue; }
+        this.db.prepare('DELETE FROM linear_cache_images WHERE url=?').run(String(row.url));
+      }
     });
   }
 

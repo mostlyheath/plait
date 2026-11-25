@@ -2534,7 +2534,8 @@ see its Git."
 
 These additive host operations let the desktop manage Linear sign-in, read
 bounded team and issue data through a local SQLite cache, persist local
-thread-to-issue links, and perform two explicit person-initiated writes. Like
+thread-to-issue links, and perform explicit writes: comments, workflow
+state, and creating and editing issues. No harness or agent receives a Linear tool; writes come only from explicit requests on the host socket, which any process running as you can reach. Like
 [Recorded turn review](#recorded-turn-review), they omit `protocol_version`:
 versions 1–6 retain their existing request, `ThreadSummary`, and `Snapshot`
 shapes unchanged. New result fields and typed error fields apply only to Linear
@@ -2543,9 +2544,9 @@ existing desktop reply
 shapes remain unchanged, so no protocol version bump is required. An older host rejects these operation names with
 `invalid_request`. Unknown fields (including `protocol_version`) are refused.
 
-No agent, model tool, or MCP server can call these operations, and nothing runs
-in the background or polls Linear on a timer. Requests are made only when a
-authenticated client asks through the owner-only host socket.
+No harness or agent receives a Linear tool, and nothing runs in the background
+or polls Linear on a timer. Requests come only from explicit requests on the
+owner-only host socket, which any process running as you can reach.
 
 ### What crosses the socket and where the key lives
 
@@ -2596,10 +2597,15 @@ authenticated client asks through the owner-only host socket.
 {"op":"linear_list_thread_links","limit":200,"cursor":"1763400000000:THREAD_ID"}
 {"op":"linear_post_comment","issue_id":"ISSUE_ID","body":"Comment text","request_id":"CLIENT_UUID"}
 {"op":"linear_update_issue_state","issue_id":"ISSUE_ID","state_id":"STATE_ID","request_id":"CLIENT_UUID"}
+{"op":"linear_create_issue","team_id":"TEAM_ID","title":"Retry 429s","description":"Markdown","state_id":"STATE_ID","request_id":"CLIENT_UUID"}
+{"op":"linear_update_issue","issue_id":"ISSUE_ID","expected_updated_at":"2026-11-18T12:00:00.000Z","title":"New title","description":"Markdown","request_id":"CLIENT_UUID"}
+{"op":"linear_read_image","url":"https://uploads.linear.app/ORG/FILE","offset":0}
+{"op":"linear_get_issue_text","issue_id":"ISSUE_ID"}
 ```
 
 - **`linear_info`** is local and read-only. Returns
-  `{"schema":1,"features":{"durable_write_outcomes":true,"exact_issue_resolution":true,"workspace_links":true,"typed_rate_limits":true},"write_history_limit":10000,"write_history_retention":"store_lifetime"}`.
+  `{"schema":1,"features":{"durable_write_outcomes":true,"exact_issue_resolution":true,"workspace_links":true,"typed_rate_limits":true,"issue_writes":true,"images":true},"write_history_limit":10000,"write_history_retention":"store_lifetime"}`.
+  `issue_writes` and `images` are absent from older hosts; clients treat absence as false.
   Clients gate write UI on `features.durable_write_outcomes`, not a release
   number. Older hosts reject this operation with `invalid_request`.
 - **`linear_get_write`** is local and read-only, including while signed out.
@@ -2741,6 +2747,46 @@ authenticated client asks through the owner-only host socket.
   rejecting mismatches with `invalid_request`). Invalidates cached entries for
   the issue and its team, deduplicates by `request_id` as above, and returns
   `{"issue":DETAIL|null,"partial":false,"warning":null,"outcome":"accepted"}`.
+- **`linear_get_issue_text`** reads an issue's title and description exactly
+  as Linear stores them, for an edit: issue reads bound and escape text for
+  display, and writing that back would lose text. Returns
+  `{"issue_id":ID,"updated_at":TIME,"editable":true,"title":TEXT,"description":TEXT}`.
+  When the text is longer than Plait can write back (512 characters of title,
+  32 KiB of description), holds characters the write operations refuse,
+  contains the key, or Linear's answer was partial (GraphQL errors, or a field
+  absent from it), `editable` is false and both fields are null; edit that
+  issue in Linear. An absent field is never read as empty text; a present null
+  description is Linear's empty description and starts blank.
+- **`linear_create_issue`** creates an issue in `team_id` with `title` (1–512
+  characters), an optional Markdown `description` (at most 32 KiB, tabs and
+  newlines allowed) and an optional `state_id` of that team, checked against
+  the team's states before sending. The host sends Linear a UUID v4 issue `id`
+  derived from team and `request_id` (`IssueCreateInput.id` in Linear's SDK
+  schema), so a retried request names the same issue. Returns
+  `{"issue_id":"ISSUE_UUID","identifier":"PLA-201"|null,"issue":DETAIL|null,"partial":false,"warning":null,"outcome":"accepted"}`
+  and deduplicates by `request_id` as above.
+- **`linear_update_issue`** changes an issue's `title`, `description`, or both
+  (at least one; same bounds). Linear's `issueUpdate` has no conditional guard,
+  so before sending the host reads the issue and refuses with
+  `linear_issue_changed` (`outcome:"not_sent"`) when its `updatedAt` differs
+  from `expected_updated_at`. A change landing between that read and the
+  mutation is still possible. Returns the same shape without `issue_id`.
+- **`linear_read_image`** reads one image from Linear's file storage, which
+  Linear documents at `uploads.linear.app` with the same `authorization`
+  header as the API. `url` must be https on exactly that host, with no port or
+  credentials. The host sends the key only to that host. A redirect is
+  followed once, without the key, and only when it stays on that host over
+  https on the default port; any other destination is refused before
+  connecting. Only PNG and JPEG within
+  the thread image bounds (5 MiB, 8192 pixels a side; streamed and
+  decompressed size both count) are kept, in a cache of at most 64 images and
+  64 MiB. Every read, cached or not, needs the current sign-in, and an entry
+  is served only to the sign-in that read it (bound to the key file's save
+  time and workspace, never the key), so a crash between removing the key
+  and clearing the cache leaves nothing readable. Sign-out clears it. Returns
+  `{"url":URL,"size":BYTES,"offset":OFFSET,"data":BASE64}` in 512 KiB chunks;
+  read from offset 0 until `size`. Unreadable or missing files are `not_found`
+  and never mark the key rejected.
 
 ### Durable write outcomes
 

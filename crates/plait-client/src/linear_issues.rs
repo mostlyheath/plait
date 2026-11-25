@@ -8,11 +8,14 @@
 //! nothing here opens a link from an issue.
 
 use crate::host::linear::{
-    Binding, Cache, Filter, IssueDetail, IssueReply, IssueSummary, Issues, ProjectBinding,
-    Rejection, StateUpdate, Teams, WorkflowState, WriteFailure,
+    Binding, Cache, Earlier, Filter, IssueDetail, IssueReply, IssueSummary, IssueText, IssueWrite,
+    Issues, ProjectBinding, Rejection, StateUpdate, Teams, WorkflowState, WriteFailure,
 };
 use crate::linear_settings::{Pending, message};
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 /// The filters offered, in the order they are drawn.
 pub const FILTERS: [(Filter, &str); 5] = [
@@ -72,6 +75,18 @@ pub struct IssuesView {
     pub state_change: Option<StateChange>,
     /// Whether the host records Linear writes durably; older hosts offer no writes.
     pub writes: Option<bool>,
+    /// The host can create and edit issues (`linear_info`'s `issue_writes`).
+    pub issue_writes: bool,
+    /// The host can read images from Linear's storage (`linear_info`'s `images`).
+    pub images: bool,
+    /// The new issue being written, kept until it is saved or discarded.
+    pub new_form: Option<IssueForm>,
+    /// Whether the new issue's form is in front of the selected issue.
+    pub composing_new: bool,
+    /// An issue whose text is too long or unusual for Plait to edit unchanged.
+    pub not_editable: Option<String>,
+    /// Unsaved edits by issue id, kept while other issues are shown.
+    pub edits: HashMap<String, IssueForm>,
     epoch: Option<u64>,
     binding_generation: u64,
     list_generation: u64,
@@ -125,6 +140,12 @@ impl Default for IssuesView {
             states_load: Load::Idle,
             state_change: None,
             writes: None,
+            issue_writes: false,
+            images: false,
+            new_form: None,
+            composing_new: false,
+            not_editable: None,
+            edits: HashMap::new(),
             epoch: None,
             binding_generation: 0,
             list_generation: 0,
@@ -313,6 +334,8 @@ impl IssuesView {
 
     /// Selects an issue and returns the generation its details load under.
     pub fn select(&mut self, id: &str) -> Option<u64> {
+        // Choosing an issue puts the new issue's form behind it; its text is kept.
+        self.composing_new = false;
         if self.selected.as_deref() == Some(id) && self.detail_load != Load::Failed {
             return None;
         }
@@ -490,6 +513,22 @@ impl IssuesView {
                 current.status = ChangeStatus::Unknown;
                 false
             }
+            Err(WriteFailure::Conflict { .. }) => {
+                current.status = ChangeStatus::Failed {
+                    note:
+                        "This request was already used for another change. Choose the state again."
+                            .into(),
+                    retry: false,
+                };
+                false
+            }
+            Err(WriteFailure::Changed) => {
+                current.status = ChangeStatus::Failed {
+                    note: "The issue changed in Linear. It was not moved.".into(),
+                    retry: false,
+                };
+                false
+            }
             Err(WriteFailure::Lost) => {
                 current.status = ChangeStatus::Failed {
                     note: "The host's answer was lost. Trying again will not move it twice.".into(),
@@ -497,7 +536,7 @@ impl IssuesView {
                 };
                 false
             }
-            Err(WriteFailure::Refused(error)) => {
+            Err(WriteFailure::Refused(error) | WriteFailure::Undecided(error)) => {
                 current.status = ChangeStatus::Failed {
                     note: state_message(error),
                     retry: !matches!(
@@ -511,6 +550,515 @@ impl IssuesView {
     }
 }
 
+/// Longest title Linear accepts through the host.
+pub const TITLE_LIMIT: usize = 512;
+/// Longest description, in UTF-8 bytes, the host sends.
+pub const DESCRIPTION_LIMIT: usize = 32 * 1024;
+/// Unsaved edits kept at once, so an afternoon of browsing stays bounded.
+pub const EDIT_LIMIT: usize = 20;
+
+/// Which form: the one new issue being written, or an edit of one issue.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum FormSlot {
+    New,
+    Edit(String),
+}
+
+/// What a form writes, and for an edit, the version it started from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FormKind {
+    New {
+        team_id: String,
+        /// The team's name when the form opened, so the draft says where it goes.
+        team_name: Option<String>,
+    },
+    Edit {
+        issue_id: String,
+        /// When the person read it: the host refuses the edit if Linear has moved on.
+        expected_updated_at: String,
+        title: String,
+        description: String,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FormStatus {
+    Editing,
+    /// Being written: the fields are read-only until the host answers.
+    Saving,
+    /// Not written. `retry` is whether saving again is safe.
+    Failed {
+        note: String,
+        retry: bool,
+    },
+    /// Linear changed the issue since this edit started. Nothing was written;
+    /// the view shows Linear's version beside the person's.
+    Changed,
+    /// Linear may have written it; the host will not send it again.
+    Unknown,
+}
+
+/// When the form's request ID gives way to a new one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Retire {
+    /// Every save reuses it, so the host returns the saved outcome.
+    Never,
+    /// Its request definitely wrote nothing; new text takes a new ID.
+    IfChanged(Option<String>, Option<String>),
+    /// The person was told what became of it; the next save takes a new ID.
+    Next,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IssueForm {
+    pub kind: FormKind,
+    pub status: FormStatus,
+    /// Given when the form opens and saved with its draft before any send, so
+    /// a save after a crash or a lost reply names the same request.
+    pub request_id: String,
+    retire: Retire,
+    /// The request in flight, so a stale reply is told apart.
+    sent: Option<FormRequest>,
+}
+
+impl IssueForm {
+    fn new(kind: FormKind, request_id: String) -> Self {
+        Self {
+            kind,
+            status: FormStatus::Editing,
+            request_id,
+            retire: Retire::Never,
+            sent: None,
+        }
+    }
+
+    pub fn slot(&self) -> FormSlot {
+        match &self.kind {
+            FormKind::New { .. } => FormSlot::New,
+            FormKind::Edit { issue_id, .. } => FormSlot::Edit(issue_id.clone()),
+        }
+    }
+
+    /// The request being saved, if one is in flight.
+    pub fn sending(&self) -> Option<&FormRequest> {
+        self.sent.as_ref()
+    }
+
+    /// Whether its fields are read-only now.
+    pub fn frozen(&self) -> bool {
+        self.status == FormStatus::Saving
+    }
+}
+
+/// One create or edit request, computed by the model from what was typed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FormRequest {
+    pub kind: FormKind,
+    /// `None` leaves the title as it is (an edit that changed only the description).
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub request_id: String,
+}
+
+/// What `submit_form` asks the view to do.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Submit {
+    /// Nothing to send now; the form says why, if anything.
+    Nothing,
+    /// An edit that changed nothing closed.
+    Closed(FormSlot),
+    /// Save the draft with this request to disk, then send it.
+    Send(FormRequest),
+}
+
+/// What a create or edit reply means for the view.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FormDone {
+    /// Nothing more to do, or the reply was stale.
+    Nothing,
+    /// The form closed after a write: drop its fields and read the list again.
+    Closed(FormSlot),
+    /// A new issue: drop the form's fields, select it, and read the list again.
+    Created(String),
+    /// Read the shown issue again: after an accepted edit without a refreshed
+    /// issue, or to show Linear's version beside a refused one.
+    Reload,
+}
+
+impl IssuesView {
+    /// The form in front: the new issue while it is being written, otherwise
+    /// the selected issue's unsaved edit, if it has one.
+    pub fn form(&self) -> Option<&IssueForm> {
+        if self.composing_new {
+            return self.new_form.as_ref();
+        }
+        self.edits.get(self.selected.as_ref()?)
+    }
+
+    fn form_mut(&mut self, slot: &FormSlot) -> Option<&mut IssueForm> {
+        match slot {
+            FormSlot::New => self.new_form.as_mut(),
+            FormSlot::Edit(id) => self.edits.get_mut(id),
+        }
+    }
+
+    fn remove_form(&mut self, slot: &FormSlot) {
+        match slot {
+            FormSlot::New => {
+                self.new_form = None;
+                self.composing_new = false;
+            }
+            FormSlot::Edit(id) => {
+                self.edits.remove(id);
+            }
+        }
+    }
+
+    /// Shows the new issue's form, keeping any text it already has. A new form
+    /// takes `request_id` and the linked team.
+    pub fn start_new(&mut self, request_id: String) -> bool {
+        let Some(binding) = self.team().cloned() else {
+            return false;
+        };
+        if !self.issue_writes {
+            return false;
+        }
+        self.new_form.get_or_insert_with(|| {
+            IssueForm::new(
+                FormKind::New {
+                    team_id: binding.team_id,
+                    team_name: binding.team_name,
+                },
+                request_id,
+            )
+        });
+        self.composing_new = true;
+        true
+    }
+
+    /// Brings the selected issue's unsaved edit to the front, if it has one.
+    pub fn show_edit(&mut self) -> bool {
+        let shown = self
+            .selected
+            .as_ref()
+            .is_some_and(|id| self.edits.contains_key(id));
+        if shown {
+            self.composing_new = false;
+        }
+        shown
+    }
+
+    /// Starts editing an issue from its exact text, read for this edit, so
+    /// nothing the display shortened is written back. Text Plait cannot write
+    /// back unchanged is left to Linear. Returns whether an edit opened.
+    pub fn begin_edit(&mut self, text: &IssueText, request_id: String) -> bool {
+        if !self.issue_writes || self.selected.as_deref() != Some(text.issue_id.as_str()) {
+            return false;
+        }
+        let (Some(title), Some(description), true) =
+            (&text.title, &text.description, text.editable)
+        else {
+            self.not_editable = Some(text.issue_id.clone());
+            return false;
+        };
+        if self.edits.contains_key(&text.issue_id) {
+            return self.show_edit();
+        }
+        if self.edits.len() >= EDIT_LIMIT {
+            return false;
+        }
+        self.composing_new = false;
+        self.edits.insert(
+            text.issue_id.clone(),
+            IssueForm::new(
+                FormKind::Edit {
+                    issue_id: text.issue_id.clone(),
+                    expected_updated_at: text.updated_at.clone(),
+                    title: title.clone(),
+                    description: description.clone(),
+                },
+                request_id,
+            ),
+        );
+        true
+    }
+
+    /// Reopens a form saved before a restart or a project switch, behind
+    /// whatever is shown, with its request ID. A slot that already has a form
+    /// keeps it, and a host without issue writes reopens none.
+    pub fn restore_form(&mut self, kind: FormKind, request_id: String) -> bool {
+        if !self.issue_writes {
+            return false;
+        }
+        let form = IssueForm::new(kind, request_id);
+        match form.slot() {
+            FormSlot::New if self.new_form.is_none() => self.new_form = Some(form),
+            FormSlot::Edit(id)
+                if !self.edits.contains_key(&id) && self.edits.len() < EDIT_LIMIT =>
+            {
+                self.edits.insert(id, form);
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    /// Every open form, the new issue first.
+    pub fn forms(&self) -> impl Iterator<Item = &IssueForm> {
+        self.new_form.iter().chain(self.edits.values())
+    }
+
+    /// Discards the form in front, unless it is being written. Returns its slot.
+    pub fn cancel_form(&mut self) -> Option<FormSlot> {
+        let form = self.form()?;
+        if form.frozen() {
+            return None;
+        }
+        let slot = form.slot();
+        self.remove_form(&slot);
+        Some(slot)
+    }
+
+    /// After a conflict: base the edit on Linear's version now shown, keeping
+    /// the person's text, so Save writes it over that version on purpose.
+    pub fn keep_mine(&mut self) -> bool {
+        let Some(detail) = self.detail.as_ref().map(|d| d.issue.clone()) else {
+            return false;
+        };
+        let Some(form) = self.edits.get_mut(&detail.summary.id) else {
+            return false;
+        };
+        if form.status != FormStatus::Changed {
+            return false;
+        }
+        form.kind = FormKind::Edit {
+            issue_id: detail.summary.id.clone(),
+            expected_updated_at: detail.summary.updated_at.clone(),
+            title: detail.summary.title.clone(),
+            description: detail.description.clone().unwrap_or_default(),
+        };
+        form.status = FormStatus::Editing;
+        form.sent = None;
+        true
+    }
+
+    /// The request for what was typed in the form in front. It carries the
+    /// form's own request ID; `fresh_id` replaces it only after its request
+    /// definitely wrote nothing and the text then changed.
+    pub fn submit_form(&mut self, title: &str, description: &str, fresh_id: String) -> Submit {
+        let Some(slot) = self.form().map(IssueForm::slot) else {
+            return Submit::Nothing;
+        };
+        let Some(form) = self.form_mut(&slot) else {
+            return Submit::Nothing;
+        };
+        if matches!(
+            form.status,
+            FormStatus::Saving | FormStatus::Unknown | FormStatus::Changed
+        ) {
+            return Submit::Nothing;
+        }
+        let raw_title = title;
+        let title = title.trim();
+        let problem = if title.is_empty() {
+            Some("Give the issue a title.")
+        // Counted as the host counts: UTF-16 units.
+        } else if title.encode_utf16().count() > TITLE_LIMIT {
+            Some("The title is longer than 512 characters.")
+        } else if description.len() > DESCRIPTION_LIMIT {
+            Some("The description is longer than 32 KB.")
+        } else {
+            None
+        };
+        if let Some(note) = problem {
+            form.status = FormStatus::Failed {
+                note: note.into(),
+                retry: false,
+            };
+            return Submit::Nothing;
+        }
+        let (title, description) = match &form.kind {
+            FormKind::New { .. } => (
+                Some(title.to_owned()),
+                (!description.trim().is_empty()).then(|| description.to_owned()),
+            ),
+            // Compared as typed: " Retry " left alone is never sent as "Retry".
+            FormKind::Edit {
+                title: before,
+                description: was,
+                ..
+            } => (
+                (raw_title != before).then(|| title.to_owned()),
+                (description != was).then(|| description.to_owned()),
+            ),
+        };
+        if matches!(form.kind, FormKind::Edit { .. })
+            && title.is_none()
+            && description.is_none()
+            && form.retire == Retire::Never
+            && form.sent.is_none()
+        {
+            self.remove_form(&slot);
+            return Submit::Closed(slot);
+        }
+        let replace = match &form.retire {
+            Retire::Never => false,
+            Retire::IfChanged(t, d) => *t != title || *d != description,
+            Retire::Next => true,
+        };
+        if replace {
+            form.request_id = fresh_id;
+            form.retire = Retire::Never;
+        }
+        let request = FormRequest {
+            kind: form.kind.clone(),
+            title,
+            description,
+            request_id: form.request_id.clone(),
+        };
+        form.status = FormStatus::Saving;
+        form.sent = Some(request.clone());
+        Submit::Send(request)
+    }
+
+    /// The draft could not be written before sending, so nothing was sent.
+    pub fn draft_unsaved(&mut self, request: &FormRequest) {
+        self.not_sent(
+            request,
+            "Couldn't save your draft, so nothing was sent. Try again.",
+        );
+    }
+
+    /// Unfreezes a form whose request was never sent, saying why.
+    pub fn not_sent(&mut self, request: &FormRequest, note: &str) {
+        let slot = request_slot(request);
+        if let Some(form) = self.form_mut(&slot)
+            && form.sent.as_ref() == Some(request)
+            && form.status == FormStatus::Saving
+        {
+            form.sent = None;
+            form.status = FormStatus::Failed {
+                note: note.into(),
+                retry: true,
+            };
+        }
+    }
+
+    /// Applies the host's answer to `request`, whichever issue is shown now.
+    pub fn form_reply(
+        &mut self,
+        request: &FormRequest,
+        result: Result<IssueWrite, WriteFailure>,
+    ) -> FormDone {
+        let slot = request_slot(request);
+        let Some(form) = self.form_mut(&slot) else {
+            return FormDone::Nothing;
+        };
+        if form.sent.as_ref() != Some(request) || form.status != FormStatus::Saving {
+            return FormDone::Nothing;
+        }
+        let written_nothing = Retire::IfChanged(request.title.clone(), request.description.clone());
+        let failed = |note: &str, retry: bool| FormStatus::Failed {
+            note: note.into(),
+            retry,
+        };
+        let (status, retire) = match result {
+            Ok(write) => {
+                self.remove_form(&slot);
+                return match (&slot, write.issue_id, write.issue) {
+                    (FormSlot::New, Some(id), _) => FormDone::Created(id),
+                    (FormSlot::New, None, _) => FormDone::Closed(slot),
+                    (FormSlot::Edit(id), _, issue) => {
+                        let shown = self.detail.as_mut().filter(|d| &d.issue.summary.id == id);
+                        match (issue, shown) {
+                            (Some(issue), Some(shown)) => {
+                                shown.issue = issue;
+                                FormDone::Closed(slot)
+                            }
+                            (None, Some(_)) => FormDone::Reload,
+                            (_, None) => FormDone::Closed(slot),
+                        }
+                    }
+                };
+            }
+            Err(WriteFailure::Changed) => {
+                form.status = FormStatus::Changed;
+                form.retire = written_nothing;
+                return FormDone::Reload;
+            }
+            Err(WriteFailure::Unknown)
+            | Err(WriteFailure::Conflict {
+                earlier: Earlier::Unknown,
+            }) => (FormStatus::Unknown, Retire::Never),
+            Err(WriteFailure::Lost) => (
+                failed(
+                    "The host's answer was lost. Saving again returns what happened, so nothing is written twice.",
+                    true,
+                ),
+                Retire::Never,
+            ),
+            Err(WriteFailure::Conflict {
+                earlier: Earlier::Accepted,
+            }) => (
+                failed(
+                    match slot {
+                        FormSlot::New => {
+                            "An earlier save already created this issue. Refresh to see it; saving again creates another."
+                        }
+                        FormSlot::Edit(_) => {
+                            "An earlier save already reached Linear. Check the issue before saving again."
+                        }
+                    },
+                    false,
+                ),
+                Retire::Next,
+            ),
+            Err(WriteFailure::Conflict {
+                earlier: Earlier::NothingWritten,
+            }) => (
+                failed("Nothing was saved. Save again to send this text.", true),
+                Retire::Next,
+            ),
+            Err(WriteFailure::Undecided(error)) => (
+                failed(
+                    &format!("Nothing was saved. {}", message(Pending::Loading, error)),
+                    true,
+                ),
+                Retire::Never,
+            ),
+            Err(WriteFailure::Refused(error)) => (
+                failed(
+                    &match error {
+                        Rejection::SignedOut | Rejection::KeyRejected => {
+                            "Linear did not accept the key. Sign in again in Settings → Linear."
+                                .into()
+                        }
+                        Rejection::NotFound => "Linear no longer has this issue or team.".into(),
+                        error => {
+                            format!("Nothing was saved. {}", message(Pending::Loading, error))
+                        }
+                    },
+                    !matches!(
+                        error,
+                        Rejection::SignedOut | Rejection::KeyRejected | Rejection::NotFound
+                    ),
+                ),
+                written_nothing,
+            ),
+        };
+        form.status = status;
+        form.retire = retire;
+        form.sent = None;
+        FormDone::Nothing
+    }
+}
+
+fn request_slot(request: &FormRequest) -> FormSlot {
+    match &request.kind {
+        FormKind::New { .. } => FormSlot::New,
+        FormKind::Edit { issue_id, .. } => FormSlot::Edit(issue_id.clone()),
+    }
+}
 /// Fixed text for a refused status change. Host messages are never shown here.
 fn state_message(error: Rejection) -> String {
     match error {
@@ -966,5 +1514,319 @@ mod state_tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod form_tests {
+    use super::*;
+    use crate::host::linear::Earlier;
+    use serde_json::json;
+
+    fn detail(id: &str, updated: &str, title: &str) -> IssueReply<IssueDetail> {
+        serde_json::from_value(
+            json!({"issue": {"id": id, "identifier": "PLA-1", "title": title,
+            "url": "https://linear.app/a/issue/PLA-1", "priority": 2, "updated_at": updated,
+            "team_id": "T", "state": {"id": "S", "name": "Todo", "type": "unstarted"},
+            "assignee": null, "labels": [], "description": "Body", "attachments": [],
+            "comments": [], "comments_has_more": false, "comments_next_cursor": null},
+            "workspace_id": "ORG", "cached": false, "stale": false, "cached_at": 0,
+            "cache_age_seconds": 0, "partial": false, "warning": null}),
+        )
+        .unwrap()
+    }
+
+    fn text(id: &str, updated: &str, title: &str, description: &str) -> IssueText {
+        serde_json::from_value(
+            json!({"issue_id": id, "updated_at": updated, "editable": true,
+            "title": title, "description": description}),
+        )
+        .unwrap()
+    }
+
+    fn show(view: &mut IssuesView, id: &str, updated: &str, title: &str) {
+        if let Some(g) = view.select(id) {
+            view.detail_reply(g, id, Ok(detail(id, updated, title)));
+        }
+    }
+
+    fn bind(view: &mut IssuesView, team: &str) {
+        let g = view.start_binding();
+        view.binding_reply(
+            g,
+            Ok(
+                serde_json::from_value(json!({"checkout": "/repo", "binding": {
+                "workspace_id": "ORG", "team_id": team, "team_key": "PLA",
+                "team_name": format!("Team {team}"), "updated_at": 1}}))
+                .unwrap(),
+            ),
+        );
+    }
+
+    fn view() -> IssuesView {
+        let mut view = IssuesView::default();
+        view.target(1, Path::new("/repo"), None);
+        bind(&mut view, "T");
+        view.issue_writes = true;
+        show(&mut view, "I", "1", "Old");
+        view
+    }
+
+    fn edit(view: &mut IssuesView) {
+        assert!(view.begin_edit(&text("I", "1", "Old", "Body"), "e1".into()));
+    }
+
+    fn sent(submit: Submit) -> FormRequest {
+        match submit {
+            Submit::Send(request) => request,
+            other => panic!("expected a request, got {other:?}"),
+        }
+    }
+
+    fn written(issue_id: Option<&str>, issue: Option<IssueDetail>) -> IssueWrite {
+        IssueWrite {
+            issue_id: issue_id.map(Into::into),
+            identifier: None,
+            issue,
+            partial: false,
+            warning: None,
+            outcome: "accepted".into(),
+        }
+    }
+
+    #[test]
+    fn forms_need_the_capability_and_a_title() {
+        let mut view = view();
+        view.issue_writes = false;
+        assert!(!view.start_new("n1".into()));
+        assert!(!view.begin_edit(&text("I", "1", "Old", "Body"), "e1".into()));
+        assert!(
+            !view.restore_form(
+                FormKind::New {
+                    team_id: "T".into(),
+                    team_name: None
+                },
+                "n1".into()
+            ),
+            "a host without issue writes reopens no form"
+        );
+        view.issue_writes = true;
+        assert!(view.start_new("n1".into()));
+        assert_eq!(view.submit_form("   ", "", "x".into()), Submit::Nothing);
+        assert!(matches!(
+            view.form().unwrap().status,
+            FormStatus::Failed { retry: false, .. }
+        ));
+    }
+
+    #[test]
+    fn every_save_of_a_form_names_its_own_request() {
+        let mut view = view();
+        view.start_new("n1".into());
+        let first = sent(view.submit_form("New", "", "x1".into()));
+        assert_eq!(first.request_id, "n1", "the ID given when the form opened");
+        view.form_reply(&first, Err(WriteFailure::Lost));
+        // A slip, then different text: still the same request.
+        assert_eq!(view.submit_form("", "", "x2".into()), Submit::Nothing);
+        let again = sent(view.submit_form("Newer", "", "x3".into()));
+        assert_eq!(again.request_id, "n1");
+        // The host says the earlier text already went through: it is said, not resent.
+        view.form_reply(
+            &again,
+            Err(WriteFailure::Conflict {
+                earlier: Earlier::Accepted,
+            }),
+        );
+        assert!(matches!(
+            &view.form().unwrap().status,
+            FormStatus::Failed { note, retry: false } if note.contains("already created")
+        ));
+        // Only a deliberate save after that takes a new ID.
+        assert_eq!(
+            sent(view.submit_form("Newer", "", "x4".into())).request_id,
+            "x4"
+        );
+    }
+
+    #[test]
+    fn a_save_after_quitting_names_the_same_request() {
+        let mut view = view();
+        view.start_new("n1".into());
+        let first = sent(view.submit_form("New", "", "x1".into()));
+        // Quit right after sending: the draft was written with its ID first.
+        let saved = crate::linear_drafts::SavedForm::new(
+            Path::new("/repo"),
+            &first.kind,
+            "New",
+            "",
+            &view.form().unwrap().request_id,
+        );
+        let mut reopened = self::view();
+        assert!(reopened.restore_form(saved.form_kind(), saved.request_id.clone()));
+        reopened.start_new("n2".into());
+        let again = sent(reopened.submit_form("New", "", "x2".into()));
+        assert_eq!(
+            again, first,
+            "the host replays the first outcome: one issue"
+        );
+    }
+
+    #[test]
+    fn new_text_takes_a_new_request_only_after_nothing_was_written() {
+        let mut view = view();
+        edit(&mut view);
+        let first = sent(view.submit_form("Newer", "Body", "x1".into()));
+        view.form_reply(
+            &first,
+            Err(WriteFailure::Refused(Rejection::RateLimited(Some(5)))),
+        );
+        assert_eq!(
+            sent(view.submit_form("Newer", "Body", "x2".into())).request_id,
+            "e1",
+            "the same text keeps its request"
+        );
+        view.form_reply(&first.clone(), Err(WriteFailure::Lost));
+        let mut view = self::view();
+        edit(&mut view);
+        let first = sent(view.submit_form("Newer", "Body", "x1".into()));
+        view.form_reply(
+            &first,
+            Err(WriteFailure::Refused(Rejection::RateLimited(None))),
+        );
+        let changed = sent(view.submit_form("Newest", "Body", "x2".into()));
+        assert_eq!(
+            changed.request_id, "x2",
+            "refused, then changed: a new request"
+        );
+        view.form_reply(&changed, Err(WriteFailure::Unknown));
+        assert_eq!(view.form().unwrap().status, FormStatus::Unknown);
+        assert_eq!(
+            view.submit_form("Newest", "Body", "x3".into()),
+            Submit::Nothing
+        );
+    }
+
+    #[test]
+    fn a_save_freezes_the_form_and_a_failure_keeps_the_text() {
+        let mut view = view();
+        view.start_new("n1".into());
+        let request = sent(view.submit_form("New", "Body", "x".into()));
+        assert!(view.form().unwrap().frozen());
+        assert_eq!(view.cancel_form(), None, "a form being saved stays open");
+        view.draft_unsaved(&request);
+        assert!(!view.form().unwrap().frozen());
+        assert!(matches!(
+            &view.form().unwrap().status,
+            FormStatus::Failed { note, retry: true } if note.contains("Couldn't save your draft")
+        ));
+        let again = sent(view.submit_form("New", "Body", "x2".into()));
+        assert_eq!(again.request_id, "n1");
+        assert_eq!(
+            view.form_reply(&again, Ok(written(Some("NEW"), None))),
+            FormDone::Created("NEW".into())
+        );
+        assert!(view.new_form.is_none());
+    }
+
+    #[test]
+    fn a_new_issue_keeps_the_team_it_was_written_for() {
+        let mut view = view();
+        view.start_new("n1".into());
+        bind(&mut view, "OTHER");
+        view.start_new("n2".into());
+        assert!(matches!(
+            &view.form().unwrap().kind,
+            FormKind::New { team_id, team_name: Some(name) } if team_id == "T" && name == "Team T"
+        ));
+        let request = sent(view.submit_form("New", "", "x".into()));
+        assert!(matches!(&request.kind, FormKind::New { team_id, .. } if team_id == "T"));
+    }
+
+    #[test]
+    fn an_edit_starts_from_the_exact_text_and_long_text_stays_in_linear() {
+        let mut view = view();
+        let title = "漢".repeat(200);
+        assert!(view.begin_edit(&text("I", "1", &title, "Body"), "e1".into()));
+        assert!(
+            matches!(&view.form().unwrap().kind, FormKind::Edit { title: t, .. } if *t == title)
+        );
+        let mut other = self::view();
+        let blocked: IssueText = serde_json::from_value(json!({"issue_id": "I",
+            "updated_at": "1", "editable": false, "title": null, "description": null}))
+        .unwrap();
+        assert!(!other.begin_edit(&blocked, "e1".into()));
+        assert_eq!(other.not_editable.as_deref(), Some("I"));
+    }
+
+    #[test]
+    fn each_issue_keeps_its_own_unsaved_edit_and_a_conflict_waits_for_a_choice() {
+        let mut view = view();
+        edit(&mut view);
+        show(&mut view, "J", "1", "Other");
+        assert!(view.form().is_none());
+        show(&mut view, "I", "1", "Old");
+        assert!(view.show_edit());
+        let request = sent(view.submit_form("Mine", "Body", "x".into()));
+        assert_eq!(
+            view.form_reply(&request, Err(WriteFailure::Changed)),
+            FormDone::Reload
+        );
+        assert_eq!(
+            view.submit_form("Mine", "Body", "x".into()),
+            Submit::Nothing
+        );
+        let g = view.reload_detail().unwrap();
+        view.detail_reply(g.1, "I", Ok(detail("I", "3", "Theirs")));
+        assert!(view.keep_mine());
+        let again = sent(view.submit_form("Mine", "Body", "x2".into()));
+        assert_eq!(
+            again.request_id, "e1",
+            "nothing was written, same text: same request"
+        );
+        assert!(
+            matches!(&again.kind, FormKind::Edit { expected_updated_at, .. } if expected_updated_at == "3")
+        );
+    }
+
+    #[test]
+    fn an_edit_sends_only_what_changed_and_a_stale_reply_is_dropped() {
+        let mut view = view();
+        edit(&mut view);
+        assert_eq!(
+            view.submit_form("Old", "Body", "x".into()),
+            Submit::Closed(FormSlot::Edit("I".into()))
+        );
+        edit(&mut view);
+        let request = sent(view.submit_form("Old", "New body", "x".into()));
+        assert_eq!(request.title, None);
+        let stale = FormRequest {
+            request_id: "old".into(),
+            ..request.clone()
+        };
+        assert_eq!(
+            view.form_reply(&stale, Ok(written(None, None))),
+            FormDone::Nothing
+        );
+        assert!(view.form().unwrap().frozen());
+    }
+
+    #[test]
+    fn a_refusal_without_a_recorded_outcome_keeps_the_request() {
+        let mut view = view();
+        view.start_new("n1".into());
+        let first = sent(view.submit_form("New", "", "x1".into()));
+        view.form_reply(&first, Err(WriteFailure::Lost));
+        // 300 emoji are 300 characters but 600 UTF-16 units: refused here, as the host would.
+        let emoji = "🙂".repeat(300);
+        assert_eq!(view.submit_form(&emoji, "", "x2".into()), Submit::Nothing);
+        // A refusal the host did not record leaves the earlier request in charge.
+        let again = sent(view.submit_form("Newer", "", "x3".into()));
+        assert_eq!(again.request_id, "n1");
+        view.form_reply(&again, Err(WriteFailure::Undecided(Rejection::Other)));
+        let corrected = sent(view.submit_form("Newest", "", "x4".into()));
+        assert_eq!(
+            corrected.request_id, "n1",
+            "never a fresh ID without a recorded outcome"
+        );
     }
 }

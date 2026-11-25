@@ -21,6 +21,10 @@ export const LINEAR_CACHE_MAX_DETAILS = 200;
 export const LINEAR_CACHE_MAX_PAGES = 100;
 export const LINEAR_MAX_RECENT_WRITES = 500;
 
+/** An issue description written in Plait; Linear stores more, the request line holds 64 KB. */
+export const LINEAR_DESCRIPTION_MAX_BYTES = 32 * 1024;
+/** Linear's file storage, documented at linear.app/developers/file-storage-authentication. */
+export const LINEAR_IMAGE_HOST = 'uploads.linear.app';
 export const LINEAR_COMMENT_BODY_MAX_BYTES = 16 * 1024;
 export const LINEAR_KEY_MAX_BYTES = 4096;
 
@@ -49,6 +53,7 @@ export type LinearErrorKind =
   | 'read_only_key'
   | 'rate_limited'
   | 'offline'
+  | 'not_found'
   | 'invalid_request';
 
 const ERROR_CODES: Record<LinearErrorKind, string> = {
@@ -57,6 +62,7 @@ const ERROR_CODES: Record<LinearErrorKind, string> = {
   read_only_key: 'linear_read_only_key',
   rate_limited: 'linear_rate_limited',
   offline: 'linear_offline',
+  not_found: 'not_found',
   invalid_request: 'invalid_request',
 };
 

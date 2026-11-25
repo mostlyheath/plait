@@ -307,6 +307,7 @@ mod tests {
                     retry_after_seconds: None,
                     code: "busy".into(),
                     message: "New work appeared.".into(),
+                    outcome: None,
                 }),
             }),
         );

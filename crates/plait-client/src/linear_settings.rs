@@ -47,6 +47,9 @@ pub struct Account {
     pub note: Option<String>,
     /// The note explains a refusal rather than confirming a change.
     pub failed: bool,
+    /// Counts saved keys and sign-outs: a replacement key with the same
+    /// workspace and viewer still changes it.
+    pub credentials: u64,
     generation: u64,
     epoch: Option<u64>,
 }
@@ -123,6 +126,9 @@ impl Account {
         match result {
             Ok(status) => {
                 self.replacing = false;
+                if matches!(pending, Pending::Saving | Pending::SigningOut) {
+                    self.credentials += 1;
+                }
                 self.auth = auth(&status);
                 self.note = match (pending, &self.auth) {
                     (Pending::Saving, Auth::SignedIn { .. }) => {

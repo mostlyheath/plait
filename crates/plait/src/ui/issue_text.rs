@@ -1,22 +1,37 @@
 //! Linear's Markdown, drawn for reading. An issue's description and comments
 //! are parsed on the background executor when the issue arrives, and drawn
 //! here without selection or Find. Nothing in them is followed: a link shows
-//! where it points, and Open in Linear is the way out.
+//! where it points, and Open in Linear is the way out. An image uploaded to
+//! Linear is drawn once the host has read it; any other image stays in Linear.
 use super::{markdown::token_color, theme::*};
 use gpui::{prelude::*, *};
 use plait_client::{
     host::linear::IssueDetail,
     markdown::{Block, Kind, Message, Style},
 };
-use std::ops::Range;
+use std::{ops::Range, sync::Arc};
 
 /// Text drawn from Linear: wide enough to read, never the whole window.
 pub(super) const READING_WIDTH: f32 = 720.;
 const BODY_SIZE: f32 = 14.;
 const BODY_LINE: f32 = 22.;
 const LIST_STEP: f32 = 20.;
-/// The parser writes an image as `[image: alt]`; Plait does not load it.
+/// The parser writes an image as `[image: alt] (url)`.
 const IMAGE_PREFIX: &str = "[image: ";
+/// Only Linear's own file storage is read, through the host.
+const LINEAR_UPLOADS: &str = "https://uploads.linear.app/";
+/// Every image Plait reads takes this height, loaded or not.
+const IMAGE_HEIGHT: f32 = 320.;
+
+/// An image's state, as the view knows it.
+#[derive(Clone)]
+pub(super) enum Picture {
+    Ready(Arc<RenderImage>),
+    Loading,
+    Failed(String),
+    /// Not on Linear's storage, or the host cannot read images.
+    Elsewhere,
+}
 
 /// One issue's text, parsed once for the revision it came from.
 pub(super) struct IssueText {
@@ -51,10 +66,39 @@ impl IssueText {
     pub(super) fn matches(&self, detail: &IssueDetail) -> bool {
         self.issue == detail.summary.id && self.updated_at == detail.summary.updated_at
     }
+
+    /// Every image on Linear's storage, in the order it appears, once each.
+    pub(super) fn linear_images(&self) -> Vec<String> {
+        let mut urls = Vec::new();
+        for block in self
+            .description
+            .iter()
+            .chain(self.comments.iter().flatten())
+        {
+            if let Some(url) = image_url(block).filter(|url| url.starts_with(LINEAR_UPLOADS))
+                && !urls.contains(&url)
+            {
+                urls.push(url);
+            }
+        }
+        urls
+    }
 }
 
-/// Every block, spaced as the conversation spaces them.
-pub(super) fn blocks(blocks: &[Block], key: &str) -> Div {
+/// The address of an image paragraph, as the parser left it after the alt text.
+pub(super) fn image_url(block: &Block) -> Option<String> {
+    if !is_image(block) {
+        return None;
+    }
+    let end = block.text.find(']')?;
+    let rest = block.text[end + 1..].trim();
+    let url = rest.strip_prefix('(')?.strip_suffix(')')?;
+    (!url.is_empty() && !url.contains(char::is_whitespace)).then(|| url.to_owned())
+}
+
+/// Every block, spaced as the conversation spaces them. `picture` says what
+/// is known of each image by its address.
+pub(super) fn blocks(blocks: &[Block], key: &str, picture: &dyn Fn(&str) -> Picture) -> Div {
     let mut previous: Option<&Kind> = None;
     column().w_full().min_w_0().children(
         blocks
@@ -73,13 +117,13 @@ pub(super) fn blocks(blocks: &[Block], key: &str) -> Div {
                     .min_w_0()
                     .mt(px(gap))
                     .pl(px(block.indent as f32 * LIST_STEP))
-                    .child(self::block(block, &format!("{key}-{index}")))
+                    .child(self::block(block, &format!("{key}-{index}"), picture))
             })
             .collect::<Vec<_>>(),
     )
 }
 
-fn block(block: &Block, key: &str) -> AnyElement {
+fn block(block: &Block, key: &str, picture: &dyn Fn(&str) -> Picture) -> AnyElement {
     match &block.kind {
         Kind::Heading(level) => {
             let size = match level {
@@ -133,7 +177,10 @@ fn block(block: &Block, key: &str) -> AnyElement {
             .my_1()
             .bg(rgb(colors().border))
             .into_any_element(),
-        Kind::Paragraph if is_image(block) => image(block),
+        Kind::Paragraph if is_image(block) => {
+            let state = image_url(block).map_or(Picture::Elsewhere, |url| picture(&url));
+            image(block, state, key)
+        }
         Kind::Paragraph => prose_block(block, 0..block.text.len()).into_any_element(),
     }
 }
@@ -153,7 +200,7 @@ fn is_image(block: &Block) -> bool {
     block.text.starts_with(IMAGE_PREFIX) && block.text.find(']').is_some()
 }
 
-fn image(block: &Block) -> AnyElement {
+fn image(block: &Block, picture: Picture, key: &str) -> AnyElement {
     let end = block.text.find(']').unwrap_or(block.text.len());
     let alt = block.text[IMAGE_PREFIX.len().min(end)..end].trim();
     let label = if alt.is_empty() {
@@ -161,35 +208,80 @@ fn image(block: &Block) -> AnyElement {
     } else {
         format!("Image: {alt}")
     };
-    row()
-        .gap_2()
-        .w_full()
-        .min_w_0()
-        .px_3()
-        .py_2()
-        .rounded_md()
-        .border_1()
-        .border_color(rgb(colors().border))
-        .bg(rgb(colors().rail))
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .truncate()
-                .text_size(px(13.))
-                .text_color(rgb(colors().text))
-                .child(label),
-        )
-        .child(
-            div()
-                .flex_shrink_0()
-                .text_size(px(12.))
-                .text_color(rgb(colors().subtle))
-                .child("Shown in Linear"),
-        )
-        .into_any_element()
+    // An image Plait reads holds its frame from the first frame drawn, so text
+    // below never moves when it arrives or fails.
+    let frame = || {
+        div()
+            .id(SharedString::from(format!("issue-image-{key}")))
+            .role(Role::Image)
+            .aria_label(label.clone())
+            .audited()
+            .flex()
+            .items_center()
+            .justify_center()
+            .w_full()
+            .h(px(IMAGE_HEIGHT))
+            .rounded_md()
+            .border_1()
+            .border_color(rgb(colors().border))
+            .bg(rgb(colors().rail))
+            .overflow_hidden()
+    };
+    let note = |text: String| {
+        column()
+            .items_center()
+            .gap_1()
+            .px_4()
+            .child(
+                div()
+                    .text_size(px(13.))
+                    .text_color(rgb(colors().text))
+                    .child(label.clone()),
+            )
+            .child(
+                div()
+                    .text_size(px(12.))
+                    .text_color(rgb(colors().subtle))
+                    .child(text),
+            )
+    };
+    match picture {
+        Picture::Ready(pixels) => frame()
+            .child(img(pixels).size_full().object_fit(ObjectFit::Contain))
+            .into_any_element(),
+        Picture::Loading => frame().child(note("Loading…".into())).into_any_element(),
+        Picture::Failed(reason) => frame()
+            .child(note(format!("{reason}. Shown in Linear.")))
+            .into_any_element(),
+        Picture::Elsewhere => row()
+            .gap_2()
+            .w_full()
+            .min_w_0()
+            .px_3()
+            .py_2()
+            .rounded_md()
+            .border_1()
+            .border_color(rgb(colors().border))
+            .bg(rgb(colors().rail))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_size(px(13.))
+                    .text_color(rgb(colors().text))
+                    .child(label.clone()),
+            )
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .text_size(px(12.))
+                    .text_color(rgb(colors().subtle))
+                    .child("Shown in Linear"),
+            )
+            .into_any_element(),
+    }
 }
-
 fn code(block: &Block, key: &str) -> AnyElement {
     div()
         .id(SharedString::from(format!("issue-code-{key}")))
@@ -287,7 +379,7 @@ fn highlight(style: &Style) -> HighlightStyle {
 
 #[cfg(test)]
 mod tests {
-    use super::{destination, is_image};
+    use super::{destination, image_url, is_image};
     use plait_client::markdown::Message;
 
     #[test]
@@ -302,6 +394,15 @@ mod tests {
     fn an_image_paragraph_is_recognised_and_plain_text_is_not() {
         let image = Message::parse("![Failure](https://uploads.linear.app/a/b.png)");
         assert!(is_image(&image.blocks[0]), "{:?}", image.blocks[0].text);
+        assert_eq!(
+            image_url(&image.blocks[0]).as_deref(),
+            Some("https://uploads.linear.app/a/b.png")
+        );
+        let bare = Message::parse("![](https://uploads.linear.app/a/b.png)");
+        assert_eq!(
+            image_url(&bare.blocks[0]).as_deref(),
+            Some("https://uploads.linear.app/a/b.png")
+        );
         let text = Message::parse("Not an image [here](https://linear.app).");
         assert!(!is_image(&text.blocks[0]));
     }

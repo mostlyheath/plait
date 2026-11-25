@@ -397,6 +397,10 @@ pub struct HostError {
     pub retry_after_seconds: Option<u32>,
     pub code: String,
     pub message: String,
+    /// A Linear write's recorded outcome: `not_sent`, `rejected` or `unknown`,
+    /// or for a conflict, the earlier request's outcome.
+    #[serde(default)]
+    pub outcome: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
