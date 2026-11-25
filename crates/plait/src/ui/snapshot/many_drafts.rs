@@ -251,7 +251,7 @@ fn two_creations_complete_once_in_their_tabs_after_switch_and_close() {
         for (id,text) in [("created-a","Message A"),("created-b","Message B")] {
             assert_eq!(p.host.submissions.all(id).len(),1);
             assert_eq!(p.host.submissions.all(id)[0].text,text);
-            assert_eq!(p.session.data.as_ref().unwrap().threads[id].pending.as_ref().unwrap().text,text);
+            assert_eq!(p.test_saved_threads()[id].pending.as_ref().unwrap().text,text);
         }
         finish(p,"send-a",reply("created-a"),w,cx);
         assert_eq!(p.host.submissions.all("created-a").len(),1);
@@ -264,7 +264,7 @@ fn two_creations_complete_once_in_their_tabs_after_switch_and_close() {
 
 pub(super) fn scenes(h: &mut Harness, suffix: &str) {
     h.update(|p, w, cx| {
-        p.tabs = Default::default();
+        p.reset_tabs_for_test();
         p.park_workspace(cx);
         for n in 0..3 {
             p.open_draft(w, cx);
@@ -373,7 +373,7 @@ fn drafts_restart_in_order_with_images_settings_and_evicted_history() {
     h.connect(&repo, false);
     h.update(|p, w, cx| {
         p.host.connection.connected = false;
-        p.tabs = Default::default();
+        p.reset_tabs_for_test();
         p.park_workspace(cx);
         p.install_tab_identity(host.clone(), vec![checkout.clone()], cx);
         p.session.journal = Some(journal.clone());
@@ -452,7 +452,7 @@ fn drafts_restart_in_order_with_images_settings_and_evicted_history() {
     save.write().unwrap();
     h.update(|p, _, _| {
         p.session = Default::default();
-        p.tabs = Default::default();
+        p.reset_tabs_for_test();
     });
     drop(h);
     drop(journal);
@@ -473,7 +473,7 @@ fn drafts_restart_in_order_with_images_settings_and_evicted_history() {
     h.connect(&repo, false);
     h.update(|p, w, cx| {
         p.host.connection.connected = false;
-        p.tabs = Default::default();
+        p.reset_tabs_for_test();
         p.park_workspace(cx);
         p.session.journal = Some(journal.clone());
         p.session.data = Some(data);
@@ -622,10 +622,12 @@ fn restore_with_open_empty_draft(worktrees_front: bool) {
     h.connect(&repo, false);
     h.update(|p, w, cx| {
         p.host.connection.connected = false;
-        p.tabs = Default::default();
+        p.reset_tabs_for_test();
         p.park_workspace(cx);
         p.install_tab_identity(host, vec![checkout.clone()], cx);
         p.session.data = Some(data);
+        // As restore_desktop does once saved work loads.
+        p.capture_session(cx);
         let draft_tab = p
             .tabs
             .model
@@ -672,15 +674,10 @@ fn restore_with_open_empty_draft(worktrees_front: bool) {
             assert_eq!(row.title, "Worktrees");
             assert!(p.tabs.draft_row.is_none());
         }
-        let data = p.session.data.as_ref().unwrap();
-        let mut ids: Vec<_> = data.draft_tabs.keys().map(String::as_str).collect();
-        ids.sort();
+        let ids: Vec<_> = p.test_saved_drafts().into_keys().collect();
         assert_eq!(ids, ["closed-text", "open-empty"]);
-        assert_eq!(
-            data.new_draft_for(&repo).unwrap().text,
-            "Kept text",
-            "an older build is shown the draft with text"
-        );
+        // The older build's records were copied, never moved: all are still there.
+        assert_eq!(p.session.data.as_ref().unwrap().draft_tabs.len(), 3);
     });
     drop(h);
     std::fs::remove_dir_all(scratch).unwrap();
@@ -713,7 +710,7 @@ fn titles_follow_edits_without_rebuilding_sibling_rows() {
     let mut h = Harness::new(&repo, None, 900., 600.);
     h.connect(&repo, false);
     h.update(|p, w, cx| {
-        p.tabs = Default::default();
+        p.reset_tabs_for_test();
         p.park_workspace(cx);
         p.open_draft(w, cx);
     });
@@ -800,7 +797,7 @@ fn discard_closes_only_its_draft_without_journal_or_history_recovery() {
     let mut h = Harness::new(&repo, None, 900., 600.);
     h.connect(&repo, false);
     h.update(|p, w, cx| {
-        p.tabs = Default::default();
+        p.reset_tabs_for_test();
         p.park_workspace(cx);
         p.session.data = Some(data);
         p.session.journal = Some(journal.clone());
@@ -847,9 +844,9 @@ fn discard_closes_only_its_draft_without_journal_or_history_recovery() {
             assert_eq!(draft_text(p, cx), "Keep this sibling");
             assert!(!p.draft_isolation_choice());
             assert!(!p.tabs.lifecycle.drafts.contains_key(&discarded));
-            let data = p.session.data.as_ref().unwrap();
-            assert!(!data.draft_tabs.contains_key(&discarded));
-            assert_eq!(data.draft_tabs[&sibling].draft.text, "Keep this sibling");
+            let saved = p.test_saved_drafts();
+            assert!(!saved.contains_key(&discarded));
+            assert_eq!(saved[&sibling].draft.text, "Keep this sibling");
         });
         journal.flush().unwrap();
         h.keystroke("cmd-shift-t");
@@ -882,7 +879,7 @@ fn discard_closes_only_its_draft_without_journal_or_history_recovery() {
         assert!(p.tabs.model.tabs().is_empty());
         assert_eq!(p.tabs.model.active(), None);
         assert_eq!(p.tabs.model.closed_len(), 0);
-        assert!(p.session.data.as_ref().unwrap().draft_tabs.is_empty());
+        assert!(p.test_saved_drafts().is_empty());
         assert!(p.draft.composer.is_none() && !p.draft.open);
     });
     journal.flush().unwrap();
@@ -898,6 +895,7 @@ fn discard_closes_only_its_draft_without_journal_or_history_recovery() {
     assert!(saved.draft_tabs.is_empty());
     assert!(saved.new_drafts.is_empty());
     assert!(saved.new_draft.is_none());
+    assert!(saved.spaces.iter().all(|space| space.drafts.is_empty()));
     std::fs::remove_dir_all(scratch).unwrap();
 }
 
@@ -914,7 +912,7 @@ fn discard_waits_for_a_creation_that_blocks_closing_its_tab() {
     let mut h = Harness::new(&repo, None, 900., 600.);
     h.connect(&repo, false);
     h.update(|p, w, cx| {
-        p.tabs = Default::default();
+        p.reset_tabs_for_test();
         p.park_workspace(cx);
         p.session.data = Some(data);
         p.session.journal = Some(journal.clone());
@@ -936,10 +934,7 @@ fn discard_waits_for_a_creation_that_blocks_closing_its_tab() {
             assert_eq!(p.tabs.model.tabs().len(), 2);
             assert_eq!(draft_text(p, cx), "Still wanted");
             let id = p.draft.id.clone().unwrap();
-            assert_eq!(
-                p.session.data.as_ref().unwrap().draft_tabs[&id].draft.text,
-                "Still wanted"
-            );
+            assert_eq!(p.test_saved_drafts()[&id].draft.text, "Still wanted");
             assert_eq!(
                 p.notice.as_deref(),
                 Some("Resolve the pending thread creation before discarding this draft.")
@@ -978,7 +973,7 @@ fn closing_a_draft_keeps_it_for_reopen_and_discarding_does_not() {
     let mut h = Harness::new(&repo, None, 900., 600.);
     h.connect(&repo, false);
     h.update(|p, w, cx| {
-        p.tabs = Default::default();
+        p.reset_tabs_for_test();
         p.park_workspace(cx);
         p.session.data = Some(data);
         p.session.journal = Some(journal.clone());
@@ -998,14 +993,16 @@ fn closing_a_draft_keeps_it_for_reopen_and_discarding_does_not() {
     wait_tabs(&mut h);
     h.update(|p, _, _| {
         assert_eq!(p.tabs.model.closed_len(), 1);
-        let data = p.session.data.as_ref().unwrap();
-        assert_eq!(data.draft_tabs[&closed].draft.text, "Closed only\nbody");
+        assert_eq!(
+            p.test_saved_drafts()[&closed].draft.text,
+            "Closed only\nbody"
+        );
     });
     h.update(|p, w, cx| p.discard_draft(w, cx));
     wait_tabs(&mut h);
     h.update(|p, _, _| {
         assert!(p.tabs.model.tabs().is_empty());
-        assert_eq!(p.session.data.as_ref().unwrap().draft_tabs.len(), 1);
+        assert_eq!(p.test_saved_drafts().len(), 1);
     });
     h.keystroke("cmd-shift-t");
     wait_tabs(&mut h);
@@ -1034,7 +1031,7 @@ fn escape_closes_only_a_draft_that_holds_nothing() {
     let mut h = Harness::new(&repo, None, 900., 600.);
     h.connect(&repo, false);
     h.update(|p, w, cx| {
-        p.tabs = Default::default();
+        p.reset_tabs_for_test();
         p.park_workspace(cx);
         p.session.data = Some(data);
         p.session.journal = Some(journal.clone());
@@ -1055,8 +1052,7 @@ fn escape_closes_only_a_draft_that_holds_nothing() {
         .update(&mut h.cx, |p, w, cx| {
             assert_eq!(p.tabs.model.tabs().len(), 1);
             assert_eq!(draft_text(p, cx), "Typed by hand");
-            let data = p.session.data.as_ref().unwrap();
-            assert_eq!(data.draft_tabs[&typed].draft.text, "Typed by hand");
+            assert_eq!(p.test_saved_drafts()[&typed].draft.text, "Typed by hand");
             let composer = p.draft.composer.as_ref().unwrap();
             assert!(composer.focus_handle(cx).contains_focused(w, cx));
         })

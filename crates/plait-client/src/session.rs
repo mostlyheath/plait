@@ -5,10 +5,15 @@
 
 mod blobs;
 mod drafts;
+mod spaces;
 use crate::host::ModelChoice;
 use crate::host_state::PendingSubmit;
 pub use drafts::{DraftSettings, DraftTab, DraftTabCreation};
 use serde::{Deserialize, Serialize};
+pub use spaces::{
+    Copied, DRAFT_CAP, Namespace, Origin, SPACE_CAP, SavedDraft, SavedThread, Space, THREAD_CAP,
+    draft_is_empty,
+};
 use std::{
     collections::BTreeMap,
     fs::{self, File, OpenOptions},
@@ -81,7 +86,16 @@ pub struct Session {
     pub host_store: PathBuf,
     pub checkout: Option<PathBuf>,
     pub selected: Option<String>,
+    /// Saved before per-machine namespaces. Kept for older builds, which read
+    /// only these; this build copies them into a namespace and never changes them.
     pub threads: BTreeMap<String, Thread>,
+    /// Per-machine saved work (#132). Older builds ignore this field.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub spaces: Vec<Space>,
+    /// The host last verified for each machine. Before the next check, its
+    /// work is shown read-only; an edit copies it to the provisional namespace.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub last_verified: BTreeMap<crate::machines::MachineId, crate::tabs::HostKey>,
 }
 
 impl Session {
@@ -117,6 +131,8 @@ impl Session {
             checkout: None,
             selected: None,
             threads: BTreeMap::new(),
+            spaces: Vec::new(),
+            last_verified: BTreeMap::new(),
         }
     }
 
@@ -161,14 +177,33 @@ impl Session {
                     .iter()
                     .flat_map(|(_, draft)| &draft.images)
                     .chain(self.new_drafts.values().flat_map(|draft| &draft.images))
-                    .chain(self.threads.values().flat_map(|thread| {
-                        thread.draft.images.iter().chain(
-                            thread
-                                .pending
-                                .iter()
-                                .chain(&thread.pending_submissions)
-                                .flat_map(|pending| &pending.images),
-                        )
+                    .chain(
+                        self.threads
+                            .values()
+                            .chain(
+                                self.spaces
+                                    .iter()
+                                    .flat_map(|space| space.threads.iter().map(|t| &t.thread)),
+                            )
+                            .flat_map(|thread| {
+                                thread.draft.images.iter().chain(
+                                    thread
+                                        .pending
+                                        .iter()
+                                        .chain(&thread.pending_submissions)
+                                        .flat_map(|pending| &pending.images),
+                                )
+                            }),
+                    )
+                    .chain(self.spaces.iter().flat_map(|space| {
+                        space.drafts.iter().flat_map(|d| {
+                            d.tab.draft.images.iter().chain(
+                                d.tab
+                                    .creation
+                                    .iter()
+                                    .flat_map(|creation| &creation.message.images),
+                            )
+                        })
                     })),
             )
             .map(|image| image.id.as_str())
@@ -200,49 +235,55 @@ impl Session {
             crate::images::validate_message(&draft.images)?;
         }
         for (id, thread) in &self.threads {
-            crate::images::validate_message(&thread.draft.images)?;
-            if !identifier(id)
-                || !thread.checkout.is_absolute()
-                || thread.title.len() > 1024
-                || thread.draft.text.len() > 256 * 1024
-                || thread
-                    .draft
-                    .submitted
-                    .as_ref()
-                    .is_some_and(|(text, _)| text.len() > crate::host::REQUEST_LIMIT)
-            {
-                return Err("Saved thread or draft exceeds its limits.".into());
-            }
-            if thread.queued_submissions.len() > 16
-                || thread.pending_submissions.len() + usize::from(thread.pending.is_some()) > 16
-            {
-                return Err("Saved thread has too many pending submissions.".into());
-            }
-            let mut seen = std::collections::HashSet::new();
-            for pending in thread
-                .pending
-                .iter()
-                .chain(&thread.pending_submissions)
-                .chain(&thread.queued_submissions)
-            {
-                crate::images::validate_message(&pending.images)?;
-                let request =
-                    crate::host::Request::submit_bound(id, &pending.request_id, &pending.text);
-                if !seen.insert(&pending.request_id)
-                    || !identifier(&pending.request_id)
-                    || (pending.text.trim().is_empty() && pending.images.is_empty())
-                    || serde_json::to_vec(&request)
-                        .map_err(|e| e.to_string())?
-                        .len()
-                        + 1
-                        > crate::host::REQUEST_LIMIT
-                {
-                    return Err("Saved submission is invalid. It was not sent.".into());
-                }
-            }
+            validate_thread(id, thread)?;
         }
+        self.validate_spaces()?;
         Ok(())
     }
+}
+
+/// One saved thread's limits, wherever it is kept.
+pub(super) fn validate_thread(id: &str, thread: &Thread) -> Result<(), String> {
+    crate::images::validate_message(&thread.draft.images)?;
+    if !identifier(id)
+        || !thread.checkout.is_absolute()
+        || thread.title.len() > 1024
+        || thread.draft.text.len() > 256 * 1024
+        || thread
+            .draft
+            .submitted
+            .as_ref()
+            .is_some_and(|(text, _)| text.len() > crate::host::REQUEST_LIMIT)
+    {
+        return Err("Saved thread or draft exceeds its limits.".into());
+    }
+    if thread.queued_submissions.len() > 16
+        || thread.pending_submissions.len() + usize::from(thread.pending.is_some()) > 16
+    {
+        return Err("Saved thread has too many pending submissions.".into());
+    }
+    let mut seen = std::collections::HashSet::new();
+    for pending in thread
+        .pending
+        .iter()
+        .chain(&thread.pending_submissions)
+        .chain(&thread.queued_submissions)
+    {
+        crate::images::validate_message(&pending.images)?;
+        let request = crate::host::Request::submit_bound(id, &pending.request_id, &pending.text);
+        if !seen.insert(&pending.request_id)
+            || !identifier(&pending.request_id)
+            || (pending.text.trim().is_empty() && pending.images.is_empty())
+            || serde_json::to_vec(&request)
+                .map_err(|e| e.to_string())?
+                .len()
+                + 1
+                > crate::host::REQUEST_LIMIT
+        {
+            return Err("Saved submission is invalid. It was not sent.".into());
+        }
+    }
+    Ok(())
 }
 
 fn identifier(value: &str) -> bool {

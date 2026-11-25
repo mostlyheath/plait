@@ -492,11 +492,13 @@ impl Plait {
         if !self.tab_error(result) {
             return;
         }
+        self.bind_draft();
         let draft = std::mem::take(&mut self.draft);
-        if let Some(id) = &draft.id
+        // Moving to another folder: the record is rewritten in the same namespace.
+        if let (Some(id), Some(binding)) = (&draft.id, &draft.binding)
             && let Some(data) = &mut self.session.data
         {
-            data.clear_draft_tab(id);
+            data.discard_draft(&binding.namespace, id);
         }
         self.tabs.lifecycle.presenting = true;
         self.change_checkout(checkout, window, cx);

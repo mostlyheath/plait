@@ -581,17 +581,22 @@ fn reopened_creation() {
         });
     }
     let saved = saved.unwrap();
-    let draft = saved.new_draft_for(&root).unwrap();
+    let draft = super::saved_draft_for(&saved, &root).unwrap();
     assert_eq!(draft.text, "Only once");
     assert!(draft.creation.is_some());
     let mut harness = Harness::new(&repository, None, 900., 600.);
     harness.connect(&repository, false);
     harness.update(|p, w, cx| {
         p.host.connection.status.as_mut().unwrap().protocol_version = 6;
-        let (id, tab) = saved.draft_tabs.iter().next().unwrap();
+        let draft = saved
+            .spaces
+            .iter()
+            .flat_map(|space| &space.drafts)
+            .next()
+            .unwrap();
         let target = plait_client::tabs::TabTarget::Draft {
-            id: id.clone(),
-            checkout: p.tab_checkout(tab.checkout.clone()),
+            id: draft.id.clone(),
+            checkout: p.tab_checkout(draft.tab.checkout.clone()),
         };
         p.session.data = Some(saved);
         p.open_tab_target(target, w, cx);

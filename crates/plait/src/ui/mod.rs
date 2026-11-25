@@ -41,6 +41,7 @@ mod panel;
 mod panels;
 mod permissions;
 mod remote_browser;
+mod saved_work;
 mod selection;
 mod server_setup;
 mod session;
@@ -235,6 +236,7 @@ pub struct Plait {
     toasts: plait_client::toasts::Toasts,
     toast_timer: Option<Task<()>>,
     session: session::SessionState,
+    saved_work: saved_work::SavedWork,
     picker_open: bool,
     notice: Option<String>,
     machine_restore_notice: Option<String>,
@@ -276,10 +278,14 @@ impl Plait {
         cx: &mut Context<Self>,
     ) {
         let another = self.machines.active != machine;
-        // Save the outgoing machine's work while its client and locality still
-        // describe it: a remote folder must not be saved as this computer's.
         if another {
+            // Save this machine's work and tab document, with its own client and
+            // locality, and put its workspace away before anything changes: a
+            // remote folder must not be saved as this computer's.
             self.capture_session(cx);
+            self.flush_machine_tabs(window, cx);
+            self.park_workspace(cx);
+            self.forget_saved_work();
         }
         self.host_client = client;
         self.host_local = local;
@@ -395,6 +401,7 @@ impl Plait {
             toasts: Default::default(),
             toast_timer: None,
             session: session::SessionState::default(),
+            saved_work: Default::default(),
             picker_open: false,
             notice: None,
             machine_restore_notice: None,

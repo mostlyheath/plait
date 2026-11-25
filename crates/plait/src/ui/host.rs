@@ -451,6 +451,8 @@ impl Plait {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Every mount binds the composer, if a restore has not already.
+        self.bind_thread_composer(&id);
         let mut last = composer.read(cx).box_state();
         cx.observe(&composer, move |this, composer, cx| {
             this.capture_session(cx);

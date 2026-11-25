@@ -297,48 +297,51 @@ impl Session {
             return Err("Saved workspace exceeds 10,000 drafts. Nothing was discarded.".into());
         }
         for (id, tab) in &self.draft_tabs {
-            if !identifier(id)
-                || !tab.checkout.is_absolute()
-                || tab.checkout.as_os_str().len() > 4096
-                || tab.draft.text.len() > 256 * 1024
-                || tab
-                    .draft
-                    .submitted
-                    .as_ref()
-                    .is_some_and(|(text, _)| text.len() > crate::host::REQUEST_LIMIT)
-                || tab
-                    .settings
-                    .mode
-                    .as_ref()
-                    .is_some_and(|mode| mode.len() > 128)
-                || tab
-                    .settings
-                    .model
-                    .as_ref()
-                    .is_some_and(|m| m.provider.len() > 1024 || m.model_id.len() > 1024)
-            {
-                return Err(
-                    "Saved new-thread draft exceeds its limits. Nothing was discarded.".into(),
-                );
-            }
-            crate::images::validate_message(&tab.draft.images)?;
-            if let Some(creation) = &tab.creation {
-                if !identifier(&creation.request_id)
-                    || creation.message.text.len() > 256 * 1024
-                    || creation.model.provider.len() > 1024
-                    || creation.model.model_id.len() > 1024
-                    || creation.mode.as_ref().is_some_and(|mode| mode.len() > 128)
-                    || (creation.message.text.trim().is_empty()
-                        && creation.message.images.is_empty())
-                    || creation.harness == HarnessId::Other
-                {
-                    return Err("Saved draft creation is invalid. It was not sent.".into());
-                }
-                crate::images::validate_message(&creation.message.images)?;
-            }
+            validate_draft_tab(id, tab)?;
         }
         Ok(())
     }
+}
+
+/// One saved draft's limits, wherever it is kept.
+pub(super) fn validate_draft_tab(id: &str, tab: &DraftTab) -> Result<(), String> {
+    if !identifier(id)
+        || !tab.checkout.is_absolute()
+        || tab.checkout.as_os_str().len() > 4096
+        || tab.draft.text.len() > 256 * 1024
+        || tab
+            .draft
+            .submitted
+            .as_ref()
+            .is_some_and(|(text, _)| text.len() > crate::host::REQUEST_LIMIT)
+        || tab
+            .settings
+            .mode
+            .as_ref()
+            .is_some_and(|mode| mode.len() > 128)
+        || tab
+            .settings
+            .model
+            .as_ref()
+            .is_some_and(|m| m.provider.len() > 1024 || m.model_id.len() > 1024)
+    {
+        return Err("Saved new-thread draft exceeds its limits. Nothing was discarded.".into());
+    }
+    crate::images::validate_message(&tab.draft.images)?;
+    if let Some(creation) = &tab.creation {
+        if !identifier(&creation.request_id)
+            || creation.message.text.len() > 256 * 1024
+            || creation.model.provider.len() > 1024
+            || creation.model.model_id.len() > 1024
+            || creation.mode.as_ref().is_some_and(|mode| mode.len() > 128)
+            || (creation.message.text.trim().is_empty() && creation.message.images.is_empty())
+            || creation.harness == HarnessId::Other
+        {
+            return Err("Saved draft creation is invalid. It was not sent.".into());
+        }
+        crate::images::validate_message(&creation.message.images)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

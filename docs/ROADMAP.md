@@ -36,9 +36,7 @@ for evidence and limits.
 
 - Show several independent machines in one sidebar. Hosts report a
   fingerprint per project and the client can group copies across machines;
-  no view uses it yet. Client state still keyed by a path without its machine
-  comes first. See [#133](https://github.com/mostlyheath/plait/issues/133)
-  and [#132](https://github.com/mostlyheath/plait/issues/132).
+  no view uses it yet. See [#133](https://github.com/mostlyheath/plait/issues/133).
 - Update Linux hosts in place, from the machine and from the Mac. Prebuilt
   Linux hosts are published with each release and install from the Mac.
 - Complete independent client and host releases and update flows.
@@ -101,6 +99,35 @@ recovery keeps its earlier inference for them. The change adds a column and two
 triggers that fill it. The triggers are stored in the schema, so writes made by
 an older build after a rollback are marked too, and those writes still succeed.
 Another model reviews it independently before merge.
+
+**Per-machine saved work (agreed).** The owner agreed this change to the
+desktop's saved workspace on 2026-11-25, for
+[#132](https://github.com/mostlyheath/plait/issues/132), following
+[the design](https://github.com/mostlyheath/plait/issues/132#issuecomment-7153471382).
+Unsent drafts and saved thread work, including waiting messages, are kept
+in a separate namespace per machine. A namespace is a verified host identity,
+or provisional for the selected machine until its host is verified. Thread
+work is keyed by thread ID and folder. A draft, composer or send ledger is
+bound to a namespace when it is created or mounted, and its saves always go
+there. The window reads only the current machine's namespaces. Before a
+check it also reads the machine's last verified host, read-only: an edit
+copies the record into the provisional namespace first. Provisional work is
+copied to the host's namespace, and the source is removed only after that
+copy is saved durably. If both copies changed, both are kept. Records from
+before this change are copied, never moved, into the first verified local
+host's namespace. Each machine's tab document has its own writer and revision.
+
+The design's open questions were decided as follows:
+- **Revision lineage.** Every record carries a revision that only advances
+  within its namespace, and the record it came from.
+- **Caps.** A namespace holds at most 256 drafts and 256 threads, and a
+  workspace at most 64 namespaces. The whole file stays within 4 MiB on every
+  save. A full namespace refuses a new record with a notice and evicts
+  nothing. Older builds' fields are left as they were, so their 512-record
+  bound still holds.
+
+The new field is optional and older builds ignore it. Another model reviews
+the change independently before merge.
 
 Client and host releases must be independently selectable and publishable.
 Compatibility is negotiated through protocol versions and capabilities, not

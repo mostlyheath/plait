@@ -30,6 +30,8 @@ pub(super) struct ThreadWorkspace {
     pub(super) cancelled: Arc<std::sync::atomic::AtomicBool>,
     /// Existing per-thread editors; selection keeps their drafts and IME state.
     pub(super) composers: HashMap<String, Entity<super::composer::Composer>>,
+    /// Where each composer saves, set as it mounts (#132).
+    pub(super) bindings: HashMap<String, super::saved_work::Binding>,
     pub(super) host_watch: Option<host::WatchLease>,
     pub(super) live_scroll: ListState,
     pub(super) live_count: usize,
@@ -77,6 +79,7 @@ impl ThreadWorkspace {
             changed_patch: Default::default(),
             cancelled: Arc::default(),
             composers: HashMap::new(),
+            bindings: HashMap::new(),
             host_watch: None,
             live_scroll: ListState::new(0, ListAlignment::Bottom, px(300.)),
             live_count: 0,

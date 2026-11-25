@@ -299,6 +299,12 @@ impl Plait {
             .connection
             .connected
             .then_some(self.host.connection.epoch);
+        // The current machine's saved drafts, read before the tab model changes.
+        let saved_drafts: Vec<(String, std::path::PathBuf)> = self
+            .saved_drafts()
+            .into_iter()
+            .map(|(id, tab)| (id, tab.checkout.clone()))
+            .collect();
         let result = match intent {
             Intent::Open(target) => self.tabs.model.open(target, connection).map(|_| ()),
             Intent::Activate(id) => self.tabs.model.activate(id),
@@ -317,17 +323,24 @@ impl Plait {
                             .as_ref()
                             .is_some_and(|c| !c.read(cx).is_empty())
                     } else {
-                        self.session
-                            .data
-                            .as_ref()
-                            .and_then(|s| s.draft_tab(draft_id, &checkout.root))
-                            .is_some_and(|tab| tab.creation.is_some() || !tab.draft.text.is_empty() || !tab.draft.images.is_empty())
+                        // A parked draft's text may not be saved yet: it counts too.
+                        self.tabs.lifecycle.drafts.get(draft_id).is_some_and(|parked| {
+                            parked.pending.is_some()
+                                || !parked.saved.text.is_empty()
+                                || !parked.saved.images.is_empty()
+                        }) || self
+                            .saved_draft(draft_id, &checkout.root)
+                            .is_some_and(|tab| !plait_client::session::draft_is_empty(tab))
                     }
                 });
                 let draft = self.tabs.model.get(id).and_then(|tab| match tab.session().target() { TabTarget::Draft { id, .. } => Some(id.clone()), _ => None });
                 let result = self.tabs.model.close(id, nonempty);
                 if result.is_ok() && !nonempty && let Some(draft) = draft {
-                    if let Some(data) = &mut self.session.data { data.clear_draft_tab(&draft); }
+                    // Empty-draft cleanup: only a stored record that is empty, in its own namespace.
+                    let namespace = self.tabs.lifecycle.drafts.get(&draft).and_then(|d| d.binding.clone()).map(|b| b.namespace)
+                        .or_else(|| self.saved_draft_record(&draft).map(|(namespace, _, _)| namespace))
+                        .filter(|namespace| self.writes_here(namespace));
+                    if let (Some(data), Some(namespace)) = (&mut self.session.data, namespace) { data.discard_empty_draft(&namespace, &draft); }
                     self.tabs.lifecycle.drafts.remove(&draft);
                 }
                 result
@@ -353,19 +366,18 @@ impl Plait {
                     TabTarget::Draft {
                         id: draft_id,
                         checkout,
-                    } => self
-                        .session
-                        .data
-                        .as_ref()
-                        .and_then(|s| s.draft_tab(draft_id, &checkout.root))
-                        .map(|_| connection),
+                    } => saved_drafts
+                        .iter()
+                        .any(|(id, root)| id == draft_id && *root == checkout.root)
+                        .then_some(connection),
                 }),
             }
             .and_then(|opened| {
                 if opened.is_none() && matches!(action, TabNavigation::Reopen) {
-                    let fallback = self.session.data.as_ref().and_then(|data| data.draft_tabs.iter().find(|(id, tab)| {
-                        (tab.creation.is_some() || !tab.draft.text.is_empty() || !tab.draft.images.is_empty()) && !self.tabs.model.tabs().iter().any(|open| matches!(open.session().target(), TabTarget::Draft { id: open_id, .. } if open_id == *id))
-                    }).map(|(id, tab)| TabTarget::Draft { id: id.clone(), checkout: self.tab_checkout(tab.checkout.clone()) }));
+                    // Only the current machine's drafts can reopen here.
+                    let fallback = self.saved_drafts().into_iter().find(|(id, tab)| {
+                        !plait_client::session::draft_is_empty(tab) && !self.tabs.model.tabs().iter().any(|open| matches!(open.session().target(), TabTarget::Draft { id: open_id, .. } if open_id == id))
+                    }).map(|(id, tab)| TabTarget::Draft { id, checkout: self.tab_checkout(tab.checkout.clone()) });
                     if let Some(target) = fallback { self.tabs.model.open(target, connection)?; }
                 }
                 Ok(())
@@ -548,7 +560,9 @@ impl Plait {
     }
 
     fn retire_editor_cache(&mut self, cx: &mut Context<Self>) {
-        // Closed drafts without an in-flight creation can be restored from the journal.
+        // Closed drafts without an in-flight creation can be restored from the
+        // journal: saving first makes that true for a parked draft's latest text.
+        self.capture_session(cx);
         self.tabs.lifecycle.drafts.retain(|id, draft| {
             draft.pending.is_some() || self.tabs.model.tabs().iter().any(|tab| {
                 matches!(tab.session().target(), TabTarget::Draft { id: open, .. } if open == id)

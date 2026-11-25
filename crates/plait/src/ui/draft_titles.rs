@@ -58,11 +58,8 @@ impl Plait {
             let TabTarget::Draft { id, checkout } = tab.session().target() else {
                 continue;
             };
-            let saved = self
-                .session
-                .data
-                .as_ref()
-                .and_then(|s| s.draft_tab(id, &checkout.root));
+            let saved = self.saved_draft(id, &checkout.root).cloned();
+            let saved = saved.as_ref();
             let parked = self.tabs.lifecycle.drafts.get(id);
             let name = self.tabs.draft_titles.get(id).cloned().unwrap_or_else(|| {
                 title(

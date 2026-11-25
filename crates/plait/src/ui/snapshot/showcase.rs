@@ -453,7 +453,7 @@ fn threads(checkout: &Path, current: ThreadStatus) -> Vec<ThreadSummary> {
 /// The open thread in front, then the threads that are working or waiting, so
 /// the pictures show the tab row as a real window has it.
 fn open_tabs(plait: &mut crate::ui::Plait) {
-    plait.tabs = Default::default();
+    plait.reset_tabs_for_test();
     let mut open: Vec<_> = plait
         .host
         .connection
@@ -812,7 +812,7 @@ fn stage_worktrees(harness: &mut Harness, repository: &Path) {
             plait.navigation.available.insert(tree.path.clone(), true);
         }
         plait.rebuild_projects(cx);
-        plait.tabs = Default::default();
+        plait.reset_tabs_for_test();
         for owner in &owners[..2] {
             plait
                 .tabs

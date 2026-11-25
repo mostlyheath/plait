@@ -130,6 +130,8 @@ impl Draft {
 impl Plait {
     pub(super) fn park_draft(&mut self, cx: &mut Context<Self>) {
         self.refresh_draft_title(cx);
+        // A parked draft keeps saving where it was bound.
+        self.bind_draft();
         let mut draft = std::mem::take(&mut self.draft);
         if let Some(composer) = draft.composer.take() {
             let composer = composer.read(cx);
@@ -153,13 +155,10 @@ impl Plait {
             return;
         }
         self.park_draft(cx);
-        self.draft = self.tabs.lifecycle.drafts.remove(&id).unwrap_or_else(|| {
-            let saved = self
-                .session
-                .data
-                .as_ref()
-                .and_then(|s| s.draft_tab(&id, &self.host.creation.checkout))
-                .cloned();
+        let parked = self.tabs.lifecycle.drafts.remove(&id);
+        let mounted = parked.is_none();
+        self.draft = parked.unwrap_or_else(|| {
+            let saved = self.saved_draft(&id, &self.host.creation.checkout).cloned();
             let settings = saved
                 .as_ref()
                 .map(|tab| tab.settings.clone())
@@ -182,6 +181,9 @@ impl Plait {
             }
             draft
         });
+        if mounted {
+            self.bind_draft();
+        }
     }
 
     pub(super) fn draft_isolation_choice(&self) -> bool {
@@ -249,6 +251,11 @@ impl Plait {
     pub(super) fn start_draft_creation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.host.connection.connected || !self.session.ready() {
             return;
+        }
+        // Retry, Wait and Own worktree reach here without Send's checks.
+        if let Some(reason) = self.draft_send_refusal() {
+            self.draft.error = Some(reason);
+            return cx.notify();
         }
         let Some(pending) = self.draft.pending.as_mut() else {
             return;
@@ -459,21 +466,23 @@ impl Plait {
     }
 
     fn capture_draft_operations(&mut self, cx: &mut Context<Self>) {
+        self.bind_draft();
         if let Some(data) = &mut self.session.data {
-            let mut mirrors = Vec::new();
+            let mut note = None;
             for draft in std::iter::once(&self.draft).chain(self.tabs.lifecycle.drafts.values()) {
-                if let Some(id) = &draft.id
-                    && let Some(tab) = data.draft_tabs.get_mut(id)
+                if let (Some(id), Some(binding)) = (&draft.id, &draft.binding)
+                    && let Some(saved) = data.draft_in(&binding.namespace, id)
                 {
+                    let mut tab = saved.tab.clone();
                     tab.creation = draft.saved_creation();
                     tab.draft.creation = draft.legacy_creation();
-                    if tab.legacy {
-                        mirrors.push((tab.checkout.clone(), tab.draft.clone()));
+                    if let Err(error) = data.put_draft(&binding.namespace, id, tab, None) {
+                        note = Some(error);
                     }
                 }
             }
-            for (checkout, draft) in mirrors {
-                data.set_new_draft(checkout, draft);
+            if note.is_some() {
+                self.session.note = note;
             }
             if let Some(journal) = &self.session.journal {
                 journal.queue(data.clone());
@@ -540,12 +549,13 @@ impl Plait {
             id: draft_id.clone(),
             checkout: source,
         };
-        let result = if self
-            .session
-            .data
-            .as_ref()
-            .is_some_and(|data| data.threads.contains_key(&id))
-        {
+        let binding = draft.binding.clone();
+        let result = if self.session.data.as_ref().is_some_and(|data| {
+            binding.as_ref().is_some_and(|binding| {
+                data.thread_in(&binding.namespace, &id, &reply.thread.checkout)
+                    .is_some()
+            })
+        }) {
             Err(plait_client::tabs::TabError::AlreadyOpen)
         } else {
             self.tabs.model.bind_draft_target(&draft_target, target)
@@ -564,10 +574,13 @@ impl Plait {
         let Some(sending) = draft.sending.take() else {
             return;
         };
-        if let Some(data) = &mut self.session.data {
+        if let Some(data) = &mut self.session.data
+            && let Some(binding) = &binding
+        {
             let mut saved = data
-                .draft_tab(&draft_id, &source_root)
-                .map(|tab| tab.draft.clone())
+                .draft_in(&binding.namespace, &draft_id)
+                .filter(|saved| saved.tab.checkout == source_root)
+                .map(|saved| saved.tab.draft.clone())
                 .unwrap_or_else(|| plait_client::session::Draft {
                     text: sending.text.clone(),
                     images: sending.images.clone(),
@@ -577,20 +590,27 @@ impl Plait {
                 });
             saved.creation = None;
             // Identity conflicts were rejected before the tab was rebound.
-            data.threads.insert(
-                id.clone(),
-                Thread {
-                    checkout: reply.thread.checkout.clone(),
-                    model: reply.thread.model.clone(),
-                    title: plait_client::session::title(&sending.text),
-                    draft: saved,
-                    pending: None,
-                    pending_submissions: Vec::new(),
-                    queued_submissions: Vec::new(),
-                    approval: sending.choice,
-                },
-            );
-            data.clear_draft_tab(&draft_id);
+            let thread = Thread {
+                checkout: reply.thread.checkout.clone(),
+                model: reply.thread.model.clone(),
+                title: plait_client::session::title(&sending.text),
+                draft: saved,
+                pending: None,
+                pending_submissions: Vec::new(),
+                queued_submissions: Vec::new(),
+                approval: sending.choice,
+            };
+            if let Err(error) =
+                data.put_thread(&binding.namespace, &id, thread, binding.origin.clone())
+            {
+                self.session.note = Some(error);
+            } else {
+                data.discard_draft(&binding.namespace, &draft_id);
+            }
+        }
+        // The draft's composer becomes the thread's, still saving where it did.
+        if let Some(binding) = binding {
+            self.workspace.bindings.insert(id.clone(), binding);
         }
         if in_front {
             if let Some(composer) = draft.composer.take() {
