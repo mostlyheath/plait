@@ -69,6 +69,7 @@ pub(super) struct IssuesUi {
     /// Every project's unsaved forms as last written, once read from disk.
     drafts: Option<Drafts>,
     drafts_loading: bool,
+    drafts_read_failed: bool,
     /// Bumped on each change to the drafts; writes carry it.
     drafts_revision: u64,
     /// Writes one at a time, so an older snapshot never replaces a newer.
@@ -276,6 +277,7 @@ impl Plait {
     /// whatever it is missing. Called on every notify; each step runs once.
     pub(super) fn sync_issues_view(&mut self, cx: &mut Context<Self>) {
         if !self.issues_visible() {
+            self.issues.drafts_read_failed = false;
             return;
         }
         self.issues_search_field(cx);
@@ -785,7 +787,10 @@ impl Plait {
 
     /// Reads the saved forms once, off the UI thread.
     fn load_saved_forms(&mut self, cx: &mut Context<Self>) {
-        if self.issues.drafts.is_some() || self.issues.drafts_loading {
+        if self.issues.drafts.is_some()
+            || self.issues.drafts_loading
+            || self.issues.drafts_read_failed
+        {
             return;
         }
         let Some(journal) = self.session.journal.clone() else {
@@ -793,17 +798,16 @@ impl Plait {
         };
         self.issues.drafts_loading = true;
         let task = cx.background_executor().spawn(async move {
-            journal
-                .read_record::<Drafts>(linear_drafts::RECORD, linear_drafts::RECORD_LIMIT)
-                .ok()
-                .flatten()
-                .unwrap_or_default()
+            journal.read_record::<Drafts>(linear_drafts::RECORD, linear_drafts::RECORD_LIMIT)
         });
         cx.spawn(async move |this, cx| {
             let drafts = task.await;
             let _ = this.update(cx, |this, cx| {
                 this.issues.drafts_loading = false;
-                this.issues.drafts = Some(drafts);
+                match drafts {
+                    Ok(saved) => this.issues.drafts = Some(saved.unwrap_or_default()),
+                    Err(_) => this.issues.drafts_read_failed = true,
+                }
                 cx.notify();
             });
         })
@@ -1924,6 +1928,13 @@ impl Plait {
             .py_2()
             .when_some(team, |el, team| {
                 el.child(tag("issues-team", team, colors().muted))
+            })
+            .when(self.issues.drafts_read_failed, |el| {
+                el.child(tag(
+                    "issues-draft-read-error",
+                    "Couldn’t read saved drafts. Reopen Issues to retry.",
+                    colors().amber,
+                ))
             })
             .when(self.issues.drafts_full, |el| {
                 el.child(

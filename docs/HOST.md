@@ -2846,8 +2846,12 @@ non-replay rule, not remote compare-and-swap. No live API behavior is claimed.
     Exact aliases: 500 recent entries per workspace/team, 3-minute freshness TTL.
   - Issue details (first comments page): 2-minute TTL, LRU cap of 200 issues.
   - Full write receipts: latest 500 writes; permanent retry identities: 10,000
-    (new writes refused at capacity). Uncertain bodies remain bounded to 16 KiB
-    per intent; terminal tombstones omit the body.
+    (new writes refused at capacity). An uncertain comment keeps up to 16 KiB
+    of UTF-8 body text. Create and edit intents keep a JSON array whose title is bounded to 512
+    UTF-16 code units and whose description is bounded to 32 KiB of UTF-8.
+    The create array also includes the team ID and optional state ID. A state
+    change keeps the state ID as its payload. These IDs are at most 128 ASCII
+    characters each. Terminal tombstones omit the payload.
   - All Linear requests are bounded to 65,000 bytes.
 - **Offline fallback and async guards:** When Linear cannot be reached (network
   error, timeout, HTTP 5xx, refused redirect, or oversized response), read
