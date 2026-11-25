@@ -3,6 +3,21 @@
 What changed in each Plait preview, newest first. Notes for the next preview
 wait in [changes/](changes/README.md) until a release collects them.
 
+## v0.1.0-preview.83
+
+### Added
+
+- Create Linear issues and edit their title and description from the Issues tab, with images uploaded to Linear shown in the description. Nothing is sent until you press Save, unsaved text survives quitting, and a change someone else made in Linear is shown before anything is overwritten.
+
+### Changed
+
+- Worktrees and Linear issues have a close button in their header that returns you to the tab you were on, so you can get back to your threads when thread tabs are hidden.
+
+### Fixed
+
+- In the Linear issues tab, long issue titles are shortened inside the list instead of running underneath the issue details.
+- Unsent drafts, message-box text, waiting messages and each thread's approval choice are kept separately for each machine, so work typed for one machine never appears on, or is sent to, another, and nothing you type is lost when you switch machines, reconnect or quit.
+
 ## v0.1.0-preview.82
 
 ### Added
