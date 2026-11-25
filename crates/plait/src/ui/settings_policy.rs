@@ -2,7 +2,7 @@
 //! owns the policy; an unread policy is never called sandboxed.
 use super::{Plait, settings, theme::*};
 use gpui::{prelude::*, *};
-use plait_core::host::{
+use plait_client::host::{
     policy::{self, CommandPolicy, PolicyReply, Request},
     providers,
 };
@@ -116,8 +116,12 @@ impl Plait {
         let checkout_generation =
             (key.1 == self.host.creation.checkout).then_some(self.host.creation.generation);
         let expected = self.settings_checkout_key(&key.1).cloned();
+        let client = self.host_client();
+        let supported = self.host.connection.has_checkout_identity;
+        let local = self.host_is_local();
         let task = cx.background_executor().spawn(async move {
-            let identity = Self::identify_settings_checkout(&checkout, expected)?;
+            let identity =
+                Self::identify_settings_checkout(&client, &checkout, supported, local, expected)?;
             let canonical = identity.root.clone();
             let request = match value {
                 Some(policy) => Request::SetCommandPolicy {
@@ -126,18 +130,25 @@ impl Plait {
                 },
                 None => Request::CommandPolicy {
                     checkout: canonical.clone(),
+                    identity: supported.then(|| plait_client::host::git::WireIdentity {
+                        dev: identity.device.to_string(),
+                        ino: identity.inode.to_string(),
+                    }),
                 },
             };
-            let reply: PolicyReply =
-                plait_core::host::Client::from_environment()?.send(&request)?;
+            let reply: PolicyReply = client.send(&request)?;
             if reply.checkout != canonical {
-                return Err(plait_core::host::Error::Protocol(
+                return Err(plait_client::host::Error::Protocol(
                     "Host returned another checkout's policy.".into(),
                 ));
             }
-            identity
-                .verify()
-                .map_err(plait_core::host::Error::Protocol)?;
+            Self::identify_settings_checkout(
+                &client,
+                &identity.root,
+                supported,
+                local,
+                Some(identity.clone()),
+            )?;
             Ok((reply, identity))
         });
         cx.spawn(async move |this, cx| {
@@ -164,7 +175,7 @@ impl Plait {
         &mut self,
         key: &(u64, PathBuf),
         value: Option<CommandPolicy>,
-        result: Result<PolicyReply, plait_core::host::Error>,
+        result: Result<PolicyReply, plait_client::host::Error>,
         cx: &mut Context<Self>,
     ) -> bool {
         if self.host.connection.epoch != key.0 {

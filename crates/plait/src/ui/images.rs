@@ -1,10 +1,7 @@
 //! Image decoding is background work; frames only draw prepared pixels.
 use super::{Plait, theme::*, thread_controls::TextTooltip};
 use gpui::{prelude::*, *};
-use plait_core::{
-    host::Client,
-    images::{self, ImageRef},
-};
+use plait_client::images::{self, ImageRef};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     sync::Arc,
@@ -231,12 +228,13 @@ impl Plait {
             let expected = key.clone();
             let id = reference.id.clone();
             let cancelled = self.workspace.cancelled.clone();
+            let client = self.host_client();
             let task = cx.background_executor().spawn(async move {
                 if cancelled.load(std::sync::atomic::Ordering::Acquire) {
                     return Err("Image read retired.".into());
                 }
-                let bytes = Client::from_environment()
-                    .and_then(|client| client.image(&expected.2, &reference))
+                let bytes = client
+                    .image(&expected.2, &reference)
                     .map_err(|error| error.to_string())?;
                 if cancelled.load(std::sync::atomic::Ordering::Acquire) {
                     return Err("Image decode retired.".into());
@@ -281,12 +279,13 @@ impl Plait {
         cx.notify();
         let expected = key.clone();
         let cancelled = self.workspace.cancelled.clone();
+        let client = self.host_client();
         let task = cx.background_executor().spawn(async move {
             if cancelled.load(std::sync::atomic::Ordering::Acquire) {
                 return Err("Image read retired.".into());
             }
-            let bytes = Client::from_environment()
-                .and_then(|client| client.image(&expected.2, &reference))
+            let bytes = client
+                .image(&expected.2, &reference)
                 .map_err(|error| error.to_string())?;
             if cancelled.load(std::sync::atomic::Ordering::Acquire) {
                 return Err("Image read retired.".into());
@@ -338,8 +337,11 @@ impl Plait {
                         .w((bounds.width - px(64.)).min(px(1080.)))
                         .gap_2()
                         .p_3()
-                        .bg(rgb(colors().panel))
-                        .rounded_lg()
+                        .bg(rgb(colors().raised))
+                        .border_1()
+                        .border_color(rgb(colors().edge))
+                        .rounded(px(SURFACE_CORNER))
+                        .shadow(floating_shadow())
                         .child(
                             row()
                                 .justify_between()
@@ -407,7 +409,7 @@ fn thumbnail_transfer_bench() {
         image: ImageRef,
     }
     let input: Input = serde_json::from_str(&std::env::var("PLAIT_IMAGE_BENCH").unwrap()).unwrap();
-    let client = Client::from_environment().unwrap();
+    let client = plait_client::host::Client::from_environment().unwrap();
     let mut samples = Vec::new();
     for index in 0..12 {
         let started = Instant::now();
@@ -460,7 +462,7 @@ fn thumbnail_scrollback_bench() {
     let input: Input =
         serde_json::from_str(&std::env::var("PLAIT_IMAGE_SCROLL_BENCH").unwrap()).unwrap();
     assert_eq!(input.images.len(), 50);
-    let client = Client::from_environment().unwrap();
+    let client = plait_client::host::Client::from_environment().unwrap();
     let key = (1, 1, input.thread.clone());
     let mut cache = ImageCache {
         key: Some(key.clone()),

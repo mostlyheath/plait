@@ -4,7 +4,7 @@ import type { ConversationView } from '@earendil-works/pi-durable';
 import { update } from '../src/transcript.ts';
 import type { InputRecord, Snapshot } from '../src/protocol.ts';
 import { CodexTranscript, isTerminalTurn } from '../src/codex/transcript.ts';
-import type { Entry } from '../src/codex/transcript.ts';
+import type { Entry } from '../src/external/entries.ts';
 import { threadOf } from '../src/codex/protocol.ts';
 
 const threadId = 'thread-1';

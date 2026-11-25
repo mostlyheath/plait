@@ -13,7 +13,7 @@ use super::{
     thread_controls::TextTooltip,
 };
 use gpui::{prelude::*, *};
-use plait_core::host::harness::HarnessId;
+use plait_client::host::harness::HarnessId;
 use std::rc::Rc;
 
 /// What to do with the mode id chosen from the menu.
@@ -37,8 +37,9 @@ impl Plait {
     /// The chip, or `None` when the harness lists no modes of its own.
     pub(super) fn permissions_chip(
         &self,
-        id: impl Into<ElementId>,
+        id: &'static str,
         permissions: Permissions,
+        show_caption: bool,
         cx: &mut Context<Self>,
     ) -> Option<Control> {
         let row = self.harness_row(permissions.harness)?;
@@ -52,11 +53,23 @@ impl Plait {
         let tip = permissions.tip.clone();
         let blocked = permissions.blocked;
         let permissions = Rc::new(permissions);
+        let name = format!("Permissions: {label}");
         Some(
-            menu_chip(id, Some("Permissions"), None, label, tip, blocked)
-                .on_activate(cx, move |this, window, cx| {
-                    this.open_permissions(&permissions, window, cx)
-                }),
+            menu_chip(
+                id,
+                show_caption.then_some("Permissions"),
+                None,
+                label,
+                tip,
+                blocked,
+            )
+            .aria_label(name)
+            .relative()
+            .child(self.anchor_probe(id))
+            .on_activate(cx, move |this, window, cx| {
+                this.anchor_next(id);
+                this.open_permissions(&permissions, window, cx)
+            }),
         )
     }
 
@@ -104,7 +117,7 @@ impl Plait {
             aside: None,
             note: Some(permissions.note.clone()),
         };
-        let palette = cx.new(|cx| Palette::new(options, items, window, cx));
+        let palette = cx.new(|cx| Palette::new(options, items, window, cx).picker());
         self.present(palette, None, window, cx);
     }
 }
@@ -123,13 +136,14 @@ pub(super) fn menu_chip(
         Some(caption) => format!("{caption}: {value}"),
         None => value.to_string(),
     };
-    let hover = tip.clone();
+    let hover = blocked.map_or_else(|| tip.clone(), SharedString::from);
     button(id, "")
+        .rounded(px(ITEM_CORNER))
         .min_w_0()
         .flex_shrink_1()
         .gap_1()
         .aria_label(name)
-        .aria_description(blocked.map_or_else(|| tip.clone(), SharedString::from))
+        .aria_description(hover.clone())
         .tooltip(move |_, cx| cx.new(|_| TextTooltip(hover.to_string())).into())
         .disabled(blocked.is_some())
         .when_some(caption, |el, caption| {
@@ -143,4 +157,17 @@ pub(super) fn menu_chip(
         .when_some(lead, |el, lead| el.child(lead))
         .child(div().min_w_0().truncate().child(value))
         .child(icon("down").size(px(12.)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ITEM_CORNER, menu_chip};
+    use gpui::{Styled, div, px};
+
+    #[test]
+    fn menu_chip_uses_the_chip_corner_token() {
+        let mut chip = menu_chip("mode", None, None, "Default".into(), "".into(), None);
+        let mut expected = div().rounded(px(ITEM_CORNER));
+        assert_eq!(chip.style().corner_radii, expected.style().corner_radii);
+    }
 }

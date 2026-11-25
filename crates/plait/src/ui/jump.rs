@@ -3,7 +3,7 @@
 
 use super::{Plait, settings, theme::*};
 use gpui::{prelude::*, *};
-use plait_core::preferences::{self, JumpTarget, Preferences};
+use plait_client::preferences::{self, JumpTarget, Preferences};
 
 // Bound in the action table (actions.rs), like every application shortcut.
 actions!(
@@ -26,12 +26,15 @@ pub(super) enum PreferenceGroup {
     Editor,
     /// Layout choices made outside Settings, such as hiding the Git inspector.
     View,
+    /// Settings → Machines: the machine list and the one in use.
+    Machines,
 }
 
 /// Saved state of the preference file, shown beside the setting.
 #[derive(Default)]
 pub(super) struct PreferenceState {
     pub value: Preferences,
+    pub favorites_revision: u64,
     pub loaded: bool,
     writable: bool,
     writes: preferences::SaveQueue,
@@ -44,6 +47,15 @@ pub(super) struct PreferenceState {
     group: Option<PreferenceGroup>,
     /// `note` reports a problem, not progress.
     failed: bool,
+}
+
+impl PreferenceState {
+    fn replace_value(&mut self, value: Preferences) {
+        if self.value.favorite_models != value.favorite_models {
+            self.favorites_revision = self.favorites_revision.wrapping_add(1);
+        }
+        self.value = value;
+    }
 }
 
 impl Plait {
@@ -65,24 +77,23 @@ impl Plait {
 
     /// Select the Nth thread, machine, or project in sidebar order.
     pub(super) fn jump_to(&mut self, number: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(jump) = plait_core::navigation::jump(
-            &self.preferences.value.navigation,
+        let Some(jump) = plait_client::navigation::jump(
+            self.lists(),
             &self.state.projects,
-            &self.host.connection.threads,
+            self.host.connection.threads(),
             &self.filtered_threads(cx),
             self.preferences.value.jump_target,
             number,
         ) else {
             return;
         };
-        self.navigation
-            .collapsed
-            .remove(&self.state.projects[jump.project].checkout);
+        let checkout = self.state.projects[jump.project].checkout.clone();
+        self.set_project_collapsed(checkout, false);
         self.state.collapsed_projects.remove(&jump.project);
         self.state
             .collapsed_machines
             .remove(&(jump.project, jump.machine));
-        let id = self.host.connection.threads[jump.thread].id.clone();
+        let id = self.host.connection.threads()[jump.thread].id.clone();
         self.select_host_thread(id, window, cx);
     }
 
@@ -109,7 +120,7 @@ impl Plait {
                                 state.revision += 1;
                                 state.writes.queue(state.revision, merged.clone());
                             }
-                            state.value = merged;
+                            state.replace_value(merged);
                         }
                         Err(error) => {
                             state.writable = false;
@@ -125,6 +136,8 @@ impl Plait {
                 }
                 super::actions::install(cx, &this.preferences.value.keymap);
                 this.apply_theme(cx);
+                this.apply_code_size(cx);
+                this.reconcile_live_folding();
                 // Settings opened before this read shows the default font.
                 this.show_code_font(cx);
                 this.show_editor_commands(cx);
@@ -134,13 +147,13 @@ impl Plait {
                     this.load_fonts(cx);
                 }
                 this.pump_preferences(cx);
-                let mut value = this.preferences.value.clone();
-                value
-                    .navigation
-                    .observe(&this.host.connection.threads, None, true);
-                if value != this.preferences.value {
-                    this.persist_navigation(value, cx);
-                }
+                let threads = this.host.connection.threads().to_vec();
+                this.update_lists(
+                    |lists| {
+                        lists.observe(&threads, None, true);
+                    },
+                    cx,
+                );
                 this.rebuild_projects(cx);
                 cx.notify();
             });
@@ -166,7 +179,7 @@ impl Plait {
             return;
         }
         super::actions::install(cx, &value.keymap);
-        state.value = value.clone();
+        state.replace_value(value.clone());
         state.revision += 1;
         state.group = Some(group);
         state.failed = state.path.is_none();
@@ -269,5 +282,27 @@ impl Plait {
                 self.preference_note(Some(PreferenceGroup::Keyboard)),
                 |el, note| el.child(tag("keyboard-preference-note", note, colors().subtle)),
             )
+    }
+}
+
+#[cfg(test)]
+mod favorite_revision_tests {
+    use super::PreferenceState;
+    use plait_client::host::ModelChoice;
+
+    #[test]
+    fn revision_changes_only_when_favorites_change() {
+        let mut state = PreferenceState::default();
+        state.replace_value(state.value.clone());
+        assert_eq!(state.favorites_revision, 0);
+        let mut value = state.value.clone();
+        value.toggle_favorite(&ModelChoice {
+            provider: "p".into(),
+            model_id: "m".into(),
+        });
+        state.replace_value(value.clone());
+        assert_eq!(state.favorites_revision, 1);
+        state.replace_value(value);
+        assert_eq!(state.favorites_revision, 1);
     }
 }

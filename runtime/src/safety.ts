@@ -4,7 +4,7 @@ import { realpath, lstat, mkdir, open } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 import { dirname, isAbsolute, join } from 'node:path';
 import { homedir } from 'node:os';
-import { constants } from 'node:fs';
+import { constants, close as closeFd, fstat } from 'node:fs';
 import { promisify } from 'node:util';
 import { fail, HostError } from './protocol.ts';
 import type { CleanupProof } from './cleanup.ts';
@@ -19,25 +19,63 @@ async function git(root: string, args: string[], input?: string) {
   const result = await operation;
   return new TextDecoder('utf-8', { fatal: true }).decode(result.stdout);
 }
-export async function checkout(path: string): Promise<string> {
+export type ProjectVcs = 'git' | 'folder';
+export async function projectKind(path: string): Promise<{root: string; vcs: ProjectVcs}> {
   if (!isAbsolute(path)) fail('invalid_request', 'Checkout must be absolute.');
+  // A distinct code lets a client offer to choose the project again instead of retrying.
+  try { await lstat(path); } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') fail('checkout_missing', 'The folder no longer exists.');
+  }
   try {
     const root = await realpath(path);
-    return await realpath((await git(root, ['rev-parse', '--show-toplevel'])).trim());
+    if (!(await lstat(root)).isDirectory()) throw new Error('Not a directory');
+    // Plain only when no repository marker exists here or above, as Git itself
+    // decides: a `.git` file, or a `.git` folder with HEAD. A broken repository
+    // with a marker stays a repository and keeps Git's refusal.
+    let current = root;
+    for (;;) {
+      if (await repositoryMarker(current)) break;
+      const parent = dirname(current);
+      if (parent === current) return { root, vcs: 'folder' };
+      current = parent;
+    }
+    return { root: await realpath((await git(root, ['rev-parse', '--show-toplevel'])).trim()), vcs: 'git' };
   } catch (error) { const classified = resourceError(error); if (classified !== error) throw classified; fail('invalid_request', 'Checkout must be an accessible Git working tree.'); }
+}
+async function repositoryMarker(folder: string): Promise<boolean> {
+  try {
+    const entry = await lstat(join(folder, '.git'));
+    if (!entry.isDirectory()) return true;
+    await lstat(join(folder, '.git', 'HEAD'));
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
+  }
+}
+export async function checkout(path: string): Promise<string> { return (await projectKind(path)).root; }
+export async function gitCheckout(path: string): Promise<void> {
+  try {
+    if (await realpath((await git(path, ['rev-parse', '--show-toplevel'])).trim()) !== path) throw new Error('Checkout root changed');
+  }
+  catch (error) { const classified = resourceError(error); if (classified !== error) throw classified; fail('invalid_request', 'Checkout must be an accessible Git working tree.'); }
 }
 /** A linked worktree keeps its objects and refs in the main repository's Git
  * directory, outside its own root. Returns that directory, or undefined when
  * it lies inside the root as usual. Fixed per root, so it is remembered. */
 const sharedDirs = new Map<string, string | undefined>();
 export async function sharedGitDir(root: string): Promise<string | undefined> {
+  if ((await projectKind(root)).vcs === 'folder') return undefined;
   if (sharedDirs.has(root)) return sharedDirs.get(root);
   const dir = await realpath((await git(root, ['rev-parse', '--path-format=absolute', '--git-common-dir'])).trim());
   const shared = dir === root || dir.startsWith(root + '/') ? undefined : dir;
   sharedDirs.set(root, shared);
   return shared;
 }
-export async function dirtyPaths(root: string): Promise<string[]> {
+/** `vcs` is the thread's stored kind. Without it the checkout is treated as
+ * Git, so a repository that lost its `.git` is refused, never unprotected. */
+export async function dirtyPaths(root: string, vcs: ProjectVcs = 'git'): Promise<string[]> {
+  if (vcs === 'folder') return [];
   let names = '';
   try { names = await git(root, ['config', '--name-only', '--get-regexp', '^filter\\..*\\.(clean|process)$']); }
   catch (error) { if ((error as { code?: number }).code !== 1) throw error; }
@@ -64,7 +102,8 @@ export function sameImage(left: Postimage, right: Postimage) {
   return (['path', 'sha256', 'dev', 'ino', 'mode', 'size', 'mtime', 'ctime'] as const).every(key => left[key] === right[key]);
 }
 export const pathKey = (path: string) => path.normalize('NFD').toLowerCase();
-export async function ignoredPaths(root: string, paths: string[]): Promise<string[]> {
+export async function ignoredPaths(root: string, paths: string[], vcs: ProjectVcs = 'git'): Promise<string[]> {
+  if (vcs === 'folder') return [];
   if (!paths.length) return [];
   try { return (await git(root, ['check-ignore', '--no-index', '-z', '--stdin'], paths.join('\0') + '\0')).split('\0').filter(Boolean); }
   catch (error) { if ((error as { code?: number }).code === 1) return []; throw error; }
@@ -74,9 +113,21 @@ export async function rootIdentity(root: string): Promise<FileIdentity> {
   if (!info.isDirectory() || await realpath(root) !== root) fail('permission_denied', 'Checkout root changed.');
   return { dev: String(info.dev), ino: String(info.ino) };
 }
+export async function sameDirectory(stored: FileIdentity, current: FileIdentity, path: string): Promise<boolean> {
+  if (stored.ino !== current.ino) return false;
+  if (stored.dev === current.dev) return true;
+  try { return await realpath(path) === path; } catch { return false; }
+}
+export async function verifyExpectedIdentity(root: string, expected: unknown): Promise<void> {
+  if (expected === undefined) return;
+  const current = await rootIdentity(root);
+  const identity = expected as FileIdentity;
+  if (!await sameDirectory(identity, current, root)) fail('invalid_request', 'This folder changed since it was opened.');
+}
 export async function checkRoot(root: string, expected: FileIdentity) {
   const current = await rootIdentity(root);
-  if (current.dev !== expected.dev || current.ino !== expected.ino) fail('permission_denied', 'Checkout root identity changed. Create a new thread for the replacement.');
+  if (!await sameDirectory(expected, current, root)) fail('permission_denied', 'Checkout root identity changed. Create a new thread for the replacement.');
+  return current;
 }
 export async function identities(root: string, paths: string[]): Promise<FileIdentity[]> {
   const result: FileIdentity[] = [];
@@ -111,6 +162,7 @@ export type LeaseHandle = {
 export type CheckoutLease = LeaseHandle & {
   fd: number | undefined;
   lifecycleFd: number;
+  ownerFd?: number;
   class: LeaseClass;
   root: string;
   identity: FileIdentity;
@@ -151,7 +203,7 @@ function lockFailure(stderr: string, fallback: string): HostError {
   return new HostError('permission_denied', line ? `Checkout lease could not be acquired: ${line}` : 'Checkout lease could not be acquired safely.');
 }
 
-/** The per-user lease directory, as `plait_core::lease::default_lease_dir` finds it. */
+/** The per-user lease directory, as `plait_engine::lease::default_lease_dir` finds it. */
 function leaseDirectory(): string {
   const configured = process.env.PLAIT_LEASE_DIR;
   if (configured === undefined) return join(homedir(), '.local/share/plait-leases');
@@ -159,7 +211,7 @@ function leaseDirectory(): string {
   return configured;
 }
 const lockHex = (value: string) => BigInt(value).toString(16).padStart(16, '0');
-/** `plait_core::lease::checkout_lock_name`; `lock-fd` refuses a descriptor for any other file. */
+/** `plait_engine::lease::checkout_lock_name`; `lock-fd` refuses a descriptor for any other file. */
 export const checkoutLockName = (identity: FileIdentity) => `checkout-${lockHex(identity.dev)}-${lockHex(identity.ino)}.lock`;
 
 /**
@@ -170,6 +222,7 @@ export const checkoutLockName = (identity: FileIdentity) => `checkout-${lockHex(
  */
 async function openLifecycle(root: string): Promise<{ root: string; identity: FileIdentity; lifecycle: FileHandle }> {
   const canonical = await realpath(root).catch(() => fail('permission_denied', 'Checkout root changed.'));
+  // Persisted device numbers can change across boots; all processes lock the current identity.
   const identity = await rootIdentity(canonical);
   const directory = leaseDirectory();
   try {
@@ -217,6 +270,7 @@ export async function acquireCheckout(root: string, mode: LeaseClass = 'writer')
     return {
       fd: writer?.fd,
       lifecycleFd: lifecycle.fd,
+      ownerFd: owner?.fd,
       class: mode,
       root: canonical,
       identity: expected,
@@ -231,6 +285,56 @@ export async function acquireCheckout(root: string, mode: LeaseClass = 'writer')
     try { await writer?.close(); } finally { try { await owner?.close(); } finally { await lifecycle.close(); } }
     throw error;
   }
+}
+
+export type LeaseDescriptors = [number, number, number];
+export type LeaseExpectation = { root: string; identity: FileIdentity };
+
+/** The descriptors stay owned by the lease until releaseAfterHandoff. */
+export function handoffDescriptors(lease: CheckoutLease): LeaseDescriptors {
+  if (lease.class === 'reader' || lease.fd === undefined || lease.ownerFd === undefined) {
+    throw new Error('A writer checkout lease is required for handoff.');
+  }
+  return [lease.lifecycleFd, lease.fd, lease.ownerFd];
+}
+
+export async function releaseAfterHandoff(lease: CheckoutLease): Promise<void> {
+  // FileHandle.close closes the descriptor; it does not issue flock(LOCK_UN).
+  await lease.close();
+}
+
+const statFd = promisify(fstat);
+const closeDescriptor = promisify(closeFd);
+
+/** Validate against the current checkout and lock files before accepting ownership. */
+export async function adoptDescriptors(fds: LeaseDescriptors, expected: LeaseExpectation): Promise<CheckoutLease> {
+  if (new Set(fds).size !== 3 || fds.some(fd => !Number.isInteger(fd) || fd < 3)) {
+    throw new Error('Invalid checkout lease descriptors.');
+  }
+  const current = await rootIdentity(expected.root);
+  if (current.dev !== expected.identity.dev || current.ino !== expected.identity.ino) {
+    throw new Error('Checkout identity changed.');
+  }
+  const ownerName = `cleanup-owner-${lockHex(current.dev)}-${lockHex(current.ino)}.lock`;
+  const paths = [join(leaseDirectory(), checkoutLockName(current)), expected.root, join(leaseDirectory(), ownerName)];
+  for (let i = 0; i < fds.length; i++) {
+    const [held, target] = await Promise.all([statFd(fds[i], { bigint: true }), lstat(paths[i], { bigint: true })]);
+    if (held.dev !== target.dev || held.ino !== target.ino || (i === 1 ? !target.isDirectory() : !target.isFile())) {
+      throw new Error('Checkout lease descriptor identity mismatch.');
+    }
+  }
+  let closed = false;
+  return {
+    lifecycleFd: fds[0], fd: fds[1], ownerFd: fds[2], class: 'writer',
+    root: expected.root, identity: expected.identity,
+    async close() {
+      if (closed) return;
+      closed = true;
+      try { await closeDescriptor(fds[1]); } finally {
+        try { await closeDescriptor(fds[2]); } finally { await closeDescriptor(fds[0]); }
+      }
+    },
+  };
 }
 
 export async function acquireCommonMetadata(root: string, timeoutMs = 5000): Promise<CommonMetadataLease> {
@@ -305,7 +409,8 @@ export async function fileAction<T = FileResult>(root: string, action: string, p
 }
 
 /** Metadata only: no working-tree filters, project hooks, or optional locks. */
-export async function runHeader(root: string): Promise<string> {
+export async function runHeader(root: string, vcs: ProjectVcs = 'git'): Promise<string> {
+  if (vcs === 'folder') return `Plait run context (host supplied):\nWorking directory: ${JSON.stringify(root)}\nThis folder is not a Git repository. Nothing in it is protected or can be undone.\n`;
   const branch = (await git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']).catch(error => {
     if ((error as { code?: number }).code === 1) return '(detached)'; throw error;
   })).trim();

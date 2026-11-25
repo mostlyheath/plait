@@ -1,6 +1,6 @@
 use super::{OpenRepository, Plait, Refresh, theme::*, thread_controls::TextTooltip};
 use gpui::{prelude::*, *};
-use plait_core::{
+use plait_client::{
     git::WriteOp,
     model::{Change, DiffKind, DiffLine, DiffMode},
     patch::PatchRow,
@@ -8,7 +8,15 @@ use plait_core::{
 };
 use std::{path::Path, sync::Arc};
 
-const DIFF_LINE_HEIGHT: f32 = 21.;
+/// Row height for diff lines and file headings: 9 points of leading over the
+/// code size (21 at 12, 22 at 13, 23 at 14) so 13- and 14-point faces fit
+/// without clipping while keeping uniform_list rows equal height.
+fn diff_line_height() -> f32 {
+    code_size() + 9.
+}
+
+const PATCH_CHANGED: &str =
+    "The patch changed. Showing its current contents without the old selection.";
 
 pub(super) fn diff_limit_notice(recorded: bool) -> (&'static str, &'static str) {
     if recorded {
@@ -28,7 +36,7 @@ pub(super) fn diff_limit_notice(recorded: bool) -> (&'static str, &'static str) 
 /// while the same file and side are shown; another file ignores it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct LinePick {
-    pub checkout: plait_core::state::CheckoutId,
+    pub checkout: plait_client::state::CheckoutId,
     pub epoch: u64,
     pub path: std::path::PathBuf,
     pub mode: DiffMode,
@@ -78,7 +86,7 @@ fn stage_verb(change: &Change, stage: bool) -> &'static str {
 
 /// Where a diff's hunks stage to, captured once per frame for visible rows.
 pub(super) struct HunkTarget {
-    checkout: plait_core::state::CheckoutId,
+    checkout: plait_client::state::CheckoutId,
     epoch: u64,
     path: std::path::PathBuf,
     mode: DiffMode,
@@ -101,8 +109,8 @@ fn hunk_button(target: &HunkTarget, hunk: usize, header: &str, cx: &mut Context<
         if stage { "Stage hunk" } else { "Unstage hunk" },
         "diff-hunk",
     )
-    .h(px(DIFF_LINE_HEIGHT - 2.))
-    .font_family(".SystemUIFont")
+    .h(px(diff_line_height() - 2.))
+    .font_family(ui_font())
     .text_size(px(11.))
     .disabled(target.busy)
     .on_activate(cx, move |this, _, cx| {
@@ -131,8 +139,8 @@ fn discard_hunk_button(
         |name| name.to_string_lossy().into_owned(),
     );
     quiet_button(("hunk-discard", hunk), "Discard hunk…", "diff-hunk")
-        .h(px(DIFF_LINE_HEIGHT - 2.))
-        .font_family(".SystemUIFont")
+        .h(px(diff_line_height() - 2.))
+        .font_family(ui_font())
         .text_size(px(11.))
         .disabled(target.busy)
         .on_activate(cx, move |this, window, cx| {
@@ -159,7 +167,7 @@ fn line_text(line: &DiffLine) -> AnyElement {
         color: Some(rgb(colors().subtle).into()),
         ..Default::default()
     };
-    let end = plait_core::patch::hunk_ranges_end(&text);
+    let end = plait_client::patch::hunk_ranges_end(&text);
     StyledText::new(text)
         .with_highlights([(0..end, ranges)])
         .into_any_element()
@@ -179,7 +187,7 @@ fn file_heading(line: usize, name: &Arc<str>, directory: &Arc<str>) -> AnyElemen
         .aria_label(path)
         .audited()
         .w_full()
-        .h(px(DIFF_LINE_HEIGHT))
+        .h(px(diff_line_height()))
         .px_4()
         .bg(rgb(colors().rail))
         .border_t_1()
@@ -382,7 +390,9 @@ impl Plait {
                             ),
                     )
                     .when(!compact, |el| el.child(self.review_scope_button(cx)))
-                    .child(if count == 0 {
+                    .child(if count == 0 && snapshot.plain {
+                        empty("Not a Git repository", super::PLAIN_FOLDER).into_any_element()
+                    } else if count == 0 {
                         empty(
                             "Working tree clean",
                             "There are no staged, unstaged, or untracked changes.",
@@ -479,33 +489,36 @@ impl Plait {
         const LEAD: f32 = 260.;
         // The file and the side being shown come first, then what can be
         // done to that side.
+        let in_panel = self.panel_is_open();
         let lead = row()
             .flex_wrap()
             .flex_1()
-            .min_w(px(LEAD))
+            .min_w(px(if in_panel { 0. } else { LEAD }))
             .gap_2()
-            .child(
-                column()
-                    .flex_1()
-                    // The path stays readable when the header is crowded.
-                    .min_w(px(96.))
-                    .child(
-                        div()
-                            .truncate()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(change.display_path()),
-                    )
-                    .when_some(change.original.as_ref(), |el, original| {
-                        el.child(
-                            tag(
-                                "diff-renamed-from",
-                                format!("Renamed from {}", original.to_string_lossy()),
-                                colors().subtle,
-                            )
-                            .truncate(),
+            .when(!in_panel, |el| {
+                el.child(
+                    column()
+                        .flex_1()
+                        // The path stays readable when the header is crowded.
+                        .min_w(px(96.))
+                        .child(
+                            div()
+                                .truncate()
+                                .font_weight(FontWeight::MEDIUM)
+                                .child(change.display_path()),
                         )
-                    }),
-            )
+                        .when_some(change.original.as_ref(), |el, original| {
+                            el.child(
+                                tag(
+                                    "diff-renamed-from",
+                                    format!("Renamed from {}", original.to_string_lossy()),
+                                    colors().subtle,
+                                )
+                                .truncate(),
+                            )
+                        }),
+                )
+            })
             .when(self.workspace.turn_review.target.is_some(), |el| {
                 el.child(self.recorded_switch(cx))
             })
@@ -520,21 +533,23 @@ impl Plait {
             .ml_auto()
             .gap_2()
             // A deleted file has nothing left to open.
-            .when(change.worktree != b'D', |el| {
+            .when(!in_panel && change.worktree != b'D', |el| {
                 let path = change.path.clone();
                 el.child(
                     button("diff-open-file", "Open")
                         .aria_label(format!("Open {} in Files", change.display_path()))
-                        .on_activate(cx, move |this, _, cx| {
-                            this.open_file(path.clone(), None, cx)
+                        .on_activate(cx, move |this, window, cx| {
+                            this.open_file_in_view(path.clone(), window, cx)
                         }),
                 )
             })
-            .when(super::ways_out::on_disk(change), |el| {
+            .when(!in_panel && super::ways_out::on_disk(change), |el| {
                 el.child(super::ways_out::editor_button(
                     "diff-editor",
                     &change.display_path(),
                     self.shortcut_aria("file.open_in_editor"),
+                    self.host_is_local(),
+                    false,
                     cx,
                 ))
             })
@@ -569,6 +584,7 @@ impl Plait {
                                 "Discard…"
                             },
                         )
+                        .text_color(rgb(colors().red))
                         .disabled(repo.write().busy())
                         .on_activate(cx, move |this, window, cx| {
                             this.discard_file(index, window, cx)
@@ -580,9 +596,9 @@ impl Plait {
             // One 44-point line where there is room. In a narrow window the
             // actions wrap beneath, so no control runs off the edge.
             row()
-                .min_h(px(44.))
-                .px_4()
-                .py(px(6.))
+                .min_h(px(if in_panel { 32. } else { 44. }))
+                .px_2()
+                .py(px(if in_panel { 0. } else { 6. }))
                 .gap_x_2()
                 .gap_y(px(2.))
                 .flex_wrap()
@@ -702,7 +718,8 @@ impl Plait {
             DiffMode::Staged => "staged",
         };
         let path = pick.path.to_string_lossy();
-        let Some(quote) = plait_core::review::quote(&path, side, &diff.lines[pick.range()]) else {
+        let Some(quote) = plait_client::review::quote(&path, side, &diff.lines[pick.range()])
+        else {
             return;
         };
         if !composer.update(cx, |composer, cx| composer.append_block(&quote, window, cx)) {
@@ -776,7 +793,7 @@ impl Plait {
     pub(super) fn diff_lines(
         &self,
         id: &'static str,
-        diff: std::sync::Arc<plait_core::model::Diff>,
+        diff: std::sync::Arc<plait_client::model::Diff>,
         scroll: &UniformListScrollHandle,
         hint: Option<&'static str>,
         controls: DiffControls,
@@ -792,9 +809,12 @@ impl Plait {
                 let elapsed = diff.elapsed;
                 let truncated = diff.truncated;
                 let (limit_label, limit_detail) = diff_limit_notice(id == "recorded-patch");
-                let gutter = || {
+                let size = code_size();
+                let line_height = diff_line_height();
+                let gutter_width = (size * 3.7).round();
+                let gutter = move || {
                     div()
-                        .w(px(44.))
+                        .w(px(gutter_width))
                         .flex_shrink_0()
                         .text_right()
                         .text_color(rgb(colors().subtle))
@@ -802,6 +822,17 @@ impl Plait {
                 column()
                     .flex_1()
                     .min_h_0()
+                    .when(
+                        self.workspace.changed_patch.as_ptr() == std::sync::Arc::as_ptr(&diff),
+                        |el| {
+                            el.child(
+                                tag("patch-restore-notice", PATCH_CHANGED, colors().muted)
+                                    .px_4()
+                                    .py_2()
+                                    .text_size(px(12.)),
+                            )
+                        },
+                    )
                     .when(truncated, |el| {
                         el.child(
                             div()
@@ -822,7 +853,12 @@ impl Plait {
                         uniform_list(
                             id,
                             rows,
-                            cx.processor(move |_, range: std::ops::Range<usize>, _, cx| {
+                            cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
+                                let find = &this.workspace.diff_find;
+                                let hit =
+                                    (find.open && id != "commit-lines" && this.panel_is_open())
+                                        .then(|| find.matches.get(find.current))
+                                        .flatten();
                                 range
                                     .map(|drawn| {
                                         // Clicks, hunks, and ids use the patch line.
@@ -893,15 +929,24 @@ impl Plait {
                                             .audited()
                                             .gap_0()
                                             .w_full()
-                                            .h(px(DIFF_LINE_HEIGHT))
+                                            .h(px(line_height))
                                             .bg(rgb(if picked {
                                                 mix(c.bg, c.blue, 0.22)
                                             } else {
                                                 bg
                                             }))
                                             .font_family(mono())
-                                            .text_size(px(12.))
-                                            .line_height(px(DIFF_LINE_HEIGHT))
+                                            .text_size(px(size))
+                                            .line_height(px(line_height))
+                                            .when(
+                                                hit.is_some_and(|r| r.contains(&drawn))
+                                                    && this.panel_is_open(),
+                                                |el| {
+                                                    el.border_l_2()
+                                                        .border_color(rgb(c.blue))
+                                                        .bg(rgb(c.selected))
+                                                },
+                                            )
                                             .child(numbers)
                                             .child(
                                                 div()
@@ -946,23 +991,303 @@ impl Plait {
                         .min_h_0(),
                     )
                     .children(bar)
-                    .child(
-                        row()
-                            .h(px(28.))
-                            .px_4()
-                            .flex_shrink_0()
-                            .justify_between()
-                            .text_size(px(11.))
-                            .text_color(rgb(colors().subtle))
-                            .child(format!(
-                                "{} patch lines · {} ms",
-                                count,
-                                elapsed.as_millis()
-                            ))
-                            .children(hint),
-                    )
+                    .when(self.diagnostics || hint.is_some(), |el| {
+                        el.child(
+                            row()
+                                .h(px(28.))
+                                .px_4()
+                                .flex_shrink_0()
+                                .justify_between()
+                                .text_size(px(11.))
+                                .text_color(rgb(colors().subtle))
+                                .when(self.diagnostics, |el| {
+                                    el.child(format!(
+                                        "{count} patch lines · {} ms",
+                                        elapsed.as_millis()
+                                    ))
+                                })
+                                .children(hint),
+                        )
+                    })
                     .into_any_element()
             }
+        }
+    }
+
+    pub(super) fn count_panel_files(&mut self, cx: &mut Context<Self>) {
+        self.workspace.panel_file_counts.clear();
+        self.workspace.panel_change_total = None;
+        if self.panel_kind() != Some(plait_client::panel::PanelKind::Changes)
+            || self.panel_recorded()
+        {
+            return;
+        }
+        let Some(snapshot) = self
+            .state
+            .repository
+            .snapshot()
+            .ready()
+            .cloned()
+            .filter(|s| !s.changes.is_empty())
+        else {
+            return;
+        };
+        let source = snapshot.clone();
+        let backend = self.repository_backend();
+        let tab = self.tabs.model.active();
+        let task = cx.background_executor().spawn(async move {
+            let mut labels = std::collections::HashMap::new();
+            let mut totals = (0_usize, 0_usize);
+            // The host's bounded line-count read accepts 500 paths at a time.
+            for changes in source.changes.chunks(500) {
+                let paths = changes.iter().map(|c| c.path.clone()).collect::<Vec<_>>();
+                for count in backend.line_counts(&source.root, &paths)? {
+                    if let (Some(added), Some(removed)) = (count.added, count.removed) {
+                        totals.0 += added;
+                        totals.1 += removed;
+                        labels.insert(count.path, format!("+{added} −{removed}"));
+                    }
+                }
+            }
+            let total = (labels.len() == source.changes.len())
+                .then(|| format!("+{} −{}", totals.0, totals.1));
+            Ok::<_, String>((labels, total))
+        });
+        cx.spawn(async move |this, cx| {
+            let counts = task.await;
+            let _ = this.update(cx, |this, cx| {
+                if this.tabs.model.active() == tab
+                    && this
+                        .state
+                        .repository
+                        .snapshot()
+                        .ready()
+                        .is_some_and(|s| std::sync::Arc::ptr_eq(s, &snapshot))
+                    && let Ok((counts, total)) = counts
+                {
+                    this.workspace.panel_file_counts = counts;
+                    this.workspace.panel_change_total = total;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+    pub(super) fn panel_file_count(&self, recorded: bool) -> usize {
+        if recorded {
+            self.workspace
+                .turn_review
+                .record
+                .as_ref()
+                .map_or(0, |r| r.files.len())
+        } else {
+            self.state
+                .repository
+                .snapshot()
+                .ready()
+                .map_or(0, |s| s.changes.len())
+        }
+    }
+    pub(super) fn select_panel_file(
+        &mut self,
+        index: usize,
+        recorded: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.panel_is_open() {
+            return;
+        }
+        if recorded {
+            self.select_recorded_file(index, window, cx);
+        } else if let Some(change) = self
+            .state
+            .repository
+            .snapshot()
+            .ready()
+            .and_then(|s| s.changes.get(index))
+        {
+            self.select_file(
+                index,
+                if change.unstaged() {
+                    DiffMode::Unstaged
+                } else {
+                    DiffMode::Staged
+                },
+                window,
+                cx,
+            );
+        }
+        if self.panel_is_open() {
+            window.focus(
+                &self.panel_focus[plait_client::panes::PaneKind::Changes as usize],
+                cx,
+            );
+        }
+    }
+    fn panel_file_chip(
+        &self,
+        index: usize,
+        recorded: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let selected = if recorded {
+            self.workspace.turn_review.selected
+        } else {
+            self.state.repository.selected_diff().map(|d| d.file)
+        };
+        let (name, path) = if recorded {
+            let file = self
+                .workspace
+                .turn_review
+                .record
+                .as_ref()?
+                .files
+                .get(index)?;
+            (
+                format!("{} {}", file.name, file.counts),
+                file.detail.clone(),
+            )
+        } else {
+            let file = self
+                .state
+                .repository
+                .snapshot()
+                .ready()?
+                .changes
+                .get(index)?;
+            let path = file.display_path();
+            {
+                let name = path.rsplit('/').next().unwrap_or(&path);
+                let counts = self
+                    .workspace
+                    .panel_file_counts
+                    .get(&file.path)
+                    .map_or("", String::as_str);
+                (format!("{name} {counts}"), format!("{path} {counts}"))
+            }
+        };
+        Some(
+            nav_row(("panel-file", index), path, selected == Some(index))
+                .w_auto()
+                .max_w(px(160.))
+                .aria_selected(selected == Some(index))
+                .min_w_0()
+                .child(div().truncate().child(name))
+                .on_activate(cx, move |this, w, cx| {
+                    this.select_panel_file(index, recorded, w, cx)
+                })
+                .into_any_element(),
+        )
+    }
+    pub(super) fn panel_changes(&self, recorded: bool, width: f32, cx: &mut Context<Self>) -> Div {
+        let count = self.panel_file_count(recorded);
+        let per_row = (width / 132.).floor().max(1.) as usize;
+        let rows = count.div_ceil(per_row);
+        let chips = uniform_list(
+            "panel-file-chips",
+            rows,
+            cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
+                range
+                    .map(|row_index| {
+                        let start = row_index * per_row;
+                        row().h(px(30.)).min_w_0().gap_1().children(
+                            (start..(start + per_row).min(count))
+                                .filter_map(|i| this.panel_file_chip(i, recorded, cx)),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            }),
+        )
+        .h(px(30. * rows.min(2) as f32))
+        .flex_shrink_0();
+        let mut switch = segmented();
+        for (id, label, value) in [
+            ("panel-recorded", "This turn", true),
+            ("panel-uncommitted", "Uncommitted", false),
+        ] {
+            switch = switch.child(
+                segment(id, label, value == recorded)
+                    .disabled(value && self.panel_is_open() && !self.has_panel_record())
+                    .on_activate(cx, move |this, w, cx| this.choose_panel_scope(value, w, cx)),
+            );
+        }
+        let body = column()
+            .flex_1()
+            .min_h_0()
+            .child(
+                row()
+                    .min_h(px(40.))
+                    .px_2()
+                    .flex_wrap()
+                    .gap_1()
+                    .child(switch)
+                    .child(tag(
+                        "panel-count",
+                        format!("{count} {}", if count == 1 { "file" } else { "files" }),
+                        colors().muted,
+                    ))
+                    .when_some(
+                        self.workspace
+                            .turn_review
+                            .record
+                            .as_ref()
+                            .filter(|_| recorded),
+                        |el, r| el.child(tag("panel-totals", r.counts.clone(), colors().subtle)),
+                    )
+                    .when(!recorded, |el| {
+                        el.when_some(self.workspace.panel_change_total.clone(), |el, total| {
+                            el.child(tag("panel-working-totals", total, colors().subtle))
+                        })
+                    })
+                    .when(recorded, |el| el.children(self.panel_turn_heading(cx)))
+                    .when_some(self.way_out_target(), |el, target| {
+                        el.child(
+                            super::ways_out::editor_button(
+                                "panel-editor",
+                                &target.display,
+                                self.shortcut_aria("file.open_in_editor"),
+                                self.host_is_local(),
+                                true,
+                                cx,
+                            )
+                            .ml_auto(),
+                        )
+                    }),
+            )
+            .when(recorded, |el| {
+                let records = &self.workspace.turn_records;
+                let line = records.selection.review_line(&records.lines);
+                el.children(line.and_then(|line| self.undo_panel(line, cx)))
+            })
+            .when(self.workspace.turn_review.older, |el| {
+                el.child(tag(
+                    "panel-older-host",
+                    "Older host · recorded changes unavailable",
+                    colors().muted,
+                ))
+            })
+            .child(chips)
+            .when(self.workspace.diff_find.open, |el| {
+                el.child(self.find_bar(super::file_view::FindIn::Changes, cx))
+            });
+        if recorded && self.workspace.turn_review.target.is_none() {
+            body.child(empty(
+                "No recorded turn",
+                "This thread has no recorded diff to show.",
+            ))
+        } else if recorded {
+            body.child(self.recorded_diff(cx))
+        } else if let Load::Error(error) = self.state.repository.snapshot() {
+            body.child(empty("Cannot read repository", error.clone()))
+        } else if self.plain_folder_open() {
+            body.child(empty("Not a Git repository", super::PLAIN_FOLDER))
+        } else {
+            body.children(self.diff_header(cx))
+                .child(self.diff_view(cx))
+                .when(self.state.repository.snapshot().ready().is_some(), |el| {
+                    el.child(self.commit_box(cx))
+                })
         }
     }
 
@@ -1015,10 +1340,39 @@ impl Plait {
 }
 
 #[cfg(test)]
+pub(super) fn assert_hunk_action_font(plait: &Plait, cx: &mut Context<Plait>, expected: &str) {
+    for mode in [DiffMode::Unstaged, DiffMode::Staged] {
+        let target = HunkTarget {
+            checkout: plait.state.checkout_id(),
+            epoch: plait.state.repository.epoch(),
+            path: "src/main.rs".into(),
+            mode,
+            busy: false,
+        };
+        assert_eq!(
+            hunk_button(&target, 0, "@@", cx)
+                .text_style()
+                .font_family
+                .as_deref(),
+            Some(expected)
+        );
+        if mode == DiffMode::Unstaged {
+            assert_eq!(
+                discard_hunk_button(&target, 0, "@@", cx)
+                    .text_style()
+                    .font_family
+                    .as_deref(),
+                Some(expected)
+            );
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::{change_mark, split_path, stage_verb};
     use crate::ui::theme::colors;
-    use plait_core::model::Change;
+    use plait_client::model::Change;
     use std::path::PathBuf;
 
     fn change(path: &str) -> Change {

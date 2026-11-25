@@ -1,7 +1,7 @@
 //! Placement is negotiated off-thread before creation; replies retain their owner.
 use super::{Plait, host::Created, theme::*};
 use gpui::{prelude::*, *};
-use plait_core::host::{
+use plait_client::host::{
     self, Client,
     admission::{self, Placement, Request, Stage},
 };
@@ -69,9 +69,10 @@ impl Plait {
         self.admission.origin = Some((id.clone(), None));
         let epoch = self.host.connection.epoch;
         let thread = id.clone();
+        let client = self.host_client();
         let task = cx
             .background_executor()
-            .spawn(async move { admission::origin(&Client::from_environment()?, thread) });
+            .spawn(async move { admission::origin(&client, thread) });
         cx.spawn(async move |this, cx| {
             if let Ok(origin) = task.await {
                 let _ = this.update(cx, |this, cx| {
@@ -89,11 +90,12 @@ impl Plait {
     fn poll_preparation(&mut self, id: String, delay: bool, cx: &mut Context<Self>) {
         let epoch = self.host.connection.epoch;
         let thread = id.clone();
+        let client = self.host_client();
         let task = cx.background_executor().spawn(async move {
             if delay {
                 std::thread::sleep(Duration::from_millis(300));
             }
-            admission::preparation(&Client::from_environment()?, thread)
+            admission::preparation(&client, thread)
         });
         cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -187,9 +189,10 @@ impl Plait {
         }
         self.admission.capabilities = Some((epoch, root.clone(), false));
         let target = root.clone();
+        let client = self.host_client();
         let task = cx
             .background_executor()
-            .spawn(async move { admission::info(&Client::from_environment()?, target) });
+            .spawn(async move { admission::info(&client, target) });
         cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
@@ -249,7 +252,7 @@ impl Plait {
         let busy = self
             .host
             .connection
-            .threads
+            .threads()
             .iter()
             .any(|thread| thread.checkout == snapshot.checkout && thread.status.busy());
         if !busy && self.admission.refused_busy.as_ref() != Some(&snapshot.id) {
@@ -285,7 +288,7 @@ impl Plait {
         let snapshot = snapshot.clone();
         let harness = super::harnesses::harness_of(&snapshot);
         let mode = snapshot.harness.as_ref().and_then(|h| h.mode.clone());
-        let request_id = plait_core::host_state::request_id();
+        let request_id = plait_client::host_state::request_id();
         self.admission.source = Some(snapshot.id.clone());
         self.admission.continuation = None;
         self.admission.pending = Some(Request::CreateAdmittedThread {
@@ -352,71 +355,87 @@ impl Plait {
         );
         let epoch = self.host.connection.epoch;
         let expected = self.state.checkout_key().cloned();
+        let captured_expected = expected.clone();
         let journal = self.session.journal.clone();
         let polling = cx.background_executor().clone();
+        let client = self.host_client();
+        let supported = self.host.connection.has_checkout_identity;
         let task = cx.background_executor().spawn(async move {
-            if let Some(journal) = journal {
-                journal.flush().map_err(host::Error::Protocol)?;
+            if let Some(journal) = journal
+                && let Err(error) = journal.flush()
+            {
+                return (None, Err(host::Error::Protocol(error)));
             }
-            if let Some(expected) = expected {
-                expected.verify().map_err(host::Error::Protocol)?;
-            }
-            let client = Client::from_environment()?;
-            let Request::CreateAdmittedThread {
-                checkout,
-                source_thread_id,
-                harness,
-                provider,
-                model_id,
-                placement,
-                ..
-            } = &request
-            else {
-                unreachable!()
-            };
-            if *placement == Placement::Wait && !host::checkout_queue::available(&client)? {
-                return Err(host::Error::Protocol(
-                    "Wait needs a newer host. The draft and its original request are kept.".into(),
-                ));
-            }
-            if admission::info(&client, checkout.clone())?.is_none() {
-                if source_thread_id.is_some() {
+            let refreshed =
+                match super::host::verified_checkout(&client, expected.as_ref(), supported) {
+                    Ok(key) => key,
+                    Err(error) => return (None, Err(error)),
+                };
+            let result = async {
+                let Request::CreateAdmittedThread {
+                    checkout,
+                    source_thread_id,
+                    harness,
+                    provider,
+                    model_id,
+                    placement,
+                    ..
+                } = &request
+                else {
+                    unreachable!()
+                };
+                if *placement == Placement::Wait && !host::checkout_queue::available(&client)? {
                     return Err(host::Error::Protocol(
-                        "Linked worktree threads need a newer host.".into(),
+                        "Wait needs a newer host. The draft and its original request are kept."
+                            .into(),
                     ));
                 }
-                let reply: host::ThreadReply = client.request(&legacy)?;
-                return Ok((None, Some(reply)));
-            }
-            let receipt = await_admission(&client, &request, &polling).await?;
-            let reply = if receipt.state == Stage::Ready {
-                let thread = receipt
-                    .thread_id
-                    .clone()
-                    .ok_or_else(|| host::Error::Protocol("Admission omitted its thread.".into()))?;
-                let reply: host::ThreadReply = client.request(&host::Request::Watch {
-                    thread_id: thread.clone(),
-                    protocol_version: Some(host::PROTOCOL_VERSION),
-                })?;
-                if reply.thread.id != thread
-                    || reply.thread.checkout != receipt.checkout
-                    || super::harnesses::harness_of(&reply.thread) != *harness
-                    || reply.thread.model.provider != *provider
-                    || reply.thread.model.model_id != *model_id
-                {
-                    return Err(host::Error::Protocol(
-                        "Admission returned a different thread, checkout, model or harness.".into(),
-                    ));
+                if admission::info(&client, checkout.clone())?.is_none() {
+                    if source_thread_id.is_some() {
+                        return Err(host::Error::Protocol(
+                            "Linked worktree threads need a newer host.".into(),
+                        ));
+                    }
+                    let reply: host::ThreadReply = client.request(&legacy)?;
+                    return Ok((None, Some(reply)));
                 }
-                Some(reply)
-            } else {
-                None
-            };
-            Ok::<_, host::Error>((Some(receipt), reply))
+                let receipt = await_admission(&client, &request, &polling).await?;
+                let reply = if receipt.state == Stage::Ready {
+                    let thread = receipt.thread_id.clone().ok_or_else(|| {
+                        host::Error::Protocol("Admission omitted its thread.".into())
+                    })?;
+                    let reply: host::ThreadReply = client.request(&host::Request::Watch {
+                        thread_id: thread.clone(),
+                        protocol_version: Some(host::PROTOCOL_VERSION),
+                    })?;
+                    if reply.thread.id != thread
+                        || reply.thread.checkout != receipt.checkout
+                        || super::harnesses::harness_of(&reply.thread) != *harness
+                        || reply.thread.model.provider != *provider
+                        || reply.thread.model.model_id != *model_id
+                    {
+                        return Err(host::Error::Protocol(
+                            "Admission returned a different thread, checkout, model or harness."
+                                .into(),
+                        ));
+                    }
+                    Some(reply)
+                } else {
+                    None
+                };
+                Ok::<_, host::Error>((Some(receipt), reply))
+            }
+            .await;
+            (refreshed, result)
         });
         cx.spawn_in(window, async move |this, cx| {
-            let result = task.await;
+            let (refreshed, result) = task.await;
             let _ = this.update_in(cx, |this, window, cx| {
+                if this.host.connection.epoch == epoch
+                    && let (Some(old), Some(new)) = (&captured_expected, &refreshed)
+                {
+                    this.refresh_checkout_identity(old, new, cx);
+                }
                 if this.host.connection.epoch == epoch { this.finish_build_watch(&created.request_id, build_generation); }
                 if created.draft_id.is_some() {
                     this.finish_draft_creation(created, epoch, result, window, cx);
@@ -434,7 +453,7 @@ impl Plait {
                         if let Some(receipt) = receipt
                             && let Some(tree) = receipt.worktree {
                                 if let Some(identity) = &tree.identity {
-                                    this.tabs.identity.checkouts.insert(tree.path.clone(), plait_core::tabs::DirectoryIdentity {
+                                    this.tabs.identity.checkouts.insert(tree.path.clone(), plait_client::tabs::DirectoryIdentity {
                                         device: identity.dev.parse().unwrap(), inode: identity.ino.parse().unwrap(),
                                     });
                                 }

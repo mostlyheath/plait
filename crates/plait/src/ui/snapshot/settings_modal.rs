@@ -2,7 +2,7 @@
 use super::*;
 use crate::ui::{Workspace, selection::Owner};
 
-fn click(harness: &mut Harness, x: f32, y: f32) {
+pub(super) fn click(harness: &mut Harness, x: f32, y: f32) {
     harness.draw();
     let position = point(px(x), px(y));
     harness.pointer(PlatformInput::MouseDown(MouseDownEvent {
@@ -20,7 +20,12 @@ fn click(harness: &mut Harness, x: f32, y: f32) {
 }
 
 pub(super) fn walk(harness: &mut Harness, repository: &Path, suffix: &str) {
+    let before = harness
+        .window
+        .update(&mut harness.cx, |p, _, _| p.preferences.value.thread_tabs)
+        .unwrap();
     harness.connect(repository, false);
+    harness.update(|p, _, _| super::tabs::show_tabs(p));
     harness.change_snapshot(|snapshot| {
         snapshot.live_text = "Sample streaming text continues arriving.".into();
         snapshot.messages[1].text =
@@ -37,7 +42,10 @@ pub(super) fn walk(harness: &mut Harness, repository: &Path, suffix: &str) {
     harness.connect(repository, true);
     harness.update(|plait, window, cx| plait.show_settings(true, window, cx));
     harness.capture(&format!("tabs-modal-approval-shield-{suffix}"));
-    harness.update(|plait, window, cx| plait.show_settings(false, window, cx));
+    harness.update(|plait, window, cx| {
+        plait.show_settings(false, window, cx);
+        plait.preferences.value.thread_tabs = before;
+    });
 }
 
 #[core::prelude::v1::test]
@@ -97,6 +105,8 @@ fn focus_cycles_inside_and_workspace_shortcuts_are_inert() {
     let mut harness = Harness::new(&repository, None, 900., 600.);
     harness.connect(&repository, true);
     harness.update(|plait, window, cx| {
+        // An approval hides the composer until Reply instead opens it.
+        plait.workspace.show_composer_for_approval("a1".into());
         plait.focus_composer(window, cx);
         plait.show_settings(true, window, cx);
     });
@@ -315,7 +325,7 @@ fn project_replies_keep_their_target_after_dismissal() {
         return;
     }
     use crate::ui::settings_agent::AgentView;
-    use plait_core::host::{
+    use plait_client::host::{
         agent::AgentResources,
         policy::{CommandPolicy, PolicyReply},
     };
@@ -374,7 +384,7 @@ fn project_replies_keep_their_target_after_dismissal() {
         assert!(!plait.accept_policy(
             &(key.0 + 1, key.1),
             None,
-            Err(plait_core::host::Error::Protocol("stale".into())),
+            Err(plait_client::host::Error::Protocol("stale".into())),
             cx
         ));
     });
@@ -409,17 +419,23 @@ fn a_settings_picker_closes_before_the_modal() {
 }
 
 #[core::prelude::v1::test]
-fn menu_palette_and_sidebar_open_settings() {
-    if !isolated("settings_modal::menu_palette_and_sidebar_open_settings") {
+fn menu_palette_and_sidebar_foot_open_settings() {
+    if !isolated("settings_modal::menu_palette_and_sidebar_foot_open_settings") {
         return;
     }
     let scratch = std::env::temp_dir().join(format!("plait-modal-open-{}", std::process::id()));
     let repository = fixture_repository(&scratch);
-    let mut harness = Harness::new(&repository, None, 900., 600.);
+    let mut harness = Harness::with_host(&repository, None, 900., 600., None);
     harness.connect(&repository, false);
     harness.draw();
-    click(&mut harness, 218., 580.);
-    harness.update(|plait, _, _| assert!(plait.settings_open, "sidebar footer"));
+    let rail = harness
+        .window
+        .update(&mut harness.cx, |plait, _, _| {
+            plait.panel_width(crate::ui::panels::Panel::Sidebar)
+        })
+        .unwrap();
+    click(&mut harness, rail - 20., 577.);
+    harness.update(|plait, _, _| assert!(plait.settings_open, "sidebar foot"));
     harness.keystroke("escape");
     harness.update(|_, window, cx| window.dispatch_action(Box::new(crate::ui::Settings), cx));
     harness.update(|plait, _, _| assert!(plait.settings_open, "menu action"));
@@ -448,7 +464,7 @@ fn created(repository: &Path, request: &str, selection_epoch: u64) -> crate::ui:
         draft_id: None,
         request_id: request.into(),
         choice: choice(),
-        harness: plait_core::host::harness::HarnessId::Pi,
+        harness: plait_client::host::harness::HarnessId::Pi,
         selection_epoch,
         checkout: Some(repository.to_owned()),
     }
@@ -457,8 +473,8 @@ fn created(repository: &Path, request: &str, selection_epoch: u64) -> crate::ui:
 fn created_reply(
     repository: &Path,
     id: &str,
-) -> Result<plait_core::host::ThreadReply, plait_core::host::Error> {
-    Ok(plait_core::host::ThreadReply {
+) -> Result<plait_client::host::ThreadReply, plait_client::host::Error> {
+    Ok(plait_client::host::ThreadReply {
         thread: Snapshot {
             id: id.into(),
             checkout: repository.to_owned(),
@@ -823,7 +839,7 @@ fn creation_parking_finishes_beneath_the_modal() {
     let mut h = Harness::new(&repository, None, 900., 600.);
     h.connect(&repository, false);
     let (journal, _) =
-        plait_core::session::Journal::open(&scratch.join("session"), "/fixture-host".into())
+        plait_client::session::Journal::open(&scratch.join("session"), "/fixture-host".into())
             .unwrap();
     h.update(|p, window, cx| {
         p.host.connection.connected = false;

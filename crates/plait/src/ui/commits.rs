@@ -1,10 +1,10 @@
 //! The History tab: commits reachable from HEAD, newest first, and the
-//! selected commit's message and patch. Git runs in plait-core on the
+//! selected commit's message and patch. Git runs in plait-client on the
 //! background executor; pages load as the list asks for them.
 
 use super::{Plait, theme::*};
 use gpui::{prelude::*, *};
-use plait_core::{git::Commit, state::Load};
+use plait_client::{git::Commit, state::Load};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// How long ago, in the short form the thread list uses.
@@ -63,7 +63,12 @@ impl Plait {
                     .gap_2()
                     .text_size(px(11.))
                     .text_color(rgb(colors().subtle))
-                    .child(div().font_family(mono()).child(commit.short.clone()))
+                    .child(
+                        div()
+                            .font_family(mono())
+                            .text_size(px(code_size()))
+                            .child(commit.short.clone()),
+                    )
                     .child(
                         div()
                             .flex_1()
@@ -168,21 +173,33 @@ impl Plait {
         }
     }
 
-    pub(super) fn history_view(&self, wide: bool, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn history_view(&self, width: f32, cx: &mut Context<Self>) -> impl IntoElement {
         let branch = self
             .state
             .repository
             .snapshot()
             .ready()
             .map(|snapshot| snapshot.branch.clone());
+        let stacked = self.panel_is_open() || width < 540.;
         row()
+            .when(stacked, |el| el.flex_col())
             .gap_0()
             .flex_1()
             .min_h_0()
             .items_stretch()
             .child(
                 column()
-                    .w(px(if wide { 320. } else { 264. }))
+                    .map(|el| {
+                        if stacked {
+                            el.w_full().h(relative(0.45)).min_h_0().overflow_hidden()
+                        } else {
+                            el.w(px(if width > super::EXPANDED_CHROME_WIDTH {
+                                320.
+                            } else {
+                                264.
+                            }))
+                        }
+                    })
                     .flex_shrink_0()
                     .border_r_1()
                     .border_color(rgb(colors().border))
@@ -209,6 +226,7 @@ impl Plait {
                     .flex_1()
                     .min_w_0()
                     .min_h_0()
+                    .overflow_hidden()
                     .child(self.commit_patch(cx)),
             )
     }

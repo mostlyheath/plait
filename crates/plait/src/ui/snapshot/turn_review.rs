@@ -2,10 +2,88 @@
 use super::undo::{Host, inject, prepare, record, setup, wait};
 use super::*;
 use crate::ui::{Workspace, turn_review::TurnReview};
-use plait_core::review::recorded::{Record, Target};
+use plait_client::review::recorded::{Record, Target};
 use serde_json::{Value, json};
 
 const PATCH: &str = "diff --git a/src/review.rs b/src/review.rs\n--- a/src/review.rs\n+++ b/src/review.rs\n@@ -1,3 +1,4 @@\n pub fn refresh() {\n-    read_on_frame();\n+    queue_status();\n+    notify_when_ready();\n }\n";
+// These synthetic patches need only the line and hunk metadata drawn by the scene.
+fn fixture_diff(bytes: &[u8], truncated: bool, elapsed: Duration) -> plait_protocol::model::Diff {
+    use plait_protocol::model::{Diff, DiffKind, DiffLine};
+    use plait_protocol::patch::{self, FileHeaders};
+    let mut lines = Vec::new();
+    let mut hunks = Vec::new();
+    let (mut old, mut new) = (None, None);
+    for line in String::from_utf8_lossy(bytes).lines() {
+        if line.starts_with("diff ") {
+            old = None;
+            new = None;
+        }
+        if let Some(hunk) = line.strip_prefix("@@ ") {
+            let mut ranges = hunk.split_whitespace();
+            old = ranges
+                .next()
+                .and_then(|v| v.strip_prefix('-'))
+                .and_then(|v| v.split(',').next())
+                .and_then(|v| v.parse::<usize>().ok());
+            new = ranges
+                .next()
+                .and_then(|v| v.strip_prefix('+'))
+                .and_then(|v| v.split(',').next())
+                .and_then(|v| v.parse::<usize>().ok());
+        }
+        let kind = if line.starts_with("@@") {
+            DiffKind::Hunk
+        } else if old.is_none() && new.is_none() {
+            DiffKind::Header
+        } else if line.starts_with('+') {
+            DiffKind::Added
+        } else if line.starts_with('-') {
+            DiffKind::Removed
+        } else {
+            DiffKind::Context
+        };
+        let old_line = if kind == DiffKind::Removed || line.starts_with(' ') {
+            old
+        } else {
+            None
+        };
+        let new_line = if kind == DiffKind::Added || line.starts_with(' ') {
+            new
+        } else {
+            None
+        };
+        if old_line.is_some() {
+            old = old.map(|n| n.saturating_add(1));
+        }
+        if new_line.is_some() {
+            new = new.map(|n| n.saturating_add(1));
+        }
+        if kind == DiffKind::Hunk {
+            hunks.push(lines.len());
+        }
+        lines.push(DiffLine {
+            text: Arc::from(plait_client::display_text::escape(line)),
+            kind,
+            old_line,
+            new_line,
+        });
+    }
+    if lines.is_empty() {
+        return Diff::message(
+            "No text diff in this layer. The file may have changed; Refresh to update status.",
+            elapsed,
+        );
+    }
+    let patch::Rows { rows, widest } = patch::rows(&lines, FileHeaders::Omit);
+    Diff {
+        lines,
+        rows,
+        widest_row: widest,
+        hunks,
+        truncated,
+        elapsed,
+    }
+}
 fn target(p: &Plait, record: &str, path: Option<&str>) -> Target {
     Target {
         thread: p.host.thread.selected.clone().unwrap(),
@@ -19,7 +97,7 @@ pub(super) fn scene(
     h: &mut Harness,
     repository: &Path,
     kind: &str,
-    lines: Option<Arc<plait_core::model::Diff>>,
+    lines: Option<Arc<plait_client::model::Diff>>,
 ) {
     prepare(h, repository);
     h.update(|p,_,_| {
@@ -33,15 +111,51 @@ pub(super) fn scene(
         let target=target(p,id,None);
         let mut saved=Record::prepare(&p.workspace.turn_records.data,&target).unwrap();
         saved.describe(&p.workspace.turn_records.data,p.host.thread.snapshot.as_deref());
-        p.workspace.turn_review=TurnReview { selected:saved.selected(&target), target:Some(target), record:Some(Arc::new(saved)), diff:(!matches!(kind,"empty"|"loading"|"unavailable"|"old")).then(||lines.unwrap_or_else(||Arc::new(plait_core::git::recorded_diff(PATCH.as_bytes(),false,Duration::from_millis(18))))), epoch:Some(p.host.connection.epoch), ..Default::default() };
+        p.workspace.turn_review=TurnReview { selected:saved.selected(&target), target:Some(target), record:Some(Arc::new(saved)), diff:(!matches!(kind,"empty"|"loading"|"unavailable"|"old")).then(||lines.unwrap_or_else(||Arc::new(fixture_diff(PATCH.as_bytes(),false,Duration::from_millis(18))))), epoch:Some(p.host.connection.epoch), ..Default::default() };
         if kind=="loading" {p.workspace.turn_review.loading=true;}
         if kind=="unavailable" {p.workspace.turn_review.error=Some(("Unavailable","The saved content is unavailable.".into()));}
         if kind=="old" {p.workspace.turn_review.older=true;p.workspace.turn_review.error=Some(("Older host","Turn review needs a newer host. Current Git changes are still available.".into()));}
-        if kind=="clean" { p.state.repository.complete(plait_core::state::Job::Status {epoch:p.state.repository.epoch(),path:repository.into()}, plait_core::state::Reply::Status(Ok(Arc::new(plait_core::model::Snapshot {root:repository.into(),branch:"main".into(),named:true,tracking:None,changes:vec![],elapsed:Duration::ZERO})))); p.state.repository.view.changes.selected=None; }
+        if kind=="clean" { p.state.repository.complete(plait_client::state::Job::Status {epoch:p.state.repository.epoch(),path:repository.into()}, plait_client::state::Reply::Status(Ok(Arc::new(plait_client::model::Snapshot {root:repository.into(),branch:"main".into(),named:true,tracking:None,changes:vec![],elapsed:Duration::ZERO,plain:false})))); p.state.repository.view.changes.selected=None; }
         p.workspace.diff_scroll=UniformListScrollHandle::new(); p.workspace.file_scroll=UniformListScrollHandle::new();p.workspace.tab=Workspace::Changes;
     });
 }
+fn changed_patch_scene(h: &mut Harness, repository: &Path, suffix: &str) {
+    scene(h, repository, "ready", None);
+    h.update(|p, _, cx| {
+        let panel = p.tabs.model.panel_mut().unwrap();
+        panel.open_on(plait_client::panel::PanelKind::Changes);
+        panel.select_scope(plait_client::panel::Scope::ThisTurn);
+        p.workspace.tab = Workspace::Conversation;
+        let mut bookmark = p.capture_tab_bookmark(None, cx);
+        bookmark.changes.anchor.as_mut().unwrap().fingerprint = "previous patch".into();
+        bookmark.changes.selection = Some((1, 2));
+        p.workspace.restore = Some(bookmark);
+        p.workspace.restore_pending[1] = true;
+        p.restore_ready_bookmarks(cx);
+    });
+    capture_both(h, &format!("tabs-patch-changed-{suffix}"));
+    #[cfg(debug_assertions)]
+    assert!(
+        h.draw_a11y()
+            .nodes
+            .iter()
+            .any(|n| n.path.contains("patch-restore-notice"))
+    );
+}
+
+#[core::prelude::v1::test]
+fn changed_patch_restore_notice() {
+    if !isolated("turn_review::changed_patch_restore_notice") {
+        return;
+    }
+    let root = fixture_repository(&PathBuf::from(std::env::var_os(SCENE_HOME).unwrap()));
+    let output = std::env::var_os("PLAIT_SNAPSHOT_DIR").map(PathBuf::from);
+    let mut h = this_turn::harness(&root, output.as_deref(), 900., 600.);
+    changed_patch_scene(&mut h, &root, "narrow");
+}
+
 pub(super) fn walk(h: &mut Harness, repository: &Path, suffix: &str) {
+    changed_patch_scene(h, repository, suffix);
     for (name, kind) in [
         ("turn-recorded", "ready"),
         ("turn-recorded-clean", "clean"),
@@ -59,7 +173,7 @@ pub(super) fn walk(h: &mut Harness, repository: &Path, suffix: &str) {
         h,
         repository,
         "ready",
-        Some(Arc::new(plait_core::git::recorded_diff(
+        Some(Arc::new(fixture_diff(
             PATCH.as_bytes(),
             true,
             Duration::ZERO,
@@ -71,7 +185,7 @@ pub(super) fn walk(h: &mut Harness, repository: &Path, suffix: &str) {
         ("empty-deleted", "deleted", b"diff --git a/empty b/empty\ndeleted file mode 100644\n--- a/empty\n+++ /dev/null\n".as_slice()),
         ("latin1", "modified", b"diff --git a/latin1 b/latin1\n--- a/latin1\n+++ b/latin1\n@@ -1 +1 @@\n-caf\xe9\n+caf\xe8\n".as_slice()),
     ] {
-        scene(h, repository, "ready", Some(Arc::new(plait_core::git::recorded_diff(patch, false, Duration::ZERO))));
+        scene(h, repository, "ready", Some(Arc::new(fixture_diff(patch, false, Duration::ZERO))));
         h.update(|p, _, _| {
             let mut data = record("last", &["last"], "ready");
             data["paths"] = json!([{ "path": if name == "latin1" { "latin1" } else { "empty" }, "change": change, "added": if name == "latin1" { 1 } else { 0 }, "removed": if name == "latin1" { 1 } else { 0 } }]);
@@ -235,6 +349,35 @@ fn answer(request: &Value) -> Option<Value> {
         other => panic!("unexpected {other}"),
     }
 }
+#[core::prelude::v1::test]
+fn hidden_recorded_patch_survives_info_refresh() {
+    if !isolated("turn_review::hidden_recorded_patch_survives_info_refresh") {
+        return;
+    }
+    let (scratch, _, mut h) = setup("panel-recorded-cache");
+    let host = Host::start(answer);
+    h.update(|p, w, cx| p.open_turn_review(target(p, "last", Some("README.md")), w, cx));
+    wait(&mut h, |p| p.workspace.turn_review.diff.is_some());
+    h.update(|p, w, cx| {
+        p.show_tab(Workspace::Files, w, cx);
+        p.refresh_turn_review(cx);
+        assert!(p.workspace.turn_review.running);
+    });
+    wait(&mut h, |p| !p.workspace.turn_review.running);
+    h.update(|p, w, cx| {
+        p.host.connection.connected = false;
+        p.show_tab(Workspace::Changes, w, cx);
+        assert_eq!(p.recorded_file().unwrap().path, Path::new("README.md"));
+        assert!(
+            p.workspace.turn_review.diff.is_some(),
+            "lost the cached recorded patch"
+        );
+    });
+    drop(host);
+    drop(h);
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
 #[core::prelude::v1::test]
 fn recorded_identity_survives_undo() {
     if !isolated("turn_review::recorded_identity_survives_undo") {
@@ -429,7 +572,7 @@ fn scope_keys_and_clean_files() {
             p.workspace.turn_review.record.as_ref().unwrap().files.len(),
             1
         );
-        assert!(p.focus.is_focused(w));
+        assert!(p.panel_focus[plait_client::panes::PaneKind::Changes as usize].is_focused(w));
         p.open_review_scopes(w, cx);
     });
     wait(&mut h, |p| p.overlay.is_some());
@@ -437,7 +580,7 @@ fn scope_keys_and_clean_files() {
     press(&mut h, "escape");
     h.update(|p, w, _| {
         assert!(p.overlay.is_none());
-        assert!(p.focus.is_focused(w));
+        assert!(p.panel_focus[plait_client::panes::PaneKind::Changes as usize].is_focused(w));
     });
     h.update(|p, w, cx| p.open_review_scopes(w, cx));
     wait(&mut h, |p| p.overlay.is_some());
@@ -459,13 +602,14 @@ fn scope_keys_and_clean_files() {
     h.update(|p, _, cx| {
         assert_eq!(p.recorded_file().unwrap().path, PathBuf::from("README.md"));
         assert_eq!(p.recorded_file().unwrap().label, "Deleted");
-        p.state.repository.data.snapshot = Load::Ready(Arc::new(plait_core::model::Snapshot {
+        p.state.repository.data.snapshot = Load::Ready(Arc::new(plait_client::model::Snapshot {
             root: repository.clone(),
             branch: "main".into(),
             named: true,
             tracking: None,
             changes: vec![],
             elapsed: Duration::ZERO,
+            plain: false,
         }));
         p.state.repository.view.changes.selected = None;
         p.review_comparison(true, cx);
@@ -573,9 +717,9 @@ fn current_selects_a_present_layer() {
     let (scratch, repository, mut h) = setup("review-layer");
     scene(&mut h, &repository, "ready", None);
     h.update(|p, _, cx| {
-        use plait_core::{model::DiffMode, state::DiffKey};
+        use plait_client::{model::DiffMode, state::DiffKey};
         p.host.connection.connected = false;
-        let changes = vec![plait_core::model::Change {
+        let changes = vec![plait_client::model::Change {
             path: "src/review.rs".into(),
             original: None,
             index: b'M',
@@ -615,14 +759,15 @@ fn current_selects_a_present_layer() {
     std::fs::remove_dir_all(scratch).unwrap();
 }
 
-fn set_changes(p: &mut Plait, changes: Vec<plait_core::model::Change>) {
-    p.state.repository.data.snapshot = Load::Ready(Arc::new(plait_core::model::Snapshot {
+fn set_changes(p: &mut Plait, changes: Vec<plait_client::model::Change>) {
+    p.state.repository.data.snapshot = Load::Ready(Arc::new(plait_client::model::Snapshot {
         root: p.host.creation.checkout.clone(),
         branch: "main".into(),
         named: true,
         tracking: None,
         changes,
         elapsed: Duration::ZERO,
+        plain: false,
     }));
 }
 
@@ -733,7 +878,7 @@ fn first_old_host_file_click_opens_current() {
         let detail = p.closing_file_detail(&line.files[0], line);
         assert!(detail.contains("current Changes"));
         assert!(!detail.contains("recorded"));
-        assert_eq!(p.workspace.tab, Workspace::Changes);
+        assert_eq!(p.selected_view(), Workspace::Changes);
     });
     // A second click uses the known capability and performs no further probe.
     let probes = host.requests.lock().unwrap().len();
@@ -781,7 +926,7 @@ fn recorded_wording_names_only_available_states() {
         &mut h,
         &repository,
         "ready",
-        Some(Arc::new(plait_core::git::recorded_diff(
+        Some(Arc::new(fixture_diff(
             PATCH.as_bytes(),
             true,
             Duration::ZERO,

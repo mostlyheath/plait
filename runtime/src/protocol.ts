@@ -72,12 +72,12 @@ export type Summary = {
   /** Version 4 only. */
   harness?: HarnessId;
 };
-export const PROTOCOL_VERSIONS = [1, 2, 3, 4, 5, 6] as const;
+export const PROTOCOL_VERSIONS = [1, 2, 3, 4, 5, 6, 7] as const;
 export type Protocol = typeof PROTOCOL_VERSIONS[number];
 export type Request = Record<string, string | boolean | number | string[]> & { op: string };
 export function version(request: Request): Protocol {
   const asked = request.protocol_version;
-  return asked === 6 ? 6 : asked === 5 ? 5 : asked === 4 ? 4 : asked === 3 ? 3 : asked === 2 ? 2 : 1;
+  return PROTOCOL_VERSIONS.find(value => value === asked) ?? 1;
 }
 const TURN_LIMIT = 'Agent ended without an answer (turn_limit). Inspect the transcript before retrying.';
 /**
@@ -147,7 +147,12 @@ export function failure(error: unknown): Failure {
       && error.retryAfterSeconds! > 0 && error.retryAfterSeconds! <= 86_400 ? { retry_after_seconds: error.retryAfterSeconds } : {}) }
     : { code: 'internal', message: 'Host operation failed. No credentials or provider details are exposed.' };
 }
-const fields: Record<string, string[]> = {
+export function validIdentity(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const identity = value as Record<string, unknown>;
+  return Object.keys(identity).length === 2 && ['dev', 'ino'].every(key => typeof identity[key] === 'string' && /^[0-9]{1,20}$/.test(identity[key] as string));
+}
+const fields: Record<string, string[]> = { install_harness: ['harness'], start_harness_sign_in: ['harness'],
   status: [], set_default_model: ['provider', 'model_id'], list_threads: ['checkout'],
   create_thread: ['checkout', 'provider', 'model_id', 'request_id'],
   submit: ['thread_id', 'request_id', 'text'], stop: ['thread_id'],
@@ -210,9 +215,11 @@ export function validate(value: unknown): Request {
   const expected = sixth && Object.hasOwn(fields6, known) ? fields6[known] : fifth && Object.hasOwn(fields5, known) ? fields5[known] : fourth && Object.hasOwn(fields4, known) ? fields4[known]
     : third && Object.hasOwn(fields3, known) ? fields3[known] : Object.hasOwn(fields, known) ? fields[known] : undefined;
   // `approval` stays allowed on every version so version 1 keeps its specific error.
-  const allowed = expected && [...expected, 'protocol_version', ...(known === 'submit' ? ['approval'] : []), ...(third ? optional3[known] ?? [] : []),
+  const allowed = expected && [...expected, 'protocol_version', ...(['list_threads', 'create_thread', 'command_policy', 'agent_resources', 'submit'].includes(known) ? ['identity'] : []), ...(known === 'submit' ? ['approval'] : []), ...(third ? optional3[known] ?? [] : []),
     ...(fourth ? optional4[known] ?? [] : []), ...(fifth ? optional5[known] ?? [] : []), ...(sixth ? optional6[known] ?? [] : [])];
   if (!allowed || Object.keys(request).some(key => key !== 'op' && !allowed.includes(key))) fail('invalid_request', 'Unknown operation or field.');
+  if (request.identity !== undefined && !validIdentity(request.identity)) fail('invalid_request', 'Invalid checkout identity.');
+  if (request.identity !== undefined && request.checkout === undefined && known !== 'submit') fail('invalid_request', 'Identity requires a checkout.');
   if (request.protocol_version !== undefined && !PROTOCOL_VERSIONS.includes(request.protocol_version as Protocol)) {
     fail('invalid_request', 'Unsupported protocol_version.');
   }

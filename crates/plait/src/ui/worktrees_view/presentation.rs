@@ -2,7 +2,7 @@
 use super::{Graph, Item};
 use std::{collections::HashMap, ops::Range};
 
-pub(super) fn ancestry_label(lane: &plait_core::worktree_graph::Lane) -> Option<&'static str> {
+pub(super) fn ancestry_label(lane: &plait_client::worktree_graph::Lane) -> Option<&'static str> {
     if lane.no_new_commits {
         Some("No new commits")
     } else if lane.merged {
@@ -49,7 +49,7 @@ fn part(text: &mut String, value: &str, separator: &str) -> Range<usize> {
 }
 
 pub(super) fn preservation_label(
-    facts: &plait_core::git::worktree::inventory::Preservation,
+    facts: &plait_client::git::worktree::inventory::Preservation,
 ) -> String {
     [
         facts.changed.map_or_else(
@@ -202,10 +202,10 @@ mod tests {
         incoming: &[usize],
         outgoing: &[usize],
         joins: &[(usize, usize)],
-    ) -> plait_core::worktree_graph::Row {
-        plait_core::worktree_graph::Row {
-            commit: plait_core::git::log::GraphCommit {
-                commit: plait_core::git::log::Commit {
+    ) -> plait_client::worktree_graph::Row {
+        plait_client::worktree_graph::Row {
+            commit: plait_client::git::log::GraphCommit {
+                commit: plait_client::git::log::Commit {
                     id: "a".into(),
                     short: "a".into(),
                     author: String::new(),
@@ -284,7 +284,7 @@ mod tests {
     }
     #[test]
     fn unknown_publication_is_never_presented_as_a_commit_count() {
-        let mut facts = plait_core::git::worktree::inventory::Preservation {
+        let mut facts = plait_client::git::worktree::inventory::Preservation {
             changed: Some(0),
             exclusive: Some(0),
             ..Default::default()
@@ -302,7 +302,7 @@ mod tests {
 
     #[test]
     fn a_reset_or_fresh_lane_says_no_new_commits_instead_of_merged() {
-        let mut lane = plait_core::worktree_graph::Lane {
+        let mut lane = plait_client::worktree_graph::Lane {
             head: Some(2),
             base: Some(1),
             parent: Some(0),

@@ -2,7 +2,7 @@
 //!
 //! The table is the single source for key bindings, the menu bar, the command
 //! palette's entries and shortcut hints, and the keyboard table in
-//! docs/MACOS.md (a test compares them). Shortcuts are bound only by `bind`,
+//! docs/SHORTCUTS.md (a test compares them). Shortcuts are bound only by `bind`,
 //! which takes a map of action ID to keystroke, so a saved keymap can replace
 //! any default without touching the table.
 //!
@@ -27,6 +27,8 @@ use std::{collections::BTreeMap, rc::Rc};
 pub(super) enum Place {
     /// A menu item and a command palette entry.
     Menu,
+    /// A command palette entry with an optional shortcut.
+    Palette,
     /// The same, starting a new group in its menu.
     MenuGroup,
     /// Shortcut only: movement that needs no menu item.
@@ -99,8 +101,9 @@ pub(super) const ACTIONS: &[AppAction] = &[
     entry("thread.new_with_model", "New Thread with Model…", "File", Some("cmd-shift-n"), Item, || Box::new(NewThreadWithModel)),
     entry("thread.new_worktree", "New Thread in Worktree", "File", Some("cmd-alt-n"), Item, || Box::new(NewWorktreeThread)),
     entry("thread.switch_model", "Change Thread Model…", "File", Some("cmd-shift-m"), Item, || Box::new(SwitchThreadModel)),
-    entry("repository.open", "Open Repository…", "File", Some("cmd-o"), Group, || Box::new(OpenRepository)),
+    entry("repository.open", "Open Project…", "File", Some("cmd-o"), Group, || Box::new(OpenRepository)),
     entry("project.worktrees", "Worktrees", "File", None, Item, || Box::new(super::worktrees_view::Worktrees)),
+    entry("project.issues", "Linear Issues", "File", None, Item, || Box::new(super::issues_view::Issues)),
     entry("project.settings", "Project Settings…", "File", None, Item, || Box::new(ProjectSettings)),
     entry("file.open", "Open File…", "File", Some("cmd-p"), Item, || Box::new(QuickOpen)),
     entry("git.refresh", "Refresh Git Status", "File", Some("cmd-r"), Item, || Box::new(Refresh)),
@@ -113,7 +116,11 @@ pub(super) const ACTIONS: &[AppAction] = &[
     entry("window.close", "Close Window", "File", Some("cmd-shift-w"), Group, || Box::new(Close)),
     entry("palette.toggle", "Command Palette…", "View", Some("cmd-k"), Item, || Box::new(CommandPalette)),
     entry("view.toggle_sidebar", "Toggle Sidebar", "View", Some("cmd-b"), Group, || Box::new(ToggleSidebar)),
-    entry("view.toggle_inspector", "Toggle Git Inspector", "View", Some("cmd-l"), Item, || Box::new(ToggleInspector)),
+    entry("view.overview", "Every Thread", "View", Some("cmd-shift-e"), Item, || Box::new(ToggleOverview)),
+    entry("view.toggle_work", "Fill Panel", "View", Some("cmd-\\"), Item, || Box::new(FillPanel)),
+    entry("pane.next", "Focus Next Pane", "View", Some("cmd-alt-right"), Item, || Box::new(FocusNextPane)),
+    entry("pane.previous", "Focus Previous Pane", "View", Some("cmd-alt-left"), Item, || Box::new(FocusPreviousPane)),
+    entry("view.toggle_inspector", "Toggle Panel", "View", Some("cmd-l"), Item, || Box::new(ToggleInspector)),
     entry("view.toggle_changed_files", "Toggle Changed Files", "View", None, Item, || Box::new(ToggleChangedFiles)),
     entry("view.toggle_diagnostics", "Toggle Diagnostics", "View", Some("cmd-shift-d"), Item, || Box::new(ToggleDiagnostics)),
     entry("view.conversation", "Conversation", "View", Some("cmd-shift-1"), Item, || Box::new(Conversation)),
@@ -123,7 +130,9 @@ pub(super) const ACTIONS: &[AppAction] = &[
     entry("file.find", "Find", "View", Some("cmd-f"), Group, || Box::new(FindInFile)),
     entry("file.find_next", "Find Next", "View", Some("cmd-g"), Item, || Box::new(FindNext)),
     entry("file.find_previous", "Find Previous", "View", Some("cmd-shift-g"), Item, || Box::new(FindPrevious)),
+    entry("conversation.quote_selection", "Quote selection", "View", None, Place::Palette, || Box::new(super::selection::QuoteSelection)),
     entry("thread.next", "Next Thread", "View", Some("cmd-alt-down"), Group, || Box::new(NextThread)),
+    entry("thread.next_needing_me", "Next Thread Needing Me", "View", Some("cmd-alt-j"), Item, || Box::new(NextThreadNeedingMe)),
     entry("thread.previous", "Previous Thread", "View", Some("cmd-alt-up"), Item, || Box::new(PreviousThread)),
     entry("git.next_file", "Next Changed File", "View", Some("alt-down"), Item, || Box::new(NextFile)),
     entry("git.previous_file", "Previous Changed File", "View", Some("alt-up"), Item, || Box::new(PreviousFile)),
@@ -132,6 +141,8 @@ pub(super) const ACTIONS: &[AppAction] = &[
     entry("thread.show_archived", "Show or Hide Archived Threads", "Thread", None, Item, || Box::new(ToggleArchived)),
     entry("thread.filter", "Find a Thread", "Thread", None, Item, || Box::new(FilterThreads)),
     entry("thread.notifications", "Mute or Unmute Thread Alerts", "Thread", None, Item, || Box::new(ToggleNotifications)),
+    entry("thread.refresh_list", "Refresh Threads and Folders", "Thread", None, Item, || Box::new(RefreshThreadList)),
+    entry("project.show_hidden", "Show Hidden Projects", "Thread", None, Item, || Box::new(ShowHiddenProjects)),
     // Answers to the open thread's approval. Both need Command and Option, so
     // no typing slip sends one, and their keys sit far apart.
     entry("thread.undo_last_turn", "Undo Last Turn", "Thread", Some("cmd-alt-u"), Group, || Box::new(UndoLastTurn)),
@@ -251,7 +262,10 @@ fn winning_bindings(overrides: &KeyOverrides) -> Vec<bool> {
 /// The menu bar: one menu per category, in table order.
 fn menus() -> Vec<Menu> {
     let mut menus: Vec<(&str, Vec<MenuItem>)> = Vec::new();
-    for action in ACTIONS.iter().filter(|action| action.place != Hidden) {
+    for action in ACTIONS
+        .iter()
+        .filter(|action| matches!(action.place, Item | Group))
+    {
         if menus
             .last()
             .is_none_or(|(name, _)| *name != action.category)
@@ -726,7 +740,7 @@ fn documented(keystroke: &str) -> String {
     parts.collect::<Vec<_>>().join("-")
 }
 
-/// The default shortcuts as the Markdown table in docs/MACOS.md. The nine
+/// The default shortcuts as the Markdown table in docs/SHORTCUTS.md. The nine
 /// jumps are one row there, as they are in the shortcut editor.
 #[cfg(test)]
 fn keyboard_table() -> String {
@@ -752,7 +766,10 @@ fn keyboard_table() -> String {
 #[cfg(test)]
 mod tests {
     // Named imports: a glob would bring in GPUI's own `test` attribute.
-    use super::{ACTIONS, KeyOverrides, documented, keyboard_table, keystroke, menus, parses};
+    use super::{
+        ACTIONS, KeyOverrides, documented, keyboard_table, keystroke, menus, parses, reset_all,
+        unknown, winning_bindings,
+    };
     use std::collections::HashSet;
 
     #[test]
@@ -885,6 +902,23 @@ mod tests {
         assert_eq!(documented("cmd-alt-."), "Cmd-Option-period");
     }
 
+    #[test]
+    fn retired_pane_actions_never_bind_or_appear_in_menus() {
+        let mut overrides = KeyOverrides::from([
+            ("pane.split_right".into(), "cmd-n".into()),
+            ("pane.split_down".into(), "cmd-8".into()),
+            ("pane.close".into(), "cmd-7".into()),
+        ]);
+        assert_eq!(unknown(&overrides), 3);
+        assert_eq!(
+            winning_bindings(&overrides),
+            winning_bindings(&KeyOverrides::new())
+        );
+        let previous = overrides.clone();
+        reset_all(&mut overrides);
+        assert_eq!(overrides, previous);
+    }
+
     /// An approval answer must not come from a typing slip or from the
     /// composer's own keys, and Allow must not be one key away from Deny.
     #[test]
@@ -915,11 +949,11 @@ mod tests {
 
     #[test]
     fn the_documented_keyboard_table_is_this_table() {
-        let documentation = include_str!("../../../../docs/MACOS.md");
+        let documentation = include_str!("../../../../docs/SHORTCUTS.md");
         let table = keyboard_table();
         assert!(
             documentation.contains(&table),
-            "docs/MACOS.md is out of date. Replace its application shortcut table with:\n\n{table}"
+            "docs/SHORTCUTS.md is out of date. Replace its application shortcut table with:\n\n{table}"
         );
     }
 }

@@ -1,7 +1,7 @@
 //! Bounded presentation titles; the journal continues to own the full draft.
 use super::{Plait, session::UNTITLED};
 use gpui::*;
-use plait_core::tabs::{
+use plait_client::tabs::{
     TabTarget,
     row::{TabMetadata, TabState},
 };
@@ -40,7 +40,7 @@ fn first_line(text: &str) -> String {
 
 fn title(text: &str) -> String {
     let line = first_line(text);
-    plait_core::display_text::escape(if line.is_empty() { UNTITLED } else { &line })
+    plait_client::display_text::escape(if line.is_empty() { UNTITLED } else { &line })
 }
 
 fn rename(row: &mut TabMetadata, title: &str) {

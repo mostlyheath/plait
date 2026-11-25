@@ -1,12 +1,12 @@
 # Plait artwork
 
-This directory contains the Plait vector kit. Its SVGs reconstruct the supplied
-reference artwork; they are not the original source geometry.
+This directory contains the Plait vector kit. The kit reconstructs the supplied
+reference artwork. The worktree icon is a later addition drawn for Plait.
 [README.txt](README.txt) records the provenance, limitations, and editing notes.
 
 - `marks/`: ribbon-P artwork for branding; not shown inside the current app window.
 - `wordmarks/`: outlined lettering that needs no font; not used in current navigation.
-- `icons/`: category glyphs. GPUI uses the project, machine, thread, and Git paths
+- `icons/`: category glyphs. GPUI uses the project, machine, thread, Git, and worktree paths
   with the UI's state colors. Do not add controls for unimplemented features.
 - `app-icon/plait-app-icon.svg`: editable app-icon master.
 - `app-icon/plait-app-icon-1024.png`: export used to generate the macOS icon set.

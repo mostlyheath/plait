@@ -1,5 +1,6 @@
 use super::*;
-use plait_core::update::{self, Offer, install};
+use crate::update::install;
+use plait_client::update::{self, Offer};
 use std::sync::Arc;
 
 /// Release update progress. Network and install work run on the background executor.
@@ -82,7 +83,7 @@ impl Plait {
         let busy = self
             .host
             .connection
-            .threads
+            .threads()
             .iter()
             .filter(|thread| thread.status.busy())
             .count();

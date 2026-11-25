@@ -106,7 +106,7 @@ struct Snapshot {
 
 impl Drop for Snapshot {
     fn drop(&mut self) {
-        plait_core::host::providers::wipe(&mut self.text);
+        plait_client::host::providers::wipe(&mut self.text);
     }
 }
 
@@ -458,7 +458,7 @@ impl TextField {
         self.revealed
     }
 
-    pub fn take_secret(&mut self, cx: &mut Context<Self>) -> plait_core::host::providers::Secret {
+    pub fn take_secret(&mut self, cx: &mut Context<Self>) -> plait_client::host::providers::Secret {
         let text = std::mem::take(&mut self.line.value.text);
         self.line = Line {
             sensitive: self.secret,
@@ -468,7 +468,7 @@ impl TextField {
         self.scroll = px(0.);
         self.input_changed = true;
         cx.notify();
-        plait_core::host::providers::Secret::new(text)
+        plait_client::host::providers::Secret::new(text)
     }
 
     fn display_offset(&self, offset: usize) -> usize {

@@ -1,9 +1,9 @@
 //! Capture semantic locations before shedding a thread's rendered payload.
 use super::{Plait, Workspace, file_view::FindIn, text_field::TextField};
 use gpui::*;
-use plait_core::{
+use plait_client::{
     tabs::bookmark::*,
-    transcript::{self, Row},
+    transcript::{self, row_key},
 };
 
 fn milli(value: Pixels) -> i32 {
@@ -35,15 +35,6 @@ fn query(field: &Option<Entity<TextField>>, cx: &App) -> String {
         .map(|f| f.read(cx).text().to_owned())
         .unwrap_or_default()
 }
-pub(super) fn row_key(row: Row<'_>) -> String {
-    match row {
-        Row::Message(m) => format!("message:{}", m.id),
-        Row::Reasoning(m) => format!("reasoning:{}", m.id),
-        Row::Tool(t) => format!("tool:{}", t.id),
-        Row::Streaming(_) => "stream".into(),
-        Row::LiveReasoning(_) => "live-reasoning".into(),
-    }
-}
 
 impl Plait {
     pub(super) fn capture_tab_bookmark(&self, window: Option<&Window>, cx: &App) -> ThreadBookmark {
@@ -53,13 +44,16 @@ impl Plait {
             ConversationScroll::Latest
         } else {
             self.conversation_snapshot()
-                .and_then(|s| {
-                    w.live_layout
-                        .get(top.item_ix)
-                        .and_then(|slot| transcript::resolve(s, *slot))
+                .and_then(|s| match w.live_layout.rows.get(top.item_ix)? {
+                    plait_client::folding::DisplayRow::Slot(slot) => {
+                        transcript::resolve(s, *slot).map(row_key)
+                    }
+                    plait_client::folding::DisplayRow::FoldedTurn { id, .. } => {
+                        Some(format!("message:{id}"))
+                    }
                 })
                 .map(|row| ConversationScroll::Anchored {
-                    row: row_key(row),
+                    row,
                     offset_millipoints: milli(top.offset_in_item),
                 })
                 .unwrap_or_default()
@@ -77,12 +71,15 @@ impl Plait {
                 scroll,
                 before: w.history.cache.restore_cursor(
                     self.conversation_snapshot()
-                        .and_then(|s| {
-                            w.live_layout
-                                .get(top.item_ix)
-                                .and_then(|slot| transcript::resolve(s, *slot))
+                        .and_then(|s| match w.live_layout.rows.get(top.item_ix)? {
+                            plait_client::folding::DisplayRow::Slot(slot) => {
+                                transcript::resolve(s, *slot)
+                                    .and_then(plait_client::history::Key::row)
+                            }
+                            plait_client::folding::DisplayRow::FoldedTurn { id, .. } => {
+                                Some(plait_client::history::Key::Message(id.clone()))
+                            }
                         })
-                        .and_then(plait_core::history::Key::row)
                         .as_ref(),
                 ),
                 pages: 1,
@@ -102,7 +99,8 @@ impl Plait {
                 } else {
                     selected.map(|key| key.path.to_string_lossy().into_owned())
                 },
-                staged: selected.is_some_and(|key| key.mode == plait_core::model::DiffMode::Staged),
+                staged: selected
+                    .is_some_and(|key| key.mode == plait_client::model::DiffMode::Staged),
                 scope: w
                     .turn_review
                     .target
@@ -286,11 +284,15 @@ impl Plait {
                 self.workspace.history.expanded.insert(id.into());
             }
         }
-        self.restore_find_bookmark(FindIn::Conversation, &bookmark.conversation.find, cx);
-        self.restore_find_bookmark(FindIn::File, &bookmark.files.find, cx);
-        self.workspace.file_viewer.path = bookmark.files.path.as_ref().map(Into::into);
-        self.workspace.file_viewer.root = self.file_root();
-        self.workspace.file_viewer.reveal = Some(bookmark.files.line as usize);
+        if let Some(saved) = self
+            .tabs
+            .model
+            .panel()
+            .map(|p| p.diff_find.clone())
+            .filter(|f| f.open || !f.query.is_empty())
+        {
+            self.restore_find_bookmark(FindIn::Changes, &saved, cx);
+        }
         if let Some(composer) = self.visible_composer() {
             composer.update(cx, |c, _| c.restore_cursor(&bookmark.draft));
         }
@@ -302,8 +304,11 @@ impl Plait {
             && let Some(thread) = self.host.thread.selected.clone()
         {
             self.clear_turn_review();
+            if self.panel_recorded() {
+                self.workspace.turn_records.selection.earlier(original);
+            }
             self.workspace.turn_review.window = Some(window.window_handle());
-            self.workspace.turn_review.target = Some(plait_core::review::recorded::Target {
+            self.workspace.turn_review.target = Some(plait_client::review::recorded::Target {
                 thread,
                 checkout: self.host.creation.checkout.clone(),
                 record: record.clone(),
@@ -313,10 +318,23 @@ impl Plait {
             self.workspace.turn_review.current = *compare_current;
         }
         let focus = bookmark.focus;
-        let view = bookmark.view;
-        self.workspace.restore_pending = [true; 4];
-        self.workspace.restore = Some(bookmark);
-        self.show_tab(view, window, cx);
+        let view = Workspace::Conversation;
+        self.install_view_locations(bookmark, cx);
+        if let Some(target) = self
+            .tabs
+            .model
+            .panel()
+            .filter(|p| p.scope == plait_client::panel::Scope::ThisTurn)
+            .and_then(|p| p.recorded.clone())
+        {
+            self.workspace
+                .turn_records
+                .selection
+                .earlier(&target.original);
+            self.workspace.turn_review.target = Some(target);
+            self.workspace.turn_review.window = Some(window.window_handle());
+        }
+        self.present_workspace(view, window, cx);
         match focus {
             FocusTarget::Composer => self.focus_composer(window, cx),
             FocusTarget::ConversationFind => {
@@ -333,6 +351,17 @@ impl Plait {
         }
         self.pump(cx);
         self.restore_ready_bookmarks(cx);
+    }
+
+    fn install_view_locations(&mut self, bookmark: ThreadBookmark, cx: &mut Context<Self>) {
+        self.restore_find_bookmark(FindIn::Conversation, &bookmark.conversation.find, cx);
+        self.restore_find_bookmark(FindIn::File, &bookmark.files.find, cx);
+        self.workspace.file_viewer.path = bookmark.files.path.as_ref().map(Into::into);
+        self.workspace.file_viewer.root = self.file_root();
+        self.workspace.file_viewer.reveal = Some(bookmark.files.line as usize);
+        self.workspace.changed_patch = Default::default();
+        self.workspace.restore_pending = [true; 4];
+        self.workspace.restore = Some(bookmark);
     }
 
     pub(super) fn restore_tab_image(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -417,7 +446,7 @@ impl Plait {
                         });
                     }
                 } else {
-                    self.notice = Some("The patch changed. Showing its current contents without the old selection.".into());
+                    self.workspace.changed_patch = std::sync::Arc::downgrade(diff);
                 }
             }
             self.workspace.restore_pending[1] = false;
@@ -461,9 +490,7 @@ impl Plait {
                 ));
             self.workspace.restore_pending[3] = false;
         }
-        if self.workspace.restore_pending[0]
-            && let Some(snapshot) = self.conversation_snapshot()
-        {
+        if self.workspace.restore_pending[0] && self.conversation_snapshot().is_some() {
             match &bookmark.conversation.scroll {
                 ConversationScroll::Latest => {
                     self.workspace.live_scroll.scroll_to_end();
@@ -473,12 +500,20 @@ impl Plait {
                     row,
                     offset_millipoints,
                 } => {
-                    if let Some(item_ix) = self.workspace.live_layout.iter().position(|slot| {
-                        transcript::resolve(snapshot, *slot).is_some_and(|r| row_key(r) == *row)
-                    }) {
+                    let layout = &self.workspace.live_layout;
+                    if let Some(&raw) = layout.raw_index_by_key.get(row) {
+                        let item_ix = layout
+                            .raw_index_of_row
+                            .partition_point(|&start| start <= raw)
+                            - 1;
+                        let inside_fold = layout.raw_index(item_ix) != raw;
                         self.workspace.live_scroll.scroll_to(ListOffset {
                             item_ix,
-                            offset_in_item: pixels(*offset_millipoints),
+                            offset_in_item: if inside_fold {
+                                px(0.)
+                            } else {
+                                pixels(*offset_millipoints)
+                            },
                         });
                         self.workspace.restore_pending[0] = false;
                     } else if self.workspace.history.cache.loaded

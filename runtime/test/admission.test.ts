@@ -146,7 +146,7 @@ test('lost reply and restart resume the same admission; linked continuation leav
   const sourceBefore=structuredClone(h.runtime.snapshot(source.id));
   // A crash between child completion and the admission receipt update.
   h.runtime.store.db.prepare('UPDATE thread_admissions SET result=? WHERE request_id=?').run(JSON.stringify({...first,state:'preparing',thread_id:null,worktree:null,checkout:h.root}),'linked');
-  await h.close();const next=h.reopen();const recovered=await admitted(next.runtime,'linked');assert.equal(recovered.thread_id,first.thread_id);
+  await h.close();const next=await h.reopen();const recovered=await admitted(next.runtime,'linked');assert.equal(recovered.thread_id,first.thread_id);
   const origin:any=await next.runtime.reply({op:'thread_origin',thread_id:first.thread_id});assert.equal(origin.result.admission.source_thread_id,source.id);
   assert.deepEqual(next.runtime.snapshot(source.id),sourceBefore);
   assert.equal(next.runtime.store.db.prepare('SELECT count(*) AS n FROM worktree_operations').get()!.n,1);
@@ -174,7 +174,7 @@ test('project authorization survives restart but never follows a replaced reposi
   const {rename}=await import('node:fs/promises');const h=await codex(t);await chmod(h.store,0o700);await commit(h.root);
   const info:any=await h.runtime.reply({op:'admission_info',checkout:h.root});
   assert.equal((await h.runtime.reply({op:'set_project_isolation',checkout:h.root,identity:info.result.project_identity,auto_worktree:true})).ok,true);
-  await h.close();const next=h.reopen();assert.equal((await next.runtime.reply({op:'admission_info',checkout:h.root}) as any).result.auto_worktree,true);
+  await h.close();const next=await h.reopen();assert.equal((await next.runtime.reply({op:'admission_info',checkout:h.root}) as any).result.auto_worktree,true);
   await rename(h.root,h.root+'-original');await mkdir(h.root);await exec('/usr/bin/git',['init','-q',h.root]);await commit(h.root);
   const replacement:any=await next.runtime.reply({op:'admission_info',checkout:h.root});assert.equal(replacement.result.auto_worktree,false);
   assert.equal((await next.runtime.reply({op:'set_project_isolation',checkout:h.root,identity:info.result.project_identity,auto_worktree:true})).error?.code,'permission_denied');
@@ -261,4 +261,32 @@ test('a run start waits for an in-flight placement probe instead of colliding wi
   assert.equal((await info as any).result.busy,false);
   await until(()=>!h.runtime.sessions.has(created.result.thread.id));
   assert.equal(h.runtime.snapshot(created.result.thread.id).status,'idle',JSON.stringify(h.runtime.snapshot(created.result.thread.id).error));
+});
+
+test('plain folder threads keep their kind and run Pi without records', async t => {
+  const h = await pi(t, [
+    fauxAssistantMessage([fauxToolCall('write', { path: 'created.txt', content: 'hello' }, { id: 'write' })], { stopReason: 'toolUse' }),
+    fauxAssistantMessage('done'), fauxAssistantMessage('done'),
+  ]);
+  const folder = join(h.base, 'plain'); await mkdir(folder);
+  const info: any = await h.runtime.reply({ op: 'admission_info', checkout: folder });
+  assert.equal(info.result.parent, null); assert.equal(info.result.refusal, 'Worktrees need a Git repository.');
+  assert.equal(info.result.auto_worktree, false);
+  const isolation = await h.runtime.reply({ op: 'set_project_isolation', checkout: folder, identity: info.result.identity, auto_worktree: true });
+  assert.equal(isolation.error?.message, 'Worktrees need a Git repository.');
+  const created: any = await h.runtime.reply({ protocol_version: 6, op: 'create_thread', checkout: folder, request_id: 'plain', provider: 'faux', model_id: 'faux-1' });
+  assert.equal(created.ok, true, JSON.stringify(created)); const id = created.result.thread.id;
+  const run = async (request_id: string) => {
+    const reply = await h.runtime.reply({ protocol_version: 6, op: 'submit', thread_id: id, request_id, text: 'go', approval: 'auto' });
+    assert.equal(reply.ok, true, JSON.stringify(reply)); await until(() => !h.runtime.sessions.has(id));
+    assert.equal(h.runtime.snapshot(id).status, 'idle', JSON.stringify(h.runtime.snapshot(id).error));
+  };
+  await run('run1'); assert.equal(await readFile(join(folder, 'created.txt'), 'utf8'), 'hello');
+  await exec('/usr/bin/git', ['init', '-q', folder]); await run('run2');
+  assert.equal(h.runtime.store.db.prepare('SELECT vcs FROM thread_vcs WHERE thread=?').get(id)?.vcs, 'folder');
+  assert.equal(h.runtime.store.db.prepare('SELECT count(*) AS n FROM records WHERE thread=?').get(id)?.n, 0);
+  const undo = await h.runtime.reply({ protocol_version: 6, op: 'undo_turn', thread_id: id, record_id: 'missing', request_id: 'undo' });
+  assert.equal(undo.error?.code, 'unsupported'); assert.equal(undo.error?.message, 'Undo needs a Git repository; this folder is not one.');
+  const review: any = await h.runtime.reply({ op: 'turn_review_info', thread_id: id });
+  assert.equal(review.result.features.record_diff, false);
 });

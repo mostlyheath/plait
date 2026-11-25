@@ -1,6 +1,13 @@
 //! Injected tab states; no fixture data reaches the shipped view.
 use super::*;
-use plait_core::tabs::{CheckoutKey, TabTarget};
+use plait_client::tabs::{CheckoutKey, TabTarget};
+
+pub(super) fn show_tabs(plait: &mut Plait) {
+    plait.preferences.value.thread_tabs = Some(plait_client::preferences::ThreadTabs::Show);
+    for project in &mut plait.state.projects {
+        project.machines[0].name = "studio".into();
+    }
+}
 
 pub(super) fn install(harness: &mut Harness, count: usize) {
     install_projects(harness, count, false);
@@ -8,15 +15,16 @@ pub(super) fn install(harness: &mut Harness, count: usize) {
 
 fn install_projects(harness: &mut Harness, count: usize, projects: bool) {
     harness.update(move |plait, _, _| {
+        show_tabs(plait);
         plait.tabs = Default::default();
         let template = plait
             .host
             .connection
-            .threads
+            .threads()
             .first()
             .cloned()
             .unwrap_or_default();
-        plait.host.connection.threads.clear();
+        plait.host.connection.threads_mut().clear();
         for index in 0..count {
             let mut thread = template.clone();
             thread.id = if index == 0 {
@@ -75,7 +83,7 @@ fn install_projects(harness: &mut Harness, count: usize, projects: bool) {
                 .model
                 .open(target, Some(plait.host.connection.epoch))
                 .unwrap();
-            plait.host.connection.threads.push(thread);
+            plait.host.connection.threads_mut().push(thread);
         }
         if let Some(first) = plait.tabs.model.tabs().first() {
             let id = first.id();
@@ -273,8 +281,8 @@ pub(super) fn cold_workspaces() {
     ] {
         let old = h
             .window
-            .update(&mut h.cx, |p, _, cx| {
-                p.workspace.tab = view;
+            .update(&mut h.cx, |p, w, cx| {
+                p.show_tab(view, w, cx);
                 p.workspace.thread_files.collapsed = true;
                 p.workspace.thread_controls.usage_open = true;
                 p.workspace
@@ -282,7 +290,7 @@ pub(super) fn cold_workspaces() {
                     .update(cx, |f, cx| f.set_text("Preserve this commit message", cx));
                 p.restore_find_bookmark(
                     super::super::file_view::FindIn::Conversation,
-                    &plait_core::tabs::bookmark::FindBookmark {
+                    &plait_client::tabs::bookmark::FindBookmark {
                         open: true,
                         query: "queue".into(),
                         current: None,
@@ -311,7 +319,7 @@ pub(super) fn cold_workspaces() {
         h.draw();
         h.keystroke("cmd-1");
         h.update(|p, _, cx| {
-            assert_eq!(p.workspace.tab, view);
+            assert_eq!(p.selected_view(), view);
             assert_eq!(
                 p.workspace.composers[THREAD].read(cx).saved_draft().0,
                 "Draft survives parking"
@@ -349,7 +357,7 @@ pub(super) fn cold_workspaces() {
 }
 
 pub(super) fn restore_preferences() {
-    use plait_core::{
+    use plait_client::{
         session::Journal,
         tabs::{CheckoutKey, HostKey, persistence, storage},
     };
@@ -443,7 +451,8 @@ pub(super) fn restore_preferences() {
         p.install_tab_identity(host.clone(), vec![checkout.clone()], cx);
         p.try_restore_tabs(w, cx);
         assert_eq!(p.tabs.model.tabs().len(), 3);
-        assert_eq!(p.workspace.tab, super::super::Workspace::Files);
+        assert_eq!(p.selected_view(), super::super::Workspace::Conversation);
+        assert!(!p.panel_is_open());
         assert_eq!(p.workspace.file_viewer.path, Some("src/review.rs".into()));
         assert!(!p.tabs.model.accepts_lifetime(previous.0));
         assert_eq!(p.workspace.composers.len(), 1);
@@ -531,7 +540,7 @@ pub(super) fn restore_preferences() {
     let checkouts = vec![checkout];
     let summaries = h
         .window
-        .update(&mut h.cx, |p, _, _| p.host.connection.threads.clone())
+        .update(&mut h.cx, |p, _, _| p.host.connection.threads().to_vec())
         .unwrap();
     let context = persistence::RestoreContext {
         host: &host,
@@ -554,7 +563,7 @@ pub(super) fn journal_limit() {
     let repository = fixture_repository(&scratch);
     let directory = scratch.join("session");
     let (journal, data) =
-        plait_core::session::Journal::open(&directory, "/tab-test-host".into()).unwrap();
+        plait_client::session::Journal::open(&directory, "/tab-test-host".into()).unwrap();
     let mut h = Harness::new(&repository, None, 900., 600.);
     h.connect(&repository, false);
     install(&mut h, 20);
@@ -570,7 +579,7 @@ pub(super) fn journal_limit() {
         let data = p.session.data.as_mut().unwrap();
         let mut thread = data.threads[THREAD].clone();
         thread.draft.text = "x".repeat(256 * 1024);
-        for summary in p.host.connection.threads.iter().skip(1) {
+        for summary in p.host.connection.threads().iter().skip(1) {
             data.threads.insert(summary.id.clone(), thread.clone());
         }
         journal.queue(data.clone());
@@ -605,7 +614,7 @@ pub(super) fn journal_limit() {
 }
 
 pub(super) fn unloaded_views() {
-    use plait_core::tabs::bookmark::{ConversationScroll, ThreadBookmark};
+    use plait_client::tabs::bookmark::{ConversationScroll, ThreadBookmark};
     let scratch = std::env::temp_dir().join(format!("plait-tab-views-{}", std::process::id()));
     let repository = fixture_repository(&scratch);
     let mut h = Harness::new(&repository, None, 900., 600.);
@@ -613,12 +622,11 @@ pub(super) fn unloaded_views() {
     h.update(|p, w, cx| {
         p.host.connection.connected = false;
         let stamp = p.host.read_stamp();
-        let formatted = p.workspace.formatted.clone();
         p.show_tab(super::super::Workspace::Changes, w, cx);
-        assert!(!p.host.accepts_read(&stamp));
-        assert!(p.workspace.host_watch.is_none());
-        p.conversation_changed(w, cx);
-        assert!(Arc::ptr_eq(&formatted, &p.workspace.formatted));
+        assert!(
+            p.host.accepts_read(&stamp),
+            "opening a panel retains its conversation"
+        );
         let mut saved = ThreadBookmark::default();
         saved.conversation.scroll = ConversationScroll::Anchored {
             row: "message:older".into(),
@@ -692,10 +700,10 @@ pub(super) fn created_in_front() {
         p.host.connection.connected = false;
         p.open_draft(w, cx);
         assert!(p.draft.open);
-        let mut created = p.host.connection.threads[0].clone();
+        let mut created = p.host.connection.threads()[0].clone();
         created.id = "created-thread".into();
         created.checkout = p.host.creation.checkout.clone();
-        p.host.connection.threads.push(created);
+        p.host.connection.threads_mut().push(created);
         p.draft.sending = Some(super::super::new_thread::Sending {
             generation: p.draft.generation,
             request_id: "create-1".into(),
@@ -707,7 +715,7 @@ pub(super) fn created_in_front() {
         });
         p.show_tab(super::super::Workspace::Changes, w, cx);
         super::many_drafts::set_pending(p, "create-1");
-        let reply = plait_core::host::ThreadReply {
+        let reply = plait_client::host::ThreadReply {
             thread: Snapshot {
                 id: "created-thread".into(),
                 checkout: p.host.creation.checkout.clone(),
@@ -722,7 +730,7 @@ pub(super) fn created_in_front() {
             TabTarget::Existing { id, .. } if id == "created-thread"
         ));
         assert_eq!(p.host.thread.selected.as_deref(), Some("created-thread"));
-        assert_eq!(p.workspace.tab, super::super::Workspace::Changes);
+        assert_eq!(p.selected_view(), super::super::Workspace::Changes);
         assert!(p.workspace.composers.contains_key("created-thread"));
     });
     drop(h);
@@ -731,7 +739,7 @@ pub(super) fn created_in_front() {
 
 /// The tab file does not depend on the draft journal staying under its limit.
 pub(super) fn journal_limit_saves_tabs() {
-    use plait_core::{
+    use plait_client::{
         session::Journal,
         tabs::{CheckoutKey, HostKey, storage},
     };
@@ -767,7 +775,7 @@ pub(super) fn journal_limit_saves_tabs() {
         let data = p.session.data.as_mut().unwrap();
         let mut thread = data.threads[THREAD].clone();
         thread.draft.text = "x".repeat(256 * 1024);
-        for summary in p.host.connection.threads.iter().skip(1) {
+        for summary in p.host.connection.threads().iter().skip(1) {
             data.threads.insert(summary.id.clone(), thread.clone());
         }
         journal.queue(data.clone());
@@ -788,7 +796,7 @@ pub(super) fn journal_limit_saves_tabs() {
 
 /// Saving an unchanged large view neither adds a stored record nor rewrites the tab file.
 pub(super) fn stored_views() {
-    use plait_core::{
+    use plait_client::{
         session::Journal,
         tabs::{CheckoutKey, HostKey},
     };
@@ -866,7 +874,7 @@ pub(super) fn stored_views() {
 
 /// Saved tabs restored while Settings is open stay beneath it.
 pub(super) fn restore_beneath_settings() {
-    use plait_core::{
+    use plait_client::{
         session::Journal,
         tabs::{CheckoutKey, HostKey, storage},
     };

@@ -1,9 +1,9 @@
 //! Background history reads and projection; render only consumes prepared data.
 use super::{Plait, theme::*};
 use gpui::{prelude::*, *};
-use plait_core::{
+use plait_client::{
     history::{self, History, Key},
-    host::{Client, HistoryField, Snapshot},
+    host::{HistoryField, Snapshot},
     markdown, transcript,
 };
 use std::{
@@ -203,15 +203,21 @@ impl Plait {
         let record_generation = self.workspace.turn_records.data_generation;
         let cancelled = self.workspace.cancelled.clone();
         let view_cancelled = self.workspace.history.cancelled.clone();
-        let anchor = self
-            .conversation_snapshot()
-            .and_then(|s| {
-                self.workspace
-                    .live_layout
-                    .get(self.workspace.live_scroll.logical_scroll_top().item_ix)
-                    .and_then(|slot| transcript::resolve(s, *slot))
-            })
-            .and_then(Key::row);
+        let anchor = self.conversation_snapshot().and_then(|s| {
+            match self
+                .workspace
+                .live_layout
+                .rows
+                .get(self.workspace.live_scroll.logical_scroll_top().item_ix)?
+            {
+                plait_client::folding::DisplayRow::Slot(slot) => {
+                    transcript::resolve(s, *slot).and_then(Key::row)
+                }
+                plait_client::folding::DisplayRow::FoldedTurn { id, .. } => {
+                    Some(Key::Message(id.clone()))
+                }
+            }
+        });
         let task = cx.background_executor().spawn(async move {
             let mut cache = (*cache).clone();
             loop {
@@ -228,8 +234,8 @@ impl Plait {
                     .entries
                     .iter()
                     .filter_map(|entry| match &entry.item {
-                        plait_core::host::HistoryItem::Tool { id, status, .. }
-                            if *status != plait_core::host::ToolStatus::Running
+                        plait_client::host::HistoryItem::Tool { id, status, .. }
+                            if *status != plait_client::host::ToolStatus::Running
                                 && display
                                     .tools
                                     .iter()
@@ -255,7 +261,7 @@ impl Plait {
                     if cache.evict_for_budget(anchor.as_ref()) { continue; }
                     return Some(Err("This conversation part exceeds the reading memory limit. Its stored history is unchanged."));
                 }
-                let lines = history::records::project(&display, &records, !cache.detached);
+                let lines = if cache.detached { history::records::project_detached(&display, &snapshot, &records) } else { history::records::project(&display, &records, true) };
                 return Some(Ok((
                     Arc::new(cache),
                     Arc::new(display),
@@ -295,6 +301,15 @@ impl Plait {
                     this.remeasure_records(previous.as_deref(), &before);
                 }
                 this.install_record_lines(lines, record_generation);
+                if this.panel_recorded()
+                    && this
+                        .tabs
+                        .model
+                        .panel()
+                        .is_some_and(|p| p.recorded.is_none())
+                {
+                    this.sync_panel_scope(true, window, cx);
+                }
                 this.conversation_rows_changed(cx);
                 this.restore_ready_bookmarks(cx);
                 this.restore_tab_image(window, cx);
@@ -354,8 +369,8 @@ impl Plait {
         let operation = load.clone();
         let thread = id.clone();
         let protocol = self.host.protocol();
+        let client = self.host_client();
         let task = cx.background_executor().spawn(async move {
-            let client = Client::from_environment()?;
             let mut cache = (*cache).clone();
             match operation {
                 Load::Restore(before) => {
@@ -375,7 +390,7 @@ impl Plait {
                 )?),
                 Load::Part(key, field, restart) => {
                     let entry = cache.get(&key).ok_or_else(|| {
-                        plait_core::host::Error::Protocol(
+                        plait_client::host::Error::Protocol(
                             "This text is outside the reading window. Load its page again.".into(),
                         )
                     })?;
@@ -383,7 +398,7 @@ impl Plait {
                     cache.replace(entry);
                 }
             }
-            Ok::<_, plait_core::host::Error>(Arc::new(cache))
+            Ok::<_, plait_client::host::Error>(Arc::new(cache))
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = task.await;
@@ -599,12 +614,20 @@ impl Plait {
             self.workspace.history.expanded.insert(id.to_owned());
         }
         if let Some(snapshot) = self.conversation_snapshot()
-            && let Some(index) = self.workspace.live_layout.iter().position(|slot| {
-                match transcript::resolve(snapshot, *slot) {
-                    Some(transcript::Row::Reasoning(m)) => m.id == id,
-                    _ => false,
-                }
-            })
+            && let Some(index) = self
+                .workspace
+                .live_layout
+                .rows
+                .iter()
+                .position(|row| match row {
+                    plait_client::folding::DisplayRow::Slot(slot) => {
+                        matches!(
+                            transcript::resolve(snapshot, *slot),
+                            Some(transcript::Row::Reasoning(m)) if m.id == id
+                        )
+                    }
+                    plait_client::folding::DisplayRow::FoldedTurn { .. } => false,
+                })
         {
             self.workspace.live_scroll.remeasure_items(index..index + 1);
         }

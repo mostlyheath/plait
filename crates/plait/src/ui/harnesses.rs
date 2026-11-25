@@ -11,15 +11,16 @@ use super::{
     model_picker::{model_key, model_label},
     palette::Item,
     settings,
+    text_field::TextField,
     theme::*,
 };
 use gpui::{prelude::*, *};
-use plait_core::host::{
+use plait_client::host::{
     self, Model, ModelChoice, Snapshot,
     harness::{Harness, HarnessId, HarnessState, Harnesses, Request, ThreadHarness},
     providers,
 };
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 #[derive(Default)]
 pub(super) struct HarnessesState {
@@ -34,6 +35,7 @@ pub(super) struct HarnessesState {
     /// The latest request; an earlier reply that lands after it is dropped.
     serial: u64,
     note: Option<SharedString>,
+    path_editor: Option<PathEditor>,
     /// The harness of the model last chosen for a new thread, and its permission mode.
     chosen: Option<(HarnessId, ModelChoice, Option<String>)>,
     /// The harness and mode `host.pending_create` was made for, so a retry repeats them.
@@ -41,6 +43,12 @@ pub(super) struct HarnessesState {
     pending_mode: Option<String>,
     /// The open thread's harness, the list generation, and what its composer line says.
     line: Option<(ThreadHarness, u64, ThreadLine)>,
+}
+
+struct PathEditor {
+    id: HarnessId,
+    field: Entity<TextField>,
+    error: Option<SharedString>,
 }
 
 /// What the composer line says about a thread that does not run in Pi.
@@ -100,8 +108,14 @@ pub(super) struct HarnessRow {
     pub(super) default_detail: SharedString,
     /// Settings → Agents: why the harness cannot be the default now, as hover text.
     pub(super) unstartable: Option<SharedString>,
-    /// The harness needs a download the person starts from Settings → Agents.
+    /// The harness needs a download the person starts: from Settings → Agents,
+    /// the new thread's harness list, or the command palette.
     pub(super) setup: bool,
+    /// The version the host can install, offered while the harness is not installed.
+    pub(super) installable: Option<SharedString>,
+    pub(super) signed_out: bool,
+    /// The host installed the copy that runs.
+    pub(super) managed: bool,
 }
 
 pub(super) struct HarnessesView {
@@ -193,6 +207,12 @@ impl HarnessRow {
             default_detail,
             unstartable: unstartable.map(Into::into),
             setup: harness.state == HarnessState::SetupRequired,
+            installable: harness
+                .installable
+                .filter(|_| harness.state == HarnessState::NotInstalled)
+                .map(Into::into),
+            signed_out: harness.state == HarnessState::SignedOut,
+            managed: harness.managed,
         }
     }
 
@@ -249,16 +269,13 @@ pub(super) fn thread_items(row: &HarnessRow) -> Vec<Item> {
 }
 
 /// The harness list a new thread chooses from: Pi, then every harness the host
-/// lists. One that cannot start a thread is listed, disabled, with its state.
+/// lists. One that needs setup is offered to set it up; any other that cannot
+/// start a thread is listed, disabled, with its state.
 pub(super) fn harness_items(rows: &[HarnessRow], current: HarnessId) -> Vec<Item> {
-    let item = |id: HarnessId, name: SharedString, detail: SharedString| {
-        let item = Item::new(
-            format!("harness\u{1f}{name}"),
-            name,
-            Command::DraftHarness(id),
-        )
-        .detail(detail)
-        .section("Agent harnesses");
+    let item = |id: HarnessId, name: SharedString, detail: SharedString, command: Command| {
+        let item = Item::new(format!("harness\u{1f}{name}"), name, command)
+            .detail(detail)
+            .section("Agent harnesses");
         match harness_glyph(id) {
             Some(glyph) => item.glyph(glyph, colors().text),
             None => item,
@@ -273,7 +290,12 @@ pub(super) fn harness_items(rows: &[HarnessRow], current: HarnessId) -> Vec<Item
     };
     // An older host lists none; every thread runs in Pi.
     if !rows.iter().any(|row| row.id == HarnessId::Pi) {
-        let pi = item(HarnessId::Pi, "Pi".into(), "Built into the host".into());
+        let pi = item(
+            HarnessId::Pi,
+            "Pi".into(),
+            "Built into the host".into(),
+            Command::DraftHarness(HarnessId::Pi),
+        );
         let mut items = vec![current_badge(pi, HarnessId::Pi)];
         items.extend(
             rows.iter()
@@ -288,11 +310,28 @@ pub(super) fn harness_items(rows: &[HarnessRow], current: HarnessId) -> Vec<Item
 
 fn harness_item(
     row: &HarnessRow,
-    item: &impl Fn(HarnessId, SharedString, SharedString) -> Item,
+    item: &impl Fn(HarnessId, SharedString, SharedString, Command) -> Item,
     current: &impl Fn(Item, HarnessId) -> Item,
 ) -> Item {
     let detail = row.note.clone().unwrap_or_else(|| row.version.clone());
-    let listed = item(row.id, row.name.clone(), detail);
+    // Setup is the only way forward for this harness, so choosing it starts
+    // setup rather than leaving a dead row. The host's note, shown as the
+    // detail, says what setup downloads before the person chooses it.
+    if row.setup {
+        return item(
+            row.id,
+            row.name.clone(),
+            detail,
+            Command::SetUpHarness(row.id),
+        )
+        .badge(row.state.clone(), colors().amber);
+    }
+    let listed = item(
+        row.id,
+        row.name.clone(),
+        detail,
+        Command::DraftHarness(row.id),
+    );
     if row.startable() {
         return current(listed, row.id);
     }
@@ -302,6 +341,26 @@ fn harness_item(
         row.state.clone()
     };
     listed.badge(badge, colors().amber).enabled(false)
+}
+
+/// Command palette rows that set up each harness that needs it, beside the
+/// providers' sign-in rows.
+pub(super) fn setup_items(rows: &[HarnessRow]) -> Vec<Item> {
+    rows.iter()
+        .filter(|row| row.setup)
+        .map(|row| {
+            let item = Item::new(
+                format!("harness-setup\u{1f}{}", row.name),
+                format!("Set up {} threads", row.name),
+                Command::SetUpHarness(row.id),
+            )
+            .section("Agent harnesses");
+            match &row.note {
+                Some(note) => item.detail(note.clone()),
+                None => item,
+            }
+        })
+        .collect()
 }
 
 /// The harness a snapshot's thread runs in. Hosts before version 4 run only Pi.
@@ -383,6 +442,27 @@ fn own_settings(id: HarnessId) -> (&'static str, &'static str) {
     match id {
         HarnessId::Claude => ("settings", "set"),
         _ => ("configuration", "sets"),
+    }
+}
+
+/// What installing a harness downloads, and whose software it stays.
+fn install_terms(id: HarnessId, version: &str) -> String {
+    let owner = match id {
+        HarnessId::Codex => "OpenAI's software under the Apache-2.0 license",
+        HarnessId::Claude => "Anthropic's software under Anthropic's terms",
+        _ => "its vendor's software under the vendor's terms",
+    };
+    format!(
+        "Not installed on this machine. Plait can install {} {version}, the version it is tested with, into the host's own folder; a copy you install yourself is used first. It stays {owner}.",
+        id.label()
+    )
+}
+
+fn terms_url(id: HarnessId) -> Option<&'static str> {
+    match id {
+        HarnessId::Codex => Some("https://github.com/openai/codex/blob/main/LICENSE"),
+        HarnessId::Claude => Some("https://code.claude.com/docs/en/legal-and-compliance"),
+        _ => None,
     }
 }
 
@@ -555,7 +635,11 @@ impl Plait {
         self.send_harnesses(Request::set_up_harness(id), cx);
     }
 
-    /// Whether harness `id` is being set up now, for Settings → Agents.
+    pub(super) fn install_harness(&mut self, id: HarnessId, cx: &mut Context<Self>) {
+        self.send_harnesses(Request::install_harness(id), cx);
+    }
+
+    /// Whether harness `id` is being set up or installed now, for Settings → Agents.
     pub(super) fn harness_setting_up(&self, id: HarnessId) -> bool {
         self.harnesses.busy && self.harnesses.setting_up == Some(id)
     }
@@ -581,7 +665,9 @@ impl Plait {
             return;
         }
         let setup = match &request {
-            Request::SetUpHarness { harness, .. } => Some(*harness),
+            Request::SetUpHarness { harness, .. } | Request::InstallHarness { harness, .. } => {
+                Some(*harness)
+            }
             _ => None,
         };
         if self.host.protocol() >= 6 {
@@ -595,6 +681,9 @@ impl Plait {
                 }
                 | Request::SetUpHarness {
                     protocol_version, ..
+                }
+                | Request::InstallHarness {
+                    protocol_version, ..
                 } => *protocol_version = 6,
             }
         }
@@ -602,8 +691,15 @@ impl Plait {
             return;
         };
         cx.notify();
+        let client = self.host_client();
         let task = cx.background_executor().spawn(async move {
-            let reply: Harnesses = host::Client::from_environment()?.send(&request)?;
+            // An install downloads about 170 MB on the host before it answers.
+            let wait = if matches!(request, Request::InstallHarness { .. }) {
+                Duration::from_secs(16 * 60)
+            } else {
+                Duration::from_secs(20)
+            };
+            let reply: Harnesses = client.send_within(&request, wait)?;
             Ok::<_, host::Error>(HarnessesView::new(reply))
         });
         cx.spawn(async move |this, cx| {
@@ -640,8 +736,55 @@ impl Plait {
         cx.notify();
     }
 
+    pub(super) fn harness_path_open(&self) -> bool {
+        self.harnesses.path_editor.is_some()
+    }
+
+    pub(super) fn cancel_harness_path(&mut self) {
+        self.harnesses.path_editor = None;
+    }
+
+    fn save_harness_editor(&mut self, cx: &mut Context<Self>) {
+        if self.harnesses.busy {
+            return;
+        }
+        let Some(editor) = self.harnesses.path_editor.as_ref() else {
+            return;
+        };
+        let id = editor.id;
+        let path = editor.field.read(cx).text().trim().to_owned();
+        if !valid_harness_path(&path) {
+            if let Some(editor) = &mut self.harnesses.path_editor {
+                editor.error = Some("Enter an absolute path on the remote machine.".into());
+            }
+        } else {
+            self.cancel_harness_path();
+            self.set_harness_path(id, Some(path.into()), cx);
+        }
+        cx.notify();
+    }
+
     /// Ask for an executable with the system file picker, then send it to the host.
-    fn choose_harness_path(&mut self, id: HarnessId, name: SharedString, cx: &mut Context<Self>) {
+    fn choose_harness_path(
+        &mut self,
+        id: HarnessId,
+        name: SharedString,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.host_is_local() {
+            let field =
+                cx.new(|cx| TextField::new("Remote executable path", "/usr/local/bin/agent", cx));
+            cx.observe(&field, |_, _, cx| cx.notify()).detach();
+            window.focus(&field.focus_handle(cx), cx);
+            self.harnesses.path_editor = Some(PathEditor {
+                id,
+                field,
+                error: None,
+            });
+            cx.notify();
+            return;
+        }
         let prompt = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
@@ -746,7 +889,7 @@ impl Plait {
         });
         let mut page = settings::section("Agent harnesses").child(settings::setting(
             "What can run a thread",
-            "Pi is built in. Codex and Claude Code run through your own installs, with their own sign-in and settings. A new thread starts in the default from New threads; choose another under its message box, and the thread stays in it.",
+            "Pi is built in. Codex and Claude Code run through your own installs, or ones Plait installs on this machine, with their own sign-in and settings. A new thread starts in the default from New threads; choose another under its message box, and the thread stays in it.",
             refresh,
         ));
         if !self.host.connection.connected {
@@ -827,8 +970,22 @@ impl Plait {
                 colors().muted,
             ));
         if let Some(path) = &harness.path {
-            text = text
-                .child(tag(("harness-path-text", index), path.clone(), colors().subtle).truncate());
+            let path: SharedString = if harness.managed {
+                format!("Installed by Plait · {path}").into()
+            } else {
+                path.clone()
+            };
+            text = text.child(tag(("harness-path-text", index), path, colors().subtle).truncate());
+        }
+        if let Some(version) = &harness.installable {
+            text = text.child(
+                tag(
+                    ("harness-install-terms", index),
+                    install_terms(harness.id, version),
+                    colors().subtle,
+                )
+                .line_height(px(16.)),
+            );
         }
         if let Some(note) = &harness.note {
             text = text.child(
@@ -879,6 +1036,49 @@ impl Plait {
                 }),
             );
         }
+        if let Some(version) = &harness.installable {
+            let id = harness.id;
+            let installing = self.harness_setting_up(id);
+            entry = entry.child(
+                row()
+                    .flex_shrink_0()
+                    .gap_1()
+                    .children(terms_url(id).map(|url| {
+                        toned_button(("harness-terms", index), "Terms", Tone::Ghost)
+                            .aria_label(format!("Read the terms {} comes under", harness.name))
+                            .on_activate(cx, move |_, _, cx| cx.open_url(url))
+                    }))
+                    .child(
+                        toned_button(
+                            ("harness-install", index),
+                            if installing {
+                                "Installing…"
+                            } else {
+                                "Install"
+                            },
+                            Tone::Primary,
+                        )
+                        .aria_label(format!("Install {} {version} on the host", harness.name))
+                        .disabled(busy)
+                        .when(!busy, |el| {
+                            el.on_activate(cx, move |this, _, cx| this.install_harness(id, cx))
+                        }),
+                    ),
+            );
+        }
+        if harness.signed_out {
+            let id = harness.id;
+            let signing_in = self.harness_flow() == Some(id);
+            entry = entry.child(
+                toned_button(("harness-sign-in", index), "Sign in", Tone::Primary)
+                    .flex_shrink_0()
+                    .aria_label(format!("Sign in to {} on the host", harness.name))
+                    .disabled(busy || signing_in)
+                    .when(!busy && !signing_in, |el| {
+                        el.on_activate(cx, move |this, _, cx| this.start_harness_sign_in(id, cx))
+                    }),
+            );
+        }
         if harness.has_path() {
             let (id, name) = (harness.id, harness.name.clone());
             entry = entry.child(
@@ -886,14 +1086,22 @@ impl Plait {
                     .flex_shrink_0()
                     .gap_1()
                     .child(
-                        toned_button(("harness-choose", index), "Choose…", Tone::Ghost)
-                            .aria_label(format!("Choose the {} executable", harness.name))
-                            .disabled(busy)
-                            .when(!busy, |el| {
-                                el.on_activate(cx, move |this, _, cx| {
-                                    this.choose_harness_path(id, name.clone(), cx)
-                                })
-                            }),
+                        toned_button(
+                            ("harness-choose", index),
+                            if self.host_is_local() {
+                                "Choose…"
+                            } else {
+                                "Enter path…"
+                            },
+                            Tone::Ghost,
+                        )
+                        .aria_label(format!("Choose the {} executable", harness.name))
+                        .disabled(busy)
+                        .when(!busy, |el| {
+                            el.on_activate(cx, move |this, window, cx| {
+                                this.choose_harness_path(id, name.clone(), window, cx)
+                            })
+                        }),
                     )
                     .child(
                         toned_button(("harness-path", index), "Use PATH", Tone::Ghost)
@@ -901,16 +1109,81 @@ impl Plait {
                             .disabled(busy)
                             .when(!busy, |el| {
                                 el.on_activate(cx, move |this, _, cx| {
+                                    this.cancel_harness_path();
                                     this.set_harness_path(id, None, cx)
                                 })
                             }),
                     ),
             );
         }
-        match modes {
+        let flow = (self.harness_flow() == Some(harness.id)).then(|| {
+            column()
+                .gap_2()
+                .when_some(self.providers.note.clone(), |el, note| {
+                    el.child(tag(("harness-sign-in-note", index), note, colors().amber))
+                })
+                .child(self.provider_form(cx))
+        });
+        let entry = match modes {
             Some(modes) => column().gap_3().child(entry).child(modes),
             None => column().child(entry),
-        }
+        };
+        let editor = self
+            .harnesses
+            .path_editor
+            .as_ref()
+            .filter(|editor| editor.id == harness.id)
+            .map(|editor| {
+                let field = editor.field.clone();
+                let error = editor.error.clone();
+                column()
+                    .gap_2()
+                    .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                        if event.keystroke.key == "enter"
+                            && this
+                                .harnesses
+                                .path_editor
+                                .as_ref()
+                                .is_some_and(|editor| !editor.field.read(cx).is_composing())
+                        {
+                            this.save_harness_editor(cx);
+                            cx.stop_propagation();
+                        }
+                    }))
+                    .child(field.clone())
+                    .when_some(error, |el, note| {
+                        el.child(tag(("harness-path-error", index), note, colors().amber))
+                    })
+                    .child(
+                        row()
+                            .gap_2()
+                            .child(
+                                toned_button(
+                                    ("harness-path-save", index),
+                                    "Save path",
+                                    Tone::Primary,
+                                )
+                                .disabled(busy)
+                                .when(!busy, |el| {
+                                    el.on_activate(cx, move |this, _, cx| {
+                                        this.save_harness_editor(cx);
+                                    })
+                                }),
+                            )
+                            .child(
+                                button(("harness-path-cancel", index), "Cancel").on_activate(
+                                    cx,
+                                    |this, _, cx| {
+                                        this.cancel_harness_path();
+                                        cx.notify();
+                                    },
+                                ),
+                            ),
+                    )
+            });
+        entry
+            .when_some(editor, |el, editor| el.gap_3().child(editor))
+            .when_some(flow, |el, flow| el.gap_3().child(flow))
     }
 
     /// Settings → New threads: the harness a new thread's draft starts in: Pi,
@@ -1055,7 +1328,8 @@ impl Plait {
 mod tests {
     // Named imports: a glob would bring in GPUI's own `test` attribute.
     use super::{
-        HarnessId, Harnesses, HarnessesView, ThreadHarness, harness_items, mode_line, thread_items,
+        Command, HarnessId, Harnesses, HarnessesView, ThreadHarness, harness_items, mode_line,
+        setup_items, thread_items,
     };
 
     fn sample() -> Harnesses {
@@ -1178,8 +1452,39 @@ mod tests {
         .unwrap()
     }
 
+    fn with(mut list: Harnesses, installable: Option<&str>, managed: bool) -> Harnesses {
+        list.harnesses[1].installable = installable.map(Into::into);
+        list.harnesses[1].managed = managed;
+        list
+    }
+
     #[test]
-    fn a_harness_that_needs_setup_offers_setup_and_nothing_else() {
+    fn a_missing_harness_offers_its_pinned_install_and_a_signed_out_one_offers_sign_in() {
+        let view = HarnessesView::new(with(
+            claude_list("not_installed", None),
+            Some("2.1.326"),
+            false,
+        ));
+        let claude = &view.rows[1];
+        assert_eq!(claude.installable.as_deref(), Some("2.1.326"));
+        assert!(!claude.signed_out);
+        assert!(super::install_terms(claude.id, "2.1.326").contains("Claude Code 2.1.326"));
+        // A host without a build for its platform offers nothing to install.
+        let view = HarnessesView::new(with(claude_list("not_installed", None), None, false));
+        assert_eq!(view.rows[1].installable, None);
+        // An installed harness is not offered again, even when the host could.
+        let view = HarnessesView::new(with(claude_list("signed_out", None), Some("2.1.326"), true));
+        let claude = &view.rows[1];
+        assert_eq!(claude.installable, None);
+        assert!(claude.signed_out && claude.managed);
+        assert!(
+            super::terms_url(HarnessId::Codex).is_some()
+                && super::terms_url(HarnessId::Pi).is_none()
+        );
+    }
+
+    #[test]
+    fn a_harness_that_needs_setup_offers_setup_wherever_it_is_chosen() {
         let view = HarnessesView::new(claude_list("setup_required", Some("Set up first.")));
         let claude = &view.rows[1];
         assert!(claude.setup && !claude.ready && !claude.startable());
@@ -1200,9 +1505,15 @@ mod tests {
             claude.blocked.as_deref(),
             Some("Claude Code: needs setup. Set up first.")
         );
+        // The new thread's harness list offers setup, saying what it downloads.
         let items = harness_items(&view.rows, HarnessId::Pi);
         assert_eq!(items[1].title.as_ref(), "Claude Code");
-        assert!(!items[1].enabled);
+        assert!(items[1].enabled, "setup can be started from the list");
+        assert!(matches!(
+            items[1].command,
+            Command::SetUpHarness(HarnessId::Claude)
+        ));
+        assert_eq!(items[1].detail.as_ref(), "Set up first.");
         assert_eq!(
             items[1].glyph.map(|(glyph, _)| glyph),
             Some("harness-claude")
@@ -1211,12 +1522,28 @@ mod tests {
             items[1].badge.as_ref().map(|(badge, _)| badge.as_ref()),
             Some("Needs setup")
         );
+        // So does the command palette.
+        let setup = setup_items(&view.rows);
+        assert_eq!(setup.len(), 1);
+        assert_eq!(setup[0].title.as_ref(), "Set up Claude Code threads");
+        assert_eq!(setup[0].detail.as_ref(), "Set up first.");
+        assert!(matches!(
+            setup[0].command,
+            Command::SetUpHarness(HarnessId::Claude)
+        ));
 
         let view = HarnessesView::new(claude_list("ready", None));
         let claude = &view.rows[1];
         assert!(claude.ready && !claude.setup && claude.startable() && claude.has_path());
         assert_eq!(claude.default_detail.as_ref(), "Decides itself.");
         assert_eq!(thread_items(claude).len(), 1);
+        // A ready harness is chosen for the draft, and needs no setup row.
+        let items = harness_items(&view.rows, HarnessId::Pi);
+        assert!(matches!(
+            items[1].command,
+            Command::DraftHarness(HarnessId::Claude)
+        ));
+        assert!(setup_items(&view.rows).is_empty());
     }
 
     #[test]
@@ -1308,5 +1635,25 @@ mod tests {
             line.note.as_ref(),
             "Codex is using permissions its own configuration sets, not Full access."
         );
+    }
+}
+
+fn valid_harness_path(path: &str) -> bool {
+    path.len() > 1
+        && path.starts_with('/')
+        && !path.ends_with('/')
+        && !path.chars().any(char::is_control)
+}
+
+#[cfg(test)]
+mod remote_path_tests {
+    #[test]
+    fn requires_an_absolute_remote_path() {
+        assert!(super::valid_harness_path("/usr/bin/codex"));
+        assert!(!super::valid_harness_path("codex"));
+        assert!(!super::valid_harness_path("/"));
+        assert!(!super::valid_harness_path("/bin/"));
+        assert!(!super::valid_harness_path("/bin/\u{1b}codex"));
+        assert!(!super::valid_harness_path("/bin/\0codex"));
     }
 }

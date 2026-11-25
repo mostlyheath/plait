@@ -7,7 +7,7 @@
 //! files. Both deny Git-directory writes, including timestamp changes.
 //! Elsewhere the helpers run directly.
 
-use plait_core::git::{
+use plait_engine::git::{
     record::{self, Located, PruneRequest, Request},
     undo,
 };
@@ -358,7 +358,7 @@ fn undo_request(value: Value) -> io::Result<()> {
         return Err(failure("store must be absolute".into()));
     }
     let located = undo::locate(&request.checkout).map_err(failure)?;
-    let expected = plait_core::lease::DirIdentity {
+    let expected = plait_engine::lease::DirIdentity {
         dev: request
             .identity
             .dev
@@ -436,7 +436,10 @@ mod tests {
         std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o700)).unwrap();
         let mut command = Command::new("/bin/sh");
         command
-            .args(["-c", "\"$PLAIT_GIT\" --version"])
+            // The shell reads the script rather than executing the file just
+            // written: a concurrent test's fork can still hold it open for
+            // writing, and exec would then fail with ETXTBSY.
+            .args(["-c", "/bin/sh \"$PLAIT_GIT\" --version"])
             .env("PLAIT_GIT", &wrapper)
             .stdout(Stdio::null());
         let fd = lock.as_raw_fd();
@@ -455,7 +458,10 @@ mod tests {
         // Long enough for the injected Git to start on a busy machine; the
         // wrapper itself would run for thirty seconds.
         let result = supervise_command(command, json!({}), Duration::from_millis(1500));
-        assert!(result.unwrap_err().to_string().contains("time budget"));
+        assert!(
+            matches!(&result, Err(error) if error.to_string().contains("time budget")),
+            "unexpected result: {result:?}"
+        );
         assert!(start.elapsed() < Duration::from_secs(10));
         assert!(marker.exists(), "injected Git was not started");
         drop(lock);

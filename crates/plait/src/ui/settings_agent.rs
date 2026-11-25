@@ -9,7 +9,7 @@
 
 use super::{Plait, composer::AgentCommand, settings, theme::*, thread_controls::TextTooltip};
 use gpui::{prelude::*, *};
-use plait_core::host::{
+use plait_client::host::{
     agent::{AgentResources, McpServer, McpTransport, Request},
     providers,
 };
@@ -68,7 +68,7 @@ pub(super) struct McpRow {
 
 impl From<McpServer> for McpRow {
     fn from(server: McpServer) -> Self {
-        use plait_core::host::agent::{McpConsent, McpState};
+        use plait_client::host::agent::{McpConsent, McpState};
         let state = if server.consent == Some(McpConsent::Changed) {
             "Changed"
         } else if server.consent == Some(McpConsent::Required) {
@@ -148,7 +148,7 @@ impl From<McpServer> for McpRow {
                 Some(McpTransport::Http) => "HTTP",
                 _ => "Unknown",
             },
-            hover: plait_core::display_text::escape(&hover.join("\n")).into(),
+            hover: plait_client::display_text::escape(&hover.join("\n")).into(),
             enabled: server.enabled,
             can_enable: server.can_enable,
             file: None,
@@ -390,25 +390,39 @@ impl Plait {
         let checkout_generation =
             (key.1 == self.host.creation.checkout).then_some(self.host.creation.generation);
         let expected = self.settings_checkout_key(&key.1).cloned();
+        let client = self.host_client();
+        let supported = self.host.connection.has_checkout_identity;
+        let local = self.host_is_local();
         let task = cx.background_executor().spawn(async move {
-            let identity = Self::identify_settings_checkout(&checkout, expected)?;
+            let identity =
+                Self::identify_settings_checkout(&client, &checkout, supported, local, expected)?;
             let canonical = identity.root.clone();
             let request = match change {
                 Some((name, enabled, definition)) => {
                     Request::set_mcp_server(canonical.clone(), name, enabled, definition)
                 }
-                None => Request::agent_resources(canonical.clone()),
+                None => Request::AgentResources {
+                    checkout: canonical.clone(),
+                    identity: supported.then(|| plait_client::host::git::WireIdentity {
+                        dev: identity.device.to_string(),
+                        ino: identity.inode.to_string(),
+                    }),
+                    protocol_version: 3,
+                },
             };
-            let reply: AgentResources =
-                plait_core::host::Client::from_environment()?.send(&request)?;
+            let reply: AgentResources = client.send(&request)?;
             if reply.checkout != canonical {
-                return Err(plait_core::host::Error::Protocol(
+                return Err(plait_client::host::Error::Protocol(
                     "Host returned another checkout's agent setup.".into(),
                 ));
             }
-            identity
-                .verify()
-                .map_err(plait_core::host::Error::Protocol)?;
+            Self::identify_settings_checkout(
+                &client,
+                &identity.root,
+                supported,
+                local,
+                Some(identity.clone()),
+            )?;
             Ok((AgentView::new(reply), identity))
         });
         cx.spawn(async move |this, cx| {
@@ -438,7 +452,7 @@ impl Plait {
         &mut self,
         key: &(u64, PathBuf),
         revision: u64,
-        result: Result<AgentView, plait_core::host::Error>,
+        result: Result<AgentView, plait_client::host::Error>,
     ) -> bool {
         if self.host.connection.epoch != key.0 {
             return false;
@@ -597,7 +611,7 @@ impl Plait {
                                 if checkout != this.host.creation.checkout {
                                     this.change_checkout(checkout, window, cx);
                                 }
-                                this.open_file(path.clone(), None, cx);
+                                this.open_file_in_view(path.clone(), window, cx);
                             },
                         ))
                     })

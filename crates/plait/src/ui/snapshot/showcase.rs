@@ -10,8 +10,8 @@
 
 use super::{Harness, git, isolated};
 use gpui::AppContext as _;
-use plait_core::tabs::{CheckoutKey, TabTarget};
-use plait_core::{
+use plait_client::tabs::{CheckoutKey, TabTarget};
+use plait_client::{
     host::{
         Approval, ApprovalKind, ApprovalMode, Message, MessageRole, Model, ModelChoice, Snapshot,
         Status, ThinkingLevel, ThreadStatus, ThreadSummary, Tool, ToolStatus, Usage,
@@ -457,7 +457,7 @@ fn open_tabs(plait: &mut crate::ui::Plait) {
     let mut open: Vec<_> = plait
         .host
         .connection
-        .threads
+        .threads()
         .iter()
         .filter(|thread| {
             thread.id == THREAD
@@ -503,12 +503,12 @@ fn stage(harness: &mut Harness, checkout: &Path, snapshot: Snapshot) {
         plait.host.connection.status = Some(status());
         plait.host.connection.settings_model = Some(choice());
         plait.host.creation.new_model = Some(choice());
-        plait.host.connection.threads = threads(&checkout, snapshot.status);
+        *plait.host.connection.threads_mut() = threads(&checkout, snapshot.status);
         plait.host.thread.selected = Some(THREAD.into());
         open_tabs(plait);
         plait.workspace.history = Default::default();
         plait.host.thread.snapshot = Some(Arc::new(snapshot));
-        plait.workspace.formatted = Arc::new(plait_core::markdown::Transcript::update(
+        plait.workspace.formatted = Arc::new(plait_client::markdown::Transcript::update(
             &plait.workspace.formatted,
             plait.host.thread.snapshot.as_ref().unwrap(),
         ));
@@ -528,7 +528,7 @@ fn stage(harness: &mut Harness, checkout: &Path, snapshot: Snapshot) {
             .preferences
             .value
             .navigation
-            .observe(&plait.host.connection.threads, None, true);
+            .observe(plait.host.connection.threads(), None, true);
         plait.rebuild_projects(cx);
         for project in &plait.state.projects {
             plait
@@ -604,9 +604,9 @@ fn graph_commit(
     parent: &str,
     subject: &str,
     minutes: u64,
-) -> plait_core::git::log::GraphCommit {
-    plait_core::git::log::GraphCommit {
-        commit: plait_core::git::log::Commit {
+) -> plait_client::git::log::GraphCommit {
+    plait_client::git::log::GraphCommit {
+        commit: plait_client::git::log::Commit {
             id: graph_oid(id),
             short: id[..7].into(),
             subject: subject.into(),
@@ -621,7 +621,7 @@ fn graph_commit(
     }
 }
 
-fn worktree_history() -> Vec<plait_core::git::log::GraphCommit> {
+fn worktree_history() -> Vec<plait_client::git::log::GraphCommit> {
     vec![
         graph_commit("7a8d4c32", "bc6209e1", "Honor Retry-After dates", 2),
         graph_commit("a3d18b6f", "4d927ea1", "Validate station aliases", 8),
@@ -648,7 +648,7 @@ fn worktree_history() -> Vec<plait_core::git::log::GraphCommit> {
 
 /// Sample facts for the same forecast project; no host or agent runs.
 fn stage_worktrees(harness: &mut Harness, repository: &Path) {
-    use plait_core::{
+    use plait_client::{
         git::worktree::{Identity, inventory::Preservation},
         host::worktree::Checkout,
         navigation::WorktreeOf,
@@ -798,7 +798,7 @@ fn stage_worktrees(harness: &mut Harness, repository: &Path) {
     }
     harness.update(move |plait, _, cx| {
         plait.park_workspace(cx);
-        plait.host.connection.threads.extend(owners.clone());
+        plait.host.connection.threads_mut().extend(owners.clone());
         for tree in &rows[1..] {
             plait.preferences.value.navigation.worktrees.insert(
                 tree.path.clone(),

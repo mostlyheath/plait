@@ -1,7 +1,7 @@
 //! Worktree effects belong to the host; the window only starts and observes them.
 use super::Plait;
 use gpui::*;
-use plait_core::{
+use plait_client::{
     host::{
         self, Client, ThreadSummary,
         worktree::{self, Operation, Request, Stage},
@@ -20,13 +20,13 @@ pub(super) struct Pending {
     /// The checkout the person asked from; a retry elsewhere is a new request.
     checkout: PathBuf,
     selection: u64,
-    tab: Option<plait_core::tabs::TabId>,
+    tab: Option<plait_client::tabs::TabId>,
     connection: u64,
-    host: plait_core::tabs::HostKey,
+    host: plait_client::tabs::HostKey,
 }
 #[cfg(test)]
 impl Pending {
-    pub(super) fn for_test(checkout: PathBuf, host: plait_core::tabs::HostKey) -> Self {
+    pub(super) fn for_test(checkout: PathBuf, host: plait_client::tabs::HostKey) -> Self {
         Self {
             request: Request::ListWorktrees,
             checkout,
@@ -113,10 +113,10 @@ impl Plait {
         self.worktree_busy = true;
         self.notice = Some("Creating a worktree from the selected commit…".into());
         cx.notify();
-        let task = cx.background_executor().spawn(async move {
-            let client = Client::from_environment()?;
-            worktree::info(&client, root)
-        });
+        let client = self.host_client();
+        let task = cx
+            .background_executor()
+            .spawn(async move { worktree::info(&client, root) });
         cx.spawn_in(window, async move |this, cx| {
             let result = task.await;
             let _ = this.update_in(cx, |this, window, cx| {
@@ -171,8 +171,9 @@ impl Plait {
         self.notice = Some("Creating worktree… You can keep working in another tab.".into());
         cx.notify();
         let request = pending.request.clone();
+        let client = self.host_client();
         let task = cx.background_executor().spawn(async move {
-            let client = Client::from_environment()?;
+
             let operation = await_operation(&client, &request)?;
             let summary = if operation.state == Stage::Ready {
                 let reply: host::ThreadReply = client.request(&host::Request::Watch {
@@ -210,7 +211,7 @@ impl Plait {
                         this.remember_worktree_operation(&operation, cx);
                         if let Some(summary) = summary {
                             let id = summary.id.clone();
-                            let _ = plait_core::navigation::merge_threads(&mut this.host.connection.threads, vec![summary]);
+                            let _ = plait_client::navigation::merge_threads(this.host.connection.threads_mut(), vec![summary]);
                             this.rebuild_projects(cx);
                             if completion_visible(pending.selection, this.host.thread.watch_epoch, pending.tab, this.tabs.model.active()) {
                                 this.notice = None; this.open_created_thread(id, window, cx);
@@ -228,27 +229,29 @@ impl Plait {
         operation: &Operation,
         cx: &mut Context<Self>,
     ) {
-        let mut preferences = self.preferences.value.clone();
-        preferences.navigation.remember_host_worktree(operation);
-        self.persist_navigation(preferences, cx);
+        self.update_lists(|lists| lists.remember_host_worktree(operation), cx);
     }
     /// Reconcile receipts after a closed window or a lost acknowledgement.
     pub(super) fn refresh_host_worktrees(&mut self, cx: &mut Context<Self>) {
         let epoch = self.host.connection.epoch;
+        let client = self.host_client();
         let task = cx
             .background_executor()
-            .spawn(async move { worktree::list(&Client::from_environment()?) });
+            .spawn(async move { worktree::list(&client) });
         cx.spawn(async move |this, cx| {
             if let Ok(operations) = task.await {
                 let _ = this.update(cx, |this, cx| {
                     if this.host.connection.epoch != epoch {
                         return;
                     }
-                    let mut preferences = this.preferences.value.clone();
-                    for operation in operations {
-                        preferences.navigation.remember_host_worktree(&operation);
-                    }
-                    this.persist_navigation(preferences, cx);
+                    this.update_lists(
+                        |lists| {
+                            for operation in &operations {
+                                lists.remember_host_worktree(operation);
+                            }
+                        },
+                        cx,
+                    );
                     this.rebuild_projects(cx);
                 });
             }
@@ -278,7 +281,7 @@ impl Plait {
             }
             return;
         }
-        let Some(tree) = self.preferences.value.navigation.worktree(&path).cloned() else {
+        let Some(tree) = self.lists().worktree(&path).cloned() else {
             return;
         };
         if tree.creation_id.is_none() || tree.identity.is_none() {
@@ -313,7 +316,7 @@ impl Plait {
             .map(|choice| PromptButton::Other(choice.label().into()))
             .collect();
         buttons.push(PromptButton::Cancel("Cancel".into()));
-        self.worktrees.removal_project = Some(project);
+        self.worktrees.removal_project = Some((self.machines.active.clone(), project));
         let answer = window.prompt(
             PromptLevel::Warning,
             "Remove this worktree?",
@@ -355,23 +358,30 @@ impl Plait {
         }
         self.worktree_busy = true;
         let request = attempt.request.clone();
-        let task = cx.background_executor().spawn(async move {
-            super::worktree::await_operation(&Client::from_environment()?, &request)
-        });
+        let machine = self.machines.active.clone();
+        let client = self.host_client();
+        let task = cx
+            .background_executor()
+            .spawn(async move { super::worktree::await_operation(&client, &request) });
         cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
                 this.worktree_busy = false;
-                this.settle_worktree_removal(&attempt, result, cx);
+                this.settle_worktree_removal(&attempt, &machine, result, cx);
             });
         })
         .detach();
     }
     /// Removal here must leave the sidebar and composer where the sidebar's own
     /// Remove leaves them: the folder is gone, not merely re-listed.
+    /// `machine` is the one the removal was sent to. The reply always settles
+    /// the removal record, but the lists change only for a verified, current
+    /// host on that machine: after a switch the same path is another folder,
+    /// and after a reconnect the host is not checked yet (#132).
     pub(super) fn settle_worktree_removal(
         &mut self,
-        attempt: &plait_core::worktree_removal::Attempt,
+        attempt: &plait_client::worktree_removal::Attempt,
+        machine: &plait_client::machines::MachineId,
         result: Result<worktree::Operation, host::Error>,
         cx: &mut Context<Self>,
     ) {
@@ -389,10 +399,20 @@ impl Plait {
         {
             return;
         }
+        let here = attempt.host == self.tabs.host
+            && *machine == self.machines.active
+            && self.host_verified_here();
+        if !here {
+            return cx.notify();
+        }
         if !self.worktrees_visible()
-            && attempt.host == self.tabs.host
-            && self.worktrees.removal_project.as_deref()
-                == Some(self.project_of(self.visible_project_checkout()))
+            && self
+                .worktrees
+                .removal_project
+                .as_ref()
+                .is_some_and(|(_, project)| {
+                    project == self.project_of(self.visible_project_checkout())
+                })
         {
             self.notice = self.worktrees.removal.message.clone();
         }

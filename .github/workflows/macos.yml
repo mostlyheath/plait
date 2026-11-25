@@ -5,28 +5,45 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      release:
+        description: Build main and publish the next preview
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
-# A build on main always finishes: a newer push waits behind the running build
+# A run on main always finishes: a newer push waits behind the running one
 # rather than cancelling it, and GitHub keeps only the newest waiting one, which
-# holds every change before it. Pull requests cancel superseded runs.
+# holds every change before it. A release has a group of its own, so a merge
+# that arrives while it waits cannot take its place. Pull requests cancel
+# superseded runs.
 concurrency:
-  group: macos-${{ github.ref }}
+  group: macos-${{ github.ref }}${{ inputs.release && '-release' || '' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # A change is tested once, on its pull request, and built once, when it
-  # reaches main. This job decides which of the two this run is, and for main
-  # whether it holds unreleased code that ships and which preview that makes.
+  # A change is tested on its pull request and again when it reaches main,
+  # since a request need not be up to date with main to merge, unless the
+  # request's check already passed on the exact tree main now holds. Nothing
+  # is released by a merge: a person starts a release by hand, on main. This
+  # job decides which of these this run is, and for a release whether main
+  # holds unreleased code that ships and which preview that makes.
   plan:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
     outputs:
       test: ${{ steps.decide.outputs.test }}
       release: ${{ steps.decide.outputs.release }}
       tag: ${{ steps.decide.outputs.tag }}
+      reused: ${{ steps.reuse.outputs.reused }}
+      reused_run: ${{ steps.reuse.outputs.reused_run }}
+      tree: ${{ steps.tree.outputs.tree }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -36,24 +53,93 @@ jobs:
       - id: decide
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+          RELEASE: ${{ inputs.release }}
         run: |
+          if [[ $GITHUB_EVENT_NAME == workflow_dispatch && $RELEASE == true && $GITHUB_REF != refs/heads/main ]]; then
+            echo '::error::A release is made from main.'
+            exit 1
+          fi
           case "$GITHUB_EVENT_NAME" in
             pull_request) python3 scripts/release_plan.py pull-request "$BASE" ;;
-            push) python3 scripts/release_plan.py main ;;
-            # A run started by hand tests the branch it was started on.
-            *) printf 'test=true\nrelease=false\n' ;;
+            push) python3 scripts/release_plan.py merged "$BEFORE" ;;
+            # A run started by hand releases main when asked to, and otherwise
+            # tests the branch it was started on.
+            *)
+              if [[ $RELEASE == true ]]; then
+                python3 scripts/release_plan.py main
+              else
+                printf 'test=true\nrelease=false\n'
+              fi
+              ;;
           esac | tee -a "$GITHUB_OUTPUT"
+      # A preview ships with its changelog: refuse a release whose tag has no
+      # section, before anything is built.
+      - name: Require release notes
+        if: steps.decide.outputs.release == 'true'
+        env:
+          TAG: ${{ steps.decide.outputs.tag }}
+        run: python3 scripts/changelog.py section "$TAG" > /dev/null
+      # A merge whose exact tree passed the check on its pull request is not
+      # tested again. The script prints reused=false on any doubt, and anything
+      # but reused=true runs the full check.
+      - id: reuse
+        if: github.event_name == 'push' && steps.decide.outputs.test == 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BEFORE: ${{ github.event.before }}
+        run: python3 scripts/release_reuse.py "$GITHUB_SHA" "$BEFORE" | tee -a "$GITHUB_OUTPUT"
+      # The tree this run tests; a passing pull request records it for the merge.
+      - id: tree
+        run: echo "tree=$(git rev-parse 'HEAD^{tree}')" | tee -a "$GITHUB_OUTPUT"
 
-  # The tests that gate a merge. They run on the pull request, not again on main.
-  check:
+  # The tests that gate a merge, in two halves that run side by side. They run
+  # on the pull request, and again on main after the merge, where they see
+  # every merged change together, unless the plan reuses the request's result.
+  check-rust:
     needs: plan
-    if: needs.plan.outputs.test == 'true'
+    if: needs.plan.outputs.test == 'true' && needs.plan.outputs.reused != 'true'
     runs-on: macos-26
     timeout-minutes: 45
     env:
       MACOSX_DEPLOYMENT_TARGET: '15.0'
       # The release binaries are built and tested once, by the package job on main.
       PLAIT_CHECK_SKIP_RELEASE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: tools
+        uses: ./.github/actions/macos-tools
+      - name: Install iOS target
+        run: rustup target add aarch64-apple-ios
+      - name: Restore native build cache
+        id: cargo-cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/debug
+            target/aarch64-apple-ios/debug
+          key: macos26-${{ runner.arch }}-${{ steps.tools.outputs.cache-id }}-check-v2-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            macos26-${{ runner.arch }}-${{ steps.tools.outputs.cache-id }}-check-v2-
+            macos26-${{ runner.arch }}-${{ steps.tools.outputs.cache-id }}-check-
+      - name: Check Rust workspace
+        run: bash scripts/check.sh rust --require-command-sandbox
+      - name: Check installer planning
+        run: python3 -m unittest discover -s scripts -p 'test_release_*.py'
+
+  check-runtime:
+    needs: plan
+    if: needs.plan.outputs.test == 'true' && needs.plan.outputs.reused != 'true'
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '15.0'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -68,25 +154,78 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target/debug
-          key: macos26-${{ runner.arch }}-${{ steps.tools.outputs.cache-id }}-check-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
-          restore-keys: macos26-${{ runner.arch }}-${{ steps.tools.outputs.cache-id }}-check-
-      - name: Check workspace and real command sandbox
-        run: bash scripts/check.sh --require-command-sandbox
+            target/aarch64-apple-ios/debug
+          key: macos26-${{ runner.arch }}-${{ steps.tools.outputs.cache-id }}-check-v2-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            macos26-${{ runner.arch }}-${{ steps.tools.outputs.cache-id }}-check-v2-
+            macos26-${{ runner.arch }}-${{ steps.tools.outputs.cache-id }}-check-
+      - name: Check runtime and real command sandbox
+        run: bash scripts/check.sh runtime --require-command-sandbox
       - name: Check runtime recovery without credentials
         working-directory: experiments/pi-durable
         run: |
           npm ci --ignore-scripts
           npm test
-      - name: Check installer planning
-        run: python3 -m unittest discover -s scripts -p 'test_release_*.py'
 
-  # A pull request can read a build cache only if main saved it, and the tests
-  # no longer run on main. When the lockfile or toolchain changes, main builds
-  # the test binaries once and saves them for the pull requests that follow.
+  # The required check. It keeps the name branch protection asks for and
+  # passes only when both halves passed, there was nothing to test, or the
+  # plan reused the pull request's passing result for this exact tree. A
+  # skipped, cancelled or failed half fails it.
+  check:
+    needs: [plan, check-rust, check-runtime]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require both halves
+        env:
+          PLAN: ${{ needs.plan.result }}
+          TEST: ${{ needs.plan.outputs.test }}
+          REUSED: ${{ needs.plan.outputs.reused }}
+          REUSED_RUN: ${{ needs.plan.outputs.reused_run }}
+          RUST: ${{ needs.check-rust.result }}
+          RUNTIME: ${{ needs.check-runtime.result }}
+        run: |
+          if [[ $PLAN != success ]]; then
+            echo "::error::The plan did not succeed ($PLAN)."
+            exit 1
+          fi
+          if [[ $TEST != true ]]; then
+            echo 'Nothing in this change needs the tests.'
+            exit 0
+          fi
+          if [[ $REUSED == true ]]; then
+            echo "::notice::This tree passed the check on its pull request: $REUSED_RUN"
+            exit 0
+          fi
+          if [[ $RUST != success || $RUNTIME != success ]]; then
+            echo "::error::Rust check: $RUST. Runtime check: $RUNTIME."
+            exit 1
+          fi
+      - name: Record the tested tree
+        if: github.event_name == 'pull_request' && needs.plan.outputs.test == 'true'
+        env:
+          TREE: ${{ needs.plan.outputs.tree }}
+        run: |
+          test -n "$TREE"
+          printf '%s\n' "$TREE" > tested-tree
+      - name: Upload the tested tree
+        if: github.event_name == 'pull_request' && needs.plan.outputs.test == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tested-tree
+          path: tested-tree
+          if-no-files-found: error
+          retention-days: 30
+
+  # A pull request can read a build cache only if main saved it. When the
+  # lockfile or toolchain changes, main builds everything the check builds
+  # once (test binaries, lints, the no-default-features and iOS checks, and
+  # the host) and saves it for the pull requests that follow.
   test-cache:
     needs: plan
-    # A lockfile or toolchain change always ships, so it always makes a release.
-    if: needs.plan.outputs.release == 'true'
+    # After a merge that is tested or reused, and with a release.
+    if: (github.event_name == 'push' && needs.plan.outputs.test == 'true') || needs.plan.outputs.release == 'true'
     runs-on: macos-26
     timeout-minutes: 45
     env:
@@ -105,11 +244,18 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target/debug
-          key: macos26-${{ runner.arch }}-${{ steps.tools.outputs.cache-id }}-check-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+            target/aarch64-apple-ios/debug
+          key: macos26-${{ runner.arch }}-${{ steps.tools.outputs.cache-id }}-check-v2-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
           lookup-only: true
-      - name: Build the test binaries
+      - name: Build what the check builds
         if: steps.cargo-cache.outputs.cache-hit != 'true'
-        run: cargo test --locked --workspace --no-run
+        run: |
+          rustup target add aarch64-apple-ios
+          cargo test --locked --workspace --no-run
+          cargo clippy --locked --workspace --all-targets
+          cargo check --locked -p plait-client --no-default-features
+          cargo check --locked -p plait-client --no-default-features --target aarch64-apple-ios
+          cargo build --locked -p plait-host
       - name: Save native build cache
         if: steps.cargo-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
@@ -118,6 +264,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target/debug
+            target/aarch64-apple-ios/debug
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   # The one build of a release: installers, the installer test, and the
@@ -185,6 +332,38 @@ jobs:
             target/release-inputs
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
+  # Packaged on pull requests too, so a broken Linux archive fails before a release.
+  linux-host:
+    needs: plan
+    if: needs.plan.outputs.release == 'true' || (needs.plan.outputs.test == 'true' && needs.plan.outputs.reused != 'true')
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build and package host
+        env:
+          RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+        run: |
+          rustup toolchain install --profile minimal --no-self-update
+          python3 scripts/package_linux_host.py --arch ${{ matrix.arch }} --out dist --release-tag "$RELEASE_TAG"
+          python3 scripts/smoke_linux_host.py dist/*.tar.gz
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: plait-host-linux-${{ matrix.arch }}-${{ github.sha }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 14
+
   # The real-window check drives the package this run built. It is advisory:
   # publishing does not wait for it, and its failures do not fail the run.
   acceptance:
@@ -240,7 +419,7 @@ jobs:
   # The preview's number is taken only here, when everything before it passed:
   # a build that fails uses up no number and leaves no tag behind.
   publish:
-    needs: [plan, package]
+    needs: [plan, package, linux-host]
     runs-on: ubuntu-24.04
     permissions:
       actions: read
@@ -257,11 +436,13 @@ jobs:
       - name: Download the tested build and verify every checksum
         run: |
           gh run download "$GITHUB_RUN_ID" -n "$ARTIFACT" -D release
+          gh run download "$GITHUB_RUN_ID" -n "plait-host-linux-x86_64-$GITHUB_SHA" -D release
+          gh run download "$GITHUB_RUN_ID" -n "plait-host-linux-arm64-$GITHUB_SHA" -D release
           (cd release && sha256sum -c ./*.sha256)
       - name: Build the update signing tool
         run: |
           rustup toolchain install --profile minimal --no-self-update
-          cargo build --locked -p plait-core --example update-key
+          cargo build --locked -p plait-protocol --example update-key
       - name: Write and sign the update manifest
         env:
           PLAIT_UPDATE_SIGNING_KEY: ${{ secrets.PLAIT_UPDATE_SIGNING_KEY }}
@@ -272,31 +453,39 @@ jobs:
           trap 'rm -f "$key"' EXIT
           printf '%s\n' "$PLAIT_UPDATE_SIGNING_KEY" > "$key"
           # Signing refuses a key that does not match the one built into Plait.
-          target/debug/examples/update-key sign "$key" release/update.json
-          target/debug/examples/update-key verify release/update.json
+          # Schema 1 for current apps, and one manifest per component for the
+          # independent updates in docs/RELEASING.md. Each is checked as a client would.
+          for manifest in release/update.json release/update-client.json release/update-host.json release/update-host-linux-*.json; do
+            test -f "$manifest" || continue
+            target/debug/examples/update-key sign "$key" "$manifest"
+            target/debug/examples/update-key verify "$manifest"
+          done
       - name: Publish an immutable preview
         run: |
+          # What changed comes first; GitHub appends its list of pull requests.
+          { echo "## What's new"; echo; python3 scripts/changelog.py section "$RELEASE_TAG"; echo; } > notes.md
           printf '%s\n' \
             '## Install' \
-            'Download the DMG, open it, and run **Install Plait.command**.' \
-            'This installs the prebuilt app and bundled host for your user account. No Xcode, Rust, or Node installation is needed.' \
+            'Download the DMG, open it, and drag **Plait** into **Applications**, then open it from there.' \
+            'On first launch Plait sets up its local server for your user account. No Xcode, Rust, Node, or Terminal command is needed.' \
             '' \
             '**Unsigned local preview. Not notarized. Do not disable Gatekeeper.**' \
             'Apple Silicon; macOS 15+ declared, tested on macOS 26.' \
             '' \
             'The host includes Node and the runtime. Model credentials and project build tools are not included.' \
             'Per-user installs update from **Plait → Check for Updates…**; headless hosts run `plait-host update`.' \
-            'Older package installs move to the per-user layout automatically; administrator access is needed once. Threads, drafts, and credentials are preserved.' \
+            'An earlier system-wide package install moves once with **Move from system-wide install.command** on the DMG; it needs administrator access once. Threads, drafts, and credentials are preserved.' \
             '' \
             'Native code display, copy controls, saved drafts, and safe submission recovery are included.' \
             'The installed coding/reconnect test uses a scripted provider and real sandboxed Cargo commands, not a live model.' \
             '' \
             'The attached installed-client images show that labeled test, not a personal-account session.' \
-            'See docs/MACOS.md, docs/SELF-HOSTING.md, and docs/VERIFICATION.md at this tag for setup and limits.' > notes.md
+            'Linux hosts (x86_64, arm64): Plait-Host-*-linux-*.tar.gz, each with its own signed update-host-linux-*.json. See docs/REMOTE.md.' \
+            'See docs/GUIDE.md, docs/REMOTE.md, and docs/VERIFICATION.md at this tag for setup and limits.' >> notes.md
           # The tag is created with the release, on the commit this run built.
           gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" --prerelease --draft \
             --title "Plait $RELEASE_TAG — local preview" --notes-file notes.md --generate-notes \
             release/*.dmg release/*.pkg release/*.zip release/*.tar.gz release/*.sha256 \
-            release/update.json release/update.json.sig \
+            release/update*.json release/update*.json.sig \
             release/install.sh release/release.json release/Plait-Release-*.json release/installed-client*.png
           gh release edit "$RELEASE_TAG" --draft=false

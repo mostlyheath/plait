@@ -4,7 +4,10 @@ use super::{
     theme::*,
 };
 use gpui::{prelude::*, *};
-use std::time::Instant;
+use plait_client::preferences::Turns;
+use std::{sync::Arc, time::Instant};
+
+pub(super) const LIST_TOP_PADDING: f32 = 8.;
 
 /// Carries guarded keyboard actions to the key event that knows whether they repeat.
 #[derive(Default)]
@@ -61,15 +64,16 @@ impl Reveals {
             .advance(key, reasoning.saturating_sub(1).max(1), at);
     }
 }
-use plait_core::{
+use plait_client::{
+    folding::{self, DisplayRow},
     history::{self, Key},
     host::{
-        Approval, ApprovalMode, HistoryField, Message, MessageRole, Snapshot, ThreadStatus,
-        harness::HarnessId,
+        Approval, ApprovalKind, ApprovalMode, HistoryField, Message, MessageRole, Snapshot,
+        ThreadStatus, harness::HarnessId,
     },
     markdown::Block,
     reveal::Reveal,
-    transcript::{self, Row},
+    transcript::{self, Row, Slot},
 };
 
 /// Full-width line above the conversation for host and submission state.
@@ -91,15 +95,20 @@ fn banner(tint: u32) -> Div {
 /// The author and copy control share one line, clear of selectable text.
 const AUTHOR_LINE: f32 = 22.;
 
-fn message_author(author: &'static str) -> Div {
-    div()
-        .h(px(AUTHOR_LINE))
-        .flex()
-        .items_center()
-        .text_size(px(12.))
-        .font_weight(FontWeight::MEDIUM)
-        .text_color(rgb(colors().muted))
-        .child(author)
+fn message_author(style: Turns, author: &'static str) -> Option<Div> {
+    if style == Turns::Bubbles {
+        return None;
+    }
+    Some(
+        div()
+            .h(px(AUTHOR_LINE))
+            .flex()
+            .items_center()
+            .text_size(px(12.))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(rgb(colors().muted))
+            .child(author),
+    )
 }
 
 /// The turn line hangs in the middle of the conversation's 24-point left
@@ -112,38 +121,47 @@ const RING: f32 = 9.;
 const NODE: f32 = 7.;
 /// Clear space around a mark, so the line does not touch it.
 const MARK_GAP: f32 = 2.;
-/// Height of a turn's record line and of the state line, which centers
-/// their nodes.
+/// Height of the legacy record and live state lines.
 const RECORD_LINE: f32 = 22.;
+pub(super) const CLOSING_LINE: f32 = 30.;
 
 /// One row's piece of the turn line, from `from` points below the row's top
 /// to its bottom. Rows are drawn edge to edge, so the pieces read as one line.
-fn strand_line(from: f32) -> Div {
-    div()
-        .absolute()
-        .left(px(-STRAND_LEFT))
-        .top(px(from))
-        .bottom_0()
-        .w(px(1.))
-        // The outline color, not the hairline: the line has to read as a
-        // line beside dense text.
-        .bg(rgb(colors().edge))
+fn strand_line(style: Turns, from: f32) -> Option<Div> {
+    if style == Turns::Bubbles {
+        return None;
+    }
+    Some(
+        div()
+            .absolute()
+            .left(px(-STRAND_LEFT))
+            .top(px(from))
+            .bottom_0()
+            .w(px(1.))
+            // The outline color, not the hairline: the line has to read as a
+            // line beside dense text.
+            .bg(rgb(colors().edge)),
+    )
 }
 
 /// The line's last piece, down to the live state's node.
-fn strand_end(to: f32) -> Div {
-    div()
-        .absolute()
-        .left(px(-STRAND_LEFT))
-        .top_0()
-        .h(px(to))
-        .w(px(1.))
-        .bg(rgb(colors().edge))
+fn strand_end(style: Turns, to: f32) -> Option<Div> {
+    if style == Turns::Bubbles {
+        return None;
+    }
+    Some(
+        div()
+            .absolute()
+            .left(px(-STRAND_LEFT))
+            .top_0()
+            .h(px(to))
+            .w(px(1.))
+            .bg(rgb(colors().edge)),
+    )
 }
 
-/// A round mark centered on the turn line, `center` points below its
-/// parent's top edge, on a little clear ground.
-fn strand_mark(center: f32, size: f32, color: u32, hollow: bool) -> Div {
+/// A clear ground centered on the turn line, `center` points below its parent's top edge.
+fn strand_mark_ground(center: f32, size: f32) -> Div {
     let ground = size + MARK_GAP * 2.;
     div()
         .absolute()
@@ -155,7 +173,14 @@ fn strand_mark(center: f32, size: f32, color: u32, hollow: bool) -> Div {
         .flex()
         .items_center()
         .justify_center()
-        .child(
+}
+
+fn strand_mark(style: Turns, center: f32, size: f32, color: u32, hollow: bool) -> Option<Div> {
+    if style == Turns::Bubbles {
+        return None;
+    }
+    Some(
+        strand_mark_ground(center, size).child(
             div()
                 .size(px(size))
                 .rounded_full()
@@ -171,7 +196,54 @@ fn strand_mark(center: f32, size: f32, color: u32, hollow: bool) -> Div {
                             .bg(rgb(colors().bg)),
                     )
                 }),
-        )
+        ),
+    )
+}
+
+/// Honest file and line totals for a folded earlier turn in Bubbles mode,
+/// using only counts the host reported and never inventing missing values.
+fn folded_turn_summary(
+    recorded: Option<&plait_client::history::records::Line>,
+    records: &[plait_client::host::TurnRecord],
+    legacy: Option<&history::TurnSummary>,
+) -> Option<String> {
+    if let Some(line) = recorded {
+        if line.undone {
+            return Some("Undone".into());
+        }
+        if line.paths_total == 0 {
+            return None;
+        }
+        let files = if line.paths_total == 1 {
+            "1 file".to_owned()
+        } else {
+            format!("{} files", line.paths_total)
+        };
+        let totals = records
+            .iter()
+            .find(|record| record.id == line.displayed)
+            .filter(|record| record.paths.len() == line.paths_total)
+            .and_then(|record| {
+                record
+                    .paths
+                    .iter()
+                    .try_fold((0u64, 0u64), |(added, removed), path| {
+                        Some((
+                            added.checked_add(path.added?)?,
+                            removed.checked_add(path.removed?)?,
+                        ))
+                    })
+            });
+        return Some(match totals {
+            Some((added, removed)) => format!("{files} +{added} −{removed}"),
+            None => files,
+        });
+    }
+    legacy.and_then(|summary| match summary.files.len() {
+        0 => None,
+        1 => Some("1 file".into()),
+        count => Some(format!("{count} files")),
+    })
 }
 
 /// A tool's path as Changes lists it: relative to the checkout.
@@ -188,6 +260,15 @@ pub(super) fn approvable(approval: &Approval, harness: HarnessId) -> bool {
     approval.details.len() <= 16384 && (harness != HarnessId::Pi || !approval.details.is_empty())
 }
 
+/// Heights in the virtual list belong to the last work layout drawn.
+#[derive(Default)]
+pub(super) struct MeasuredWork {
+    folds: Arc<[folding::WorkFold]>,
+    enabled: bool,
+}
+
+const CONVERSATION_PADDING: f32 = 24.;
+
 impl Plait {
     /// The desktop default from Settings → New threads.
     pub(super) fn default_approval(&self) -> ApprovalMode {
@@ -201,19 +282,6 @@ impl Plait {
     /// The mode the next submission requests: the open thread's own choice,
     /// else the default. Version 1 hosts always ask. A harness thread asks for
     /// none: the harness's own mode governs it.
-    pub(super) fn next_approval_mode(&self) -> Option<ApprovalMode> {
-        if self.thread_harness() != HarnessId::Pi {
-            return None;
-        }
-        let chosen = self
-            .host
-            .thread
-            .selected
-            .as_deref()
-            .and_then(|id| self.thread_approval(id));
-        (self.host.protocol() >= 2).then(|| chosen.unwrap_or_else(|| self.default_approval()))
-    }
-
     /// A running thread reports its own mode; otherwise show what the next message uses.
     fn approval_note(&self, snapshot: Option<&Snapshot>) -> &'static str {
         let mode = match snapshot {
@@ -225,6 +293,48 @@ impl Plait {
         } else {
             "Approve each action"
         }
+    }
+
+    /// An older host cannot change a thread's settings, so the box says what
+    /// the thread runs with instead of offering controls: its project,
+    /// machine and branch, its saved model, and how actions are approved.
+    fn older_host_message_box_parts(&self) -> super::thread_controls::MessageBoxParts {
+        let snapshot = self.host.thread.snapshot.as_ref();
+        let model = snapshot.map(|snapshot| &snapshot.model).or_else(|| {
+            self.host
+                .connection
+                .threads()
+                .iter()
+                .find(|thread| Some(&thread.id) == self.host.thread.selected.as_ref())
+                .map(|thread| &thread.model)
+        });
+        let model_label = model.map_or_else(
+            || "Loading saved model…".into(),
+            |model| format!("{} / {}", model.provider, model.model_id),
+        );
+        super::thread_controls::MessageBoxParts {
+            left: vec![
+                self.connection_details(
+                    Some(model_label),
+                    Some((self.approval_note(snapshot.map(|s| &**s)), colors().muted)),
+                )
+                .into_any_element(),
+            ],
+            ..Default::default()
+        }
+    }
+
+    pub(super) fn next_approval_mode(&self) -> Option<ApprovalMode> {
+        if self.thread_harness() != HarnessId::Pi {
+            return None;
+        }
+        let chosen = self
+            .host
+            .thread
+            .selected
+            .as_deref()
+            .and_then(|id| self.thread_approval(id));
+        (self.host.protocol() >= 2).then(|| chosen.unwrap_or_else(|| self.default_approval()))
     }
 
     fn live_message(&self, message: &Message, index: usize, cx: &mut Context<Self>) -> AnyElement {
@@ -242,8 +352,24 @@ impl Plait {
                 None => prose().child(message.text.clone()).into_any_element(),
             }
         });
+        let bubble = user && self.preferences.value.turns == Turns::Bubbles;
         let body = column()
-            .w_full()
+            .when(!bubble, |el| el.w_full())
+            .when(bubble, |el| {
+                el.max_w(relative(0.84))
+                    .ml_auto()
+                    .bg(rgb(colors().raised))
+                    .text_color(rgb(colors().strong))
+                    .border_1()
+                    .border_color(rgb(colors().edge))
+                    .rounded(px(12.))
+                    .rounded_br(px(4.))
+                    .py(px(10.))
+                    .px(px(14.))
+            })
+            .when(bubble && !message.images.is_empty(), |el| {
+                el.child(self.image_row(&message.images, cx))
+            })
             .min_w_0()
             .gap_2()
             .children(self.history_parts(
@@ -252,10 +378,12 @@ impl Plait {
                 cx,
             ))
             .children(body)
-            .when(!message.images.is_empty(), |el| {
+            .when(!bubble && !message.images.is_empty(), |el| {
                 el.child(self.image_row(&message.images, cx))
             })
-            .when(user, |el| el.p_3().rounded_md().bg(rgb(colors().panel)));
+            .when(user && !bubble, |el| {
+                el.p_3().rounded_md().bg(rgb(colors().panel))
+            });
         let part = self
             .workspace
             .history
@@ -267,6 +395,7 @@ impl Plait {
                     .iter()
                     .any(|part| part.field == HistoryField::Text)
             });
+        let can_quote = !user && self.can_quote_reply(&message.id, cx);
         let copy = quiet_button(
             SharedString::from(format!("copy-message-{}", message.id)),
             if part {
@@ -276,25 +405,71 @@ impl Plait {
             },
             row_group(index),
         )
+        .when(can_quote, |el| el.opacity(1.))
         .aria_label(if part {
             "Copy this message part"
         } else {
             "Copy message source"
         })
         .on_activate(cx, {
-            let text = message.text.clone();
-            move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(text.clone()))
-        });
-        // The author stays visible even when the copy action is hidden.
+            let snapshot = self
+                .workspace
+                .history
+                .display
+                .as_ref()
+                .or(self.host.thread.snapshot.as_ref())
+                .cloned();
+            let id = message.id.clone();
+            move |_, _, cx| {
+                if let Some(message) = snapshot
+                    .as_ref()
+                    .and_then(|snapshot| snapshot.messages.iter().find(|message| message.id == id))
+                {
+                    cx.write_to_clipboard(ClipboardItem::new_string(message.text.clone()));
+                }
+            }
+        })
+        .h(px(AUTHOR_LINE));
+        let actions = row()
+            .gap_1()
+            .when(can_quote, |el| {
+                let reply = message.id.clone();
+                el.child(
+                    button("quote-selection", "Quote selection")
+                        .h(px(AUTHOR_LINE))
+                        .aria_keyshortcuts(self.shortcut_aria("conversation.quote_selection"))
+                        .block_mouse_except_scroll()
+                        .on_activate(cx, move |this, window, cx| {
+                            this.quote_reply_selection(Some(&reply), window, cx);
+                        }),
+                )
+            })
+            .child(copy);
         let id = (
             ElementId::from("live-message"),
             SharedString::from(message.id.clone()),
         );
-        let label = format!(
-            "{} message: {}",
-            if user { "Your" } else { "Plait" },
-            message.text
-        );
+        let label = self
+            .workspace
+            .formatted
+            .message_labels
+            .get(&message.id)
+            .filter(|_| {
+                self.workspace
+                    .formatted
+                    .messages
+                    .get(&message.id)
+                    .is_some_and(|parsed| parsed.source == message.text)
+            })
+            .map(SharedString::from)
+            .unwrap_or_else(|| {
+                format!(
+                    "{} message: {}",
+                    if user { "Your" } else { "Plait" },
+                    message.text
+                )
+                .into()
+            });
         column()
             .id(id)
             .role(Role::Group)
@@ -305,17 +480,32 @@ impl Plait {
             .min_w_0()
             .gap_1()
             .when(user, |el| {
-                el.child(strand_mark(AUTHOR_LINE / 2., RING, colors().muted, true))
+                el.children(strand_mark(
+                    self.preferences.value.turns,
+                    AUTHOR_LINE / 2.,
+                    RING,
+                    colors().muted,
+                    true,
+                ))
             })
-            .child(
-                row()
-                    .w_full()
-                    .justify_between()
-                    .gap_2()
-                    .child(message_author(if user { "You" } else { "Plait" }))
-                    .child(copy.h(px(AUTHOR_LINE))),
-            )
-            .child(body)
+            .map(|el| match self.preferences.value.turns {
+                Turns::Line => el
+                    .child(
+                        row()
+                            .w_full()
+                            .justify_between()
+                            .gap_2()
+                            .children(message_author(
+                                Turns::Line,
+                                if user { "You" } else { "Plait" },
+                            ))
+                            .child(actions),
+                    )
+                    .child(body),
+                Turns::Bubbles => el
+                    .child(body)
+                    .child(div().absolute().top(px(-14.)).right_0().child(actions)),
+            })
             // A record stays on the open surface, never inside a request panel.
             .when_some(
                 self.conversation_snapshot().and_then(|shown| {
@@ -412,6 +602,7 @@ impl Plait {
             .child(
                 div()
                     .font_family(mono())
+                    .text_size(px(code_size()))
                     .text_color(rgb(colors().blue))
                     .underline()
                     .text_decoration_color(rgb(colors().blue))
@@ -456,10 +647,20 @@ impl Plait {
                         .into()
                 }
             })
+            .when(self.preferences.value.turns == Turns::Bubbles, |el| {
+                el.border_t_1().border_color(rgb(colors().border))
+            })
+            .flex_wrap()
             .pt(px(2.))
             .min_h(px(2. + line))
             .text_size(px(12.))
-            .child(strand_mark(2. + line / 2., NODE, colors().subtle, false))
+            .children(strand_mark(
+                self.preferences.value.turns,
+                2. + line / 2.,
+                NODE,
+                colors().subtle,
+                false,
+            ))
             .children(parts)
             .into_any_element()
     }
@@ -470,8 +671,8 @@ impl Plait {
     pub(super) fn advance_reveals(&mut self, window: &mut Window) {
         let key = self.host.thread.selected.as_deref().unwrap_or_default();
         let now = Instant::now();
-        let total = |parsed: Option<&std::sync::Arc<plait_core::markdown::Message>>| {
-            parsed.map_or(0, |parsed| plait_core::reveal::total(&parsed.blocks))
+        let total = |parsed: Option<&std::sync::Arc<plait_client::markdown::Message>>| {
+            parsed.map_or(0, |parsed| plait_client::reveal::total(&parsed.blocks))
         };
         let text = total(self.workspace.formatted.live.as_ref());
         let reasoning = total(self.workspace.formatted.live_reasoning.as_ref());
@@ -485,7 +686,7 @@ impl Plait {
 
     /// The part of live `blocks` on screen this frame: whole blocks and a cut last one.
     fn revealed<'a>(&self, shown: usize, blocks: &'a [Block]) -> (&'a [Block], Option<Block>) {
-        let (whole, tail) = plait_core::reveal::visible(blocks, shown);
+        let (whole, tail) = plait_client::reveal::visible(blocks, shown);
         (&blocks[..whole], tail)
     }
 
@@ -506,24 +707,31 @@ impl Plait {
         column()
             .id("live-stream")
             .role(Role::Group)
-            .aria_label(format!("Plait is writing: {text}"))
+            .aria_label(
+                self.workspace
+                    .formatted
+                    .live_label
+                    .as_ref()
+                    .filter(|_| {
+                        self.workspace
+                            .formatted
+                            .live
+                            .as_ref()
+                            .is_some_and(|parsed| parsed.source == text)
+                    })
+                    .map(SharedString::from)
+                    .unwrap_or_else(|| format!("Plait is writing: {text}").into()),
+            )
             .audited()
             .w_full()
             .min_w_0()
             .gap_1()
-            .child(message_author("Plait"))
+            .children(message_author(self.preferences.value.turns, "Plait"))
             .child(body)
             .into_any_element()
     }
 
-    fn reasoning(
-        &self,
-        id: &str,
-        text: &str,
-        index: usize,
-        live: bool,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    fn reasoning(&self, id: &str, index: usize, live: bool, cx: &mut Context<Self>) -> AnyElement {
         let open = live || self.workspace.history.expanded.contains(id);
         let site = Site {
             owner: if live {
@@ -573,9 +781,29 @@ impl Plait {
                         row_group(index),
                     )
                     .on_activate(cx, {
-                        let text = text.to_owned();
+                        let snapshot = self
+                            .workspace
+                            .history
+                            .display
+                            .as_ref()
+                            .or(self.host.thread.snapshot.as_ref())
+                            .cloned();
+                        let id = id.to_owned();
                         move |_, _, cx| {
-                            cx.write_to_clipboard(ClipboardItem::new_string(text.clone()))
+                            if let Some(snapshot) = &snapshot {
+                                let text = if live {
+                                    Some(&snapshot.live_reasoning)
+                                } else {
+                                    snapshot
+                                        .messages
+                                        .iter()
+                                        .find(|message| message.id == id)
+                                        .map(|message| &message.reasoning)
+                                };
+                                if let Some(text) = text {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
+                                }
+                            }
                         }
                     }),
                 )
@@ -618,16 +846,373 @@ impl Plait {
             .into_any_element()
     }
 
+    /// One folded earlier turn on the line: its ring with the first line of the
+    /// request and age at the right, then its node with the closing line unchanged.
+    /// Does not build any folded-away reply, reasoning, or tool content.
+    fn folded_turn_row(
+        &self,
+        index: usize,
+        snapshot: &Snapshot,
+        turn_id: &str,
+        request_message: usize,
+        closing_slot: Option<Slot>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        const TOP: f32 = 16.;
+        const BOTTOM: f32 = 8.;
+        let Some(request) = snapshot.messages.get(request_message) else {
+            return div().into_any_element();
+        };
+        let closing_row = closing_slot.and_then(|slot| transcript::resolve(snapshot, slot));
+        let recorded = closing_row
+            .and_then(history::records::closing_key)
+            .and_then(|key| self.workspace.turn_records.lines.rows.get(&key))
+            .filter(|_| self.host.protocol() >= 5);
+        let legacy = closing_row.and_then(|row| match row {
+            Row::Message(message) => history::row_record(
+                &self.workspace.formatted.turn_summaries,
+                snapshot,
+                &message.id,
+            )
+            .filter(|_| {
+                self.host.protocol() < 5
+                    || !self
+                        .workspace
+                        .turn_records
+                        .lines
+                        .covered
+                        .contains(&Key::Message(message.id.clone()))
+            })
+            .map(|summary| (message.id.as_str(), summary)),
+            _ => None,
+        });
+        let preview = folding::first_request_line(&request.text, request.images.len());
+        let open_id = turn_id.to_owned();
+        if self.preferences.value.turns == Turns::Bubbles {
+            let summary = folded_turn_summary(
+                recorded,
+                &self.workspace.turn_records.data,
+                legacy.map(|(_, summary)| summary),
+            );
+            let accessible_name = match (&preview[..], &summary) {
+                ("", Some(summary)) => format!("Turn hidden, {summary}. Show turn"),
+                ("", None) => "Turn hidden. Show turn".into(),
+                (text, Some(summary)) => format!("Turn hidden: {text}, {summary}. Show turn"),
+                (text, None) => format!("Turn hidden: {text}. Show turn"),
+            };
+            let disclosure = button(
+                (
+                    ElementId::from("folded-turn"),
+                    SharedString::from(turn_id.to_owned()),
+                ),
+                "",
+            )
+            .w_full()
+            .min_w_0()
+            .h(px(32.))
+            .px(px(10.))
+            .rounded(px(CONTROL_CORNER))
+            .text_size(px(12.))
+            .text_color(rgb(colors().subtle))
+            .justify_between()
+            .gap(px(9.))
+            .when(cfg!(test), |el| {
+                let mut context = KeyContext::default();
+                context.set("folded-turn", turn_id.to_owned());
+                el.key_context(context)
+            })
+            .aria_label(accessible_name)
+            .aria_expanded(false)
+            .child(
+                row()
+                    .min_w_0()
+                    .flex_1()
+                    .gap(px(9.))
+                    .child(icon("right"))
+                    .child(div().min_w_0().truncate().text_size(px(12.)).child(preview)),
+            )
+            .when_some(summary, |el, summary| {
+                el.child(
+                    div()
+                        .flex_shrink_0()
+                        .text_size(px(12.))
+                        .text_color(rgb(colors().subtle))
+                        .child(summary),
+                )
+            })
+            .on_activate(cx, move |this, _, cx| this.open_folded_turn(&open_id, cx));
+            return div()
+                .group(row_group(index))
+                .w_full()
+                .px(px(CONVERSATION_PADDING))
+                .child(
+                    div()
+                        .relative()
+                        .w_full()
+                        .max_w(px(CONTENT_WIDTH))
+                        .mx_auto()
+                        .pt(px(8.))
+                        .child(disclosure)
+                        .when_some(recorded, |el, line| el.children(self.undo_panel(line, cx))),
+                )
+                .into_any_element();
+        }
+        let age = recorded
+            .filter(|line| line.created_at > 0)
+            .map(|line| {
+                let now = if self.workspace.history.now > 0 {
+                    self.workspace.history.now
+                } else {
+                    super::commits::now().max(0) as u64 * 1000
+                };
+                plait_client::navigation::age(Some(line.created_at), now)
+            })
+            .filter(|age| !age.is_empty());
+        let accessible_name = match (&preview[..], &age) {
+            ("", Some(age)) => format!("Turn hidden, {age}. Show turn"),
+            ("", None) => "Turn hidden. Show turn".into(),
+            (text, Some(age)) => format!("Turn hidden: {text}, {age}. Show turn"),
+            (text, None) => format!("Turn hidden: {text}. Show turn"),
+        };
+        let disclosure = div()
+            .relative()
+            .w_full()
+            .min_w_0()
+            .children(strand_mark(
+                self.preferences.value.turns,
+                ROW_HEIGHT / 2.,
+                RING,
+                colors().muted,
+                true,
+            ))
+            .child(
+                button(
+                    (
+                        ElementId::from("folded-turn"),
+                        SharedString::from(turn_id.to_owned()),
+                    ),
+                    "",
+                )
+                .w_full()
+                .min_w_0()
+                .h(px(ROW_HEIGHT))
+                .px_2()
+                .ml(px(-8.))
+                .justify_between()
+                .gap_2()
+                .when(cfg!(test), |el| {
+                    let mut context = KeyContext::default();
+                    context.set("folded-turn", turn_id.to_owned());
+                    el.key_context(context)
+                })
+                .aria_label(accessible_name)
+                .aria_expanded(false)
+                .child(
+                    row()
+                        .min_w_0()
+                        .flex_1()
+                        .gap(px(6.))
+                        .child(icon("right"))
+                        .child(div().min_w_0().truncate().text_size(px(13.)).child(preview)),
+                )
+                .when_some(age, |el, age| {
+                    el.child(
+                        div()
+                            .flex_shrink_0()
+                            .text_size(px(12.))
+                            .text_color(rgb(colors().subtle))
+                            .child(age),
+                    )
+                })
+                .on_activate(cx, move |this, _, cx| this.open_folded_turn(&open_id, cx)),
+            );
+        let from = if index == 0 {
+            TOP + ROW_HEIGHT / 2.
+        } else {
+            0.
+        };
+        div()
+            .group(row_group(index))
+            .w_full()
+            .px_6()
+            .child(
+                div()
+                    .relative()
+                    .w_full()
+                    .max_w(px(CONTENT_WIDTH))
+                    .mx_auto()
+                    .pt(px(TOP))
+                    .pb(px(BOTTOM))
+                    .children(strand_line(self.preferences.value.turns, from))
+                    .child(disclosure)
+                    .when_some(recorded, |el, line| {
+                        el.child(
+                            div()
+                                .relative()
+                                .pt_1()
+                                .children(strand_mark(
+                                    self.preferences.value.turns,
+                                    4. + CLOSING_LINE / 2.,
+                                    NODE,
+                                    colors().subtle,
+                                    false,
+                                ))
+                                .child(self.record_line(line, false, cx)),
+                        )
+                    })
+                    .when(recorded.is_none(), |el| {
+                        el.when_some(legacy, |el, (id, summary)| {
+                            el.child(self.turn_record(id, summary, cx))
+                        })
+                    }),
+            )
+            .into_any_element()
+    }
+
+    pub(super) fn work_open_at(&self, row: usize) -> Option<bool> {
+        self.workspace
+            .live_layout
+            .work_at(row)?
+            .open(self.preferences.value.fold_finished_work())
+    }
+
+    fn reconcile_work_rows(&self) {
+        let layout = &self.workspace.live_layout;
+        let enabled = self.preferences.value.fold_finished_work();
+        let mut previous = self.workspace.turn_records.measured_work.borrow_mut();
+        if previous.enabled == enabled && Arc::ptr_eq(&previous.folds, &layout.work) {
+            return;
+        }
+        // Splices may have moved the turn since the last frame. Locate its
+        // request in the current list before invalidating old measurements.
+        for fold in previous.folds.iter().filter(|_| previous.enabled) {
+            if let Some(&request) = layout.row_of_message.get(&fold.request) {
+                let first = request + 1;
+                let current = layout.work_at(first);
+                if !enabled || current != Some(fold) {
+                    self.workspace
+                        .live_scroll
+                        .remeasure_items(first..(first + fold.rows.len()).min(layout.len()));
+                }
+            }
+        }
+        if enabled {
+            for fold in layout.work.iter() {
+                let ix = previous
+                    .folds
+                    .partition_point(|old| old.rows.end <= fold.rows.start);
+                if !previous.enabled || previous.folds.get(ix) != Some(fold) {
+                    self.workspace
+                        .live_scroll
+                        .remeasure_items(fold.rows.clone());
+                }
+            }
+        }
+        previous.folds = layout.work.clone();
+        previous.enabled = enabled;
+    }
+
+    pub(super) fn toggle_finished_work(&mut self, request: &str, cx: &mut Context<Self>) {
+        let layout = &self.workspace.live_layout;
+        let Some(fold) = layout
+            .row_of_message
+            .get(request)
+            .and_then(|row| layout.work_at(row + 1))
+            .filter(|fold| fold.request == request)
+        else {
+            return;
+        };
+        let Some(open) = fold.open(self.preferences.value.fold_finished_work()) else {
+            return;
+        };
+        let Some(tab) = self
+            .tabs
+            .model
+            .active()
+            .and_then(|id| self.tabs.model.get(id))
+        else {
+            return;
+        };
+        // The current Find match keeps its work visible. Activating an open
+        // disclosure clears the manual choice instead of pinning it open.
+        if !tab.session().outcomes().set_work_open(&fold.request, !open) {
+            return;
+        }
+        let scroll = &self.workspace.live_scroll;
+        // Bottom alignment may put a short transcript partway down the list.
+        // Preserve that space before taller rows replace the zero-height ones.
+        if scroll.logical_scroll_top().item_ix >= self.workspace.live_count {
+            scroll.scroll_to_end();
+            let top = -scroll.scroll_px_offset_for_scrollbar().y + px(LIST_TOP_PADDING)
+                - scroll.viewport_bounds().size.height;
+            scroll.scroll_to(ListOffset {
+                item_ix: 0,
+                offset_in_item: top.min(px(0.)),
+            });
+            if top > px(0.) {
+                scroll.scroll_by(top);
+            }
+        }
+        self.reconcile_live_folding();
+        cx.notify();
+    }
+
+    fn work_disclosure(
+        &self,
+        fold: &folding::WorkFold,
+        open: bool,
+        cx: &mut Context<Self>,
+    ) -> Control {
+        let request = SharedString::from(fold.request.clone());
+        button((ElementId::from("finished-work"), request.clone()), "")
+            .h(px(28.))
+            .min_w_0()
+            .max_w_full()
+            .px_1()
+            .gap(px(6.))
+            .text_size(px(12.))
+            .text_color(rgb(colors().subtle))
+            .aria_label(fold.summary.clone())
+            .aria_expanded(open)
+            .child(icon(if open { "down" } else { "right" }))
+            .child(div().min_w_0().truncate().child(fold.summary.clone()))
+            .on_activate(cx, move |this, _, cx| {
+                this.toggle_finished_work(&request, cx)
+            })
+    }
+
     fn live_event(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
         let Some(snapshot) = self.conversation_snapshot() else {
             return div().into_any_element();
         };
-        let Some(row) = self
-            .workspace
-            .live_layout
-            .get(index)
-            .and_then(|slot| transcript::resolve(snapshot, *slot))
-        else {
+        let slot = match self.workspace.live_layout.rows.get(index) {
+            Some(DisplayRow::Slot(slot)) => *slot,
+            Some(DisplayRow::FoldedTurn {
+                id,
+                request_message,
+                closing_slot,
+            }) => {
+                return self.folded_turn_row(
+                    index,
+                    snapshot,
+                    id,
+                    *request_message,
+                    *closing_slot,
+                    cx,
+                );
+            }
+            None => return div().into_any_element(),
+        };
+        let work = self.workspace.live_layout.work_at(index);
+        let open = work.and_then(|fold| fold.open(self.preferences.value.fold_finished_work()));
+        let disclosure = work
+            .zip(open)
+            .filter(|(fold, _)| fold.rows.start == index)
+            .map(|(fold, open)| self.work_disclosure(fold, open, cx));
+        if open == Some(false) && disclosure.is_none() {
+            return div().h(px(0.)).into_any_element();
+        }
+        let Some(row) = transcript::resolve(snapshot, slot) else {
             return div().into_any_element();
         };
         // Requests stand clear of the previous turn. Replies and streaming
@@ -636,22 +1221,75 @@ impl Plait {
         let recorded = history::records::closing_key(row)
             .and_then(|key| self.workspace.turn_records.lines.rows.get(&key))
             .filter(|_| self.host.protocol() >= 5);
-        let (content, top, bottom) = match row {
-            Row::Message(message) if request => (self.live_message(message, index, cx), 24., 8.),
-            Row::Message(message) => (self.live_message(message, index, cx), 16., 8.),
-            Row::Streaming(text) => (self.live_stream(text, index, cx), 16., 8.),
-            Row::Reasoning(message) => (
-                self.reasoning(&message.id, &message.reasoning, index, false, cx),
-                6.,
-                3.,
-            ),
-            Row::LiveReasoning(text) => (self.reasoning("live", text, index, true, cx), 6., 3.),
-            Row::Tool(tool) => match self.tool_row(tool, index, cx) {
-                Some(content) => (content, 1., 1.),
-                // Folded into a closed group: the row stays, with no height.
-                None if recorded.is_some() => (div().into_any_element(), 1., 1.),
-                None => return div().into_any_element(),
-            },
+        let (content, top, bottom) = if open == Some(false) {
+            (div().into_any_element(), 6., 3.)
+        } else {
+            match row {
+                Row::Message(message) if request => {
+                    (self.live_message(message, index, cx), 24., 8.)
+                }
+                Row::Message(message) => (self.live_message(message, index, cx), 16., 8.),
+                Row::Streaming(text) => (self.live_stream(text, index, cx), 16., 8.),
+                Row::Reasoning(message) => (self.reasoning(&message.id, index, false, cx), 6., 3.),
+                Row::LiveReasoning(_) => (self.reasoning("live", index, true, cx), 6., 3.),
+                Row::Tool(tool) => match self.tool_row(tool, index, cx) {
+                    Some(content) => (content, 1., 1.),
+                    // Folded into a closed group: the row stays, with no height.
+                    None if recorded.is_some() => (div().into_any_element(), 1., 1.),
+                    None => return div().into_any_element(),
+                },
+            }
+        };
+        let bubble = self.preferences.value.turns == Turns::Bubbles;
+        let (top, bottom) = match self.preferences.value.turns {
+            Turns::Line => (top, bottom),
+            Turns::Bubbles if request => (22., 0.),
+            Turns::Bubbles
+                if matches!(
+                    slot,
+                    Slot::Tool(_) | Slot::Reasoning(_) | Slot::LiveReasoning
+                ) && index > 0
+                    && matches!(
+                        self.workspace.live_layout.rows.get(index - 1),
+                        Some(DisplayRow::Slot(
+                            Slot::Tool(_) | Slot::Reasoning(_) | Slot::LiveReasoning
+                        ))
+                    ) =>
+            {
+                // The section has 14 points above it; its own rows stay compact.
+                (top + bottom, 0.)
+            }
+            Turns::Bubbles => (14., 0.),
+        };
+        let (content, top, bottom) = if let Some(open) = open {
+            let first = disclosure.is_some();
+            let group_top = if !first {
+                0.
+            } else if bubble {
+                14.
+            } else {
+                6.
+            };
+            let body = column()
+                .items_start()
+                .w_full()
+                .children(disclosure)
+                .when(open, |el| {
+                    el.child(
+                        div()
+                            .w_full()
+                            .min_w_0()
+                            .border_l_1()
+                            .border_color(rgb(colors().edge))
+                            .pl(px(18.))
+                            .pt(px(if bubble { 4. } else { top }))
+                            .pb(px(bottom))
+                            .child(content),
+                    )
+                });
+            (body.into_any_element(), group_top, 0.)
+        } else {
+            (content, top, bottom)
         };
         // The line starts with the first row: at the ring of a request, and
         // otherwise where the row's content begins, not in the space above it.
@@ -664,7 +1302,7 @@ impl Plait {
         div()
             .group(row_group(index))
             .w_full()
-            .px_6()
+            .px(px(CONVERSATION_PADDING))
             .child(
                 div()
                     .relative()
@@ -673,20 +1311,25 @@ impl Plait {
                     .mx_auto()
                     .pt(px(top))
                     .pb(px(bottom))
-                    .child(strand_line(from))
+                    .children(strand_line(self.preferences.value.turns, from))
                     .child(content)
                     .when_some(recorded, |el, line| {
                         el.child(
                             div()
                                 .relative()
-                                .pt_1()
-                                .child(strand_mark(
-                                    4. + RECORD_LINE / 2.,
+                                .pt(px(if self.preferences.value.turns == Turns::Line {
+                                    4.
+                                } else {
+                                    14.
+                                }))
+                                .children(strand_mark(
+                                    self.preferences.value.turns,
+                                    4. + CLOSING_LINE / 2.,
                                     NODE,
                                     colors().subtle,
                                     false,
                                 ))
-                                .child(self.record_line(line, false, row_group(index), cx)),
+                                .child(self.record_line(line, false, cx)),
                         )
                     }),
             )
@@ -701,6 +1344,7 @@ impl Plait {
     }
 
     fn live_rows(&self, snapshot: &Snapshot, cx: &mut Context<Self>) -> AnyElement {
+        self.reconcile_work_rows();
         self.reconcile_tool_rows();
         self.resolve_selection();
         let away = self.reading_back();
@@ -724,7 +1368,7 @@ impl Plait {
                 )
                 .size_full()
                 // No space below: the turn line runs on into the state line.
-                .pt_2(),
+                .pt(px(LIST_TOP_PADDING)),
             )
             .when(away, |el| {
                 el.child(
@@ -735,7 +1379,7 @@ impl Plait {
                         .bottom(px(10.))
                         .left_0()
                         .right_0()
-                        .px_6()
+                        .px(px(CONVERSATION_PADDING))
                         .child(
                             div()
                                 .flex()
@@ -806,6 +1450,7 @@ impl Plait {
         // runs after the palette has closed.
         let shown = !self.settings_open
             && self.workspace.tab == super::Workspace::Conversation
+            && !self.panel_fills()
             && self.overlay.is_none();
         let snapshot = self.host.thread.snapshot.as_ref().filter(|snapshot| {
             shown && self.host.thread.selected.as_deref() == Some(snapshot.id.as_str())
@@ -818,6 +1463,7 @@ impl Plait {
     /// Deny Once or Allow Once from the keyboard, the menu, or the palette.
     fn answer_by_shortcut(&mut self, allow: bool, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(answer) = self.shortcut_answer(allow) {
+            self.workspace.clear_approval_reply();
             self.control_thread(Some(answer), window, cx);
         }
     }
@@ -889,137 +1535,222 @@ impl Plait {
     /// A control's shortcut as the keymap binds it now. Nothing when unbound.
     fn shortcut_hint(&self, id: &str) -> Option<Div> {
         let label = self.shortcut_label(id);
-        (!label.is_empty()).then(|| {
-            tag(
-                SharedString::from(format!("shortcut-hint-{id}")),
-                label,
-                colors().subtle,
-            )
-        })
+        (!label.is_empty())
+            .then(|| key_hint(SharedString::from(format!("shortcut-hint-{id}")), label))
     }
 
-    /// Exact arguments and a one-call decision. Nothing runs without it.
-    fn approval(&self, approval: &Approval, cx: &mut Context<Self>) -> impl IntoElement {
-        let exact = approvable(approval, self.thread_harness());
+    /// Why an approval's buttons cannot act right now, for disabled hover text.
+    fn approval_disabled_reason(&self, approval: &Approval) -> &'static str {
+        if !approvable(approval, self.thread_harness()) {
+            "Exact arguments are unavailable. Stop this run instead."
+        } else if !self.host.connection.connected {
+            "Reconnect to answer this approval."
+        } else if self.host.thread.decided_approvals.contains(&approval.id) {
+            "Decision already sent."
+        } else if self.host.thread.controlling {
+            "Sending decision…"
+        } else {
+            "Cannot answer this approval now."
+        }
+    }
+
+    /// Exact arguments and a one-call decision. Drawn in the message box's
+    /// place while the thread waits for approval.
+    fn approval(&self, approval: &Approval, cx: &mut Context<Self>) -> Div {
+        let harness = self.thread_harness();
+        let exact = approvable(approval, harness);
         let enabled = self.can_answer(approval);
+        let disabled_reason = self.approval_disabled_reason(approval);
         let allow_id = approval.id.clone();
         let deny_id = approval.id.clone();
+        let harness_name = self
+            .harness_row(harness)
+            .map_or_else(|| harness.label().into(), |row| row.name.clone());
+        let waiting = format!("{harness_name} is waiting");
         let dirty = approval.dirty_paths.join(", ");
         // Pi refuses to write files that had changes before the run; another
         // harness only lists them, and nothing stops it writing them.
-        let dirty_note = match self.thread_harness() {
+        let dirty_note = match harness {
             _ if dirty.is_empty() => String::new(),
             HarnessId::Pi => format!("Protected dirty paths: {dirty}"),
-            id => format!(
-                "Changed before this run: {dirty}. {} is not stopped from writing them.",
-                self.harness_row(id)
-                    .map_or_else(|| id.label().into(), |row| row.name.clone())
+            _ => format!(
+                "Changed before this run: {dirty}. {harness_name} is not stopped from writing them."
             ),
         };
-        div().flex_shrink_0().px_6().pt_2().child(
-            column()
-                .w_full()
-                .max_w(px(CONTENT_WIDTH))
-                .mx_auto()
-                .p_3()
-                .gap_2()
-                .rounded_xl()
-                .border_1()
-                .border_color(rgb(colors().warn_edge))
-                .bg(rgb(colors().rail))
-                .text_size(px(12.))
-                .child(
-                    row().child(dot(colors().amber)).child(
+        let allow_hint = self.shortcut_hint("approval.allow_once").map(|hint| {
+            hint.bg(rgba(if colors().light {
+                0xffffff24
+            } else {
+                0x00000024
+            }))
+            .text_color(rgb(colors().bg))
+        });
+        let deny_hint = self.shortcut_hint("approval.deny_once");
+        column()
+            .w_full()
+            .max_w(px(CONTENT_WIDTH))
+            .mx_auto()
+            .p(px(14.))
+            .gap(px(10.))
+            .rounded(px(SURFACE_CORNER))
+            .shadow(approval_shadows())
+            .border_1()
+            .border_color(rgba((colors().amber << 8) | 0x8c))
+            .bg(rgb(colors().panel))
+            .text_size(px(12.))
+            .child(
+                row()
+                    .w_full()
+                    .min_w_0()
+                    .gap_2()
+                    .child(dot(colors().amber).size(px(9.)))
+                    .child(
                         div()
-                            .text_size(px(13.))
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(format!("Approval required: {}", approval.summary)),
+                            .flex_1()
+                            .min_w_0()
+                            .text_size(px(13.5))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(rgb(colors().strong))
+                            .child(approval_question(approval.kind)),
+                    )
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .text_size(px(12.))
+                            .text_color(rgb(colors().subtle))
+                            .child(waiting),
                     ),
-                )
-                .when(!approval.details.is_empty(), |el| {
-                    el.child(
-                        div()
-                            .id("approval-details")
-                            .role(Role::Group)
-                            .aria_label(format!(
-                                "Exact tool arguments: {}. Risk: {}. {}",
-                                approval.details, approval.risk, dirty_note
-                            ))
-                            .audited()
-                            .max_h(px(140.))
-                            .overflow_y_scroll()
-                            .px_3()
-                            .py_2()
-                            .rounded_md()
-                            .bg(rgb(colors().bg))
-                            .border_1()
-                            .border_color(rgb(colors().border))
-                            .font_family(mono())
-                            .line_height(px(19.))
-                            .child(approval.details.clone()),
-                    )
-                })
-                // The dot, title, and edge already ask for attention; the
-                // risk is read, so it is set as secondary text.
-                .child(
+            )
+            .when(!approval.details.is_empty(), |el| {
+                el.child(
                     div()
-                        .text_color(rgb(colors().muted))
-                        .child(approval.risk.clone()),
+                        .id("approval-details")
+                        .role(Role::Group)
+                        .aria_label(format!(
+                            "Exact tool arguments: {}. Risk: {}. {dirty_note}",
+                            approval.details, approval.risk
+                        ))
+                        .audited()
+                        .max_h(px(140.))
+                        .overflow_y_scroll()
+                        .px(px(11.))
+                        .py(px(9.))
+                        .rounded(px(CONTROL_CORNER))
+                        .bg(rgb(colors().rail))
+                        .border_1()
+                        .border_color(rgb(colors().border))
+                        .font_family(mono())
+                        .text_size(px(code_size()))
+                        .line_height(px(code_line_height()))
+                        .text_color(rgb(colors().text))
+                        .child(approval.details.clone()),
                 )
-                .when(!approval.dirty_paths.is_empty(), |el| {
+            })
+            .when(
+                !approval.summary.is_empty()
+                    || !approval.risk.is_empty()
+                    || !approval.dirty_paths.is_empty()
+                    || !exact,
+                |el| {
                     el.child(
-                        div()
-                            .text_color(rgb(colors().muted))
-                            .child(dirty_note.clone()),
+                        column()
+                            .gap_1()
+                            .text_size(px(12.))
+                            .when(!approval.summary.is_empty(), |el| {
+                                el.child(
+                                    div()
+                                        .text_color(rgb(colors().muted))
+                                        .child(approval.summary.clone()),
+                                )
+                            })
+                            .when(!approval.risk.is_empty(), |el| {
+                                el.child(
+                                    div()
+                                        .text_color(rgb(colors().amber))
+                                        .child(approval.risk.clone()),
+                                )
+                            })
+                            .when(!approval.dirty_paths.is_empty(), |el| {
+                                el.child(
+                                    div()
+                                        .text_color(rgb(colors().muted))
+                                        .child(dirty_note.clone()),
+                                )
+                            })
+                            .when(!exact, |el| {
+                                el.child(div().text_color(rgb(colors().red)).child(
+                                    "Exact arguments are unavailable. Approval is disabled; Stop this run.",
+                                ))
+                            }),
                     )
-                })
-                .when(!exact, |el| {
-                    el.child(div().text_color(rgb(colors().red)).child(
-                        "Exact arguments are unavailable. Approval is disabled; Stop this run.",
-                    ))
-                })
-                .child(
-                    row()
-                        .justify_end()
-                        .child(
-                            toned_button("deny-tool", "Deny once", Tone::Filled)
-                                .aria_keyshortcuts(self.shortcut_aria("approval.deny_once"))
-                                .children(self.shortcut_hint("approval.deny_once"))
-                                .disabled(!enabled)
-                                .when(enabled, |el| {
-                                    el.on_activate(cx, move |this, window, cx| {
-                                        this.control_thread(
-                                            Some((deny_id.clone(), false)),
-                                            window,
-                                            cx,
+                },
+            )
+            .child(
+                row()
+                    .w_full()
+                    .flex_wrap()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        toned_button("allow-tool", "Allow once", Tone::Primary)
+                            .aria_keyshortcuts(self.shortcut_aria("approval.allow_once"))
+                            .children(allow_hint)
+                            .disabled(!enabled)
+                            .when(!enabled, |el| {
+                                el.tooltip(move |_, cx| {
+                                    cx.new(|_| {
+                                        super::thread_controls::TextTooltip(
+                                            disabled_reason.to_owned(),
                                         )
                                     })
-                                }),
-                        )
-                        .child(
-                            toned_button("allow-tool", "Allow once", Tone::Filled)
-                                .text_color(rgb(colors().amber))
-                                .aria_keyshortcuts(self.shortcut_aria("approval.allow_once"))
-                                .children(self.shortcut_hint("approval.allow_once"))
-                                .disabled(!enabled)
-                                .when(enabled, |el| {
-                                    el.on_activate(cx, move |this, window, cx| {
-                                        this.control_thread(
-                                            Some((allow_id.clone(), true)),
-                                            window,
-                                            cx,
+                                    .into()
+                                })
+                            })
+                            .when(enabled, |el| {
+                                el.on_activate(cx, move |this, window, cx| {
+                                    this.workspace.clear_approval_reply();
+                                    this.control_thread(Some((allow_id.clone(), true)), window, cx)
+                                })
+                            }),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        toned_button("deny-tool", "Deny once", Tone::Ghost)
+                            .aria_keyshortcuts(self.shortcut_aria("approval.deny_once"))
+                            .children(deny_hint)
+                            .disabled(!enabled)
+                            .when(!enabled, |el| {
+                                el.tooltip(move |_, cx| {
+                                    cx.new(|_| {
+                                        super::thread_controls::TextTooltip(
+                                            disabled_reason.to_owned(),
                                         )
                                     })
-                                }),
-                        ),
-                ),
-        )
+                                    .into()
+                                })
+                            })
+                            .when(enabled, |el| {
+                                el.on_activate(cx, move |this, window, cx| {
+                                    this.workspace.clear_approval_reply();
+                                    this.control_thread(Some((deny_id.clone(), false)), window, cx)
+                                })
+                            }),
+                    ),
+            )
     }
 
     fn live_banners(&self, pending: bool, cx: &mut Context<Self>) -> Vec<Div> {
         let mut banners = Vec::new();
         if let Some(error) = self.host.connection.error.clone() {
-            banners.push(banner(colors().red).child(a11y_text("host-connection-error", error)));
+            let recovery = self.has_identity_recovery(&error);
+            banners.push(
+                banner(colors().red)
+                    .child(a11y_text(
+                        "host-connection-error",
+                        self.identity_recovery_message(&error),
+                    ))
+                    .when(recovery, |el| el.child(self.identity_recovery_button(cx))),
+            );
         }
         if !self.host.connection.connected {
             let connecting = self.host.connection.connecting;
@@ -1066,23 +1797,13 @@ Tone::Filled,
         banners
     }
 
-    pub(super) fn live_conversation(&self, wide: bool, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn live_conversation(
+        &self,
+        _wide: bool,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let snapshot = self.host.thread.snapshot.clone();
-        let model = snapshot
-            .as_ref()
-            .map(|snapshot| &snapshot.model)
-            .or_else(|| {
-                self.host
-                    .connection
-                    .threads
-                    .iter()
-                    .find(|thread| Some(&thread.id) == self.host.thread.selected.as_ref())
-                    .map(|thread| &thread.model)
-            });
-        let model_label = model.map_or_else(
-            || "Loading saved model…".into(),
-            |model| format!("{} / {}", model.provider, model.model_id),
-        );
         let pending = self
             .host
             .thread
@@ -1127,14 +1848,14 @@ Tone::Filled,
                 && !self.reading_back();
             if snapshot.truncated && !self.workspace.history.enabled {
                 main = main.child(
-                    div().px_6().child(
+                    div().px(px(CONVERSATION_PADDING)).child(
                         div()
                             .relative()
                             .w_full()
                             .max_w(px(CONTENT_WIDTH))
                             .mx_auto()
                             .py_1()
-                            .when(joined, |el| el.child(strand_line(0.)))
+                            .when(joined, |el| el.children(strand_line(self.preferences.value.turns, 0.)))
                             .child(tag(
                                 "conversation-truncated",
                                 "Bounded preview · older messages or tool output have been clipped by the host.",
@@ -1152,7 +1873,7 @@ Tone::Filled,
                 .filter(|_| self.host.protocol() >= 5 && !snapshot.status.busy())
             {
                 main = main.child(
-                    div().px_6().child(
+                    div().px(px(CONVERSATION_PADDING)).child(
                         div()
                             .relative()
                             .w_full()
@@ -1160,14 +1881,20 @@ Tone::Filled,
                             .mx_auto()
                             .pt_2()
                             .pb(px(6.))
-                            .when(joined, |el| el.child(strand_end(8. + RECORD_LINE / 2.)))
-                            .child(strand_mark(
-                                8. + RECORD_LINE / 2.,
+                            .when(joined, |el| {
+                                el.children(strand_end(
+                                    self.preferences.value.turns,
+                                    8. + CLOSING_LINE / 2.,
+                                ))
+                            })
+                            .children(strand_mark(
+                                self.preferences.value.turns,
+                                8. + CLOSING_LINE / 2.,
                                 NODE,
                                 colors().muted,
                                 false,
                             ))
-                            .child(self.record_line(line, true, "latest-run".into(), cx)),
+                            .child(self.record_line(line, true, cx)),
                     ),
                 );
             } else if let Some((state, failed)) = state {
@@ -1188,11 +1915,16 @@ Tone::Filled,
                         self.record_parts(id, summary, cx),
                     )
                 });
+                let legacy_line =
+                    record.is_some() && self.preferences.value.turns == Turns::Bubbles;
                 let (name, parts) = record.unwrap_or_else(|| (state.clone(), Vec::new()));
                 main = main.child(
-                    div().px_6().child(
+                    div().px(px(CONVERSATION_PADDING)).child(
                         row()
                             .id("turn-state")
+                            .when(legacy_line, |el| {
+                                el.border_t_1().border_color(rgb(colors().border))
+                            })
                             .role(Role::Group)
                             .aria_label(name)
                             .audited()
@@ -1215,8 +1947,27 @@ Tone::Filled,
                             .pt(px(LEAD))
                             .pb(px(6.))
                             .text_size(px(12.))
-                            .when(joined, |el| el.child(strand_end(center)))
-                            .child(strand_mark(center, NODE, tint, false))
+                            .when(joined, |el| {
+                                el.children(strand_end(self.preferences.value.turns, center))
+                            })
+                            .map(|el| {
+                                let style = self.preferences.value.turns;
+                                if self.host.connection.connected
+                                    && snapshot.status == ThreadStatus::Running
+                                {
+                                    let mark = running_mark(px(13.));
+                                    match style {
+                                        Turns::Line => {
+                                            el.child(strand_mark_ground(center, 13.).child(mark))
+                                        }
+                                        Turns::Bubbles => el.child(
+                                            div().pt(px((RECORD_LINE - 13.) / 2.)).child(mark),
+                                        ),
+                                    }
+                                } else {
+                                    el.children(strand_mark(style, center, NODE, tint, false))
+                                }
+                            })
                             .child(
                                 div()
                                     .min_w_0()
@@ -1244,11 +1995,10 @@ Tone::Filled,
             }
             if self.workspace.history.enabled
                 && snapshot.status.busy()
-                && (snapshot.live_text.encode_utf16().count() >= 16_383
-                    || snapshot.live_reasoning.encode_utf16().count() >= 16_383)
+                && self.host.thread.live_preview_clipped
             {
                 main = main.child(
-                    div().px_6().child(
+                    div().px(px(CONVERSATION_PADDING)).child(
                         div()
                             .w_full()
                             .max_w(px(CONTENT_WIDTH))
@@ -1261,54 +2011,102 @@ Tone::Filled,
                     ),
                 );
             }
-            if let Some(approval) = &snapshot.pending_approval {
-                main = main.child(self.approval(approval, cx));
-            }
         }
+        let pending_approval = snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.pending_approval.as_ref());
+        let reply_open = pending_approval
+            .is_some_and(|approval| self.workspace.showing_composer_for_approval(&approval.id));
+        let draw_composer = pending_approval.is_none() || reply_open;
         let composer = self
             .host
             .thread
             .selected
             .as_ref()
             .and_then(|id| self.workspace.composers.get(id));
+        let mut parts = if self.host.protocol() >= 3 {
+            self.thread_message_box_parts(cx)
+        } else {
+            self.older_host_message_box_parts()
+        };
+        let approval_notices = pending_approval.and_then(|_| {
+            let notices = std::mem::take(&mut parts.notices);
+            (!notices.is_empty()).then(|| {
+                column()
+                    .w_full()
+                    .max_w(px(CONTENT_WIDTH))
+                    .mx_auto()
+                    .gap_1()
+                    .children(notices)
+            })
+        });
         main = main.child(
             column()
                 .flex_shrink_0()
-                .px_6()
-                .pt_2()
-                .pb_3()
+                .px(px(CONVERSATION_PADDING))
+                .pt(px(6.))
+                .pb(px(18.))
                 .gap_2()
                 .children(self.checkout_wait_control(cx))
                 .children(self.queued_inputs(cx))
-                .children(self.thread_files_card(cx))
-                .when_some(composer.cloned(), |el, composer| {
-                    el.child(
-                        div()
-                            .w_full()
-                            .max_w(px(CONTENT_WIDTH))
-                            .mx_auto()
-                            .child(composer),
-                    )
+                .children(approval_notices)
+                .when_some(pending_approval, |el, approval| {
+                    let reply_id = approval.id.clone();
+                    el.child(self.approval(approval, cx))
+                        .when(!reply_open, |el| {
+                            el.child(
+                                div()
+                                    .w_full()
+                                    .max_w(px(CONTENT_WIDTH))
+                                    .mx_auto()
+                                    .flex()
+                                    .child(
+                                        button("approval-reply-instead", "Reply instead")
+                                            .h(px(24.))
+                                            .rounded(px(ITEM_CORNER))
+                                            .px(px(8.))
+                                            .aria_description(
+                                                "Show the message box below this approval card.",
+                                            )
+                                            .on_activate(cx, move |this, window, cx| {
+                                                this.workspace
+                                                    .show_composer_for_approval(reply_id.clone());
+                                                this.focus_composer(window, cx);
+                                                cx.notify();
+                                            }),
+                                    ),
+                            )
+                        })
                 })
-                .child(if self.host.protocol() >= 3 {
-                    self.thread_environment(cx)
-                } else {
-                    self.environment(
-                        Some(model_label),
-                        Some((self.approval_note(snapshot.as_deref()), colors().muted)),
-                    )
-                    .into_any_element()
-                }),
+                .when(draw_composer, |el| {
+                    el.when_some(composer.cloned(), |el, composer| {
+                        // Keep the changed-files strip joined directly to the top of the box.
+                        el.child(
+                            column()
+                                .w_full()
+                                .max_w(px(CONTENT_WIDTH))
+                                .mx_auto()
+                                .children(self.thread_files_card(cx))
+                                .child(self.message_box(composer, parts, window, cx)),
+                        )
+                    })
+                })
+                // The source issue shows whatever the host's protocol.
+                .children(self.issue_link_line(cx).map(|line| {
+                    div()
+                        .w_full()
+                        .max_w(px(CONTENT_WIDTH))
+                        .mx_auto()
+                        .child(line)
+                })),
         );
         row()
             .gap_0()
             .flex_1()
             .min_h_0()
             .items_stretch()
-            .child(main)
-            .when(self.shows_inspector(wide), |el| {
-                el.child(self.inspector(cx))
-            })
+            .when(!self.panel_fills(), |el| el.child(main))
+            .when(self.panel_is_open(), |el| el.child(self.review_panel(cx)))
     }
 }
 
@@ -1317,9 +2115,160 @@ fn row_group(row: usize) -> SharedString {
     format!("conversation-row-{row}").into()
 }
 
+fn approval_question(kind: ApprovalKind) -> &'static str {
+    match kind {
+        ApprovalKind::Command => "Run this command?",
+        ApprovalKind::Edit => "Make this edit?",
+    }
+}
+
+/// Floating shadow plus the 4-point sand ring at 12% opacity (0x1f).
+fn approval_shadows() -> Vec<BoxShadow> {
+    let mut shadows = floating_shadow();
+    shadows.push(
+        BoxShadow::new(px(0.), px(0.), rgba((colors().amber << 8) | 0x1f).into())
+            .spread_radius(px(4.)),
+    );
+    shadows
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Approval, HarnessId, approvable};
+    use super::{Approval, HarnessId, approvable, folded_turn_summary};
+    use plait_client::{
+        history::{
+            TurnSummary,
+            records::{Availability, Line},
+        },
+        host::{RecordChange, RecordKind, RecordPath, RecordState, TurnRecord},
+    };
+
+    #[test]
+    fn folded_turn_summary_uses_only_reported_counts() {
+        let make_line = |displayed: &str, paths_total: usize, undone: bool| Line {
+            created_at: 0,
+            paths_total,
+            run: displayed.into(),
+            displayed: displayed.into(),
+            target: None,
+            availability: Availability::Ready,
+            undone,
+            steps: Some(1),
+            files: Vec::new(),
+            not_covered: Vec::new(),
+            detail: String::new(),
+            review_detail: String::new(),
+            more_label: String::new(),
+            more_detail: String::new(),
+            outcome: None,
+            after_restart: false,
+            head_moved: false,
+        };
+        let make_record = |id: &str, paths: Vec<RecordPath>| TurnRecord {
+            id: id.into(),
+            request_ids: vec!["r1".into()],
+            request_ids_offset: 0,
+            request_ids_total: 1,
+            kind: RecordKind::Turn,
+            undoes: None,
+            state: RecordState::Ready,
+            head_moved: false,
+            outcome: None,
+            after_restart: false,
+            paths_offset: 0,
+            paths_total: paths.len(),
+            paths,
+            not_covered: Vec::new(),
+            not_covered_offset: 0,
+            not_covered_total: 0,
+            created_at: 0,
+        };
+        let counted = make_record(
+            "rec-1",
+            vec![
+                RecordPath {
+                    path: "a.rs".into(),
+                    change: RecordChange::Modified,
+                    added: Some(12),
+                    removed: Some(4),
+                },
+                RecordPath {
+                    path: "b.rs".into(),
+                    change: RecordChange::Added,
+                    added: Some(3),
+                    removed: Some(0),
+                },
+            ],
+        );
+        let uncounted = make_record(
+            "rec-2",
+            vec![RecordPath {
+                path: "bin.dat".into(),
+                change: RecordChange::Modified,
+                added: None,
+                removed: None,
+            }],
+        );
+        let mixed = make_record(
+            "rec-3",
+            vec![
+                RecordPath {
+                    path: "code.rs".into(),
+                    change: RecordChange::Modified,
+                    added: Some(1),
+                    removed: Some(1),
+                },
+                RecordPath {
+                    path: "data.bin".into(),
+                    change: RecordChange::Modified,
+                    added: None,
+                    removed: None,
+                },
+            ],
+        );
+        let records = vec![counted, uncounted, mixed];
+        assert_eq!(
+            folded_turn_summary(Some(&make_line("rec-1", 2, false)), &records, None).as_deref(),
+            Some("2 files +15 −4")
+        );
+        // Binary/uncounted changes must not invent +0 −0.
+        assert_eq!(
+            folded_turn_summary(Some(&make_line("rec-2", 1, false)), &records, None).as_deref(),
+            Some("1 file")
+        );
+        assert_eq!(
+            folded_turn_summary(Some(&make_line("rec-3", 2, false)), &records, None).as_deref(),
+            Some("2 files")
+        );
+        // Zero changed files or absent records emit nothing rather than "0 files".
+        assert_eq!(
+            folded_turn_summary(Some(&make_line("rec-0", 0, false)), &records, None),
+            None
+        );
+        assert_eq!(
+            folded_turn_summary(Some(&make_line("rec-1", 2, true)), &records, None).as_deref(),
+            Some("Undone")
+        );
+        let legacy = TurnSummary {
+            steps: 2,
+            files: vec!["a.rs".into()],
+        };
+        assert_eq!(
+            folded_turn_summary(None, &[], Some(&legacy)).as_deref(),
+            Some("1 file")
+        );
+        assert_eq!(
+            folded_turn_summary(
+                None,
+                &[],
+                Some(&TurnSummary {
+                    steps: 1,
+                    files: Vec::new()
+                })
+            ),
+            None
+        );
+    }
 
     #[test]
     fn only_pi_needs_the_full_arguments_to_approve() {
@@ -1327,7 +2276,7 @@ mod tests {
             details: details.into(),
             id: "a1".into(),
             tool_id: "t1".into(),
-            kind: plait_core::host::ApprovalKind::Command,
+            kind: plait_client::host::ApprovalKind::Command,
             summary: "git status".into(),
             dirty_paths: Vec::new(),
             risk: String::new(),

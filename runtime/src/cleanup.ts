@@ -1,3 +1,4 @@
+import { validIdentity } from './protocol.ts';
 // Cleanup is a proof obligation, separate from a tool or turn's success.
 import { spawn, type ChildProcess } from 'node:child_process';
 import { isAbsolute } from 'node:path';
@@ -116,18 +117,19 @@ export async function resolveProvedCleanup(proof: CleanupProof, root: string, to
 export function handlesCleanup(input: unknown) {
   return !!input && typeof input === 'object' && ['checkout_cleanup', 'resolve_checkout_cleanup', 'stop_checkout_cleanup'].includes(String((input as { op?: unknown }).op));
 }
-export function validateCleanup(input: unknown): { op: string; checkout: string; token?: string } {
+export function validateCleanup(input: unknown): { op: string; checkout: string; token?: string; identity?: unknown } {
   if (!input || typeof input !== 'object' || Array.isArray(input)) fail('invalid_request', 'Invalid cleanup request.');
   const request = input as Record<string, unknown>;
   const resolve = request.op === 'resolve_checkout_cleanup';
   const stop = request.op === 'stop_checkout_cleanup';
   const confirmation = stop ? 'confirm_stop' : 'confirm_stopped';
-  const fields = resolve || stop ? ['op', 'checkout', 'token', confirmation] : ['op', 'checkout'];
+  const fields = resolve || stop ? ['op', 'checkout', 'token', confirmation] : ['op', 'checkout', 'identity'];
   if (!handlesCleanup(request) || Object.keys(request).some(key => !fields.includes(key))
       || typeof request.checkout !== 'string' || !isAbsolute(request.checkout) || request.checkout.length > 4096
       || /[\u0000-\u001f\u007f]/u.test(request.checkout)
       || (resolve || stop) && (request[confirmation] !== true || typeof request.token !== 'string' || !/^[A-Za-z0-9-]{1,128}$/.test(request.token))) {
     fail('invalid_request', 'Invalid cleanup request. Confirm the processes stopped and use the current cleanup token.');
   }
-  return request as { op: string; checkout: string; token?: string };
+  if (request.identity !== undefined && !validIdentity(request.identity)) fail('invalid_request', 'Invalid checkout identity.');
+  return request as { op: string; checkout: string; token?: string; identity?: unknown };
 }

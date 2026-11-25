@@ -1,9 +1,9 @@
 import { fileAction, ignoredPaths, pathKey, safePath, sameImage } from './safety.ts';
 import type { FileIdentity, Postimage } from './safety.ts';
 
-export async function restoreOwned(root: string, baseline: string[], records: Postimage[], identity: FileIdentity, lease?: number, lifecycleFd?: number) {
+export async function restoreOwned(root: string, baseline: string[], records: Postimage[], identity: FileIdentity, lease?: number, lifecycleFd?: number, vcs?: 'git' | 'folder') {
   const owned = new Map<string, Postimage>();
-  const ignored = await ignoredPaths(root, records.map(record => record.path));
+  const ignored = await ignoredPaths(root, records.map(record => record.path), vcs);
   for (const record of records) {
     try {
       safePath(record.path, ignored);

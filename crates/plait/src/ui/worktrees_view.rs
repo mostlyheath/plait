@@ -3,16 +3,16 @@ mod presentation;
 mod render;
 use super::{Plait, theme::*, thread_controls::TextTooltip};
 use gpui::{prelude::*, *};
-use plait_core::{
+use plait_client::{
     host::{
-        self, Client,
+        self,
         worktree::{self, Checkout},
     },
     tabs::{ReadStamp, TabTarget},
     worktree_graph::{self, Graph},
     worktree_removal::{self, Choices},
-    worktree_size::{self, Cache, Key, Size},
 };
+use plait_protocol::worktree_size::Size;
 use std::{
     path::PathBuf,
     sync::{
@@ -21,6 +21,33 @@ use std::{
     },
 };
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Key {
+    root: PathBuf,
+    identity: Option<plait_protocol::git::worktree::Identity>,
+    head: Option<String>,
+    last_used: Option<u64>,
+    changed: Option<u64>,
+    removed: bool,
+    build_directories: Vec<String>,
+}
+#[derive(Default)]
+struct Cache(Vec<(Key, Size)>);
+impl Cache {
+    fn get(&self, key: &Key) -> Option<&Size> {
+        self.0.iter().find(|(k, _)| k == key).map(|(_, s)| s)
+    }
+    fn put(&mut self, key: Key, size: Size) {
+        self.0.retain(|(k, _)| k.root != key.root);
+        self.0.push((key, size));
+        if self.0.len() > 256 {
+            self.0.remove(0);
+        }
+    }
+    fn clear(&mut self) {
+        self.0.clear();
+    }
+}
 actions!(plait, [Worktrees]);
 #[derive(Clone)]
 pub(super) enum Item {
@@ -56,12 +83,13 @@ pub(super) struct View {
     pub generation: u64,
     pub cancelled: Arc<AtomicBool>,
     pub scroll: UniformListScrollHandle,
-    pub cache: Cache,
+    cache: Cache,
     pub sort_size: bool,
-    pub removal: plait_core::worktree_removal::Removal,
+    pub removal: plait_client::worktree_removal::Removal,
     /// The project whose view asked for `removal`: one window has one removal
     /// state, and another project's Worktrees tab must not show or resend it.
-    pub removal_project: Option<PathBuf>,
+    /// The machine and project a removal was asked in; its result shows only there.
+    pub removal_project: Option<(plait_client::machines::MachineId, PathBuf)>,
     /// One inventory at a time: its helper and Git reads run to the end even
     /// when their result is retired, so overlapping refreshes would stack.
     pub reading: bool,
@@ -128,8 +156,12 @@ impl View {
             .max()
             .unwrap_or(1)
             .max(1) as f32;
+        let measured = self.sizes.iter().any(|s| matches!(s, Some(Ok(_))));
         self.total = if self.sizes.iter().all(Option::is_none) {
             "Measuring".into()
+        } else if !measured && self.seed_bytes.is_none() && self.sizes.iter().all(Option::is_some) {
+            // Nothing was measured, so a total of zero would be untrue.
+            "Size unavailable".into()
         } else {
             format!(
                 "{}{} total",
@@ -146,7 +178,7 @@ impl View {
             .iter()
             .map(|r| {
                 r.last_used.map_or("Unknown".into(), |t| {
-                    plait_core::navigation::age(Some(t), now)
+                    plait_client::navigation::age(Some(t), now)
                 })
             })
             .collect();
@@ -159,7 +191,7 @@ impl View {
                     "{}  {}  · {}",
                     r.commit.commit.short,
                     r.commit.commit.subject,
-                    plait_core::navigation::age(
+                    plait_client::navigation::age(
                         Some(r.commit.commit.time.max(0) as u64 * 1000),
                         now
                     )
@@ -234,7 +266,7 @@ fn hover(text: String, cx: &mut App) -> AnyView {
     cx.new(|_| TextTooltip(text)).into()
 }
 fn safe_text(text: &str) -> String {
-    plait_core::display_text::escape(text)
+    plait_client::display_text::escape(text)
 }
 impl Plait {
     pub(super) fn restore_worktrees_bookmark(&mut self) {
@@ -245,7 +277,7 @@ impl Plait {
             .and_then(|id| self.tabs.model.get(id))
             .map(|t| t.session().bookmark());
         let (selected, size_sort) = match bookmark {
-            Some(plait_core::tabs::bookmark::BookmarkRecord::Worktrees {
+            Some(plait_client::tabs::bookmark::BookmarkRecord::Worktrees {
                 selected,
                 size_sort,
             }) => (selected.clone(), *size_sort),
@@ -268,7 +300,7 @@ impl Plait {
         if let Some(id) = self.tabs.model.active() {
             let result = self.tabs.model.save_bookmark(
                 id,
-                plait_core::tabs::bookmark::BookmarkRecord::Worktrees {
+                plait_client::tabs::bookmark::BookmarkRecord::Worktrees {
                     selected: self.worktrees.selection.clone(),
                     size_sort: self.worktrees.sort_size,
                 },
@@ -280,11 +312,7 @@ impl Plait {
 
     pub(super) fn worktree_context_line(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let snapshot = self.host.thread.snapshot.as_ref()?;
-        let tree = self
-            .preferences
-            .value
-            .navigation
-            .worktree(&snapshot.checkout)?;
+        let tree = self.lists().worktree(&snapshot.checkout)?;
         let project = tree.main.clone();
         Some(
             row()
@@ -315,7 +343,7 @@ impl Plait {
             .model
             .active()
             .and_then(|id| self.tabs.model.get(id))
-            .filter(|tab| tab.session().target().is_worktrees())
+            .filter(|tab| tab.session().target().is_project_view())
             .map_or(&self.host.creation.checkout, |tab| {
                 &tab.session().target().checkout().root
             })
@@ -323,7 +351,13 @@ impl Plait {
     /// Whether the visible Worktrees tab is the project that asked for removal.
     pub(super) fn removal_here(&self) -> bool {
         self.worktrees_visible()
-            && self.worktrees.removal_project.as_deref() == Some(self.visible_project_checkout())
+            && self
+                .worktrees
+                .removal_project
+                .as_ref()
+                .is_some_and(|(machine, project)| {
+                    *machine == self.machines.active && project == self.visible_project_checkout()
+                })
     }
     pub(super) fn worktrees_visible(&self) -> bool {
         self.tabs
@@ -396,8 +430,11 @@ impl Plait {
         }
         let cancelled = self.worktrees.cancelled.clone();
         self.worktrees.reading = true;
+        let client = self.host_client();
+        // A remote host draws its own checkouts' graph.
+        let backend = self.repository_backend();
         let task = cx.background_executor().spawn(async move {
-            let inventory = worktree::inventory(&Client::from_environment()?, root)?;
+            let inventory = worktree::inventory(&client, root)?;
             if cancelled.load(Ordering::Acquire) {
                 return Err(host::Error::Protocol("Read cancelled.".into()));
             }
@@ -406,7 +443,8 @@ impl Plait {
                 .iter()
                 .filter_map(|row| row.head.clone())
                 .collect::<Vec<_>>();
-            let (commits, more) = plait_core::git::log::graph(&inventory.checkouts[0].path, &heads)
+            let (commits, more) = backend
+                .graph(&inventory.checkouts[0].path, &heads)
                 .map_err(host::Error::Protocol)?;
             let graph = worktree_graph::layout(&inventory.checkouts, commits, more);
             Ok((inventory.checkouts, graph, inventory.seed_bytes))
@@ -445,7 +483,7 @@ impl Plait {
     /// have moved a checkout's facts.
     pub(super) fn worktree_summaries(
         &self,
-        live: &[plait_core::host::ThreadSummary],
+        live: &[plait_client::host::ThreadSummary],
     ) -> (bool, Vec<PathBuf>) {
         if !self.worktrees_visible() {
             return (false, Vec::new());
@@ -461,7 +499,7 @@ impl Plait {
                     && self
                         .host
                         .connection
-                        .threads
+                        .threads()
                         .iter()
                         .any(|old| old.id == t.id && old.status.busy())
             })
@@ -473,7 +511,7 @@ impl Plait {
     /// Whether a run is working in `row`. Its facts were read before the run
     /// started, so Remove waits; the host refuses it then too.
     pub(super) fn run_in_worktree(&self, row: &Checkout) -> bool {
-        self.host.connection.threads.iter().any(|t| {
+        self.host.connection.threads().iter().any(|t| {
             t.status.busy() && (t.checkout == row.path || row.thread_id.as_ref() == Some(&t.id))
         })
     }
@@ -531,8 +569,11 @@ impl Plait {
         let cancelled = self.worktrees.cancelled.clone();
         let mut rows = self.worktrees.rows.clone();
         self.worktrees.reading = true;
+        let client = self.host_client();
+        // A remote host draws its own checkouts' graph.
+        let backend = self.repository_backend();
         let task = cx.background_executor().spawn(async move {
-            let row = worktree::inventory_row(&Client::from_environment()?, root, path, main)?;
+            let row = worktree::inventory_row(&client, root, path, main)?;
             if cancelled.load(Ordering::Acquire) {
                 return Err(host::Error::Protocol("Read cancelled.".into()));
             }
@@ -545,7 +586,8 @@ impl Plait {
                 .iter()
                 .filter_map(|row| row.head.clone())
                 .collect::<Vec<_>>();
-            let (commits, more) = plait_core::git::log::graph(&rows[0].path, &heads)
+            let (commits, more) = backend
+                .graph(&rows[0].path, &heads)
                 .map_err(host::Error::Protocol)?;
             let graph = worktree_graph::layout(&rows, commits, more);
             Ok((rows, graph))
@@ -607,7 +649,7 @@ impl Plait {
             let thread = row
                 .thread_id
                 .as_ref()
-                .and_then(|id| self.host.connection.threads.iter().find(|t| &t.id == id));
+                .and_then(|id| self.host.connection.threads().iter().find(|t| &t.id == id));
             self.worktrees.openable.push(thread.is_some());
             self.worktrees.titles.push(if row.main {
                 "Main checkout".into()
@@ -627,11 +669,8 @@ impl Plait {
                 "Missing"
             } else {
                 thread.map_or("", |t| {
-                    plait_core::tabs::row::summary_state(
-                        t,
-                        self.preferences.value.navigation.unread.contains(&t.id),
-                    )
-                    .word(true)
+                    plait_client::tabs::row::summary_state(t, self.lists().unread.contains(&t.id))
+                        .word(true)
                 })
             });
         }
@@ -666,7 +705,12 @@ impl Plait {
             })
             .unzip();
     }
-    fn measure_worktrees(&mut self, stamp: ReadStamp, generation: u64, cx: &mut Context<Self>) {
+    pub(super) fn measure_worktrees(
+        &mut self,
+        stamp: ReadStamp,
+        generation: u64,
+        cx: &mut Context<Self>,
+    ) {
         let pending: Vec<_> = self
             .worktrees
             .rows
@@ -689,24 +733,36 @@ impl Plait {
             })
             .collect();
         let cancelled = self.worktrees.cancelled.clone();
-        let store = self.tabs.host.store.clone();
+        let client = self.host_client();
+        let project = self.visible_project_checkout().to_owned();
         let task = cx.background_executor().spawn(async move {
             let mut results = Vec::new();
-            for (i, key, thread, removed) in pending {
+            for (i, key, thread, _) in pending {
                 if cancelled.load(Ordering::Acquire) {
                     break;
                 }
-                let cache = thread.map(|id| store.join("build-cache").join(id));
-                let size = if removed {
-                    worktree_size::measure_retained_cache(cache.as_deref(), &cancelled)
-                } else {
-                    let others = checkouts
-                        .iter()
-                        .filter(|(path, _)| *path != key.root)
-                        .map(|(_, id)| *id)
-                        .collect();
-                    worktree_size::measure_verified(&key, cache.as_deref(), &others, &cancelled)
+                let others: std::collections::HashSet<_> = checkouts
+                    .iter()
+                    .filter(|(path, _)| *path != key.root)
+                    .map(|(_, id)| *id)
+                    .collect();
+                let read = host::git::Read::WorktreeSize {
+                    worktree: key.root.clone(),
+                    worktree_identity: key.identity.as_ref().map(|id| host::git::WireIdentity {
+                        dev: id.dev.clone(),
+                        ino: id.ino.clone(),
+                    }),
+                    thread,
+                    removed: key.removed,
+                    others: others
+                        .into_iter()
+                        .map(|(dev, ino)| plait_protocol::lease::DirIdentity { dev, ino }.into())
+                        .collect(),
+                    build_directories: key.build_directories.clone(),
                 };
+                let size = host::git::read::<Size>(&client, &project, None, read)
+                    .map(|reply| reply.result)
+                    .map_err(|error| error.to_string());
                 results.push((i, key, size));
             }
             results
@@ -785,7 +841,7 @@ impl Plait {
     pub(super) fn ask_remove_view_worktree(
         &mut self,
         path: &std::path::Path,
-        identity: Option<&plait_core::git::worktree::Identity>,
+        identity: Option<&plait_client::git::worktree::Identity>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -813,7 +869,7 @@ impl Plait {
         if !self.worktrees.removal.ask(
             tree,
             self.tabs.host.clone(),
-            plait_core::host_state::request_id(),
+            plait_client::host_state::request_id(),
         ) {
             return;
         }
@@ -823,5 +879,31 @@ impl Plait {
             window,
             cx,
         );
+    }
+}
+
+#[cfg(test)]
+mod size_cache_tests {
+    use super::*;
+
+    #[core::prelude::v1::test]
+    fn changed_checkout_identity_does_not_reuse_size() {
+        let mut cache = Cache::default();
+        let mut key = Key {
+            root: "/repo".into(),
+            identity: Some(plait_protocol::git::worktree::Identity {
+                dev: "1".into(),
+                ino: "2".into(),
+            }),
+            head: None,
+            last_used: None,
+            changed: None,
+            removed: false,
+            build_directories: Vec::new(),
+        };
+        cache.put(key.clone(), Size::default());
+        assert!(cache.get(&key).is_some());
+        key.identity.as_mut().unwrap().ino = "3".into();
+        assert!(cache.get(&key).is_none());
     }
 }

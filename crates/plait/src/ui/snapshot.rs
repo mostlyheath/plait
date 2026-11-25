@@ -25,8 +25,8 @@ use super::{
     theme::Assets,
 };
 use gpui::{prelude::*, *};
-use plait_core::host::harness::HarnessId;
-use plait_core::{
+use plait_client::host::harness::HarnessId;
+use plait_client::{
     host::{
         Approval, ApprovalKind, ApprovalMode, HostError, Message, MessageRole, Model, ModelChoice,
         Snapshot, Status, ThreadStatus, ThreadSummary, Tool, ToolStatus,
@@ -34,6 +34,7 @@ use plait_core::{
     model::DiffMode,
     state::Load,
 };
+use plait_engine::ownership::CheckoutKeyExt;
 use std::{
     path::{Path, PathBuf},
     process::Command,
@@ -45,19 +46,45 @@ use std::{
 mod a11y;
 mod admission;
 mod branches;
+mod bubbles;
+mod cards;
+mod code_size;
 mod find;
+mod finished_work;
+mod folded_turns;
+mod git_step;
+mod header;
+mod interface_font;
 mod isolation;
+mod issues;
+mod linear_settings;
+mod machines;
 mod many_drafts;
 mod mcp;
+mod message_box;
 mod messages;
 mod mixed_tabs;
+mod naming;
+mod overview;
+mod panel;
+mod pickers;
+mod quote_selection;
+mod running_mark;
 mod settings_modal;
+mod sheet;
 mod showcase;
+mod sidebar;
+mod step21;
 mod storage;
 mod tabs;
+mod test_host;
+mod this_turn;
+mod toasts;
+mod tokens;
 mod turn_review;
 mod undo;
 mod ways_out;
+mod worktree_fixture;
 mod worktrees;
 mod worktrees_view;
 
@@ -79,7 +106,7 @@ fn isolated(test: &str) -> bool {
         assert!(std::env::var_os("PLAIT_HOST_STORE").is_some(), "host store");
         // A preferences file named in the environment is outside the scratch
         // home, and a test that saves a preference would write it.
-        let preferences = plait_core::preferences::default_path();
+        let preferences = plait_client::preferences::default_path();
         assert!(
             preferences
                 .as_ref()
@@ -418,6 +445,7 @@ fn tool_states(snapshot: &mut Snapshot) {
         ),
     ];
     snapshot.error = Some(HostError {
+        retry_after_seconds: None,
         code: "sample_error".into(),
         message: "Sample host error. This is a rendering fixture, not an agent run.".into(),
     });
@@ -439,7 +467,7 @@ fn finished_turn(snapshot: &mut Snapshot) {
 }
 
 /// Sample replies that exercise every kind of conversation text.
-const PROSE: &str = "## Sample reading fixture\n\nThis is a rendering fixture, not an agent run. See [the GPUI site](https://gpui.rs/) or https://example.com/docs for more, with ~~struck~~ text, *emphasis*, **strong**, and `inline code`.\n\n1. First step\n   - nested point that is long enough to wrap onto a second line at the narrow window size so the hanging indent is visible\n     - deeper point\n2. Second step\n\n   A paragraph that belongs to the second step.\n\n- [x] finished task\n- [ ] open task\n\n> A quoted remark.\n\n| Crate | Role | Lines |\n| :-- | :-- | --: |\n| `plait` | GPUI presentation and input | 6200 |\n| `plait-core` | Models, **projection**, and Git | 5400 |\n| `plait-host` | Host lifetime | 1300 |\n\n---\n\nDone.";
+const PROSE: &str = "## Sample reading fixture\n\nThis is a rendering fixture, not an agent run. See [the GPUI site](https://gpui.rs/) or https://example.com/docs for more, with ~~struck~~ text, *emphasis*, **strong**, and `inline code`.\n\n1. First step\n   - nested point that is long enough to wrap onto a second line at the narrow window size so the hanging indent is visible\n     - deeper point\n2. Second step\n\n   A paragraph that belongs to the second step.\n\n- [x] finished task\n- [ ] open task\n\n> A quoted remark.\n\n| Crate | Role | Lines |\n| :-- | :-- | --: |\n| `plait` | GPUI presentation and input | 6200 |\n| `plait-client` | Models, **projection**, and Git | 5400 |\n| `plait-host` | Host lifetime | 1300 |\n\n---\n\nDone.";
 
 const CODE: &str = "```rust\n// Sample code\npub fn refresh<'a>(queue: &'a mut Queue) -> Result<usize, Error> {\n    let count = queue.len() + 0x1f;\n    println!(\"queued {count}\");\n    Ok(count)\n}\n```\n\n```typescript\nexport async function load(path: string): Promise<Thread[]> {\n  const reply = await fetch(`/threads/${path}`); // sample\n  return reply.ok ? reply.json() : [];\n}\n```\n\n```python\ndef total(rows: list[int]) -> int:\n    \"\"\"Sample docstring.\"\"\"\n    return sum(row for row in rows if row > 0)  # positive only\n```\n\n```sh\nCARGO_TERM_COLOR=never cargo test --locked | tee \"$TMPDIR/test.log\" # sample\n```";
 
@@ -583,13 +611,13 @@ const DRAFT: &str =
     "Also notify when the queue is empty.\nKeep the public signature of refresh() as it is.";
 
 // Real Git reads supply the fixture data; elapsed time is not scene content.
-fn pin_read_times(repository: &mut plait_core::state::RepositoryState, wide: bool) {
+fn pin_read_times(repository: &mut plait_client::state::RepositoryState, wide: bool) {
     // Preserve the reference render's measured values, which differed by size.
     const STATUS_WIDE_MS: u64 = 36;
     const STATUS_NARROW_MS: u64 = 39;
     const STAGED_DIFF_MS: u64 = 18;
     const UNSTAGED_DIFF_MS: u64 = 19;
-    use plait_core::model::{Diff, DiffLine, Snapshot as GitSnapshot};
+    use plait_client::model::{Diff, DiffLine, Snapshot as GitSnapshot};
     if let Load::Ready(snapshot) = &mut repository.data.snapshot
         && !snapshot.elapsed.is_zero()
     {
@@ -604,6 +632,7 @@ fn pin_read_times(repository: &mut plait_core::state::RepositoryState, wide: boo
             } else {
                 STATUS_NARROW_MS
             }),
+            plain: false,
         });
     }
     let selected = &repository.view.changes.selected;
@@ -645,8 +674,8 @@ fn pin_read_times(repository: &mut plait_core::state::RepositoryState, wide: boo
 
 fn pin_scene_values(plait: &mut Plait, wide: bool, name: &str) {
     pin_read_times(&mut plait.state.repository, wide);
-    let total = |message: Option<&Arc<plait_core::markdown::Message>>| {
-        message.map_or(0, |message| plait_core::reveal::total(&message.blocks))
+    let total = |message: Option<&Arc<plait_client::markdown::Message>>| {
+        message.map_or(0, |message| plait_client::reveal::total(&message.blocks))
     };
     let text = match name {
         "message-roles-streaming-wide" | "message-roles-streaming-narrow" => "I’ll".len(),
@@ -670,10 +699,32 @@ struct Harness {
     window: WindowHandle<Plait>,
     /// Where to write PNG files. `None` draws every scene without a renderer.
     output: Option<PathBuf>,
+    _host: Option<test_host::TestHost>,
 }
 
 impl Harness {
     fn new(repository: &Path, output: Option<&Path>, width: f32, height: f32) -> Self {
+        Self::with_host(
+            repository,
+            output,
+            width,
+            height,
+            Some(test_host::TestHost::start()),
+        )
+    }
+
+    fn with_host(
+        repository: &Path,
+        output: Option<&Path>,
+        width: f32,
+        height: f32,
+        host: Option<test_host::TestHost>,
+    ) -> Self {
+        // Sidebar-only scenes inject summaries and need no repository server.
+        let client = host.as_ref().map_or_else(
+            || plait_client::host::Client::with_test_git_host(None, repository.join("absent.sock")),
+            test_host::TestHost::client,
+        );
         let text_system = text_system();
         let render = output.is_some();
         let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(Assets), move || {
@@ -684,18 +735,22 @@ impl Harness {
             }
         });
         cx.allow_parking();
-        // As main does, so scenes show the shortcuts the palette reads from the keymap.
-        cx.update(super::menus);
+        // As main does, register bundled interface fonts and shortcuts before opening the window.
+        cx.update(|cx| {
+            super::theme::load_bundled_fonts(cx.text_system());
+            super::menus(cx);
+        });
         let path = repository.to_owned();
         let window = cx
             .open_window(size(px(width), px(height)), |window, cx| {
-                cx.new(|cx| Plait::new(path, Instant::now(), window, cx))
+                cx.new(|cx| Plait::with_host_client(path, Instant::now(), client, window, cx))
             })
             .expect("headless window");
         let mut harness = Self {
             cx,
             window,
             output: output.map(Path::to_owned),
+            _host: host,
         };
         harness.settle();
         harness
@@ -710,8 +765,11 @@ impl Harness {
                 .window
                 .update(&mut self.cx, |plait, _, _| {
                     let repository = &plait.state.repository;
-                    matches!(repository.snapshot(), Load::Loading)
-                        || matches!(repository.diff(), Load::Loading)
+                    // Reads queue behind an active write, so do not wait on them while a write is in flight.
+                    let reading = !repository.write().busy()
+                        && (matches!(repository.snapshot(), Load::Loading)
+                            || matches!(repository.diff(), Load::Loading));
+                    reading
                         || plait.host.connection.connecting
                         || plait.workspace.file_viewer.loading
                 })
@@ -739,7 +797,7 @@ impl Harness {
         self.update(|plait, _, cx| {
             let previous = plait.host.thread.snapshot.clone().expect("sample snapshot");
             change(Arc::make_mut(plait.host.thread.snapshot.as_mut().unwrap()));
-            plait.workspace.formatted = Arc::new(plait_core::markdown::Transcript::update(
+            plait.workspace.formatted = Arc::new(plait_client::markdown::Transcript::update(
                 &plait.workspace.formatted,
                 plait.host.thread.snapshot.as_ref().unwrap(),
             ));
@@ -749,7 +807,7 @@ impl Harness {
             if let Some(thread) = plait
                 .host
                 .connection
-                .threads
+                .threads_mut()
                 .iter_mut()
                 .find(|thread| thread.id == snapshot.id)
             {
@@ -846,11 +904,12 @@ impl Harness {
         self.update(move |plait, window, cx| {
             plait.host.connection.connecting = false;
             plait.host.connection.connected = true;
+            plait.host.connection.has_checkout_identity = true;
             plait.host.connection.error = None;
             plait.host.connection.status = Some(status());
             plait.host.connection.settings_model = Some(choice());
             plait.host.creation.new_model = Some(choice());
-            plait.host.connection.threads = vec![
+            *plait.host.connection.threads_mut() = vec![
                 ThreadSummary {
                     checkout_queue: None,
                     id: THREAD.into(),
@@ -873,11 +932,12 @@ impl Harness {
             plait.refresh_tab_rows();
             // Mirror select_host_thread without opening a socket.
             plait.host.thread.selected = Some(THREAD.into());
+            plait.bind_selected_checkout();
             plait.workspace.history = Default::default();
             plait.workspace.restore = None;
             plait.workspace.restore_pending = [false; 4];
             plait.host.thread.snapshot = Some(Arc::new(thread_snapshot(&checkout, approval)));
-            plait.workspace.formatted = Arc::new(plait_core::markdown::Transcript::update(
+            plait.workspace.formatted = Arc::new(plait_client::markdown::Transcript::update(
                 &plait.workspace.formatted,
                 plait.host.thread.snapshot.as_ref().unwrap(),
             ));
@@ -889,10 +949,9 @@ impl Harness {
             let composer = cx.new(|cx| Composer::new(window, cx));
             plait.workspace.composers.insert(THREAD.into(), composer);
             plait.refresh_live_list(None);
-            plait
-                .session
-                .data
-                .get_or_insert_with(|| plait_core::session::Session::empty("/fixture-host".into()));
+            plait.session.data.get_or_insert_with(|| {
+                plait_client::session::Session::empty("/fixture-host".into())
+            });
             plait.capture_session(cx);
             plait.sync_composer(cx);
         });
@@ -968,8 +1027,14 @@ fn approval_shortcuts_act_only_when_the_buttons_would() {
             );
         }
         // The buttons read the keymap.
-        assert_eq!(plait.shortcut_label("approval.allow_once"), "⌥⌘Y");
-        assert_eq!(plait.shortcut_label("approval.deny_once"), "⌥⌘.");
+        assert_eq!(
+            plait.shortcut_label("approval.allow_once"),
+            keys("cmd-alt-y")
+        );
+        assert_eq!(
+            plait.shortcut_label("approval.deny_once"),
+            keys("cmd-alt-.")
+        );
         // One gate decides for the buttons and the keys.
         let approval = plait
             .host
@@ -1097,7 +1162,10 @@ fn approval_shortcuts_act_only_when_the_buttons_would() {
         let keymap = &mut plait.preferences.value.keymap;
         keymap.insert("approval.allow_once".into(), "cmd-alt-u".into());
         super::actions::install(cx, keymap);
-        assert_eq!(plait.shortcut_label("approval.allow_once"), "⌥⌘U");
+        assert_eq!(
+            plait.shortcut_label("approval.allow_once"),
+            keys("cmd-alt-u")
+        );
     });
     assert!(!harness.answers("cmd-alt-y", "a6"), "the old key is free");
     assert!(harness.answers("cmd-alt-u", "a6"), "the new key answers");
@@ -1217,9 +1285,9 @@ fn desktop_recovery_does_not_rebind_saved_work_or_clear_a_newer_revision() {
         });
         plait.capture_session(cx);
         let saved = plait.session.data.as_ref().unwrap().threads[THREAD].clone();
-        plait.host.connection.threads[0].checkout = "/a-different-checkout".into();
+        plait.host.connection.threads_mut()[0].checkout = "/a-different-checkout".into();
         let snapshot = Arc::make_mut(plait.host.thread.snapshot.as_mut().unwrap());
-        snapshot.checkout = plait.host.connection.threads[0].checkout.clone();
+        snapshot.checkout = plait.host.connection.threads()[0].checkout.clone();
         snapshot.messages.push(Message {
             id: format!("request-{}", pending.request_id),
             role: MessageRole::User,
@@ -1239,7 +1307,7 @@ fn desktop_recovery_does_not_rebind_saved_work_or_clear_a_newer_revision() {
         assert!(!plait.session_accepts_thread(THREAD));
         assert!(plait.host.submissions.pending(THREAD).is_some());
         // Only the matching identity can reconcile the accepted request, not a reused thread ID.
-        plait.host.connection.threads[0].checkout = saved.checkout.clone();
+        plait.host.connection.threads_mut()[0].checkout = saved.checkout.clone();
         Arc::make_mut(plait.host.thread.snapshot.as_mut().unwrap()).checkout =
             saved.checkout.clone();
         plait.restore_composer(THREAD, &composer, cx);
@@ -1255,7 +1323,7 @@ fn desktop_recovery_does_not_rebind_saved_work_or_clear_a_newer_revision() {
 /// Opening a real file, finding in it, noticing changes on disk, and quick open.
 #[core::prelude::v1::test]
 fn files_tab_reads_finds_and_reloads_a_real_file() {
-    use plait_core::file_view::Contents;
+    use plait_client::file_view::Contents;
     let scratch = std::env::temp_dir().join(format!("plait-files-ui-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&scratch);
     let repository = fixture_repository(&scratch);
@@ -1272,7 +1340,7 @@ fn files_tab_reads_finds_and_reloads_a_real_file() {
     };
     harness.update(|plait, _, cx| plait.open_file("src/review.rs".into(), Some(2), cx));
     harness.update(|plait, _, _| {
-        assert_eq!(plait.workspace.tab, super::Workspace::Files);
+        assert_eq!(plait.selected_view(), super::Workspace::Files);
         assert!(text(plait).contains("notify_when_ready"));
     });
     harness.draw();
@@ -1553,7 +1621,7 @@ fn a_draft_creates_its_thread_only_when_sent_and_keeps_its_request_id() {
 /// model changes, and sends the chosen level, the same one on a retry.
 #[core::prelude::v1::test]
 fn a_draft_sends_its_thinking_level_and_repeats_it_on_retry() {
-    use plait_core::host::ThinkingLevel::*;
+    use plait_client::host::ThinkingLevel::*;
     if !isolated("a_draft_sends_its_thinking_level_and_repeats_it_on_retry") {
         return;
     }
@@ -1643,7 +1711,7 @@ fn a_creation_reply_lands_only_on_the_draft_that_sent_it() {
         return;
     }
     use super::new_thread::Sending;
-    use plait_core::host::{Error, HostError, ThreadReply};
+    use plait_client::host::{Error, HostError, ThreadReply};
     let scratch = std::env::temp_dir().join(format!("plait-draft-reply-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&scratch);
     let repository = fixture_repository(&scratch);
@@ -1690,7 +1758,7 @@ fn a_creation_reply_lands_only_on_the_draft_that_sent_it() {
             plait
                 .host
                 .connection
-                .threads
+                .threads()
                 .iter()
                 .all(|t| t.id != "thr_discarded")
         );
@@ -1707,7 +1775,7 @@ fn a_creation_reply_lands_only_on_the_draft_that_sent_it() {
             !plait
                 .host
                 .connection
-                .threads
+                .threads()
                 .iter()
                 .any(|t| t.id == "thr_earlier")
         );
@@ -1757,6 +1825,7 @@ fn a_creation_reply_lands_only_on_the_draft_that_sent_it() {
         plait.open_draft(window, cx);
         sent(plait, "refused", "Try again");
         let refused = Err(Error::Rejected(HostError {
+            retry_after_seconds: None,
             code: "invalid".into(),
             message: "Sample refusal.".into(),
         }));
@@ -1885,7 +1954,7 @@ fn a_saved_code_font_outlasts_settings_opening_before_the_preferences_load() {
     fonts_settled(&mut harness);
     assert_eq!(mono().as_ref(), SYSTEM_MONO);
     // The file names a font, and is read as it is at launch.
-    let path = plait_core::preferences::default_path().expect("scratch preferences");
+    let path = plait_client::preferences::default_path().expect("scratch preferences");
     std::fs::create_dir_all(path.parent().expect("a folder")).unwrap();
     std::fs::write(&path, r#"{"code_font":"Menlo"}"#).unwrap();
     harness.update(|plait, _, cx| plait.load_preferences(cx));
@@ -1900,7 +1969,7 @@ fn a_saved_code_font_outlasts_settings_opening_before_the_preferences_load() {
         let field = plait.code_font.field.clone().expect("the field");
         assert_eq!(field.read(cx).text(), "Menlo");
     });
-    let saved = plait_core::preferences::load(&path).expect("the file reads");
+    let saved = plait_client::preferences::load(&path).expect("the file reads");
     assert_eq!(saved.code_font(), Some("Menlo"));
     let _ = std::fs::remove_dir_all(&scratch);
 }
@@ -1970,7 +2039,7 @@ fn changed_files_count_with_git_hide_on_request_and_open_in_changes() {
         assert!(plait.thread_files_card(cx).is_none());
         plait.preferences.value.hide_changed_files = false;
         plait.open_thread_file("src/review.rs".into(), window, cx);
-        assert_eq!(plait.workspace.tab, super::Workspace::Changes);
+        assert_eq!(plait.selected_view(), super::Workspace::Changes);
         let repo = &plait.state.repository;
         let key = repo.selected_diff().unwrap();
         assert_eq!(
@@ -1997,7 +2066,7 @@ fn streaming_text_flows_in_over_display_frames_and_catches_up() {
                 plait
                     .workspace
                     .reveal
-                    .pending_text(plait_core::reveal::total(blocks))
+                    .pending_text(plait_client::reveal::total(blocks))
             })
             .unwrap()
     };
@@ -2047,7 +2116,7 @@ fn first_added(plait: &Plait) -> usize {
     };
     diff.lines
         .iter()
-        .position(|line| line.kind == plait_core::model::DiffKind::Added)
+        .position(|line| line.kind == plait_client::model::DiffKind::Added)
         .expect("an added line")
 }
 
@@ -2241,7 +2310,10 @@ fn walk(output: Option<&Path>) {
     let _ = std::fs::remove_dir_all(&scratch);
     let repository = fixture_repository(&scratch);
 
+    header::walk(output);
+    git_step::walk(output);
     for (suffix, width, height) in [("wide", 1380., 860.), ("narrow", 900., 600.)] {
+        tokens::walk(output, suffix, width, height);
         tabs::walk(&repository, output, suffix, width, height);
         let mut harness = Harness::new(&repository, output, width, height);
         // No socket in tests, so the host starts disconnected.
@@ -2277,7 +2349,7 @@ fn walk(output: Option<&Path>) {
         harness.update(|plait, _, _| {
             let write = plait.state.repository.write_mut();
             write.note = Some(("Discarded changes to review.rs".into(), false));
-            write.undo = Some(plait_core::git::Backup {
+            write.undo = Some(plait_client::git::Backup {
                 path: "src/review.rs".into(),
                 blob: "0".repeat(40),
                 executable: false,
@@ -2355,11 +2427,18 @@ fn walk(output: Option<&Path>) {
         harness.connect(&repository, true);
         harness.update(|plait, _, cx| plait.toggle_live_tool("t1", cx));
         harness.capture(&format!("live-approval-{suffix}"));
+        running_mark::walk(&mut harness, &repository, suffix);
         streaming_walk(&mut harness, &repository, suffix);
         tool_states_walk(&mut harness, &repository, suffix);
         reading_walk(&mut harness, &repository, suffix);
-        messages::walk(&mut harness, &repository, suffix);
+        bubbles::walk(&repository, output, suffix, width, height);
+        finished_work::scenes(&repository, output, suffix, width, height);
+        quote_selection::scenes(&repository, output, suffix, width, height);
+        code_size::walk(&mut harness, &repository, suffix);
+        interface_font::walk(&mut harness, &repository, suffix);
         find::find_walk(&mut harness, &repository, suffix);
+        folded_turns::walk(&mut harness, &repository, suffix);
+        panel::scenes(&mut harness, &repository, suffix);
         undo::undo_walk(&mut harness, &repository, suffix);
         turn_review::walk(&mut harness, &repository, suffix);
         history_walk(&mut harness, &repository, suffix);
@@ -2368,7 +2447,10 @@ fn walk(output: Option<&Path>) {
         composer_walk(&mut harness, &repository, suffix);
         images::walk(&mut harness, &repository, suffix);
         composer_v3_walk(&mut harness, &repository, suffix);
+        message_box::walk(&mut harness, &repository, suffix);
+        step21::walk(&mut harness, &repository, suffix);
         settings_modal::walk(&mut harness, &repository, suffix);
+        naming::walk(&mut harness, &repository, suffix);
         settings_walk(&mut harness, &repository, suffix);
         settings_controls_walk(&mut harness, &repository, suffix);
         mcp::mcp_walk(&mut harness, &repository, suffix);
@@ -2382,8 +2464,13 @@ fn walk(output: Option<&Path>) {
         claude_walk(&mut harness, &repository, suffix);
         draft_scenes_walk(&mut harness, &repository, suffix);
         branches::branches_walk(&mut harness, &repository, suffix);
-        inspector_walk(&mut harness, &repository, suffix);
-        navigation_walk(&mut harness, &repository, suffix);
+
+        sidebar::walk(&mut harness, &repository, suffix);
+        cards::walk(&mut harness, &repository, suffix);
+        if suffix == "narrow" {
+            cards::compact(&repository, output);
+        }
+        overview::walk(&mut harness, &repository, suffix);
         // Threads exist, but none is open.
         harness.update(|plait, _, _| {
             plait.workspace.host_watch = None;
@@ -2407,12 +2494,21 @@ fn walk(output: Option<&Path>) {
         ownership_scenes(&repository, output, suffix, width, height);
         isolation::walk(&repository, output, suffix, width, height);
         storage::walk(&repository, output, suffix, width, height);
+        toasts::walk(&repository, output, suffix, width, height);
+        linear_settings::walk(&repository, output, suffix, width, height);
+        machines::walk(&repository, output, suffix, width, height);
+        linear_settings::walk_project(&repository, output, suffix, width, height);
+        issues::walk(&repository, output, suffix, width, height);
         worktrees_view::walk(&repository, output, suffix, width, height);
     }
     let _ = std::fs::remove_dir_all(&scratch);
 }
 
 fn streaming_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
+    // These scenes, and the ones after them in this walk, were drawn with
+    // every turn shown: they count rows and select text in earlier turns.
+    // Folding has its own scenes, which turn it on themselves.
+    harness.update(|p, _, _| p.preferences.value.fold_earlier_turns = Some(false));
     harness.connect(repository, false);
     harness.change_snapshot(|snapshot| {
         snapshot.messages.extend((3..40).map(|index| Message {
@@ -2449,7 +2545,7 @@ fn streaming_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
             Arc::make_mut(plait.host.thread.snapshot.as_mut().unwrap())
                 .live_text
                 .push_str(" another streamed word");
-            plait.workspace.formatted = Arc::new(plait_core::markdown::Transcript::update(
+            plait.workspace.formatted = Arc::new(plait_client::markdown::Transcript::update(
                 &plait.workspace.formatted,
                 plait.host.thread.snapshot.as_ref().unwrap(),
             ));
@@ -2499,7 +2595,7 @@ fn tool_states_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
     harness.change_snapshot(tool_states);
     harness.update(|plait, _, cx| {
         // The sidebar and composer follow the thread's status, as a host update would set it.
-        plait.host.connection.threads[0].status = ThreadStatus::Error;
+        plait.host.connection.threads_mut()[0].status = ThreadStatus::Error;
         plait.sync_composer(cx);
         plait.toggle_live_tool("t2", cx);
         plait.toggle_live_tool("t3", cx);
@@ -2520,7 +2616,7 @@ fn reading_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
         offset_in_item: px(0.),
     };
     harness.update(|plait, _, cx| {
-        plait.host.connection.threads[0].status = ThreadStatus::Idle;
+        plait.host.connection.threads_mut()[0].status = ThreadStatus::Idle;
         plait.sync_composer(cx);
         plait.workspace.live_scroll.scroll_to(at(0));
     });
@@ -2586,6 +2682,11 @@ fn reading_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
 
     // Drag from inside the first paragraph into a later block: the table when
     // the window is tall enough to show it, otherwise a list item.
+    if suffix == "narrow" {
+        // Start at the prose reply so both ends of the drag fit in the viewport.
+        harness.update(|plait, _, _| plait.workspace.live_scroll.scroll_to(at(1)));
+        harness.draw();
+    }
     let from = caret(
         harness,
         1,
@@ -2738,7 +2839,7 @@ fn tool_cards_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
     harness.connect(repository, false);
     harness.change_snapshot(tool_cards);
     harness.update(|plait, _, cx| {
-        plait.host.connection.threads[0].status = ThreadStatus::Idle;
+        plait.host.connection.threads_mut()[0].status = ThreadStatus::Idle;
         plait.sync_composer(cx);
         for id in ["c1", "c2", "c3"] {
             plait.toggle_live_tool(id, cx);
@@ -2755,7 +2856,7 @@ fn tool_cards_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
     harness.capture(&format!("tools-commands-{suffix}"));
 
     harness.connect(repository, false);
-    harness.change_snapshot(|snapshot| long_run(snapshot, false));
+    harness.change_snapshot(|snapshot| long_run(snapshot, true));
     harness.update(|plait, _, _| plait.workspace.live_scroll.scroll_to_end());
     harness.capture(&format!("tools-group-{suffix}"));
     // How the group's first two rows were last drawn: (hidden, leads the group).
@@ -2796,7 +2897,7 @@ fn draft_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
     harness.connect(repository, false);
     harness.change_snapshot(finished_turn);
     harness.update(|plait, _, cx| {
-        plait.host.connection.threads[0].status = ThreadStatus::Idle;
+        plait.host.connection.threads_mut()[0].status = ThreadStatus::Idle;
         plait.workspace.composers[THREAD].update(cx, |composer, cx| {
             composer.restore_draft(DRAFT.into(), 1, None, cx);
         });
@@ -2808,14 +2909,14 @@ fn draft_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
 }
 
 /// Sample checkout paths for the file-suggestion scenes. Not read from disk.
-fn sample_files() -> Arc<plait_core::git::FileList> {
+fn sample_files() -> Arc<plait_client::git::FileList> {
     let paths = [
         "Cargo.toml",
         "README.md",
-        "crates/plait-core/src/git.rs",
-        "crates/plait-core/src/git/tests.rs",
-        "crates/plait-core/src/host_state.rs",
-        "crates/plait-core/src/state.rs",
+        "crates/plait-client/src/git.rs",
+        "crates/plait-client/src/git/tests.rs",
+        "crates/plait-client/src/host_state.rs",
+        "crates/plait-client/src/state.rs",
         "crates/plait/src/ui/changes.rs",
         "crates/plait/src/ui/composer/mod.rs",
         "crates/plait/src/ui/host.rs",
@@ -2825,7 +2926,7 @@ fn sample_files() -> Arc<plait_core::git::FileList> {
         "docs/HOST.md",
         "scripts/snapshots.sh",
     ];
-    Arc::new(plait_core::git::FileList {
+    Arc::new(plait_client::git::FileList {
         paths: paths.map(String::from).to_vec(),
         ..Default::default()
     })
@@ -2837,7 +2938,7 @@ impl Harness {
         self.connect(repository, false);
         self.change_snapshot(finished_turn);
         self.update(|plait, _, cx| {
-            plait.host.connection.threads[0].status = ThreadStatus::Idle;
+            plait.host.connection.threads_mut()[0].status = ThreadStatus::Idle;
             plait.sync_composer(cx);
             plait.workspace.live_scroll.scroll_to_end();
         });
@@ -2893,7 +2994,7 @@ fn composer_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
         let event =
             super::composer::ComposerEvent::Command(super::composer::CommandId::ShowChanges);
         plait.composer_event(&event, window, cx);
-        assert_eq!(plait.workspace.tab, super::Workspace::Changes);
+        assert_eq!(plait.selected_view(), super::Workspace::Changes);
         let event =
             super::composer::ComposerEvent::Command(super::composer::CommandId::ShowConversation);
         plait.composer_event(&event, window, cx);
@@ -3028,6 +3129,24 @@ fn theme_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
     };
     harness.connect(repository, true);
     force(harness, true);
+    harness.update(|p, _, _| p.navigation.menu = Some("machines".into()));
+    harness.capture(&format!("light-machine-menu-{suffix}"));
+    harness.update(|p, window, cx| {
+        p.navigation.menu = None;
+        p.toggle_command_palette(window, cx);
+    });
+    harness.capture(&format!("light-palette-{suffix}"));
+    harness.update(|p, window, cx| {
+        p.toggle_command_palette(window, cx);
+        p.toasts.push(
+            THREAD,
+            "Add retries to the client".into(),
+            "forecast · Done".into(),
+            Instant::now(),
+        );
+    });
+    harness.capture(&format!("light-toast-{suffix}"));
+    harness.update(|p, _, cx| p.dismiss_toast(THREAD, cx));
     harness.capture(&format!("light-conversation-{suffix}"));
     harness.update(|plait, window, cx| plait.select_file(1, DiffMode::Unstaged, window, cx));
     harness.capture(&format!("light-changes-{suffix}"));
@@ -3172,7 +3291,7 @@ fn draft_scenes_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
     std::fs::create_dir_all(&other).unwrap();
     let other = other.canonicalize().unwrap();
     harness.update(move |plait, window, cx| {
-        use plait_core::host::ThinkingLevel::*;
+        use plait_client::host::ThinkingLevel::*;
         let status = plait.host.connection.status.as_mut().unwrap();
         status.protocol_version = 4;
         status.models.truncate(6);
@@ -3255,6 +3374,16 @@ fn draft_scenes_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
         plait.sync_composer(cx);
     });
     harness.capture(&format!("draft-unconfirmed-{suffix}"));
+    harness.update(|plait, _, _| {
+        let path = plait.host.creation.checkout.clone();
+        plait.draft.pending = None;
+        plait.draft.sending = None;
+        plait.draft.error = Some(Plait::identity_message(&path));
+        plait.tabs.identity.recovery = Some((path, false));
+    });
+    harness.capture(&format!("draft-project-changed-{suffix}"));
+    harness.update(|plait, _, _| plait.tabs.identity.recovery = None);
+
     harness.update(|plait, window, cx| {
         plait.draft.pending = None;
         plait.draft.error = None;
@@ -3314,7 +3443,7 @@ fn codex_choice() -> ModelChoice {
 }
 
 /// A version 4 host's harness list with Codex in `state`. Labeled sample data only.
-fn sample_harnesses(state: &str, note: Option<&str>) -> plait_core::host::harness::Harnesses {
+fn sample_harnesses(state: &str, note: Option<&str>) -> plait_client::host::harness::Harnesses {
     let ready = state == "ready";
     let model = |id: &str, name: &str| {
         serde_json::json!({
@@ -3360,7 +3489,7 @@ const NEWER: &str = "Newer than the 0.169.0 Plait was tested with. It should wor
 /// Version 4 harnesses: a Codex thread's composer line, model menu, and
 /// permissions, and Settings → Agents. The draft walk covers choosing one.
 fn harnesses_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
-    use plait_core::host::{
+    use plait_client::host::{
         ThinkingLevel,
         harness::{HarnessId, ThreadHarness},
     };
@@ -3383,8 +3512,8 @@ fn harnesses_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
         });
     });
     harness.update(|plait, _, cx| {
-        plait.host.connection.threads[0].model = codex_choice();
-        plait.host.connection.threads[0].harness = Some(HarnessId::Codex);
+        plait.host.connection.threads_mut()[0].model = codex_choice();
+        plait.host.connection.threads_mut()[0].harness = Some(HarnessId::Codex);
         plait.sync_composer(cx);
     });
     harness.capture(&format!("composer-codex-thread-{suffix}"));
@@ -3430,12 +3559,37 @@ fn harnesses_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
     harness.update(|plait, _, cx| {
         plait.inject_harnesses(Some(sample_harnesses(
             "signed_out",
-            Some("Run codex login in a terminal, then Refresh in Settings → Agents."),
+            Some("Sign in from Settings → Agents, or run `codex login` on this machine."),
         )));
         plait.sync_composer(cx);
         assert!(!plait.can_submit(), "a signed-out Codex cannot send");
     });
     harness.capture(&format!("composer-codex-signed-out-{suffix}"));
+    // A machine without Codex: the host offers the version Plait is tested with.
+    harness.update(|plait, _, cx| {
+        let mut list = sample_harnesses(
+            "not_installed",
+            Some("Codex was not found. Install Codex 0.169.0 or newer."),
+        );
+        list.harnesses[1].installable = Some("0.169.0".into());
+        plait.inject_harnesses(Some(list));
+        plait.settings_open = true;
+        plait.settings_tab = SettingsTab::Agents;
+        plait.sync_composer(cx);
+    });
+    harness.capture(&format!("harness-install-{suffix}"));
+    harness.update(|plait, _, cx| {
+        let mut list = sample_harnesses(
+            "signed_out",
+            Some("Sign in from Settings → Agents, or run `codex login` on this machine."),
+        );
+        list.harnesses[1].path =
+            Some("/home/sample/.local/share/plait/tools/codex/0.169.0/bin/codex".into());
+        list.harnesses[1].managed = true;
+        plait.inject_harnesses(Some(list));
+        plait.sync_composer(cx);
+    });
+    harness.capture(&format!("harness-sign-in-{suffix}"));
     harness.update(|plait, _, cx| {
         plait.inject_harnesses(Some(sample_harnesses("ready", Some(NEWER))));
         // Codex is the default for new threads. In memory only.
@@ -3497,7 +3651,7 @@ fn claude_choice() -> ModelChoice {
 const CLAUDE_SETUP: &str = "Sample: set up Claude Code threads to download Anthropic's Agent SDK from the npm registry to this Mac. Plait then runs your installed claude.";
 
 /// The sample list with Claude Code after Codex, in `state`. Labeled sample data only.
-fn claude_harnesses(state: &str, note: Option<&str>) -> plait_core::host::harness::Harnesses {
+fn claude_harnesses(state: &str, note: Option<&str>) -> plait_client::host::harness::Harnesses {
     let ready = state == "ready";
     let model = |id: &str, name: &str| {
         serde_json::json!({
@@ -3572,7 +3726,7 @@ fn claude_settings(harness: &mut Harness, state: &str, suffix: &str) {
 /// Claude Code: Settings → Agents before, during, and after setup, a Claude
 /// Code draft, and a Claude Code thread waiting for an approval.
 fn claude_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
-    use plait_core::host::{ThinkingLevel, harness::ThreadHarness};
+    use plait_client::host::{ThinkingLevel, harness::ThreadHarness};
     harness.connect(repository, false);
     harness.update(|plait, _, cx| {
         let status = plait.host.connection.status.as_mut().unwrap();
@@ -3647,8 +3801,8 @@ fn claude_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
         approval.risk = "Sample: Claude Code runs this command on your machine with your permissions, outside Plait's sandbox. Only this request is approved.".into();
     });
     harness.update(|plait, _, cx| {
-        plait.host.connection.threads[0].model = claude_choice();
-        plait.host.connection.threads[0].harness = Some(HarnessId::Claude);
+        plait.host.connection.threads_mut()[0].model = claude_choice();
+        plait.host.connection.threads_mut()[0].harness = Some(HarnessId::Claude);
         plait.sync_composer(cx);
         // Plait's approvals are Pi's: a Claude Code message asks for none.
         assert_eq!(plait.next_approval_mode(), None);
@@ -3659,8 +3813,30 @@ fn claude_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
     capture_both(harness, &format!("composer-claude-approval-{suffix}"));
     harness.update(|plait, window, cx| plait.open_thread_permissions(window, cx));
     capture_both(harness, &format!("thread-permissions-claude-{suffix}"));
+    // Before setup, a new thread's harness list offers it.
     harness.update(|plait, window, cx| {
         plait.close_overlay(true, window, cx);
+        plait.inject_harnesses(Some(claude_harnesses("setup_required", Some(CLAUDE_SETUP))));
+        plait.open_draft(window, cx);
+        plait.open_draft_harnesses(window, cx);
+    });
+    capture_both(harness, &format!("draft-harnesses-claude-setup-{suffix}"));
+    harness.update(|plait, window, cx| {
+        plait.close_overlay(true, window, cx);
+        // Choosing it opens Settings → Agents, where the setup shows.
+        plait.run_command(
+            super::commands::Command::SetUpHarness(HarnessId::Claude),
+            None,
+            window,
+            cx,
+        );
+        assert!(plait.settings_open);
+        assert_eq!(plait.settings_tab, SettingsTab::Agents);
+        // The draft never moves to a harness that cannot start a thread.
+        assert_eq!(plait.draft_harness(), HarnessId::Pi);
+        plait.show_settings(false, window, cx);
+        plait.settings_tab = SettingsTab::default();
+        plait.discard_draft(window, cx);
         plait.inject_harnesses(None);
     });
     harness.connect(repository, false);
@@ -3674,7 +3850,7 @@ fn a_setup_reply_lands_only_on_the_request_it_answers() {
         return;
     }
     use super::harnesses::HarnessesView;
-    use plait_core::host::Error;
+    use plait_client::host::Error;
     let scratch = std::env::temp_dir().join(format!("plait-setup-ui-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&scratch);
     let repository = fixture_repository(&scratch);
@@ -3813,14 +3989,14 @@ fn a_codex_draft_starts_a_codex_thread_in_its_mode() {
     harness.update(|plait, _, _| {
         assert!(plait.draft.pending.is_some());
         let request = &plait.draft.pending.as_ref().unwrap().request;
-        assert!(matches!(request, plait_core::host::admission::Request::CreateAdmittedThread { harness: HarnessId::Codex, mode: Some(mode), model_id, .. } if mode == "ask" && model_id == "sample-codex-mini"));
+        assert!(matches!(request, plait_client::host::admission::Request::CreateAdmittedThread { harness: HarnessId::Codex, mode: Some(mode), model_id, .. } if mode == "ask" && model_id == "sample-codex-mini"));
         assert_eq!(plait.draft.sending.as_ref().unwrap().approval, None);
     });
     // No host runs here, so the creation stays unconfirmed; its retry keeps harness and mode.
     harness.creation_settles();
     harness.update(|plait, window, cx| {
         plait.retry_create(window, cx);
-        assert!(matches!(&plait.draft.pending.as_ref().unwrap().request, plait_core::host::admission::Request::CreateAdmittedThread { harness: HarnessId::Codex, mode: Some(mode), .. } if mode == "ask"));
+        assert!(matches!(&plait.draft.pending.as_ref().unwrap().request, plait_client::host::admission::Request::CreateAdmittedThread { harness: HarnessId::Codex, mode: Some(mode), .. } if mode == "ask"));
     });
     harness.creation_settles();
     harness.update(|plait, window, cx| {
@@ -3931,11 +4107,75 @@ fn a_draft_keeps_its_default_harness_when_unavailable() {
 }
 
 #[core::prelude::v1::test]
+fn unknown_harness_thread_does_not_offer_pi_controls() {
+    if !isolated("unknown_harness_thread_does_not_offer_pi_controls") {
+        return;
+    }
+    let scratch =
+        std::env::temp_dir().join(format!("plait-unknown-harness-{}", std::process::id()));
+    let repository = fixture_repository(&scratch);
+    let mut harness = Harness::new(&repository, None, 900., 600.);
+    harness.connect(&repository, false);
+    harness.change_snapshot(|snapshot| {
+        snapshot.harness = Some(serde_json::from_str(r#"{"id":"antigravity"}"#).unwrap());
+        snapshot.status = ThreadStatus::Idle;
+    });
+    harness.update(|plait, _, _| {
+        plait
+            .host
+            .connection
+            .status
+            .as_mut()
+            .unwrap()
+            .protocol_version = 4;
+        plait.sync_thread_harness();
+        assert_eq!(
+            super::harnesses::harness_of(plait.host.thread.snapshot.as_ref().unwrap()),
+            HarnessId::Other
+        );
+        assert_eq!(plait.thread_harness(), HarnessId::Other);
+        assert_eq!(
+            plait.thread_harness_line().unwrap().label.as_ref(),
+            "Another harness"
+        );
+    });
+    #[cfg(debug_assertions)]
+    {
+        harness.draw_a11y();
+        let frame = harness.draw_a11y();
+        assert!(
+            frame
+                .nodes
+                .iter()
+                .any(|node| node.label.as_deref() == Some("Another harness"))
+        );
+        assert!(!frame.nodes.iter().any(|node| {
+            node.label
+                .as_deref()
+                .is_some_and(|label| label.starts_with("Run settings:"))
+        }));
+    }
+    harness.update(|plait, window, cx| plait.open_thread_models(window, cx));
+    assert!(
+        shown(&mut harness).is_empty(),
+        "unknown harness must not list Pi models"
+    );
+    harness.update(|plait, window, cx| {
+        plait.preferences.value =
+            serde_json::from_str(r#"{"default_harness":"antigravity"}"#).unwrap();
+        plait.open_draft(window, cx);
+        assert_eq!(plait.draft_harness(), HarnessId::Pi);
+    });
+    drop(harness);
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
+#[core::prelude::v1::test]
 fn a_mode_reply_lands_only_on_the_thread_it_was_sent_for() {
     if !isolated("a_mode_reply_lands_only_on_the_thread_it_was_sent_for") {
         return;
     }
-    use plait_core::host::{
+    use plait_client::host::{
         Error, ThreadReply,
         harness::{HarnessId, ThreadHarness},
     };
@@ -4030,38 +4270,16 @@ fn a_mode_reply_lands_only_on_the_thread_it_was_sent_for() {
     std::fs::remove_dir_all(scratch).unwrap();
 }
 
-/// The Git inspector hidden. A narrow window has no inspector, so the toggle
-/// explains where Git is instead.
-fn inspector_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
-    harness.connect(repository, false);
-    harness.update(|plait, window, cx| {
-        plait.toggle_inspector(window, cx);
-        let wide = Plait::wide(window);
-        assert_eq!(plait.preferences.value.hide_inspector, wide);
-        assert_eq!(plait.workspace.inspector_note, !wide);
-    });
-    harness.capture(&format!("inspector-hidden-{suffix}"));
-    harness.update(|plait, window, cx| {
-        plait.toggle_inspector(window, cx);
-        assert!(!plait.preferences.value.hide_inspector);
-        assert!(!plait.workspace.inspector_note);
-    });
-    // Widths saved by dragging, fitted so the conversation keeps its room.
-    harness.update(|plait, _, _| {
-        plait.preferences.value.sidebar_width = Some(380);
-        plait.preferences.value.inspector_width = Some(520);
-    });
-    harness.capture(&format!("panels-resized-{suffix}"));
-    harness.update(|plait, _, _| {
-        plait.preferences.value.sidebar_width = None;
-        plait.preferences.value.inspector_width = None;
-    });
-}
-
 // The glob import above brings in `gpui::test`; these are plain tests.
 
 /// Layout and paint run for every view. GPUI reports some misuse, such as a
 /// second hover style on one element, only when the element is drawn.
+/// How this platform spells `key`, so label checks follow the binding rather
+/// than one platform's modifier glyphs.
+fn keys(key: &'static str) -> String {
+    super::actions::label(&[Keystroke::parse(key).unwrap()])
+}
+
 #[core::prelude::v1::test]
 fn every_view_draws() {
     if !isolated("every_view_draws") {
@@ -4090,7 +4308,7 @@ fn settings_controls_walk(harness: &mut Harness, repository: &Path, suffix: &str
         settings_providers::{EndpointForm, Form},
         text_field::TextField,
     };
-    use plait_core::host::{policy::CommandPolicy, providers::*, sign_in::*};
+    use plait_client::host::{policy::CommandPolicy, providers::*, sign_in::*};
     harness.connect(repository, false);
     harness.update(|plait, window, cx| {
         plait.show_settings(true, window, cx);
@@ -4410,7 +4628,7 @@ fn settings_controls_walk(harness: &mut Harness, repository: &Path, suffix: &str
     });
     harness.capture(&format!("policy-trusted-{suffix}"));
     harness.update(|plait, _, _| {
-        use plait_core::host::agent::*;
+        use plait_client::host::agent::*;
         let skill = |name: &str, description: &str, origin, model_invocation| Skill {
             name: name.into(),
             description: description.into(),
@@ -4469,7 +4687,7 @@ fn settings_controls_walk(harness: &mut Harness, repository: &Path, suffix: &str
 /// Version 3 input and context controls. All state is synthetic and no socket is opened.
 fn composer_v3_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
     use super::composer::ComposerEvent;
-    use plait_core::host::{QueueMode, Queued, ThinkingLevel, Usage};
+    use plait_client::host::{QueueMode, Queued, ThinkingLevel, Usage};
     harness.fresh_composer(repository);
     harness.update(|plait, _, cx| {
         let status = plait.host.connection.status.as_mut().unwrap();
@@ -4496,7 +4714,7 @@ fn composer_v3_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
     // What the thread changed, above its composer. Injected sample counts.
     let root = repository.to_owned();
     harness.update(move |plait, _, cx| {
-        let count = |path: &str, added, removed, untracked| plait_core::git::LineCount {
+        let count = |path: &str, added, removed, untracked| plait_client::git::LineCount {
             path: path.into(),
             added,
             removed,
@@ -4507,7 +4725,7 @@ fn composer_v3_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
             root,
             vec![
                 count(
-                    "crates/plait-core/src/git/worktree.rs",
+                    "crates/plait-client/src/git/worktree.rs",
                     Some(102),
                     Some(0),
                     true,
@@ -4517,13 +4735,34 @@ fn composer_v3_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
                 count("assets/icon.png", None, None, false),
             ],
         );
+        plait.workspace.thread_files.collapsed = false;
         cx.notify();
     });
+    #[cfg(debug_assertions)]
+    if harness.output.is_none() {
+        assert!(
+            harness.draw_a11y().has_node(Role::Button, |node| {
+                node.label.as_deref()
+                    == Some("Added crates/plait-client/src/git/worktree.rs. Show in Changes")
+            }),
+            "the expanded legacy changed-files scene shows a file row"
+        );
+    }
     harness.capture(&format!("composer-v3-changed-files-{suffix}"));
     harness.update(|plait, _, cx| {
         plait.workspace.thread_files.collapsed = true;
         cx.notify();
     });
+    #[cfg(debug_assertions)]
+    if harness.output.is_none() {
+        assert!(
+            !harness.draw_a11y().has_node(Role::Button, |node| {
+                node.label.as_deref()
+                    == Some("Added crates/plait-client/src/git/worktree.rs. Show in Changes")
+            }),
+            "the collapsed legacy changed-files scene hides file rows"
+        );
+    }
     harness.capture(&format!("composer-v3-changed-files-collapsed-{suffix}"));
     harness.update(|plait, _, cx| {
         plait.workspace.thread_files = Default::default();
@@ -4653,7 +4892,7 @@ fn composer_v3_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
         for queued in &plait.host.thread.snapshot.as_ref().unwrap().queued {
             plait.host.submissions.restore_accepted(
                 THREAD.into(),
-                plait_core::host_state::PendingSubmit {
+                plait_client::host_state::PendingSubmit {
                     checkout_wait: false,
                     images: Vec::new(),
                     request_id: queued.request_id.clone(),
@@ -4738,11 +4977,11 @@ fn composer_v3_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
 }
 
 fn stored_page(
-    items: Vec<plait_core::host::HistoryItem>,
+    items: Vec<plait_client::host::HistoryItem>,
     before: Option<&str>,
-) -> plait_core::history::Page {
-    plait_core::history::prepare_page(
-        plait_core::host::HistoryPage {
+) -> plait_client::history::Page {
+    plait_client::history::prepare_page(
+        plait_client::host::HistoryPage {
             items,
             before: before.map(str::to_owned),
         },
@@ -4752,10 +4991,10 @@ fn stored_page(
     .unwrap()
 }
 
-fn install_history(plait: &mut Plait, cache: plait_core::history::History) {
+fn install_history(plait: &mut Plait, cache: plait_client::history::History) {
     let snapshot = cache.project(plait.host.thread.snapshot.as_ref().unwrap());
     let stored = snapshot.tools.iter().map(|tool| tool.id.clone()).collect();
-    plait.workspace.formatted = Arc::new(plait_core::markdown::Transcript::update_stored(
+    plait.workspace.formatted = Arc::new(plait_client::markdown::Transcript::update_stored(
         &plait.workspace.formatted,
         &snapshot,
         &stored,
@@ -4778,8 +5017,8 @@ fn stored_message(
     role: MessageRole,
     text: &str,
     reasoning: &str,
-) -> plait_core::host::HistoryItem {
-    plait_core::host::HistoryItem::Message {
+) -> plait_client::host::HistoryItem {
+    plait_client::host::HistoryItem::Message {
         images: Vec::new(),
         id: id.into(),
         role,
@@ -4791,7 +5030,7 @@ fn stored_message(
 
 fn history_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
     use super::selection::Owner;
-    use plait_core::{history::History, host::HistoryItem};
+    use plait_client::{history::History, host::HistoryItem};
     harness.connect(repository, false);
     harness.change_snapshot(|snapshot| {
         snapshot.status = ThreadStatus::Idle;
@@ -4864,9 +5103,9 @@ fn history_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
     harness.update(|plait, _, _| {
         let text = "This is the first displayed part of a much larger stored message. Each part is explicit, and copying copies only the part on screen.";
         let item = HistoryItem::Message {
- images: Vec::new(), id: "h-answer".into(), role: MessageRole::Assistant, text: text.into(), reasoning: String::new(), more: vec![plait_core::host::More { field: plait_core::host::HistoryField::Text, reference: "fixture-part".into(), offset: text.len() as u64, length: 500_000 }] };
-        let entry = plait_core::history::Entry::from_inline(item, None).unwrap();
-        let mut cache = History::default(); cache.latest(plait_core::history::Page { entries: vec![Arc::new(entry)], before: None });
+ images: Vec::new(), id: "h-answer".into(), role: MessageRole::Assistant, text: text.into(), reasoning: String::new(), more: vec![plait_client::host::More { field: plait_client::host::HistoryField::Text, reference: "fixture-part".into(), offset: text.len() as u64, length: 500_000 }] };
+        let entry = plait_client::history::Entry::from_inline(item, None).unwrap();
+        let mut cache = History::default(); cache.latest(plait_client::history::Page { entries: vec![Arc::new(entry)], before: None });
         install_history(plait, cache);
     });
     harness.capture(&format!("history-text-parts-{suffix}"));
@@ -4940,6 +5179,7 @@ fn history_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
             "failed",
             ThreadStatus::Error,
             Some(HostError {
+                retry_after_seconds: None,
                 code: "runtime_error".into(),
                 message: "The provider did not complete the request. Try another message.".into(),
             }),
@@ -4948,6 +5188,7 @@ fn history_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
             "turn-limit",
             ThreadStatus::Error,
             Some(HostError {
+                retry_after_seconds: None,
                 code: "turn_limit".into(),
                 message: "Limit".into(),
             }),
@@ -4965,7 +5206,7 @@ fn history_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
     harness.change_snapshot(|snapshot| {
         snapshot.status = ThreadStatus::Running;
         snapshot.error = None;
-        snapshot.retry = Some(plait_core::host::Retry {
+        snapshot.retry = Some(plait_client::host::Retry {
             attempt: 2,
             at: 5000,
         });
@@ -5030,167 +5271,6 @@ fn delayed_history_cannot_land_after_a_thread_switch() {
     std::fs::remove_dir_all(scratch).unwrap();
 }
 
-fn navigation_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
-    harness.connect(repository, false);
-    let root = repository.to_owned();
-    harness.update(move |plait, _, cx| {
-        plait.sidebar = true;
-        plait
-            .host
-            .connection
-            .status
-            .as_mut()
-            .unwrap()
-            .protocol_version = 3;
-        plait.preferences.value.navigation = Default::default();
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
-        plait.host.connection.threads = (0..28)
-            .map(|index| {
-                let checkout = match index % 3 {
-                    0 => root.clone(),
-                    1 => root.join("sample-api"),
-                    _ => root.join("sample-long-project-name-that-must-truncate"),
-                };
-                ThreadSummary {
-                    checkout_queue: None,
-                    id: if index == 0 {
-                        THREAD.into()
-                    } else {
-                        format!("sample-navigation-{index}")
-                    },
-                    checkout,
-                    model: choice(),
-                    title: Some(
-                        [
-                            "Review parser recovery and Unicode boundaries",
-                            "Repair the failing tests",
-                            "Explain deployment configuration",
-                            "Update documentation",
-                        ][index % 4]
-                            .into(),
-                    ),
-                    status: [
-                        ThreadStatus::Running,
-                        ThreadStatus::Idle,
-                        ThreadStatus::AwaitingApproval,
-                        ThreadStatus::Error,
-                        ThreadStatus::Stopped,
-                        ThreadStatus::Interrupted,
-                    ][index % 6],
-                    created_at: Some(now - 86_400_000),
-                    updated_at: Some(now - index as u64 * 180_000),
-                    archived: Some(index == 3),
-                    pending_approval: Some(index % 6 == 2),
-                    harness: None,
-                }
-            })
-            .collect();
-        plait
-            .preferences
-            .value
-            .navigation
-            .observe(&plait.host.connection.threads, None, true);
-        plait
-            .preferences
-            .value
-            .navigation
-            .unread
-            .insert("sample-navigation-1".into());
-        plait
-            .preferences
-            .value
-            .navigation
-            .unread
-            .insert("sample-navigation-3".into());
-        plait.rebuild_projects(cx);
-        for project in &plait.state.projects {
-            plait
-                .navigation
-                .available
-                .insert(project.checkout.clone(), project.checkout == root);
-        }
-    });
-    harness.capture(&format!("navigation-projects-{suffix}"));
-    harness.update(|plait, _, cx| {
-        plait.navigation.attention = true;
-        cx.notify();
-    });
-    harness.capture(&format!("navigation-attention-{suffix}"));
-    harness.update(|plait, _, cx| {
-        plait.navigation.attention = false;
-        plait.navigation.archived = true;
-        cx.notify();
-    });
-    harness.capture(&format!("navigation-archived-{suffix}"));
-    harness.update(|plait, window, cx| plait.begin_rename(THREAD.into(), window, cx));
-    harness.capture(&format!("navigation-rename-{suffix}"));
-    harness.update(|plait, _, cx| {
-        plait.navigation.rename = None;
-        plait
-            .navigation
-            .filter
-            .update(cx, |field, cx| field.set_text("repair", cx));
-    });
-    harness.capture(&format!("navigation-filter-{suffix}"));
-    harness.update(|plait, _, cx| {
-        plait
-            .navigation
-            .filter
-            .update(cx, |field, cx| field.set_text("nothing matches this", cx))
-    });
-    harness.capture(&format!("navigation-empty-{suffix}"));
-    harness.update(|plait, _, cx| {
-        plait
-            .navigation
-            .filter
-            .update(cx, |field, cx| field.set_text("", cx));
-        plait.navigation.menu = Some(THREAD.into());
-    });
-    harness.capture(&format!("navigation-actions-{suffix}"));
-    let project = format!("project:{}", repository.display());
-    harness.update(move |plait, _, _| plait.navigation.menu = Some(project));
-    harness.capture(&format!("navigation-project-actions-{suffix}"));
-    // Threads in a Plait worktree list under the project it was made from.
-    let main = repository.to_owned();
-    harness.update(move |plait, _, cx| {
-        plait.preferences.value.navigation.remember_worktree(
-            main.join("sample-api"),
-            main.clone(),
-            "plait/3f9a2c".into(),
-        );
-        plait.rebuild_projects(cx);
-        plait.navigation.menu = Some("sample-navigation-1".into());
-    });
-    harness.capture(&format!("navigation-worktree-{suffix}"));
-    harness.update(|plait, _, cx| {
-        plait.preferences.value.navigation.worktrees.clear();
-        plait.rebuild_projects(cx);
-    });
-    harness.update(|plait, _, _| {
-        plait.navigation.menu = None;
-        plait.navigation.error = Some(
-            "Thread updates paused: the host disconnected. Refresh to load current states.".into(),
-        );
-    });
-    harness.capture(&format!("navigation-paused-{suffix}"));
-    harness.update(|plait, _, _| plait.navigation.error = None);
-
-    harness.update(|plait, _, cx| {
-        plait.navigation.menu = None;
-        plait.navigation.archived = false;
-        plait.preferences.value.navigation = Default::default();
-        plait.navigation.available.clear();
-        plait.navigation.collapsed.clear();
-        cx.notify();
-    });
-    harness.connect(repository, false);
-    harness.update(|plait, _, cx| plait.rebuild_projects(cx));
-    harness.capture(&format!("navigation-v2-{suffix}"));
-}
-
 #[core::prelude::v1::test]
 fn project_switching_keeps_each_draft_and_rejects_the_old_watch() {
     if !isolated("project_switching_keeps_each_draft_and_rejects_the_old_watch") {
@@ -5209,7 +5289,7 @@ fn project_switching_keeps_each_draft_and_rejects_the_old_watch() {
             .as_mut()
             .unwrap()
             .protocol_version = 3;
-        plait.host.connection.threads.push(ThreadSummary {
+        plait.host.connection.threads_mut().push(ThreadSummary {
             id: "other-thread".into(),
             checkout: other.clone(),
             model: choice(),
@@ -5258,7 +5338,7 @@ fn project_switching_keeps_each_draft_and_rejects_the_old_watch() {
                 .text,
             "Separate draft"
         );
-        assert_eq!(plait.host.connection.threads.len(), 3);
+        assert_eq!(plait.host.connection.threads().len(), 3);
     });
     drop(harness);
     std::fs::remove_dir_all(scratch).unwrap();
@@ -5357,7 +5437,7 @@ fn the_thread_menu_lists_only_the_threads_approvals() {
     let mut harness = Harness::new(&repository, None, 900., 600.);
     harness.connect(&repository, false);
     harness.update(|plait, window, cx| {
-        use plait_core::host::policy::CommandPolicy;
+        use plait_client::host::policy::CommandPolicy;
         // Trusted commands no longer add a project item to the thread's menu.
         plait.policy.key = Some((
             plait.host.connection.epoch,
@@ -5382,7 +5462,7 @@ fn thread_management_preserves_newer_edits_and_activity() {
     }
     let scratch = std::env::temp_dir().join(format!("plait-management-ui-{}", std::process::id()));
     let repository = fixture_repository(&scratch);
-    let mut harness = Harness::new(&repository, None, 900., 600.);
+    let mut harness = Harness::with_host(&repository, None, 900., 600., None);
     harness.connect(&repository, false);
     harness.update(|plait, window, cx| {
         plait
@@ -5400,19 +5480,22 @@ fn thread_management_preserves_newer_edits_and_activity() {
         let operation = plait
             .begin_thread_management(
                 THREAD.into(),
-                &plait_core::host::Request::rename_thread(THREAD.into(), "Submitted title".into()),
+                &plait_client::host::Request::rename_thread(
+                    THREAD.into(),
+                    "Submitted title".into(),
+                ),
                 cx,
             )
             .unwrap();
         field.update(cx, |field, cx| field.set_text("A newer edit", cx));
         plait.navigation.menu = Some("thr_0c44a9d1".into());
-        let focus = plait.navigation.filter.focus_handle(cx);
+        let focus = plait.workspace.composers[THREAD].focus_handle(cx);
         window.focus(&focus, cx);
 
         let summary = plait
             .host
             .connection
-            .threads
+            .threads_mut()
             .iter_mut()
             .find(|thread| thread.id == THREAD)
             .unwrap();
@@ -5420,7 +5503,7 @@ fn thread_management_preserves_newer_edits_and_activity() {
         summary.title = Some("Newer live title".into());
         summary.status = ThreadStatus::Running;
         let reply = |updated_at| {
-            Ok(plait_core::host::ThreadReply {
+            Ok(plait_client::host::ThreadReply {
                 thread: Snapshot {
                     id: THREAD.into(),
                     checkout: repository.clone(),
@@ -5443,7 +5526,7 @@ fn thread_management_preserves_newer_edits_and_activity() {
         let summary = plait
             .host
             .connection
-            .threads
+            .threads()
             .iter()
             .find(|thread| thread.id == THREAD)
             .unwrap();
@@ -5454,7 +5537,10 @@ fn thread_management_preserves_newer_edits_and_activity() {
         let operation = plait
             .begin_thread_management(
                 THREAD.into(),
-                &plait_core::host::Request::rename_thread(THREAD.into(), "Submitted title".into()),
+                &plait_client::host::Request::rename_thread(
+                    THREAD.into(),
+                    "Submitted title".into(),
+                ),
                 cx,
             )
             .unwrap();
@@ -5469,7 +5555,7 @@ fn thread_management_preserves_newer_edits_and_activity() {
         let operation = plait
             .begin_thread_management(
                 THREAD.into(),
-                &plait_core::host::Request::archive_thread(THREAD.into(), true),
+                &plait_client::host::Request::archive_thread(THREAD.into(), true),
                 cx,
             )
             .unwrap();
@@ -5481,7 +5567,10 @@ fn thread_management_preserves_newer_edits_and_activity() {
         let operation = plait
             .begin_thread_management(
                 THREAD.into(),
-                &plait_core::host::Request::rename_thread(THREAD.into(), "Submitted title".into()),
+                &plait_client::host::Request::rename_thread(
+                    THREAD.into(),
+                    "Submitted title".into(),
+                ),
                 cx,
             )
             .unwrap();
@@ -5489,6 +5578,27 @@ fn thread_management_preserves_newer_edits_and_activity() {
         plait.finish_thread_management(operation, reply(40), window, cx);
         assert!(plait.navigation.rename.is_none());
         assert!(focus.is_focused(window));
+    });
+    drop(harness);
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
+#[core::prelude::v1::test]
+fn switching_machine_reconnects() {
+    if !isolated("switching_machine_reconnects") {
+        return;
+    }
+    let scratch = std::env::temp_dir().join(format!("plait-machine-switch-{}", std::process::id()));
+    let repository = fixture_repository(&scratch);
+    let mut harness = Harness::new(&repository, None, 900., 600.);
+    harness.connect(&repository, false);
+    harness.update(|plait, window, cx| {
+        let epoch = plait.host.connection.epoch;
+        let client = plait.host_client();
+        let remote = plait_client::machines::MachineId::new("workstation").unwrap();
+        plait.use_machine_client(client, remote, false, window, cx);
+        assert!(!plait.host_is_local());
+        assert!(plait.host.connection.epoch > epoch);
     });
     drop(harness);
     std::fs::remove_dir_all(scratch).unwrap();
@@ -5515,7 +5625,10 @@ fn reconnect_releases_management_and_rejects_its_late_reply() {
         let operation = plait
             .begin_thread_management(
                 THREAD.into(),
-                &plait_core::host::Request::rename_thread(THREAD.into(), "Submitted title".into()),
+                &plait_client::host::Request::rename_thread(
+                    THREAD.into(),
+                    "Submitted title".into(),
+                ),
                 cx,
             )
             .unwrap();
@@ -5537,13 +5650,16 @@ fn reconnect_releases_management_and_rejects_its_late_reply() {
         let _new = plait
             .begin_thread_management(
                 THREAD.into(),
-                &plait_core::host::Request::rename_thread(THREAD.into(), "Submitted title".into()),
+                &plait_client::host::Request::rename_thread(
+                    THREAD.into(),
+                    "Submitted title".into(),
+                ),
                 cx,
             )
             .unwrap();
         plait.finish_thread_management(
             operation,
-            Ok(plait_core::host::ThreadReply {
+            Ok(plait_client::host::ThreadReply {
                 thread: Snapshot {
                     id: THREAD.into(),
                     checkout: repository.clone(),
@@ -5575,7 +5691,7 @@ fn the_window_bar_moves_the_window_only_from_empty_space() {
     let scratch = std::env::temp_dir().join(format!("plait-window-bar-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&scratch);
     let repository = fixture_repository(&scratch);
-    let mut harness = Harness::new(&repository, None, 1380., 860.);
+    let mut harness = Harness::with_host(&repository, None, 1380., 860., None);
     let rail = harness
         .window
         .update(&mut harness.cx, |plait, _, _| {
@@ -5624,7 +5740,7 @@ fn the_window_bar_moves_the_window_only_from_empty_space() {
     );
     assert!(arms(&mut harness, rail + 400.), "the header's empty middle");
     // A control in the bar keeps its click: this one hides the rail.
-    assert!(!arms(&mut harness, 98.), "the sidebar toggle");
+    assert!(!arms(&mut harness, rail - 22.), "the sidebar toggle");
     assert!(!sidebar(&mut harness));
     // With the rail hidden the header starts under the lights, so its toggle
     // moves clear of them and the space it leaves still moves the window.
@@ -5676,7 +5792,7 @@ fn image_drafts_survive_reopen_and_refusal_keeps_the_draft() {
     harness.fresh_composer(&repository);
     images::install(&mut harness, 1);
     let bytes = include_bytes!("../../../../runtime/test/support/images/0.png");
-    let reference = plait_core::images::persist(bytes).unwrap();
+    let reference = plait_client::images::persist(bytes).unwrap();
     let fixture = images::fixtures();
     harness.composer(|composer, window, cx| {
         composer.type_text("Keep this draft", window, cx);
@@ -5686,7 +5802,7 @@ fn image_drafts_survive_reopen_and_refusal_keeps_the_draft() {
             cx,
         );
         let revision = composer.saved_draft().1;
-        composer.scene_refuse(vec![0; plait_core::images::IMAGE_BYTES + 1], cx);
+        composer.scene_refuse(vec![0; plait_client::images::IMAGE_BYTES + 1], cx);
         assert_eq!(composer.saved_draft().0, "Keep this draft");
         assert_eq!(composer.saved_images(), std::slice::from_ref(&reference));
         assert_eq!(composer.saved_draft().1, revision);
@@ -5705,9 +5821,9 @@ fn image_drafts_survive_reopen_and_refusal_keeps_the_draft() {
             composer.scene_images(vec![reference.clone()], Default::default(), cx);
         });
     });
-    let (directory, host) = plait_core::session::locations().unwrap();
+    let (directory, host) = plait_client::session::locations().unwrap();
     let (journal, mut saved) =
-        plait_core::session::Journal::open(&directory, host.clone()).unwrap();
+        plait_client::session::Journal::open(&directory, host.clone()).unwrap();
     harness.update(|plait, _, cx| {
         plait.capture_session(cx);
         saved = plait.session.data.as_ref().unwrap().clone();
@@ -5716,11 +5832,11 @@ fn image_drafts_survive_reopen_and_refusal_keeps_the_draft() {
     journal.queue(saved);
     journal.flush().unwrap();
     drop(journal);
-    let (_, reopened) = plait_core::session::Journal::open(&directory, host).unwrap();
+    let (_, reopened) = plait_client::session::Journal::open(&directory, host).unwrap();
     let draft = &reopened.threads[THREAD].draft;
     assert_eq!(draft.text, "Keep this draft");
     assert_eq!(draft.images, std::slice::from_ref(&reference));
-    assert_eq!(plait_core::images::local(&reference).unwrap(), bytes);
+    assert_eq!(plait_client::images::local(&reference).unwrap(), bytes);
     let (checkout, new_draft) = reopened.new_draft.as_ref().unwrap();
     assert_eq!(checkout, &repository);
     assert_eq!(new_draft.text, "New image draft");
@@ -5789,7 +5905,7 @@ fn image_paste_and_drop_prepare_originals_and_keep_text_paste() {
     };
     wait(&mut harness, 1);
     let original = harness.composer(|composer, _, _| composer.saved_images()[0].clone());
-    assert_eq!(plait_core::images::local(&original).unwrap(), bytes);
+    assert_eq!(plait_client::images::local(&original).unwrap(), bytes);
     harness.update(|_, _, cx| {
         cx.write_to_clipboard(ClipboardItem {
             entries: vec![
@@ -5810,7 +5926,7 @@ fn image_paste_and_drop_prepare_originals_and_keep_text_paste() {
     wait(&mut harness, 2);
     let dropped = harness.composer(|composer, _, _| composer.saved_images()[1].clone());
     assert_eq!(dropped.media_type, "image/png");
-    assert_eq!(plait_core::images::local(&dropped).unwrap(), second);
+    assert_eq!(plait_client::images::local(&dropped).unwrap(), second);
     std::fs::remove_dir_all(root).unwrap();
 }
 
@@ -5823,13 +5939,13 @@ fn removing_an_attachment_collects_only_unreferenced_originals() {
     let repository = fixture_repository(&root);
     let mut harness = Harness::new(&repository, None, 900., 600.);
     harness.fresh_composer(&repository);
-    let (directory, host) = plait_core::session::locations().unwrap();
-    let (journal, _) = plait_core::session::Journal::open(&directory, host.clone()).unwrap();
+    let (directory, host) = plait_client::session::locations().unwrap();
+    let (journal, _) = plait_client::session::Journal::open(&directory, host.clone()).unwrap();
     harness.update(|plait, _, _| {
         plait.session.journal = Some(journal.clone());
         plait.session.data.as_mut().unwrap().host_store = host;
     });
-    let reference = plait_core::images::persist(include_bytes!(
+    let reference = plait_client::images::persist(include_bytes!(
         "../../../../runtime/test/support/images/0.png"
     ))
     .unwrap();
@@ -5860,7 +5976,7 @@ fn removing_an_attachment_collects_only_unreferenced_originals() {
     harness.composer(|composer, _, cx| composer.scene_remove(&reference.id, cx));
     harness.update(|plait, _, cx| plait.capture_session(cx));
     journal.flush().unwrap();
-    assert!(plait_core::images::local(&reference).is_ok());
+    assert!(plait_client::images::local(&reference).is_ok());
     harness.update(|plait, _, cx| {
         plait.host.submissions.finish(THREAD, &pending.request_id);
         plait.capture_session(cx);
@@ -5868,7 +5984,7 @@ fn removing_an_attachment_collects_only_unreferenced_originals() {
     journal.flush().unwrap();
     assert!(!directory.join("images").join(&reference.id).exists());
     // Removing an ordinary unsent attachment needs no host acknowledgement.
-    plait_core::images::persist(include_bytes!(
+    plait_client::images::persist(include_bytes!(
         "../../../../runtime/test/support/images/0.png"
     ))
     .unwrap();
@@ -5893,13 +6009,13 @@ fn host_acceptance_collects_the_original_after_clearing_the_draft() {
     let repository = fixture_repository(&root);
     let mut harness = Harness::new(&repository, None, 900., 600.);
     harness.fresh_composer(&repository);
-    let (directory, host) = plait_core::session::locations().unwrap();
-    let (journal, _) = plait_core::session::Journal::open(&directory, host.clone()).unwrap();
+    let (directory, host) = plait_client::session::locations().unwrap();
+    let (journal, _) = plait_client::session::Journal::open(&directory, host.clone()).unwrap();
     harness.update(|plait, _, _| {
         plait.session.journal = Some(journal.clone());
         plait.session.data.as_mut().unwrap().host_store = host;
     });
-    let reference = plait_core::images::persist(include_bytes!(
+    let reference = plait_client::images::persist(include_bytes!(
         "../../../../runtime/test/support/images/0.png"
     ))
     .unwrap();
@@ -5927,7 +6043,7 @@ fn host_acceptance_collects_the_original_after_clearing_the_draft() {
     });
     let pending = pending.unwrap();
     journal.flush().unwrap();
-    assert!(plait_core::images::local(&reference).is_ok());
+    assert!(plait_client::images::local(&reference).is_ok());
     harness.update(|plait, _, cx| {
         plait.host.submissions.confirm(THREAD, &pending.request_id);
         plait
@@ -5990,13 +6106,13 @@ fn host_acceptance_collects_the_original_after_clearing_the_draft() {
         composer.restore_thread_images(vec![reference.clone()], THREAD.into(), cx)
     });
     let deadline = Instant::now() + Duration::from_secs(5);
-    while plait_core::images::local(&reference).is_err() {
+    while plait_client::images::local(&reference).is_err() {
         assert!(Instant::now() < deadline, "accepted image was not restored");
         harness.settle();
         std::thread::sleep(Duration::from_millis(5));
     }
     server.join().unwrap();
-    assert_eq!(plait_core::images::local(&reference).unwrap(), bytes);
+    assert_eq!(plait_client::images::local(&reference).unwrap(), bytes);
     std::fs::remove_file(socket).unwrap();
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -6129,10 +6245,10 @@ fn image_restore_failure_is_per_attachment() {
     ];
     let references = originals
         .iter()
-        .map(|bytes| plait_core::images::inspect(bytes).unwrap())
+        .map(|bytes| plait_client::images::inspect(bytes).unwrap())
         .collect::<Vec<_>>();
-    let _pin = plait_core::images::pin(&references).unwrap();
-    let directory = plait_core::session::locations().unwrap().0.join("images");
+    let _pin = plait_client::images::pin(&references).unwrap();
+    let directory = plait_client::session::locations().unwrap().0.join("images");
     // A missing middle image used to discard both earlier and later valid results.
     // Queued Edit uses the same loader with a host fallback; that can fail as well.
     for (thread, unreadable, broken) in [
@@ -6142,7 +6258,7 @@ fn image_restore_failure_is_per_attachment() {
         (true, true, 2),
     ] {
         for bytes in originals {
-            plait_core::images::persist(bytes).unwrap();
+            plait_client::images::persist(bytes).unwrap();
         }
         let path = directory.join(&references[broken].id);
         std::fs::remove_file(&path).unwrap();
@@ -6261,8 +6377,8 @@ fn image_drafts_stay_with_their_checkout() {
     let b = fixture_repository(&root.join("b"));
     let mut harness = Harness::new(&a, None, 900., 600.);
     harness.fresh_composer(&a);
-    let (directory, host) = plait_core::session::locations().unwrap();
-    let (journal, _) = plait_core::session::Journal::open(&directory, host.clone()).unwrap();
+    let (directory, host) = plait_client::session::locations().unwrap();
+    let (journal, _) = plait_client::session::Journal::open(&directory, host.clone()).unwrap();
     harness.update(|plait, window, cx| {
         plait
             .host
@@ -6281,7 +6397,7 @@ fn image_drafts_stay_with_their_checkout() {
             include_bytes!("../../../../runtime/test/support/images/0.png").as_slice(),
             include_bytes!("../../../../runtime/test/support/images/1.png").as_slice(),
         ][index];
-        plait_core::images::persist(bytes).unwrap();
+        plait_client::images::persist(bytes).unwrap();
         harness.update(|plait, window, cx| {
             let composer = plait.draft.composer.clone().unwrap();
             composer.update(cx, |composer, cx| {
@@ -6322,7 +6438,7 @@ fn image_drafts_stay_with_their_checkout() {
         plait.capture_session(cx);
     });
     journal.flush().unwrap();
-    let saved: plait_core::session::Session =
+    let saved: plait_client::session::Session =
         serde_json::from_slice(&std::fs::read(directory.join("desktop.json")).unwrap()).unwrap();
     assert_eq!(saved.new_draft_for(&a).unwrap().text, "Draft for A");
     assert_eq!(saved.new_draft_for(&b).unwrap().text, "Draft for B");
@@ -6341,7 +6457,7 @@ fn image_drafts_stay_with_their_checkout() {
         harness.settle();
         std::thread::sleep(Duration::from_millis(5));
     }
-    let saved: plait_core::session::Session =
+    let saved: plait_client::session::Session =
         serde_json::from_slice(&std::fs::read(directory.join("desktop.json")).unwrap()).unwrap();
     assert!(saved.new_draft_for(&a).is_none());
     assert!(saved.new_draft_for(&b).is_some());
@@ -6393,11 +6509,11 @@ fn image_queued_edit_preserves_attachments() {
     let mut harness = Harness::new(&repository, None, 900., 600.);
     harness.fresh_composer(&repository);
     images::install(&mut harness, 1);
-    let reference = plait_core::images::persist(include_bytes!(
+    let reference = plait_client::images::persist(include_bytes!(
         "../../../../runtime/test/support/images/0.png"
     ))
     .unwrap();
-    use plait_core::host::{QueueMode, Queued};
+    use plait_client::host::{QueueMode, Queued};
     let mut reply = serde_json::Value::Null;
     harness.update(|plait, _, cx| {
         let snapshot = Arc::make_mut(plait.host.thread.snapshot.as_mut().unwrap());
@@ -6414,7 +6530,7 @@ fn image_queued_edit_preserves_attachments() {
         });
         plait.host.submissions.restore_accepted(
             THREAD.into(),
-            plait_core::host_state::PendingSubmit {
+            plait_client::host_state::PendingSubmit {
             checkout_wait: false,
                 text: "Edit this image".into(),
                 images: vec![reference.clone()],
@@ -6471,15 +6587,15 @@ fn accepted_wait(
     harness: &mut Harness,
     request_id: &str,
     text: &str,
-    images: Vec<plait_core::images::ImageRef>,
+    images: Vec<plait_client::images::ImageRef>,
 ) -> PathBuf {
     let mut checkout = PathBuf::new();
     harness.update(|plait, _, cx| {
         plait.admission.queue = true;
-        checkout = plait.host.connection.threads[0].checkout.clone();
+        checkout = plait.host.connection.threads()[0].checkout.clone();
         plait.host.submissions.restore_accepted(
             THREAD.into(),
-            plait_core::host_state::PendingSubmit {
+            plait_client::host_state::PendingSubmit {
                 checkout_wait: true,
                 text: text.into(),
                 images,
@@ -6515,7 +6631,7 @@ fn cancelled_wait_returns_its_text_and_images_to_the_draft() {
     let mut harness = Harness::new(&repository, None, 900., 600.);
     harness.fresh_composer(&repository);
     images::install(&mut harness, 1);
-    let reference = plait_core::images::persist(include_bytes!(
+    let reference = plait_client::images::persist(include_bytes!(
         "../../../../runtime/test/support/images/0.png"
     ))
     .unwrap();
@@ -6526,10 +6642,10 @@ fn cancelled_wait_returns_its_text_and_images_to_the_draft() {
         vec![reference.clone()],
     );
     harness.update(|plait, _, _| {
-        plait.host.connection.threads[0].checkout_queue =
-            Some(plait_core::host::checkout_queue::Summary::new(
+        plait.host.connection.threads_mut()[0].checkout_queue =
+            Some(plait_client::host::checkout_queue::Summary::new(
                 "wait-1".into(),
-                plait_core::host::checkout_queue::State::Waiting,
+                plait_client::host::checkout_queue::State::Waiting,
                 1,
                 1,
             ));
@@ -6538,7 +6654,7 @@ fn cancelled_wait_returns_its_text_and_images_to_the_draft() {
         "waiters":[{"request_id":"wait-1","state":"cancelled","position":0,"error":null}]}});
     let (received, release, server) = delayed_image_reply(reply);
     harness.update(|plait, window, cx| {
-        let request = plait_core::host::Request::CancelCheckoutWait {
+        let request = plait_client::host::Request::CancelCheckoutWait {
             thread_id: THREAD.into(),
             request_id: "wait-1".into(),
         };
@@ -6677,11 +6793,11 @@ fn thread_workspace_preserves_selection_and_reconnect_resets() {
     let second_id = "second-thread".to_owned();
     harness.update(|plait, window, cx| {
         plait.host.connection.connected = false;
-        let mut second = plait.host.connection.threads[0].clone();
+        let mut second = plait.host.connection.threads()[0].clone();
         second.id = second_id.clone();
         second.status = ThreadStatus::Idle;
         second.title = Some("Second".into());
-        plait.host.connection.threads.push(second);
+        plait.host.connection.threads_mut().push(second);
         plait.workspace.tab = super::Workspace::Files;
         plait.workspace.history.error = Some("old error".into());
         plait
@@ -6691,7 +6807,7 @@ fn thread_workspace_preserves_selection_and_reconnect_resets() {
         plait.workspace.composers[THREAD].update(cx, |composer, cx| {
             composer.restore_draft("Keep this draft".into(), 7, None, cx);
         });
-        plait.workspace.turn_review.target = Some(plait_core::review::recorded::Target {
+        plait.workspace.turn_review.target = Some(plait_client::review::recorded::Target {
             thread: THREAD.into(),
             checkout: plait.host.creation.checkout.clone(),
             record: "rec-1".into(),
@@ -6738,6 +6854,7 @@ fn ownership_scenes(
     let mut harness = Harness::new(repository, output, width, height);
     harness.connect(repository, false);
     harness.update(|plait, window, cx| {
+        tabs::show_tabs(plait);
         let stale = plait
             .host
             .thread
@@ -6922,10 +7039,11 @@ fn sending_does_not_wait_for_a_git_status() {
     if !isolated("sending_does_not_wait_for_a_git_status") {
         return;
     }
-    // A folder that is not a repository: its Git status read fails.
+    // A broken repository: its Git status read fails, so its identity stays unread.
     let root = std::env::temp_dir().join(format!("plait-send-plain-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(root.join(".git")).unwrap();
+    std::fs::write(root.join(".git/HEAD"), "garbage").unwrap();
     let checkout = root.canonicalize().unwrap();
     let mut harness = Harness::new(&checkout, None, 900., 600.);
     harness.connect(&checkout, false);
@@ -6986,6 +7104,102 @@ fn sending_stops_for_a_replaced_checkout() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+/// A thread is bound only to its own checkout; a replaced checkout still warns.
+#[core::prelude::v1::test]
+fn selected_thread_binds_only_its_own_checkout() {
+    if !isolated("selected_thread_binds_only_its_own_checkout") {
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("plait-bind-own-{}", std::process::id()));
+    let repository = fixture_repository(&root);
+    let mut harness = Harness::new(&repository, None, 900., 600.);
+    harness.connect(&repository, false);
+    harness.update(|plait, _, _| {
+        let key = plait.state.checkout_key().unwrap().clone();
+        let elsewhere = ThreadSummary {
+            id: "worktree-thread".into(),
+            checkout: key.root.with_file_name("plait-worktree"),
+            ..Default::default()
+        };
+        let here = ThreadSummary {
+            id: "main-thread".into(),
+            checkout: key.root.clone(),
+            ..Default::default()
+        };
+        plait
+            .host
+            .connection
+            .threads_mut()
+            .extend([elsewhere, here]);
+        plait.host.thread.selected = Some("worktree-thread".into());
+        assert!(!plait.bind_selected_checkout());
+        assert!(plait.host.expected_checkout("worktree-thread").is_none());
+        plait.host.thread.selected = Some("main-thread".into());
+        assert!(plait.bind_selected_checkout());
+        assert_eq!(plait.host.expected_checkout("main-thread"), Some(&key));
+        // The same path with another directory behind it still warns.
+        let mut replaced = key.clone();
+        replaced.inode += 1;
+        plait.host.thread.selected = Some("replaced-thread".into());
+        plait.host.connection.threads_mut().push(ThreadSummary {
+            id: "replaced-thread".into(),
+            checkout: key.root.clone(),
+            ..Default::default()
+        });
+        plait
+            .host
+            .bind_checkout("replaced-thread", &replaced)
+            .unwrap();
+        assert!(!plait.bind_selected_checkout());
+        assert_eq!(plait.notice.as_deref(), Some("Checkout identity changed."));
+        plait.host.thread.selected = None;
+        plait.host.connection.threads_mut().clear();
+    });
+    drop(harness);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[core::prelude::v1::test]
+fn admission_refreshes_stored_checkout_identity() {
+    if !isolated("admission_refreshes_stored_checkout_identity") {
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("plait-admission-refresh-{}", std::process::id()));
+    let repository = fixture_repository(&root);
+    let mut harness = Harness::new(&repository, None, 900., 600.);
+    harness.connect(&repository, false);
+    harness.update(|plait, _, cx| {
+        let current = plait.state.checkout_key().unwrap().clone();
+        let mut old = current.clone();
+        old.device = old.device.wrapping_add(1);
+        plait.state.reopen_checkout(old.clone());
+        plait.tabs.identity.checkouts.insert(
+            old.root.clone(),
+            plait_client::tabs::DirectoryIdentity {
+                device: old.device,
+                inode: old.inode,
+            },
+        );
+        plait.host.bind_checkout("refresh-test", &old).unwrap();
+        let refreshed = old.verify().unwrap();
+        plait.refresh_checkout_identity(&old, &refreshed, cx);
+        assert_eq!(plait.state.checkout_key(), Some(&current));
+        assert_eq!(plait.host.expected_checkout("refresh-test"), Some(&current));
+        assert_eq!(
+            plait
+                .tabs
+                .identity
+                .checkouts
+                .get(&current.root)
+                .unwrap()
+                .device,
+            current.device
+        );
+    });
+    drop(harness);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[core::prelude::v1::test]
 fn policy_reply_cannot_return_to_an_earlier_checkout_lifetime() {
     if !isolated("policy_reply_cannot_return_to_an_earlier_checkout_lifetime") {
@@ -7016,7 +7230,7 @@ fn policy_reply_cannot_return_to_an_earlier_checkout_lifetime() {
         plait.change_checkout(b.clone(), window, cx);
         plait.change_checkout(a.clone(), window, cx);
         plait.policy.key = Some(key);
-        plait.policy.value = Some(plait_core::host::policy::CommandPolicy::Sandboxed);
+        plait.policy.value = Some(plait_client::host::policy::CommandPolicy::Sandboxed);
         release.send(()).unwrap();
     });
     undo::wait(&mut harness, |_| !host.requests.lock().unwrap().is_empty());
@@ -7026,7 +7240,7 @@ fn policy_reply_cannot_return_to_an_earlier_checkout_lifetime() {
     harness.update(|plait, _, _| {
         assert_eq!(
             plait.policy.value,
-            Some(plait_core::host::policy::CommandPolicy::Sandboxed)
+            Some(plait_client::host::policy::CommandPolicy::Sandboxed)
         );
         assert!(plait.policy.note.is_none());
     });
@@ -7112,4 +7326,112 @@ fn restored_tabs_stay_beneath_open_settings() {
         return;
     }
     tabs::restore_beneath_settings();
+}
+
+#[core::prelude::v1::test]
+fn navigation_rows_are_cached_and_invalidated() {
+    if !isolated("navigation_rows_are_cached_and_invalidated") {
+        return;
+    }
+    let scratch =
+        std::env::temp_dir().join(format!("plait-navigation-cache-{}", std::process::id()));
+    let repository = fixture_repository(&scratch);
+    let mut harness = Harness::with_host(&repository, None, 900., 600., None);
+    harness.update(|p, _, cx| {
+        p.sidebar = true;
+        *p.host.connection.threads_mut() = vec![ThreadSummary {
+            id: "cache-thread".into(),
+            checkout: repository.clone(),
+            title: Some("Cache needle".into()),
+            model: choice(),
+            ..Default::default()
+        }];
+        p.rebuild_projects(cx);
+    });
+    harness.draw();
+    let count = harness
+        .window
+        .update(&mut harness.cx, |p, _, _| p.navigation.row_recomputations())
+        .unwrap();
+    harness.draw();
+    harness
+        .window
+        .update(&mut harness.cx, |p, _, cx| {
+            assert_eq!(p.navigation.row_recomputations(), count);
+            p.host.connection.threads_mut().push(ThreadSummary {
+                id: "new".into(),
+                checkout: repository.clone(),
+                title: Some("Another needle".into()),
+                model: choice(),
+                archived: Some(true),
+                ..Default::default()
+            });
+            assert_eq!(p.filtered_threads(cx).len(), 1);
+            assert_eq!(p.navigation.row_recomputations(), count + 1);
+            p.navigation.archived = true;
+            assert_eq!(p.filtered_threads(cx).len(), 2);
+            assert_eq!(p.navigation.row_recomputations(), count + 2);
+            p.set_project_collapsed(repository.clone(), true);
+            p.navigation.invalidate_rows();
+            let rows = p.navigation_rows(cx);
+            assert!(
+                !rows
+                    .iter()
+                    .any(|row| matches!(row, super::navigation::Row::Thread(_)))
+            );
+            assert_eq!(p.navigation.row_recomputations(), count + 3);
+        })
+        .unwrap();
+    drop(harness);
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
+#[core::prelude::v1::test]
+fn cached_thread_row_tracks_selected_machine_lists() {
+    if !isolated("cached_thread_row_tracks_selected_machine_lists") {
+        return;
+    }
+    let scratch = std::env::temp_dir().join(format!("plait-row-lists-{}", std::process::id()));
+    let repository = fixture_repository(&scratch);
+    let mut harness = Harness::with_host(&repository, None, 900., 600., None);
+    harness.update(|p, _, cx| {
+        p.sidebar = true;
+        p.host_workspace.source =
+            super::host_workspace::Source::Host(plait_client::host::workspace::HostIdentity {
+                id: "remote".into(),
+                name: "Remote".into(),
+                platform: "test".into(),
+            });
+        p.host.connection.set_threads(vec![ThreadSummary {
+            id: "row".into(),
+            checkout: repository.clone(),
+            model: choice(),
+            ..Default::default()
+        }]);
+        p.rebuild_projects(cx);
+    });
+    harness.draw();
+    harness.update(|p, _, cx| {
+        assert_eq!(p.navigation.cached_row_flags("row"), Some((false, false)));
+        p.update_lists(
+            |lists| {
+                // Unread needs an observed entry, and a worktree a different main
+                // checkout, or the lists normalise them away.
+                lists.observed.insert(
+                    "row".into(),
+                    plait_client::navigation::Activity {
+                        updated_at: 0,
+                        state: "idle".into(),
+                    },
+                );
+                lists.unread.insert("row".into());
+                lists.remember_worktree(repository.clone(), scratch.join("main"), "branch".into());
+            },
+            cx,
+        );
+    });
+    harness.draw();
+    harness.update(|p, _, _| assert_eq!(p.navigation.cached_row_flags("row"), Some((true, true))));
+    drop(harness);
+    std::fs::remove_dir_all(scratch).unwrap();
 }

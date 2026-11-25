@@ -8,9 +8,9 @@ use super::{
     thread_controls::TextTooltip,
 };
 use gpui::{prelude::*, *};
-use plait_core::{
+use plait_client::{
     history::records,
-    host::{self, Client, review},
+    host::{self, review},
     model::{Diff, DiffMode},
     review::recorded::{Record, Stamp, Target},
 };
@@ -111,9 +111,11 @@ impl Plait {
         let snapshot = self.state.repository.snapshot().ready().cloned();
         let history = self.host.thread.snapshot.clone();
         let task_stamp = stamp.clone();
-        let read_record = self.workspace.tab == Workspace::Changes;
+        let read_record = self.panel_kind() == Some(plait_client::panel::PanelKind::Changes)
+            || self.workspace.tab == Workspace::Changes;
+        let client = self.host_client();
+        let protocol = self.host.protocol();
         let task = cx.background_executor().spawn(async move {
-            let client = Client::from_environment()?;
             let info = review::info(&client, &task_stamp.thread)?;
             let mut result = Loaded {
                 info,
@@ -136,7 +138,7 @@ impl Plait {
             let data = if complete {
                 records
             } else {
-                Arc::new(records::read(&client, &task_stamp.thread)?)
+                Arc::new(records::read(&client, &task_stamp.thread, protocol)?)
             };
             let mut record = match Record::prepare(&data, target) {
                 Ok(record) => record,
@@ -190,11 +192,13 @@ impl Plait {
             if let Some(window) = window {
                 let _ = window.update(cx, |_, window, cx| {
                     this.update(cx, |this, cx| {
-                        this.review_loaded(stamp, result, Some(window), cx)
+                        this.review_loaded(stamp, read_record, result, Some(window), cx)
                     })
                 });
             } else {
-                let _ = this.update(cx, |this, cx| this.review_loaded(stamp, result, None, cx));
+                let _ = this.update(cx, |this, cx| {
+                    this.review_loaded(stamp, read_record, result, None, cx)
+                });
             }
         })
         .detach();
@@ -203,6 +207,7 @@ impl Plait {
     fn review_loaded(
         &mut self,
         stamp: Stamp,
+        read_record: bool,
         result: Result<Loaded, host::Error>,
         window: Option<&mut Window>,
         cx: &mut Context<Self>,
@@ -218,16 +223,19 @@ impl Plait {
         match result {
             Ok(result) => {
                 self.workspace.turn_review.info = Some(result.info);
-                let offline = result.error.as_ref().is_some_and(|e| e.0 == "Offline");
-                self.workspace.turn_review.error = result.error;
-                if let Some(record) = result.record {
-                    self.workspace.turn_review.record = Some(Arc::new(record));
-                    self.workspace.turn_review.selected = result.selected;
-                }
-                if !self.workspace.turn_review.current {
-                    self.workspace.turn_review.status = result.status;
-                    if !offline {
-                        self.workspace.turn_review.diff = result.diff.map(Arc::new);
+                // An info-only read cannot replace the previously loaded patch.
+                if read_record {
+                    let offline = result.error.as_ref().is_some_and(|e| e.0 == "Offline");
+                    self.workspace.turn_review.error = result.error;
+                    if let Some(record) = result.record {
+                        self.workspace.turn_review.record = Some(Arc::new(record));
+                        self.workspace.turn_review.selected = result.selected;
+                    }
+                    if !self.workspace.turn_review.current {
+                        self.workspace.turn_review.status = result.status;
+                        if !offline {
+                            self.workspace.turn_review.diff = result.diff.map(Arc::new);
+                        }
                     }
                 }
             }
@@ -256,6 +264,7 @@ impl Plait {
             }
         }
         self.sync_recorded_current(cx);
+        self.search_panel_diff(cx);
         self.restore_ready_bookmarks(cx);
         self.pump_turn_review(cx);
         cx.notify();
@@ -277,13 +286,20 @@ impl Plait {
             self.open_thread_file(path.clone(), window, cx);
             return;
         }
+        self.workspace
+            .turn_records
+            .selection
+            .earlier(&target.original);
+        if let Some(panel) = self.tabs.model.panel_mut() {
+            panel.select_scope(plait_client::panel::Scope::ThisTurn);
+            panel.recorded = Some(target.clone());
+        }
         self.clear_turn_review();
         self.workspace.turn_review.window = Some(window.window_handle());
         self.workspace.turn_review.target = Some(target);
         self.workspace.diff_scroll = UniformListScrollHandle::new();
         self.workspace.file_scroll = UniformListScrollHandle::new();
         self.show_tab(Workspace::Changes, window, cx);
-        window.focus(&self.focus, cx);
         if self.workspace.turn_review.older {
             self.workspace.turn_review.error = Some((
                 "Older host",
@@ -311,6 +327,9 @@ impl Plait {
         self.workspace.restore_pending[1] = false;
         if let Some(target) = self.workspace.turn_review.target.as_mut() {
             target.path = Some(path);
+            if let Some(panel) = self.tabs.model.panel_mut() {
+                panel.recorded = Some(target.clone());
+            }
         }
         self.workspace.turn_review.selected = Some(index);
         self.workspace.turn_review.diff = None;
@@ -388,7 +407,7 @@ impl Plait {
             self.pump(cx);
         }
     }
-    pub(super) fn recorded_file(&self) -> Option<&plait_core::review::recorded::File> {
+    pub(super) fn recorded_file(&self) -> Option<&plait_client::review::recorded::File> {
         self.workspace
             .turn_review
             .record
@@ -416,7 +435,7 @@ impl Plait {
             })
     }
     pub(super) fn recorded_current_message(&self) -> (&'static str, &str) {
-        use plait_core::state::Load;
+        use plait_client::state::Load;
         match &self.state.repository.snapshot() {
             Load::Empty | Load::Loading => (
                 "Reading diff…",
@@ -663,7 +682,7 @@ impl Plait {
                                 this.refresh(&super::Refresh, window, cx)
                             }),
                     )
-                    .child(tag("recorded-refresh-shortcut", "⌘R", colors().subtle)),
+                    .child(key_hint("recorded-refresh-shortcut", "⌘R")),
             )
     }
     pub(super) fn recorded_header(&self, cx: &mut Context<Self>) -> Div {

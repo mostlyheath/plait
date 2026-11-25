@@ -1,28 +1,31 @@
 # Documentation
 
-Start with the [project README](../README.md) for the current preview and download.
-Plait currently supports local agent work on Apple Silicon macOS. Remote hosts
-and Linux command execution are not available.
-
 ## Use Plait
 
-- [Mac setup](MACOS.md): installation, authentication, keyboard controls, recovery,
-  and independent client/host updates.
-- [Build Plait with Plait](SELF-HOSTING.md): prepare a checkout, approve a change,
-  run tests, review the diff, and continue.
-- [Verification](VERIFICATION.md): versioned release evidence and known gaps.
+- [Guide](GUIDE.md): install, machines, projects and threads, approvals, Git
+  review, undo, Linear, settings, and troubleshooting.
+- [Keyboard shortcuts](SHORTCUTS.md): the default bindings.
+- [Remote hosts](REMOTE.md): run a host on Linux and reach it over SSH or
+  Tailscale.
 
 ## Develop Plait
 
-- [Contributing](../CONTRIBUTING.md): prerequisites, checks, and code ownership.
-- [Architecture](ARCHITECTURE.md): client, state, Git, host, and runtime boundaries.
-- [Local host contract](HOST.md): protocol, persistence, approvals, and sandbox rules.
-- [Desktop design](../DESIGN.md): layout, visual tokens, and native interaction.
-- [Originality policy](ORIGINALITY.md): application code, assets, and dependencies.
+- [Contributing](../CONTRIBUTING.md): build, checks, pull requests, and
+  originality rules.
+- [Architecture](ARCHITECTURE.md): the app, the host, and how state flows
+  between them.
+- [Host contract](HOST.md): the host's protocol, persistence, and safety rules.
+- [Design](../DESIGN.md): layout, interaction, tokens, and the order the design is built in.
+- [Releasing](RELEASING.md): how `main` becomes a signed preview.
+- [Verification](VERIFICATION.md): what the checks cover and what they do not.
 
-## Planned work
+## Plans
 
-- [Roadmap](ROADMAP.md): milestones, scope, and performance goals.
-- [Antigravity through ACP](ACP.md): agreed adapter contract, not implemented.
-- [Linux sandbox](LINUX-SANDBOX.md): the open containment decision and enablement gates.
-- [ADEMark plan](ADEMARK.md): measurement requirements, not a published benchmark result.
+- [Roadmap](ROADMAP.md): what is next and why.
+- [Host-first Plait](HOST-FIRST.md): the host owns all state; the app reads
+  its stream.
+- [Linear](LINEAR.md): the issue integration's contract.
+- [Agent Client Protocol harnesses](ACP.md): the agreed contract for the next
+  harness.
+- [Linux sandbox](LINUX-SANDBOX.md): the open command-containment decision.
+- [ADEMark plan](ADEMARK.md): what a published measurement would require.

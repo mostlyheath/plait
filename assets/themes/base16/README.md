@@ -6,5 +6,5 @@ These scheme files are copied unchanged from
 license in [LICENSE](LICENSE). Each file credits its scheme's author.
 
 Plait embeds them at build time and maps their colors onto its own roles
-(`crates/plait-core/src/theme.rs`). To update, fetch the same file names at a
-newer revision, record that revision here, and run `cargo test -p plait-core theme::`.
+(`crates/plait-client/src/theme.rs`). To update, fetch the same file names at a
+newer revision, record that revision here, and run `cargo test -p plait-client theme::`.

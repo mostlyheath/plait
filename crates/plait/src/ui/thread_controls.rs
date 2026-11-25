@@ -2,6 +2,7 @@
 use super::{
     Plait,
     commands::Command,
+    composer::Composer,
     harnesses::{ModeLine, harness_of},
     model_picker::ModelPurpose,
     palette::{Item, Options, Palette},
@@ -9,14 +10,28 @@ use super::{
     theme::*,
 };
 use gpui::{prelude::*, *};
-use plait_core::{
-    compose::{ContextPressure, ContextUsage, thinking_levels},
+use plait_client::{
+    compose::{
+        self, ContextPressure, ContextUsage, approval_label, approval_tip, run_mode_note,
+        thinking_levels, thinking_value,
+    },
     host::{
         self, ApprovalMode, Model, ModelChoice, QueueMode, Request, ThinkingLevel,
         harness::HarnessId,
     },
 };
 use std::{collections::HashMap, path::PathBuf, rc::Rc, sync::Arc};
+
+/// Controls and notices that join the draft inside the message box.
+#[derive(Default)]
+pub(super) struct MessageBoxParts {
+    /// Left side of the settings row (harness mark, model, effort, approval/permissions).
+    pub(super) left: Vec<AnyElement>,
+    /// Right side of the settings row, before Stop and Send (context use).
+    pub(super) right: Vec<AnyElement>,
+    /// Notices shown inside the box beneath the settings row only when present.
+    pub(super) notices: Vec<AnyElement>,
+}
 
 #[derive(Default)]
 pub(super) struct ThreadControls {
@@ -97,25 +112,17 @@ impl Plait {
     }
 
     fn configure_reason(&self) -> Option<&'static str> {
-        if self.host.protocol() < 3 {
-            Some("Update the host to change a thread's model.")
-        } else if !self.host.connection.connected {
-            Some("Reconnect to change this thread.")
-        } else if self.host.thread.snapshot.is_none() {
-            Some("Loading thread…")
-        } else if self
-            .host
-            .thread
-            .snapshot
-            .as_ref()
-            .is_some_and(|s| s.status.busy())
-        {
-            Some("Available after the current run ends.")
-        } else if self.thread_configuration_pending() {
-            Some("Saving thread settings…")
-        } else {
-            None
-        }
+        compose::configure_reason(
+            self.host.protocol(),
+            self.host.connection.connected,
+            self.host.thread.snapshot.is_some(),
+            self.host
+                .thread
+                .snapshot
+                .as_ref()
+                .is_some_and(|s| s.status.busy()),
+            self.thread_configuration_pending(),
+        )
     }
 
     pub(super) fn open_thread_models(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -282,13 +289,189 @@ impl Plait {
                 window,
                 cx,
             )
+            .picker()
         });
         self.present(palette, None, window, cx);
     }
 
-    pub(super) fn thread_environment(&self, cx: &mut Context<Self>) -> AnyElement {
+    /// One raised outline (12-point corners, capped at 760) holding the draft
+    /// and its settings row, shared by open threads and draft tabs.
+    pub(super) fn message_box(
+        &self,
+        composer: Entity<Composer>,
+        parts: MessageBoxParts,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let (box_focus, can_send, busy, queue_enabled, can_stop, is_blank, hint) = {
+            let state = composer.read(cx);
+            (
+                state.box_focus.clone(),
+                state.can_send(),
+                state.busy(),
+                state.queue_enabled(),
+                state.can_stop(),
+                state.is_blank(),
+                state.hint(),
+            )
+        };
+        let focused = box_focus.contains_focused(window, cx);
+        let drop_composer = composer.clone();
+        let stop_composer = composer.clone();
+        let send_composer = composer.clone();
+        let show_stop = busy && (is_blank || !queue_enabled);
+        // The settings give up label width first. Send and Stop keep their hit targets.
+        let left_controls = row()
+            .flex_1()
+            .items_center()
+            .gap_x_1()
+            .min_w_0()
+            .children(parts.left);
+        let right_controls = row()
+            .flex_shrink_0()
+            .items_center()
+            .gap_x_2()
+            .ml_auto()
+            .children(parts.right)
+            .when(show_stop, |el| {
+                let tip = if can_stop {
+                    "Stop this run (Esc twice)"
+                } else {
+                    "Cannot stop this run right now."
+                };
+                el.child(
+                    // While a run is active and the draft is empty, the action
+                    // slot becomes Stop in coral.
+                    toned_icon_button("composer-stop", "stop", "Stop", Tone::Primary)
+                        .rounded(px(8.))
+                        .bg(rgb(colors().red))
+                        .disabled(!can_stop)
+                        .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.into())).into())
+                        .on_activate(cx, move |_, _, cx| {
+                            stop_composer.update(cx, |composer, cx| composer.stop_from_button(cx));
+                        }),
+                )
+            })
+            .when(!show_stop, |el| {
+                let disabled_tip = if hint.is_empty() {
+                    "Write a message to send.".to_owned()
+                } else {
+                    hint.clone()
+                };
+                el.child(
+                    // Send is the primary action: 28 square, 8 corners, disabled when empty.
+                    toned_icon_button(
+                        "composer-send",
+                        "send",
+                        if busy { "Queue message" } else { "Send" },
+                        if can_send {
+                            Tone::Primary
+                        } else {
+                            Tone::Filled
+                        },
+                    )
+                    .rounded(px(8.))
+                    .tab_stop(can_send)
+                    .disabled(!can_send)
+                    .when(!can_send, |button| {
+                        button.tooltip(move |_, cx| {
+                            cx.new(|_| TextTooltip(disabled_tip.clone())).into()
+                        })
+                    })
+                    .on_activate(cx, move |_, _, cx| {
+                        send_composer.update(cx, |composer, cx| composer.submit_from_button(cx));
+                    }),
+                )
+            });
+        let settings_row = row()
+            .whitespace_nowrap()
+            .w_full()
+            .min_w_0()
+            .items_center()
+            .justify_between()
+            .gap_x_2()
+            .pl(px(8.))
+            .pr(px(6.))
+            .pt(px(4.))
+            .pb(px(6.))
+            .text_size(px(12.))
+            .text_color(rgb(colors().muted))
+            .child(left_controls)
+            .child(right_controls);
+        let mut notices = Vec::new();
+        if !hint.is_empty() {
+            notices.push(
+                div()
+                    .w_full()
+                    .min_w_0()
+                    .text_size(px(11.))
+                    .text_color(rgb(colors().subtle))
+                    .child(a11y_text("composer-hint", hint))
+                    .into_any_element(),
+            );
+        }
+        notices.extend(parts.notices);
+        let message_box = column()
+            .id("message-box")
+            .track_focus(&box_focus)
+            .w_full()
+            .max_w(px(CONTENT_WIDTH))
+            .mx_auto()
+            .rounded(px(SURFACE_CORNER))
+            .shadow(message_box_shadows(focused))
+            .border_1()
+            .border_color(rgb(if focused {
+                colors().subtle
+            } else {
+                colors().edge
+            }))
+            .bg(rgb(colors().panel))
+            .on_drop(cx.listener(move |_, paths: &ExternalPaths, _, cx| {
+                drop_composer.update(cx, |composer, cx| {
+                    composer.drop_images(paths.paths().to_vec(), cx)
+                });
+            }))
+            .child(composer)
+            .child(settings_row)
+            .when(!notices.is_empty(), |el| {
+                el.child(
+                    column()
+                        .w_full()
+                        .min_w_0()
+                        .gap_1()
+                        .px(px(14.))
+                        .pb_2()
+                        .children(notices),
+                )
+            });
+        if self.host.thread.selected.is_some() && self.preferences.value.shows_thread_tabs() {
+            column()
+                .id("message-box-with-environment")
+                .w_full()
+                .max_w(px(CONTENT_WIDTH))
+                .mx_auto()
+                .gap_1()
+                .child(message_box)
+                .child(self.checkout_context(None, cx))
+        } else {
+            message_box
+        }
+    }
+
+    fn compact_thread_controls(&self) -> bool {
+        use super::panels::Panel;
+        // A wide window can still have a narrow conversation alongside the panel.
+        let review = if self.panel_is_open() {
+            self.panel_width(Panel::Review)
+        } else {
+            0.
+        };
+        self.sheet_width() - review < 600.
+    }
+
+    pub(super) fn thread_message_box_parts(&self, cx: &mut Context<Self>) -> MessageBoxParts {
         let Some(snapshot) = &self.host.thread.snapshot else {
-            return div().into_any_element();
+            return MessageBoxParts::default();
         };
         let model = self.thread_model();
         let model_name = self.model_name(&snapshot.model);
@@ -303,34 +486,35 @@ impl Plait {
         let pi = harness_of(snapshot) == HarnessId::Pi;
         // A harness thread runs under the harness's own mode; Plait's approvals are Pi's.
         let mode = harness.and_then(|line| line.mode.as_ref());
-        let mut controls = row()
-            .flex_wrap()
-            .gap_x_2()
-            .gap_y_1()
-            .w_full()
-            .min_w_0()
-            .text_size(px(11.))
-            .text_color(rgb(colors().muted))
-            .when_some(
-                match harness {
-                    // With no Permissions chip to carry it, the logo's hover
-                    // text says what protects the checkout.
-                    Some(line) => Some((
-                        line.label.clone(),
-                        match line.protection.as_ref().filter(|_| mode.is_none()) {
-                            Some(protection) => format!("{} {protection}", line.tip).into(),
-                            None => line.tip.clone(),
-                        },
-                    )),
-                    None if pi => Some(("Pi".into(), "Pi, built into the host".into())),
-                    None => None,
+        let compact = self.compact_thread_controls();
+        let mut left = Vec::new();
+        if let Some((label, tip)) = match harness {
+            // With no Permissions chip to carry it, the logo's hover
+            // text says what protects the checkout.
+            Some(line) => Some((
+                line.label.clone(),
+                match line.protection.as_ref().filter(|_| mode.is_none()) {
+                    Some(protection) => format!("{} {protection}", line.tip).into(),
+                    None => line.tip.clone(),
                 },
-                |el, (label, tip)| el.child(harness_mark(harness_of(snapshot), label, tip)),
-            )
-            .child(locked(
-                button("thread-model", "")
+            )),
+            None if pi => Some(("Pi".into(), "Pi, built into the host".into())),
+            None => None,
+        } {
+            left.push(harness_mark(harness_of(snapshot), label, tip).into_any_element());
+        }
+        left.push(
+            locked(
+                box_control(button("thread-model", ""))
+                    .min_w(px(54.))
                     .max_w(px(240.))
                     .flex_shrink_1()
+                    // Give the permission mode its natural width before fitting the model.
+                    .when(compact, |el| el.flex_1())
+                    .when(reason.is_none(), |el| {
+                        let name = model_name.clone();
+                        el.tooltip(move |_, cx| cx.new(|_| TextTooltip(name.clone())).into())
+                    })
                     .aria_label(format!("Change thread model: {model_name}"))
                     .aria_description(reason.unwrap_or("Choose a model for the next run."))
                     .child(
@@ -339,18 +523,50 @@ impl Plait {
                             .truncate()
                             .child(a11y_text("thread-model-name", model_name)),
                     )
-                    .on_activate(cx, |this, window, cx| this.open_thread_models(window, cx)),
+                    .relative()
+                    .child(self.anchor_probe("thread-model"))
+                    .on_activate(cx, |this, window, cx| {
+                        this.anchor_next("thread-model");
+                        this.open_thread_models(window, cx)
+                    }),
                 reason,
-            ));
+            )
+            .into_any_element(),
+        );
         if !levels.is_empty() {
-            controls = controls.child(locked(
-                button("thread-thinking", thinking_value(level))
-                    .aria_label(format!("Thinking level: {}", level.label()))
-                    .aria_description(reason.unwrap_or("Choose how much this model thinks."))
-                    .on_activate(cx, |this, window, cx| this.open_thinking(window, cx)),
-                reason,
-            ));
+            left.push(
+                locked(
+                    box_control(button("thread-thinking", thinking_value(level)))
+                        .aria_label(format!("Thinking level: {}", level.label()))
+                        .aria_description(reason.unwrap_or("Choose how much this model thinks."))
+                        .relative()
+                        .child(self.anchor_probe("thread-thinking"))
+                        .on_activate(cx, |this, window, cx| {
+                            this.anchor_next("thread-thinking");
+                            this.open_thinking(window, cx)
+                        }),
+                    reason,
+                )
+                .into_any_element(),
+            );
         }
+        if let Some(mode) = mode {
+            if let Some(chip) = self.thread_permissions(mode).and_then(|permissions| {
+                let full_access = is_full_access_mode(&permissions.current, &mode.label);
+                self.permissions_chip("thread-permissions", permissions, !compact, cx)
+                    .map(|chip| {
+                        box_control(chip).when(full_access, |el| el.text_color(rgb(colors().amber)))
+                    })
+            }) {
+                left.push(chip.into_any_element());
+            }
+        } else if pi {
+            left.push(
+                self.run_settings_button(snapshot.id.clone(), cx)
+                    .into_any_element(),
+            );
+        }
+        let mut right = Vec::new();
         if let Some(usage) = &usage {
             let detail = usage.detail.clone();
             let tint = match usage.pressure {
@@ -358,8 +574,14 @@ impl Plait {
                 ContextPressure::High => colors().amber,
                 ContextPressure::NearlyFull => colors().red,
             };
-            controls = controls.child(
-                button("thread-usage", usage.label.clone())
+            let label = if compact {
+                format!("{}%", usage.percent)
+            } else {
+                usage.label.clone()
+            };
+            right.push(
+                box_control(button("thread-usage", label))
+                    .aria_label(usage.label.clone())
                     .text_color(rgb(tint))
                     .aria_description(detail.clone())
                     .tooltip(move |_, cx| cx.new(|_| TextTooltip(detail.clone())).into())
@@ -367,51 +589,40 @@ impl Plait {
                         this.workspace.thread_controls.usage_open =
                             !this.workspace.thread_controls.usage_open;
                         cx.notify();
-                    }),
+                    })
+                    .into_any_element(),
             );
         }
-        if let Some(mode) = mode {
-            let chip = self.thread_permissions(mode).and_then(|permissions| {
-                self.permissions_chip("thread-permissions", permissions, cx)
-            });
-            controls = controls.children(chip);
-        } else if pi {
-            controls = controls.child(self.run_settings_button(snapshot.id.clone(), cx));
-        }
-        let mut content = column()
-            .w_full()
-            .max_w(px(CONTENT_WIDTH))
-            .mx_auto()
-            .gap_1()
-            .child(controls)
-            .children(self.worktree_context_line(cx))
-            .children(self.continuation_control(cx))
-            .children(self.admission_context(cx));
-        // The controls are the whole line. What a mode allows and why a
-        // control is locked are hover text. One thing is said in the open,
-        // in amber: the run is not under the mode the control names.
+        let mut notices = Vec::new();
+        // What a mode allows and why a control is locked are hover text.
+        // One thing is said in the open, in amber: the run is not under
+        // the mode the control names.
         if let Some(differs) = mode
             .filter(|mode| mode.overridden)
             .map(|mode| mode.note.clone())
             .or_else(|| self.run_differs(snapshot).filter(|_| pi))
         {
-            content = content
-                .child(tag("thread-mode-differs", differs, colors().amber).line_height(px(16.)));
+            notices.push(
+                tag("thread-mode-differs", differs, colors().amber)
+                    .line_height(px(16.))
+                    .into_any_element(),
+            );
         }
         if self.workspace.thread_controls.usage_open
             && let Some(usage) = usage
         {
-            content = content.child(
+            notices.push(
                 div()
                     .text_size(px(11.))
                     .text_color(rgb(colors().muted))
-                    .child(usage.detail),
+                    .child(a11y_text("thread-usage-detail", usage.detail))
+                    .into_any_element(),
             );
         }
         if let Some((id, note, failed)) = &self.workspace.thread_controls.note
             && id == &snapshot.id
         {
-            content = content.child(
+            notices.push(
                 div()
                     .text_size(px(11.))
                     .text_color(rgb(if *failed {
@@ -419,10 +630,30 @@ impl Plait {
                     } else {
                         colors().muted
                     }))
-                    .child(a11y_text("thread-control-note", note.clone())),
+                    .child(a11y_text(
+                        "thread-control-note",
+                        self.identity_recovery_message(note),
+                    ))
+                    .when(self.has_identity_recovery(note), |el| {
+                        el.child(self.identity_recovery_button(cx))
+                    })
+                    .into_any_element(),
             );
         }
-        content.into_any_element()
+        if let Some(line) = self.worktree_context_line(cx) {
+            notices.push(line);
+        }
+        if let Some(line) = self.continuation_control(cx) {
+            notices.push(line);
+        }
+        if let Some(line) = self.admission_context(cx) {
+            notices.push(line);
+        }
+        MessageBoxParts {
+            left,
+            right,
+            notices,
+        }
     }
 
     fn queued_text(&self, request: &host::Queued) -> Option<String> {
@@ -494,7 +725,8 @@ impl Plait {
                 Ok(reply) if reply.thread.id == id && reply.thread.checkout == checkout && !reply.thread.queued.iter().any(|q| q.request_id == request_id) => {
                     this.host.submissions.forget_accepted(&id, &request_id);
                     if let (Some(text), Some(composer), Some(revision)) = (text, composer, revision) {
-                        let restored = composer.update(cx, |composer, cx|  { let restored=composer.restore_cancelled(&text,revision,cx);if restored { composer.restore_thread_images(images,id.clone(),cx); } restored });
+                        let client = this.host_client();
+                        let restored = composer.update(cx, |composer, cx|  { let restored=composer.restore_cancelled(&text,revision,cx);if restored { composer.restore_thread_images_with_client(images,id.clone(),client,cx); } restored });
                         if restored && this.host.thread.selected.as_ref() == Some(&id) { this.focus_composer(window, cx); }
                         else if !restored { cx.write_to_clipboard(ClipboardItem::new_string(text)); this.set_thread_notice(id.clone(), "Message cancelled. The draft changed, so its text was copied to the clipboard.".into(), false); }
                     }
@@ -560,9 +792,14 @@ impl Plait {
                 .map_or(0, |p| p.images.len());
             stack = stack.child(
                 row()
+                    .h(px(ROW_HEIGHT))
+                    .px(px(9.))
                     .gap_2()
                     .w_full()
                     .min_w_0()
+                    .rounded(px(CONTROL_CORNER))
+                    .bg(rgba(colors().hover))
+                    .text_color(rgb(colors().muted))
                     .child(tag(
                         SharedString::from(format!("queued-mode-{request_id}")),
                         mode,
@@ -581,6 +818,9 @@ impl Plait {
                                 SharedString::from(format!("edit-queued-{request_id}")),
                                 "Edit",
                             )
+                            .h(px(22.))
+                            .px(px(7.))
+                            .rounded(px(ITEM_CORNER))
                             .aria_label("Cancel queued message into draft")
                             .disabled(cancelling || !self.host.connection.connected)
                             .on_activate(
@@ -600,6 +840,9 @@ impl Plait {
                                 "Cancel"
                             },
                         )
+                        .h(px(22.))
+                        .px(px(7.))
+                        .rounded(px(ITEM_CORNER))
                         .aria_label("Cancel queued message")
                         .disabled(cancelling || !self.host.connection.connected)
                         .on_activate(cx, move |this, window, cx| {
@@ -619,9 +862,14 @@ impl Plait {
                 .unwrap_or("Retry uses the same request ID.");
             stack = stack.child(
                 row()
+                    .h(px(ROW_HEIGHT))
+                    .px(px(9.))
                     .gap_2()
                     .w_full()
                     .min_w_0()
+                    .rounded(px(CONTROL_CORNER))
+                    .bg(rgba(colors().hover))
+                    .text_color(rgb(colors().muted))
                     .child(
                         button(
                             SharedString::from(format!("pending-{request_id}")),
@@ -633,6 +881,9 @@ impl Plait {
                                 "Unconfirmed"
                             },
                         )
+                        .h(px(22.))
+                        .px(px(7.))
+                        .rounded(px(ITEM_CORNER))
                         .text_color(rgb(if sending {
                             colors().blue
                         } else {
@@ -660,6 +911,9 @@ impl Plait {
                             SharedString::from(format!("retry-{request_id}")),
                             "Retry safely",
                         )
+                        .h(px(22.))
+                        .px(px(7.))
+                        .rounded(px(ITEM_CORNER))
                         .aria_description(detail.to_owned())
                         .disabled(
                             sending || !self.host.connection.connected || !self.session.ready(),
@@ -671,24 +925,6 @@ impl Plait {
             );
         }
         Some(stack.into_any_element())
-    }
-}
-
-/// What the run-settings button and menu call an approval mode.
-/// What a thinking control shows: just the level, since a bare "Off" beside
-/// the model would not say what is off.
-pub(super) fn thinking_value(level: ThinkingLevel) -> &'static str {
-    if level == ThinkingLevel::Off {
-        "No thinking"
-    } else {
-        level.label()
-    }
-}
-
-pub(super) fn approval_label(mode: ApprovalMode) -> &'static str {
-    match mode {
-        ApprovalMode::Ask => "Ask before actions",
-        ApprovalMode::Auto => "Auto-approve actions",
     }
 }
 
@@ -708,24 +944,6 @@ pub(super) fn locked(control: Control, reason: Option<&'static str>) -> Control 
         .tooltip(move |_, cx| cx.new(|_| TextTooltip(reason.to_owned())).into())
 }
 
-/// What to say when a Pi run is under one approval mode and the control
-/// names another. `None` when they agree or the host does not report the
-/// run's mode.
-fn run_mode_note(running: Option<ApprovalMode>, chosen: ApprovalMode) -> Option<SharedString> {
-    let running = running.filter(|running| *running != chosen)?;
-    let now = match running {
-        ApprovalMode::Ask => "asks before actions",
-        ApprovalMode::Auto => "approves actions automatically",
-    };
-    Some(
-        format!(
-            "This run {now}. {} applies from your next message.",
-            approval_label(chosen)
-        )
-        .into(),
-    )
-}
-
 impl Plait {
     /// The open thread's run is under another approval mode than its control
     /// names: the mode was changed while the run was under way.
@@ -736,7 +954,7 @@ impl Plait {
         let chosen = self
             .thread_approval(&snapshot.id)
             .unwrap_or_else(|| self.default_approval());
-        run_mode_note(snapshot.approval_mode, chosen)
+        run_mode_note(snapshot.approval_mode, chosen).map(Into::into)
     }
 
     /// Opens the run-settings menu. The label is this thread's approval mode
@@ -745,12 +963,8 @@ impl Plait {
     fn run_settings_button(&self, id: String, cx: &mut Context<Self>) -> Control {
         let own = self.thread_approval(&id);
         let label = approval_label(own.unwrap_or_else(|| self.default_approval()));
-        let tip = if own.is_some() {
-            "Chosen for this thread. A change applies from your next message. Whether commands are sandboxed is a project setting."
-        } else {
-            "The default from Settings → New threads. A change applies from your next message. Whether commands are sandboxed is a project setting."
-        };
-        button("thread-run-settings", "")
+        let tip = approval_tip(own.is_some());
+        box_control(button("thread-run-settings", ""))
             .min_w_0()
             .flex_shrink_1()
             .aria_label(format!("Run settings: {label}"))
@@ -758,7 +972,12 @@ impl Plait {
             .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.into())).into())
             .child(div().min_w_0().truncate().child(label))
             .child(icon("down").size(px(12.)))
-            .on_activate(cx, |this, window, cx| this.open_run_settings(window, cx))
+            .relative()
+            .child(self.anchor_probe("thread-run-settings"))
+            .on_activate(cx, |this, window, cx| {
+                this.anchor_next("thread-run-settings");
+                this.open_run_settings(window, cx)
+            })
     }
 
     /// This thread's own approval choice, if it has one.
@@ -769,7 +988,7 @@ impl Plait {
         let summary = self
             .host
             .connection
-            .threads
+            .threads()
             .iter()
             .find(|thread| thread.id == id)?;
         self.saved_thread(summary)?.approval
@@ -862,6 +1081,7 @@ impl Plait {
                 window,
                 cx,
             )
+            .picker()
         });
         self.present(palette, None, window, cx);
     }
@@ -870,17 +1090,12 @@ impl Plait {
 impl Plait {
     /// Why the open harness thread's permissions cannot change now. A run does not stop it.
     fn mode_reason(&self) -> Option<&'static str> {
-        if !self.host.connection.connected {
-            Some("Reconnect to change this thread.")
-        } else if self.host.protocol() < 4 {
-            Some("Update the host to change this thread's permissions.")
-        } else if self.host.thread.snapshot.is_none() {
-            Some("Loading thread…")
-        } else if self.mode_pending().is_some() {
-            Some("Saving permissions…")
-        } else {
-            None
-        }
+        compose::mode_reason(
+            self.host.protocol(),
+            self.host.connection.connected,
+            self.host.thread.snapshot.is_some(),
+            self.mode_pending().is_some(),
+        )
     }
 
     /// The mode sent for the open thread and not yet answered.
@@ -1043,6 +1258,31 @@ impl Plait {
     }
 }
 
+/// Settings-row controls inside the message box: 24 high, 6 corners, hover fill.
+fn box_control(control: Control) -> Control {
+    control
+        .h(px(24.))
+        .rounded(px(ITEM_CORNER))
+        .px(px(7.))
+        .font_weight(FontWeight::NORMAL)
+}
+
+/// Box shadow at rest; when focused, adds a 3-point ring in the focus color at 13%.
+fn message_box_shadows(focused: bool) -> Vec<BoxShadow> {
+    let mut shadows = box_shadow();
+    if focused {
+        shadows.push(
+            BoxShadow::new(px(0.), px(0.), rgba((colors().blue << 8) | 0x21).into())
+                .spread_radius(px(3.)),
+        );
+    }
+    shadows
+}
+
+fn is_full_access_mode(id: &str, label: &str) -> bool {
+    id == "full_access" || label.eq_ignore_ascii_case("Full access")
+}
+
 /// The harness's logo where the composer row starts; its name and version are
 /// the hover text and what assistive technology reads. Without a logo, the name.
 fn harness_mark(id: HarnessId, label: SharedString, tip: SharedString) -> Control {
@@ -1050,7 +1290,7 @@ fn harness_mark(id: HarnessId, label: SharedString, tip: SharedString) -> Contro
     div()
         .id("thread-harness")
         .flex_shrink_0()
-        .h(px(ROW_HEIGHT))
+        .h(px(24.))
         .px_1()
         .flex()
         .items_center()
@@ -1075,35 +1315,5 @@ pub(super) fn pending_description(text: &str, images: usize) -> String {
         count
     } else {
         format!("{text} · {count}")
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{ApprovalMode, run_mode_note};
-
-    /// The controls under the composer are one line. The only sentence that
-    /// joins them is this warning, when a run and its control disagree.
-    #[test]
-    fn a_run_under_another_approval_mode_is_said_in_the_open() {
-        // A run the control describes, or one the host does not describe, says nothing.
-        assert_eq!(
-            run_mode_note(Some(ApprovalMode::Ask), ApprovalMode::Ask),
-            None
-        );
-        assert_eq!(run_mode_note(None, ApprovalMode::Auto), None);
-        // Asking was chosen while a run that approves on its own is under way.
-        assert_eq!(
-            run_mode_note(Some(ApprovalMode::Auto), ApprovalMode::Ask).as_deref(),
-            Some(
-                "This run approves actions automatically. Ask before actions applies from your next message."
-            )
-        );
-        assert_eq!(
-            run_mode_note(Some(ApprovalMode::Ask), ApprovalMode::Auto).as_deref(),
-            Some(
-                "This run asks before actions. Auto-approve actions applies from your next message."
-            )
-        );
     }
 }

@@ -1,8 +1,9 @@
 //! Provider configuration is requested from the host. Secrets live only in forms.
 use super::{Plait, settings, text_field::TextField, theme::*};
 use gpui::{prelude::*, *};
-use plait_core::host::{
+use plait_client::host::{
     self,
+    harness::HarnessId,
     providers::{self, Provider, ProviderAction, Request, Secret},
     sign_in::{self, SignIn, SignInReply},
 };
@@ -88,9 +89,10 @@ impl Plait {
         complete: impl FnOnce(&mut Self, Result<T, host::Error>, &mut Context<Self>) + 'static,
     ) {
         let epoch = self.host.connection.epoch;
+        let client = self.host_client();
         let task = cx
             .background_executor()
-            .spawn(async move { host::Client::from_environment()?.send(&request) });
+            .spawn(async move { client.send(&request) });
         cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
@@ -184,6 +186,18 @@ impl Plait {
                 this.providers.busy = false;
                 match result {
                     Ok(reply) => {
+                        // A reload that kept an out-of-date login environment says so beside the list.
+                        match reply.warning_text() {
+                            Some(warning) => this.providers.note = Some(warning.into()),
+                            // A later clean reload clears that warning, and only that one.
+                            None if reload
+                                && this.providers.note.as_deref()
+                                    == Some(providers::STALE_ENVIRONMENT) =>
+                            {
+                                this.providers.note = None;
+                            }
+                            None => {}
+                        }
                         this.providers.rows = reply.providers;
                         this.providers.loaded = true;
                         this.providers.unsupported = false;
@@ -281,29 +295,44 @@ impl Plait {
         cx.notify();
     }
 
+    /// Start Codex's or Claude Code's own sign-in on the host. It runs as a
+    /// provider sign-in named `harness:<id>`, drawn under the harness in Settings → Agents.
+    pub(super) fn start_harness_sign_in(&mut self, harness: HarnessId, cx: &mut Context<Self>) {
+        self.close_provider_form(cx);
+        self.start_provider_sign_in(harness_provider(harness), cx);
+    }
+
+    /// The harness whose sign-in is open, if the open form is one.
+    pub(super) fn harness_flow(&self) -> Option<HarnessId> {
+        match &self.providers.form {
+            Some(Form::Flow { state, .. }) => harness_of_provider(&state.provider),
+            _ => None,
+        }
+    }
+
     pub(super) fn start_provider_sign_in(&mut self, provider: String, cx: &mut Context<Self>) {
         self.providers.busy = true;
         let generation = self.providers.generation;
-        self.settings_request::<_, SignInReply>(
-            Request::StartSignIn {
+        let request = match harness_of_provider(&provider) {
+            Some(harness) => Request::StartHarnessSignIn { harness },
+            None => Request::StartSignIn {
                 provider,
                 method: None,
             },
-            cx,
-            move |this, result, cx| {
-                if this.providers.generation == generation {
-                    this.sign_in_reply(result, cx);
-                } else if let Ok(reply) = result {
-                    this.settings_request::<_, SignInReply>(
-                        Request::CancelSignIn {
-                            sign_in_id: reply.sign_in.id,
-                        },
-                        cx,
-                        |_, _, _| {},
-                    );
-                }
-            },
-        );
+        };
+        self.settings_request::<_, SignInReply>(request, cx, move |this, result, cx| {
+            if this.providers.generation == generation {
+                this.sign_in_reply(result, cx);
+            } else if let Ok(reply) = result {
+                this.settings_request::<_, SignInReply>(
+                    Request::CancelSignIn {
+                        sign_in_id: reply.sign_in.id,
+                    },
+                    cx,
+                    |_, _, _| {},
+                );
+            }
+        });
     }
 
     fn sign_in_reply(&mut self, result: Result<SignInReply, host::Error>, cx: &mut Context<Self>) {
@@ -326,8 +355,12 @@ impl Plait {
             field,
         });
         if view.signed_in {
-            self.load_providers(false, cx);
-            self.refresh_provider_catalog(cx);
+            if self.harness_flow().is_some() {
+                self.refresh_harnesses(cx);
+            } else {
+                self.load_providers(false, cx);
+                self.refresh_provider_catalog(cx);
+            }
         }
         if view.poll && self.settings_open {
             self.poll_sign_in(id, cx);
@@ -528,7 +561,7 @@ impl Plait {
             )
     }
 
-    fn provider_form(&self, cx: &mut Context<Self>) -> Div {
+    pub(super) fn provider_form(&self, cx: &mut Context<Self>) -> Div {
         let mut panel = column()
             .gap_3()
             .p_3()
@@ -595,7 +628,12 @@ impl Plait {
                     panel = panel.child(
                         row()
                             .gap_2()
-                            .child(div().font_family("Menlo").child(code.clone()))
+                            .child(
+                                div()
+                                    .font_family(mono())
+                                    .text_size(px(code_size()))
+                                    .child(code.clone()),
+                            )
                             .child(button("copy-provider-code", "Copy code").on_activate(
                                 cx,
                                 move |_, _, cx| {
@@ -734,7 +772,8 @@ impl Plait {
     }
 
     pub(super) fn provider_settings(&self, cx: &mut Context<Self>) -> Div {
-        if self.providers.form.is_some() {
+        // A harness sign-in is drawn in Settings → Agents.
+        if self.providers.form.is_some() && self.harness_flow().is_none() {
             return settings::section("Providers")
                 .when(self.providers.busy, |el| {
                     el.child(tag(
@@ -866,5 +905,42 @@ impl Plait {
             .when(self.providers.form.is_some(), |el| {
                 el.child(self.provider_form(cx))
             })
+    }
+}
+
+const HARNESS_PREFIX: &str = "harness:";
+
+fn harness_provider(harness: HarnessId) -> String {
+    let id = match harness {
+        HarnessId::Codex => "codex",
+        HarnessId::Claude => "claude",
+        _ => "other",
+    };
+    format!("{HARNESS_PREFIX}{id}")
+}
+
+/// The harness a sign-in's provider names, for `harness:codex` and `harness:claude`.
+fn harness_of_provider(provider: &str) -> Option<HarnessId> {
+    match provider.strip_prefix(HARNESS_PREFIX)? {
+        "codex" => Some(HarnessId::Codex),
+        "claude" => Some(HarnessId::Claude),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod harness_sign_in_tests {
+    use super::*;
+
+    #[core::prelude::v1::test]
+    fn harness_sign_ins_are_named_apart_from_providers() {
+        for harness in [HarnessId::Codex, HarnessId::Claude] {
+            assert_eq!(
+                harness_of_provider(&harness_provider(harness)),
+                Some(harness)
+            );
+        }
+        assert_eq!(harness_of_provider("anthropic"), None);
+        assert_eq!(harness_of_provider("harness:other"), None);
     }
 }

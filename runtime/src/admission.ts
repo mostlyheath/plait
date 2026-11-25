@@ -2,7 +2,7 @@
 import { resourceFailure, type RunCapacity } from './run-capacity.ts';
 import { cleanupHelper } from './cleanup.ts';
 import { randomUUID } from 'node:crypto';
-import { acquireCheckout, checkout, checkRoot, rootIdentity, type FileIdentity } from './safety.ts';
+import { acquireCheckout, checkout, projectKind, checkRoot, rootIdentity, type FileIdentity } from './safety.ts';
 import { fail, failure, HostError, HARNESSES, THINKING_LEVELS, type Snapshot, type Failure, type HarnessId, type ThinkingLevel, type ApprovalMode } from './protocol.ts';
 import { worktreeHelper, type Worktrees, type Parent, type Managed, type Create } from './worktrees.ts';
 import type { Store } from './store.ts';
@@ -59,9 +59,10 @@ export class Admissions {
   private worktrees: Worktrees;
   private createHere: (input: Record<string, unknown>, identity: FileIdentity) => Promise<unknown>;
   private busy: (root: string) => boolean;
+  private admit: () => void;
   constructor(store: Store, worktrees: Worktrees, capacity: RunCapacity,
-    createHere: (input: Record<string, unknown>, identity: FileIdentity) => Promise<unknown>, busy: (root: string) => boolean) {
-    this.capacity = capacity; this.store = store; this.worktrees = worktrees; this.createHere = createHere; this.busy = busy;
+    createHere: (input: Record<string, unknown>, identity: FileIdentity) => Promise<unknown>, busy: (root: string) => boolean, admit: () => void = () => {}) {
+    this.capacity = capacity; this.store = store; this.worktrees = worktrees; this.createHere = createHere; this.busy = busy; this.admit = admit;
     store.db.exec('CREATE TABLE IF NOT EXISTS thread_admissions(request_id TEXT PRIMARY KEY,input TEXT NOT NULL,plan TEXT NOT NULL,result TEXT NOT NULL)');
     for (const row of store.db.prepare('SELECT request_id,result FROM thread_admissions').all()) {
       if ((JSON.parse(String(row.result)) as Admission).state === 'preparing') this.start(String(row.request_id));
@@ -75,6 +76,7 @@ export class Admissions {
       const info = await this.info(request.checkout);
       if (canonical(info.project_identity) !== canonical(request.identity)) fail('permission_denied', 'Project identity changed. Refresh its settings.');
       await checkRoot(info.project, info.project_identity);
+      if (request.auto_worktree && (await projectKind(info.checkout)).vcs === 'folder') fail('worktree_unavailable', 'Worktrees need a Git repository.');
       this.store.setSetting(policyKey(info.project, info.project_identity), request.auto_worktree ? 'worktree' : 'ask');
       return { ...info, auto_worktree: request.auto_worktree };
     }
@@ -93,7 +95,8 @@ export class Admissions {
     const root = await checkout(path); const identity = await rootIdentity(root);
     await requireCleanup(root);
     let parent: Parent | null = null; let refusal: string | null = null;
-    try { parent = await worktreeHelper<Parent>({ action: 'parent', root }); }
+    if ((await projectKind(root)).vcs === 'folder') refusal = 'Worktrees need a Git repository.';
+    else try { parent = await worktreeHelper<Parent>({ action: 'parent', root }); }
     catch (error) { refusal = error instanceof Error ? error.message : 'Worktree base is unavailable.'; }
     let busy = this.busy(root);
     if (!busy) {
@@ -109,7 +112,7 @@ export class Admissions {
     if (parent && (parent.root !== root || canonical(parent.identity) !== canonical(identity))) fail('permission_denied', 'Checkout identity changed. Refresh before starting a thread.');
     const project = parent?.main ?? root; const project_identity = parent?.main_identity ?? identity;
     return { schema: 1, worktree_at_start_v1: true, linked_continuation_v1: true, queue: true, strict_reader: false,
-      checkout: root, identity, project, project_identity, busy, auto_worktree: this.store.setting(policyKey(project, project_identity)) === 'worktree', parent, refusal };
+      checkout: root, identity, project, project_identity, busy, auto_worktree: refusal === 'Worktrees need a Git repository.' ? false : this.store.setting(policyKey(project, project_identity)) === 'worktree', parent, refusal };
   }
   /** Settles when no placement probe holds this checkout's lease. */
   probing(root: string): Promise<void> { return (this.probes.get(root) ?? Promise.resolve(false)).then(() => {}, () => {}); }
@@ -137,7 +140,7 @@ export class Admissions {
     if (request.source_thread_id) {
       const source = this.store.get(request.source_thread_id);
       if (source.checkout !== info.checkout) fail('permission_denied', 'The linked thread belongs to another checkout.');
-      await checkRoot(source.checkout, this.store.rootIdentity(source.id));
+      await this.store.refreshRootIdentity(source.id, source.checkout);
     }
     const isolated = request.placement === 'worktree' || request.placement === 'project' && info.busy && info.auto_worktree;
     const result: Admission = { request_id: request.request_id, state: 'preparing', thread_id: null, checkout: info.checkout, worktree: null, source_thread_id: request.source_thread_id ?? null, error: null };
@@ -147,6 +150,7 @@ export class Admissions {
     const effectId = randomUUID();
     const worktree: Create | null = isolated ? { op: 'create_worktree_thread', request_id: effectId, parent: info.parent!, harness, provider, model_id, approval, ...(mode === undefined ? {} : { mode }), ...(thinking === undefined ? {} : { thinking }) } : null;
     const plan: Plan = { identity: info.identity, input: request, worktree, here_id: effectId };
+    this.admit();
     this.store.db.prepare('INSERT INTO thread_admissions VALUES (?,?,?,?)').run(request.request_id, canonical(request), JSON.stringify(plan), JSON.stringify(result));
     this.start(request.request_id);
     return result;
@@ -167,7 +171,7 @@ export class Admissions {
     try {
       if (plan.worktree) {
         const reply = await this.worktrees.handle({ op: 'worktree_status', request_id: plan.worktree.request_id }).catch(error => {
-          if (error instanceof HostError && error.code === 'not_found') return requireCleanup(plan.input.checkout).then(() => this.worktrees.handle(plan.worktree));
+          if (error instanceof HostError && error.code === 'not_found') return requireCleanup(plan.input.checkout).then(() => this.worktrees.handle(plan.worktree, true));
           throw error;
         }) as { operation: { state: string; thread_id: string; worktree: Managed | null; error: Failure | null } };
         result.thread_id = reply.operation.thread_id; result.worktree = reply.operation.worktree;
@@ -175,7 +179,8 @@ export class Admissions {
         result.error = reply.operation.error;
         if (result.worktree) result.checkout = result.worktree.path;
       } else {
-        await checkRoot(plan.input.checkout, plan.identity);
+        plan.identity = await checkRoot(plan.input.checkout, plan.identity);
+        this.store.db.prepare('UPDATE thread_admissions SET plan=? WHERE request_id=?').run(JSON.stringify(plan), id);
         await requireCleanup(plan.input.checkout);
         const { checkout, harness, provider, model_id, mode, thinking } = plan.input;
         const reply = await this.createHere({ op: 'create_thread', protocol_version: 6, request_id: plan.here_id, checkout, harness, provider, model_id, ...(mode === undefined ? {} : { mode }), ...(thinking === undefined ? {} : { thinking }) }, plan.identity) as { thread: Snapshot };

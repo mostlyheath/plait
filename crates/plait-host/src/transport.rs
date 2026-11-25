@@ -1,4 +1,4 @@
-use plait_core::local_socket;
+use plait_transport::local_socket;
 use serde_json::{Value, json};
 #[cfg(test)]
 use std::io::BufRead;
@@ -327,6 +327,8 @@ fn connection(
             .transpose()?
     } else if threads || request["op"] == "watch_build_output" {
         Some(notifications.subscribe(notifications::THREADS.to_owned())?)
+    } else if request["op"] == "workspace_subscribe" {
+        Some(notifications.subscribe(notifications::WORKSPACE.to_owned())?)
     } else {
         None
     };
@@ -343,6 +345,9 @@ fn connection(
     };
     if threads {
         return watch_threads(socket, sidecar, &request, subscription, &reply);
+    }
+    if request["op"] == "workspace_subscribe" {
+        return watch_workspace(socket, sidecar, subscription, &reply);
     }
     if request["op"] == "watch_build_output" {
         let mut previous = reply["result"].clone();
@@ -408,6 +413,44 @@ fn watch_threads(
     Ok(())
 }
 
+/// Sends the workspace again whenever its revision or status changes, numbered from 1 after
+/// the snapshot. A client that cannot keep up is disconnected by the write
+/// timeout and subscribes again for a fresh snapshot.
+fn watch_workspace(
+    mut socket: UnixStream,
+    sidecar: &Mutex<Sidecar>,
+    subscription: &mut notifications::Subscription,
+    initial: &Value,
+) -> io::Result<()> {
+    let view = json!({"op": "workspace_view"});
+    let mut previous = initial["result"].clone();
+    let mut seq = 0u64;
+    while subscription.wait(&socket)? {
+        let reply = sidecar
+            .lock()
+            .map_err(|_| io::Error::other("sidecar failed"))?
+            .request(&view)?;
+        if reply["ok"] != true {
+            return send(&mut socket, &reply);
+        }
+        if let Some(event) = workspace_event(&previous, &reply["result"], seq + 1) {
+            seq += 1;
+            previous = reply["result"].clone();
+            send(&mut socket, &event)?;
+        }
+    }
+    Ok(())
+}
+
+/// A workspace event when the revision, status, or providers revision changed.
+/// The providers revision tells a client its model catalog is out of date.
+fn workspace_event(previous: &Value, current: &Value, seq: u64) -> Option<Value> {
+    (current["revision"] != previous["revision"]
+        || current["status"] != previous["status"]
+        || current["providers_revision"] != previous["providers_revision"])
+        .then(|| json!({"event": "workspace", "seq": seq, "workspace": current}))
+}
+
 /// The summaries that are new or different, in the runtime's order, and the IDs that left the list.
 fn thread_changes(previous: &Value, current: &Value) -> Option<Value> {
     let list = |value: &Value| value.as_array().cloned().unwrap_or_default();
@@ -469,6 +512,49 @@ mod tests {
             thread("a", "idle")
         ]);
         assert_eq!(thread_changes(&before, &reordered), None);
+    }
+
+    #[test]
+    fn workspace_events_follow_the_revision_and_are_numbered() {
+        let view = |revision: u64| json!({"revision": revision, "projects": []});
+        assert_eq!(workspace_event(&view(3), &view(3), 1), None);
+        assert_eq!(
+            workspace_event(&view(3), &view(4), 1),
+            Some(json!({"event": "workspace", "seq": 1, "workspace": view(4)}))
+        );
+    }
+
+    #[test]
+    fn workspace_event_includes_changed_summary_on_revision_bump() {
+        let before = json!({"revision": 3, "projects": [{"path":"/repo"}]});
+        let after =
+            json!({"revision": 4, "projects": [{"path":"/repo", "branch":{"branch":"main"}}]});
+        assert_eq!(workspace_event(&after, &after, 2), None);
+        assert_eq!(
+            workspace_event(&before, &after, 2),
+            Some(json!({"event":"workspace", "seq":2, "workspace":after}))
+        );
+    }
+
+    #[test]
+    fn workspace_event_reports_status_only_changes() {
+        let before = json!({"revision": 3, "status": {"/repo": 0}});
+        let after = json!({"revision": 3, "status": {"/repo": 1}});
+        assert_eq!(
+            workspace_event(&before, &after, 2),
+            Some(json!({"event": "workspace", "seq": 2, "workspace": after}))
+        );
+    }
+
+    #[test]
+    fn workspace_event_reports_a_new_provider_registry() {
+        let before = json!({"revision": 3, "status": {}, "providers_revision": 1});
+        let after = json!({"revision": 3, "status": {}, "providers_revision": 2});
+        assert_eq!(workspace_event(&before, &before, 2), None);
+        assert_eq!(
+            workspace_event(&before, &after, 2),
+            Some(json!({"event": "workspace", "seq": 2, "workspace": after}))
+        );
     }
 
     #[test]

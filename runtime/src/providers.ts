@@ -5,10 +5,13 @@ import { SignIns } from './sign-in.ts';
 import type { SignInLimits } from './sign-in.ts';
 import { addEndpoint, checkEndpoint, readEndpoints, removeEndpoint, renderEndpoints, updateEndpoint, writeEndpoints } from './endpoints.ts';
 import type { EndpointFile } from './endpoints.ts';
+import { shellValuesUsed } from './provider-environment.ts';
 
 /** One complete, immutable view of Pi's providers. A reload builds a new one and swaps it in. */
 export type Registry = {
   models: Models;
+  /** Pi loaded it with an error, such as a models.json it could not parse; a reload does not publish it. */
+  problem?: boolean;
   /** Providers with usable authentication, as the model catalog reports them. */
   authenticated: Set<string>;
   /** Which providers have a credential in Pi's store, and of what type. Never the credential. */
@@ -17,8 +20,11 @@ export type Registry = {
   settle(): Promise<void>;
 };
 export type ProviderSource = {
-  /** Reads Pi's files again. A reload passes a deadline; host startup does not. */
-  load(signal?: AbortSignal): Promise<Registry>;
+  /**
+   * Reads Pi's files again. A reload passes a deadline; host startup does not. `login` is the
+   * login shell's environment the new registry resolves provider keys with, and only it.
+   */
+  load(signal?: AbortSignal, login?: Record<string, string>): Promise<Registry>;
   /** Provider IDs that ship with Pi. Any other provider is a custom endpoint from models.json. */
   builtin: ReadonlySet<string>;
   /** Pi's models.json. Absent when this host cannot edit custom endpoints. */
@@ -26,7 +32,11 @@ export type ProviderSource = {
   /** Pi's credential file, kept owner-only after every write. */
   authPath?: string;
   loginOptions?: LoginOptions;
+  /** Runs the account's login shell, which may take seconds; undefined when it cannot be read. */
+  readEnvironment?(): Promise<Record<string, string> | undefined>;
 };
+/** A login-shell read, numbered when it started so a slower, older read cannot win. */
+type Reading = { ticket: number; env: Record<string, string> };
 /** What a reload replaces. `Runtime` has this shape. */
 export type RegistryHolder = { models: Models; authenticated: Set<string> };
 
@@ -57,6 +67,7 @@ type Request = Record<string, unknown> & { op: string };
 
 /** Every Pi call made for a request ends well inside the host's 20 second sidecar deadline. */
 const PI_DEADLINE_MS = 5000;
+const DETACHED_SHELL_KEY = 'This provider\'s key comes from your shell; detached runs can\'t use it yet. Turn off detached runs or set the key on the host.';
 const SECRET_LIMIT = 8192;
 const CONTROL = /[\u0000-\u001f\u007f]/;
 
@@ -90,6 +101,12 @@ function modelIds(request: Request): string[] {
     && new Set(value).size === value.length;
   if (!valid) fail('invalid_request', 'model_ids must be 1 to 200 distinct model IDs of at most 256 characters.');
   return value as string[];
+}
+
+function same(next: Record<string, string>, current: Record<string, string> | undefined): boolean {
+  if (!current) return false;
+  const keys = Object.keys(next);
+  return keys.length === Object.keys(current).length && keys.every(key => current[key] === next[key]);
 }
 
 /** The base URL as shown to a client: no user name, password, query, or fragment. */
@@ -129,8 +146,17 @@ export class Providers {
   private registry: Registry;
   private readonly holder: RegistryHolder;
   private readonly source: ProviderSource;
-  private readonly signIns: SignIns;
+  readonly signIns: SignIns;
   private reloading: Promise<void> = Promise.resolve();
+  private closed = false;
+  // The login environment the current registry resolves keys with; it is replaced only with the registry.
+  private environment?: Record<string, string>;
+  private started = 0;
+  private newest = 0;
+  /** Counts published registries, so a client can tell its catalog is older than the host's. */
+  revision = 0;
+  /** Called after a registry is published; the runtime wakes workspace watchers with it. */
+  published?: () => void;
   // Runs that started before a reload keep their registry; its credential writes still settle at shutdown.
   private readonly retired: Registry[] = [];
 
@@ -147,7 +173,7 @@ export class Providers {
   async handle(input: unknown): Promise<unknown> {
     const request = validate(input);
     switch (request.op) {
-      case 'reload_providers': await this.reload(); return { providers: await this.list() };
+      case 'reload_providers': return this.reloadRequest();
       case 'list_providers': return { providers: await this.list() };
       case 'start_sign_in': return { sign_in: await this.startSignIn(text(request, 'provider', 128), optional(request, 'method', 64)) };
       case 'sign_in_status': return { sign_in: this.signIns.status(identifier(request, 'sign_in_id')) };
@@ -166,18 +192,73 @@ export class Providers {
    * Builds a complete registry, then replaces the models and the authenticated set in one
    * synchronous step. Reloads run one after another so the last one requested is the one kept.
    */
-  reload(): Promise<void> {
-    const next = this.reloading.then(() => this.swap());
+  reload(reading?: Reading): Promise<void> {
+    const next = this.reloading.then(() => this.swap(reading));
     this.reloading = next.catch(() => {});
     return next;
   }
 
-  private async swap(): Promise<void> {
-    const registry = await this.source.load(AbortSignal.timeout(PI_DEADLINE_MS)).catch(() => fail('internal', 'Providers could not be reloaded. The previous list is still in use.'));
+  /**
+   * After startup: the host service lacks the login shell's variables, so read them once in
+   * the background and reload only if they changed. Failure keeps the registry the host
+   * started with.
+   */
+  async adoptEnvironment(): Promise<void> {
+    const reading = await this.readEnvironment();
+    if (typeof reading !== 'object' || this.closed) return;
+    const next = this.reloading.then(() => this.closed || same(reading.env, this.environment) ? undefined : this.swap(reading));
+    this.reloading = next.catch(() => {});
+    await this.reloading;
+  }
+
+  /**
+   * Reads the login shell. Reads can overlap and finish out of order; one that finishes after
+   * a newer read succeeded is dropped, so it cannot restore a rotated or removed key.
+   */
+  private async readEnvironment(): Promise<Reading | 'failed' | undefined> {
+    if (!this.source.readEnvironment) return undefined;
+    const ticket = ++this.started;
+    const env = await this.source.readEnvironment().catch(() => undefined);
+    if (!env) return 'failed';
+    if (ticket < this.newest) return undefined;
+    this.newest = ticket;
+    return { ticket, env };
+  }
+
+  /**
+   * `reload_providers`: a failed shell read keeps the last environment and still reloads, and
+   * the reply says so, since a key rotated in the shell is not yet in use. Older clients ignore it.
+   */
+  private async reloadRequest() {
+    const reading = await this.readEnvironment();
+    await this.reload(typeof reading === 'object' ? reading : undefined);
+    const providers = await this.list();
+    return reading === 'failed' ? { providers, warning: 'login_environment_unavailable' } : { providers };
+  }
+
+  /** The login environment goes into the new registry, so both are published together or not at all. */
+  private async swap(reading?: Reading): Promise<void> {
+    const environment = reading?.env ?? this.environment;
+    const registry = await this.source.load(AbortSignal.timeout(PI_DEADLINE_MS), environment).catch(() => fail('internal', 'Providers could not be reloaded. The previous list is still in use.'));
+    if (registry.problem) fail('conflict', 'Pi reported an error in models.json or a provider. The previous list is still in use.');
     this.retired.push(this.registry);
     if (this.retired.length > 8) this.retired.shift();
-    this.registry = registry;
+    this.registry = registry; this.environment = environment;
     this.holder.models = registry.models; this.holder.authenticated = registry.authenticated;
+    this.revision += 1;
+    this.published?.();
+  }
+
+  /**
+   * Why a detached run of `providerId` cannot start, or undefined. Detached runners resolve keys
+   * from the host environment only, so a credential that uses a login-shell value here, or one
+   * whose lookup failed, would become a different credential there.
+   */
+  async detachedRunProblem(providerId: string): Promise<string | undefined> {
+    const models = this.registry.models;
+    let failed = false;
+    const values = await shellValuesUsed(() => models.getAuth(providerId, { signal: AbortSignal.timeout(PI_DEADLINE_MS) }).catch(() => { failed = true; }));
+    return failed || Object.keys(values).length > 0 ? DETACHED_SHELL_KEY : undefined;
   }
 
   /** The provider list, for `list_providers` and for any reply that later wants to include it. */
@@ -187,6 +268,7 @@ export class Providers {
   }
 
   async close(): Promise<void> {
+    this.closed = true;
     await this.signIns.close();
     await this.reloading;
     await Promise.allSettled([this.registry, ...this.retired].map(registry => registry.settle()));
@@ -303,6 +385,9 @@ export class Providers {
     if (this.source.builtin.has(id) || this.registry.models.getProvider(id)) fail('conflict', 'A provider with that ID already exists.');
     const file = await readEndpoints(this.modelsPath());
     addEndpoint(file, id, change);
+    // A credential left in auth.json under this ID belongs to an earlier server, and Pi would
+    // use it before the new entry's key; it goes before the entry is published.
+    if ((await this.registry.stored()).has(id)) await this.forget(id);
     await this.commit(file, () => this.lists(id, change.modelIds));
     return key === undefined ? this.one(id) : this.setKey(id, key);
   }
@@ -313,11 +398,18 @@ export class Providers {
     const baseUrl = request.base_url === undefined ? undefined : endpointUrl(text(request, 'base_url', 2048));
     const models = request.model_ids === undefined ? undefined : modelIds(request);
     const key = request.key === undefined ? undefined : text(request, 'key', SECRET_LIMIT);
-    if (name !== undefined || baseUrl !== undefined || models !== undefined) {
-      const file = await readEndpoints(this.modelsPath());
-      updateEndpoint(file, id, { name, baseUrl, modelIds: models });
+    if (name === undefined && baseUrl === undefined && models === undefined) return key === undefined ? this.one(id) : this.setKey(id, key);
+    const file = await readEndpoints(this.modelsPath());
+    const moved = updateEndpoint(file, id, { name, baseUrl, modelIds: models });
+    if (!moved) {
       await this.commit(file, () => this.lists(id, models));
+      return key === undefined ? this.one(id) : this.setKey(id, key);
     }
+    // A stored credential is bound to its server. The old one goes before the new address is
+    // written, and a replacement is stored only after it, so no failure leaves a key at the
+    // wrong server: at worst the endpoint has no key, and the person enters it again.
+    await this.forget(id);
+    await this.commit(file, () => this.lists(id, models));
     return key === undefined ? this.one(id) : this.setKey(id, key);
   }
 

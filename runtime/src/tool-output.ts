@@ -1,6 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import type { DatabaseSync } from 'node:sqlite';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { fail } from './protocol.ts';
+
+export function threadOutputsPath(store: string, threadId: string): string {
+  return join(store, `${threadId}.outputs.sqlite`);
+}
 
 export const OUTPUT_LIMIT = 16 * 1024 * 1024;
 export const OUTPUT_COUNT = 32;
@@ -30,11 +36,61 @@ export function rangeText(page: TextRange, next: (offset: number) => string) {
     + (page.next_offset === null ? 'End of output.]' : `Continue with ${next(page.next_offset)}.]`);
 }
 
+export type CommandOutputsOptions = {
+  /** Fallback read-only database (e.g., host.sqlite when writing to a per-thread outputs database). */
+  fallbackDbPath?: string;
+  /** Store directory to check per-thread `<thread_id>.outputs.sqlite` before falling back to `this.db`. */
+  threadOutputsDir?: string;
+};
+
+function readFromDb(db: DatabaseSync, thread: string, id: string, offset: number, limit: number): string | null {
+  let row: Record<string, unknown> | undefined;
+  try {
+    row = db.prepare('SELECT * FROM command_outputs WHERE thread=? AND (id=? OR call_id=?) ORDER BY rowid DESC LIMIT 1').get(thread, id, id) as Record<string, unknown> | undefined;
+  } catch {
+    return null;
+  }
+  if (!row) return null;
+  const total = Number(row.bytes);
+  if (offset > total) fail('invalid_request', 'Output offset is beyond the stored output.');
+  const chunks = db.prepare('SELECT start,data FROM command_output_chunks WHERE id=? AND start<? AND start+length(data)>? ORDER BY start').all(row.id as string, offset + limit, offset);
+  const parts = chunks.map(chunk => Buffer.from(chunk.data as Uint8Array).subarray(Math.max(0, offset - Number(chunk.start)), offset + limit - Number(chunk.start)));
+  let data = Buffer.concat(parts);
+  let end = data.length;
+  if (offset + end < total) {
+    // Trim only an incomplete final codepoint; an invalid starting offset is rejected below.
+    let start = end - 1;
+    while (start >= 0 && (data[start] & 0xc0) === 0x80) start--;
+    if (start >= 0) {
+      const first = data[start]; const width = first < 0x80 ? 1 : first < 0xe0 ? 2 : first < 0xf0 ? 3 : 4;
+      if (start + width > end) end = start;
+    }
+  }
+  data = data.subarray(0, end);
+  let text: string;
+  try { text = new TextDecoder('utf-8', { fatal: true }).decode(data); }
+  catch { fail('invalid_request', 'Output offset must be at a UTF-8 character boundary.'); }
+  const next = offset + data.length;
+  const page = rangeText({ text, offset, next_offset: next < total ? next : null, total_bytes: total },
+    value => `read_output(${JSON.stringify({ id, offset: value })})`);
+  return page + (row.truncated ? '\n[Output exceeded 16 MiB; later bytes were not retained.]' : '')
+    + (!row.complete ? '\n[Capture did not finish; output may be incomplete.]' : '');
+}
+
+function readFromPath(path: string, thread: string, id: string, offset: number, limit: number): string | null {
+  if (!existsSync(path)) return null;
+  const db = new DatabaseSync(path, { readOnly: true, timeout: 5000 });
+  try { return readFromDb(db, thread, id, offset, limit); }
+  finally { db.close(); }
+}
+
 /** Host-owned logs share the durable store; no agent-controlled filesystem path is opened. */
 export class CommandOutputs {
   private db: DatabaseSync;
-  constructor(db: DatabaseSync) {
+  private options: CommandOutputsOptions;
+  constructor(db: DatabaseSync, options: CommandOutputsOptions = {}) {
     this.db = db;
+    this.options = options;
     db.exec(`CREATE TABLE IF NOT EXISTS command_outputs(id TEXT PRIMARY KEY, thread TEXT NOT NULL, call_id TEXT, bytes INTEGER NOT NULL DEFAULT 0, complete INTEGER NOT NULL DEFAULT 0, truncated INTEGER NOT NULL DEFAULT 0);
       CREATE INDEX IF NOT EXISTS command_outputs_thread ON command_outputs(thread);
       CREATE TABLE IF NOT EXISTS command_output_chunks(id TEXT NOT NULL, start INTEGER NOT NULL, data BLOB NOT NULL, PRIMARY KEY(id,start));`);
@@ -85,31 +141,16 @@ export class CommandOutputs {
   }
   read(thread: string, id: string, offset: number, limit: number): string {
     rangeArgs({ offset, limit });
-    const row = this.db.prepare('SELECT * FROM command_outputs WHERE thread=? AND (id=? OR call_id=?) ORDER BY rowid DESC LIMIT 1').get(thread, id, id);
-    if (!row) fail('not_found', 'Command output is unavailable in this thread or has expired.');
-    const total = Number(row.bytes);
-    if (offset > total) fail('invalid_request', 'Output offset is beyond the stored output.');
-    const chunks = this.db.prepare('SELECT start,data FROM command_output_chunks WHERE id=? AND start<? AND start+length(data)>? ORDER BY start').all(row.id!, offset + limit, offset);
-    const parts = chunks.map(chunk => Buffer.from(chunk.data as Uint8Array).subarray(Math.max(0, offset - Number(chunk.start)), offset + limit - Number(chunk.start)));
-    let data = Buffer.concat(parts);
-    let end = data.length;
-    if (offset + end < total) {
-      // Trim only an incomplete final codepoint; an invalid starting offset is rejected below.
-      let start = end - 1;
-      while (start >= 0 && (data[start] & 0xc0) === 0x80) start--;
-      if (start >= 0) {
-        const first = data[start]; const width = first < 0x80 ? 1 : first < 0xe0 ? 2 : first < 0xf0 ? 3 : 4;
-        if (start + width > end) end = start;
-      }
+    if (this.options.threadOutputsDir) {
+      const fromThread = readFromPath(threadOutputsPath(this.options.threadOutputsDir, thread), thread, id, offset, limit);
+      if (fromThread !== null) return fromThread;
     }
-    data = data.subarray(0, end);
-    let text: string;
-    try { text = new TextDecoder('utf-8', { fatal: true }).decode(data); }
-    catch { fail('invalid_request', 'Output offset must be at a UTF-8 character boundary.'); }
-    const next = offset + data.length;
-    const page = rangeText({ text, offset, next_offset: next < total ? next : null, total_bytes: total },
-      value => `read_output(${JSON.stringify({ id, offset: value })})`);
-    return page + (row.truncated ? '\n[Output exceeded 16 MiB; later bytes were not retained.]' : '')
-      + (!row.complete ? '\n[Capture did not finish; output may be incomplete.]' : '');
+    const primary = readFromDb(this.db, thread, id, offset, limit);
+    if (primary !== null) return primary;
+    if (this.options.fallbackDbPath) {
+      const fallback = readFromPath(this.options.fallbackDbPath, thread, id, offset, limit);
+      if (fallback !== null) return fallback;
+    }
+    fail('not_found', 'Command output is unavailable in this thread or has expired.');
   }
 }

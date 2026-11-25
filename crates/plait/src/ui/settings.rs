@@ -1,5 +1,5 @@
 //! The application's Settings modal: host status first, then New threads,
-//! Providers, Agents, Keyboard, Editor, Appearance, and About. Only what applies to the
+//! Providers, Linear, Agents, Keyboard, Editor, Appearance, and About. Only what applies to the
 //! whole app or host is here; a project's own settings have their own modal
 //! (settings_project.rs), and a thread's are under its message box.
 
@@ -30,6 +30,10 @@ pub(super) enum SettingsTab {
     #[default]
     NewThreads,
     Providers,
+    /// The host's Linear sign-in.
+    Linear,
+    /// Which machine's host this window works with.
+    Machines,
     Agents,
     Keyboard,
     /// What Open in Editor and Open Terminal Here run.
@@ -39,9 +43,11 @@ pub(super) enum SettingsTab {
 }
 
 impl SettingsTab {
-    pub(super) const ALL: [Self; 7] = [
+    pub(super) const ALL: [Self; 9] = [
         Self::NewThreads,
         Self::Providers,
+        Self::Linear,
+        Self::Machines,
         Self::Agents,
         Self::Keyboard,
         Self::Editor,
@@ -53,6 +59,8 @@ impl SettingsTab {
         match self {
             Self::NewThreads => "New threads",
             Self::Providers => "Providers",
+            Self::Linear => "Linear",
+            Self::Machines => "Machines",
             Self::Agents => "Agents",
             Self::Keyboard => "Keyboard",
             Self::Editor => "Editor",
@@ -77,8 +85,10 @@ pub(super) fn page(id: &'static str) -> Stateful<Div> {
 
 pub(super) fn heading(text: impl Into<SharedString>) -> Div {
     div()
-        .text_size(px(15.))
-        .font_weight(FontWeight::MEDIUM)
+        .text_size(px(TYPE_HEADER_SIZE))
+        .line_height(px(TYPE_HEADER_LINE))
+        .text_color(rgb(colors().strong))
+        .font_weight(TYPE_HEADER_WEIGHT)
         .child(text.into())
 }
 
@@ -95,8 +105,8 @@ pub(super) fn framed(column: Div) -> Div {
 
 fn note(text: impl Into<SharedString>) -> Div {
     div()
-        .text_size(px(12.))
-        .line_height(px(19.))
+        .text_size(px(TYPE_CONTROL_SIZE))
+        .line_height(px(TYPE_CONTROL_LINE))
         .text_color(rgb(colors().muted))
         .child(text.into())
 }
@@ -111,8 +121,9 @@ pub(super) fn section(title: &'static str) -> Div {
         .border_color(rgb(colors().border))
         .child(
             div()
-                .text_size(px(13.))
-                .font_weight(FontWeight::MEDIUM)
+                .text_size(px(TYPE_ROW_SIZE))
+                .line_height(px(TYPE_ROW_LINE))
+                .font_weight(TYPE_MEDIUM)
                 // Several section headings can appear in one accessibility tree.
                 .child(a11y_text(
                     (
@@ -141,14 +152,14 @@ pub(super) fn setting(
                 .gap(px(2.))
                 .child(
                     div()
-                        .text_size(px(12.))
+                        .text_size(px(TYPE_CONTROL_SIZE))
                         .text_color(rgb(colors().muted))
                         .child(label),
                 )
                 .child(
                     div()
-                        .text_size(px(11.))
-                        .line_height(px(17.))
+                        .text_size(px(TYPE_META_SIZE))
+                        .line_height(px(TYPE_META_LINE))
                         .text_color(rgb(colors().subtle))
                         .child(detail.into()),
                 ),
@@ -168,14 +179,24 @@ fn state_line(id: impl Into<ElementId>, text: impl Into<SharedString>, tint: u32
 impl Plait {
     fn host_status(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let (label, tint) = if self.host.connection.connecting {
-            ("Connecting to local host…".to_owned(), colors().muted)
+            (
+                format!("Connecting to {}…", self.machine_label()),
+                colors().muted,
+            )
         } else if self.host.connection.connected {
             (
-                format!("Local host connected · protocol {}", self.host.protocol()),
+                format!(
+                    "{} connected · protocol {}",
+                    self.machine_label(),
+                    self.host.protocol()
+                ),
                 colors().mint,
             )
         } else {
-            ("Local host disconnected".to_owned(), colors().amber)
+            (
+                format!("{} disconnected", self.machine_label()),
+                colors().amber,
+            )
         };
         column()
             .gap_2()
@@ -198,7 +219,7 @@ impl Plait {
                                     cx,
                                     |_, _, cx| {
                                         cx.open_url(
-                                            "https://github.com/heath0xFF/plait/blob/main/docs/MACOS.md",
+                                            "https://github.com/heath0xFF/plait/blob/main/docs/GUIDE.md",
                                         );
                                     },
                                 ),
@@ -214,14 +235,22 @@ impl Plait {
                             ),
                     ),
             )
-            .when_some(self.host.connection.error.clone(), |el, error| {
-                el.child(
-                    div()
-                        .text_size(px(12.))
-                        .text_color(rgb(colors().red))
-                        .child(a11y_text("settings-host-error", error)),
-                )
-            })
+            .children(self.server_setup_line(cx))
+            .when_some(
+                self.host
+                    .connection
+                    .error
+                    .clone()
+                    .filter(|_| !self.server_setup_visible()),
+                |el, error| {
+                    el.child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(rgb(colors().red))
+                            .child(a11y_text("settings-host-error", error)),
+                    )
+                },
+            )
             .when(!self.host.connection.connected, |el| {
                 el.child(note(
                     "The installed host normally starts at login. Reconnect does not restart it. Closing Plait does not stop accepted work.",
@@ -242,7 +271,7 @@ impl Plait {
         if usable == 0 {
             return Some("No model is signed in. Open Providers to sign in; its models become available as soon as the host confirms.".into());
         }
-        let providers = |models: &mut dyn Iterator<Item = &plait_core::host::Model>| {
+        let providers = |models: &mut dyn Iterator<Item = &plait_client::host::Model>| {
             models
                 .map(|model| model.provider.as_str())
                 .collect::<HashSet<_>>()
@@ -272,6 +301,7 @@ impl Plait {
                     .child(self.default_thinking_setting(cx))
                     .child(self.approval_setting(cx)),
             )
+            .child(self.naming_settings(cx))
             .child(self.catalog_settings())
     }
 
@@ -318,7 +348,7 @@ impl Plait {
             .gap_2()
             .max_w(px(320.))
             .child(div().min_w_0().truncate().child(name))
-            .child(icon("down").text_color(rgb(colors().muted)))
+            .child(icon("down").text_color(rgb(colors().faint)))
             .disabled(!can_choose)
             .when(can_choose, |el| {
                 el.on_activate(cx, |this, window, cx| {
@@ -363,7 +393,7 @@ impl Plait {
             ))
             .gap_2()
             .child(level.label())
-            .child(icon("down").text_color(rgb(colors().muted)))
+            .child(icon("down").text_color(rgb(colors().faint)))
             .on_activate(cx, |this, window, cx| {
                 this.open_default_thinking(window, cx)
             });
@@ -372,7 +402,7 @@ impl Plait {
 
     fn open_default_thinking(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let current = self.preferences.value.default_thinking();
-        let items = plait_core::host::ThinkingLevel::ALL
+        let items = plait_client::host::ThinkingLevel::ALL
             .iter()
             .map(|level| {
                 Item::new(
@@ -398,6 +428,7 @@ impl Plait {
                 window,
                 cx,
             )
+            .picker()
         });
         self.present(palette, None, window, cx);
     }
@@ -439,6 +470,7 @@ impl Plait {
                 .aria_selected(selected)
                 .on_activate(cx, move |this, _, cx| {
                     this.cancel_recording(cx);
+                    this.cancel_harness_path();
                     if tab != SettingsTab::Providers {
                         this.close_provider_form(cx);
                     }
@@ -455,6 +487,8 @@ impl Plait {
         let body = match self.settings_tab {
             SettingsTab::NewThreads => self.new_thread_settings(cx).into_any_element(),
             SettingsTab::Providers => self.provider_settings(cx).into_any_element(),
+            SettingsTab::Linear => self.linear_settings(cx).into_any_element(),
+            SettingsTab::Machines => self.machine_settings(cx).into_any_element(),
             SettingsTab::Agents => self.harness_settings(cx).into_any_element(),
             SettingsTab::Keyboard => self.keyboard_settings(cx).into_any_element(),
             SettingsTab::Editor => self.editor_settings(cx).into_any_element(),
@@ -517,6 +551,7 @@ impl Plait {
             );
         }
         section("Appearance")
+            .child(self.thread_tabs_setting(cx))
             .child(self.theme_settings(cx))
             .child(setting(
                 "Changed files above the message box",
@@ -569,7 +604,7 @@ impl Plait {
             "This host asks before every edit and command. Update the host to use Automatic."
         } else {
             // Settings describes no one project, the open one included.
-            plait_core::host::policy::approval_detail(ask)
+            plait_client::host::policy::approval_detail(ask)
         };
         let harness_modes = self.harness_rows().iter().any(|row| !row.modes.is_empty());
         column()

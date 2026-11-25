@@ -9,14 +9,14 @@ pub(super) struct ProjectSettings {
     pub name: String,
     policy: PolicyState,
     agent: AgentState,
-    identity: Option<plait_core::ownership::CheckoutKey>,
+    identity: Option<plait_client::ownership::CheckoutKey>,
 }
 
 impl Plait {
     pub(super) fn settings_checkout_key(
         &self,
         checkout: &Path,
-    ) -> Option<&plait_core::ownership::CheckoutKey> {
+    ) -> Option<&plait_client::ownership::CheckoutKey> {
         if checkout == self.host.creation.checkout {
             return self.state.checkout_key();
         }
@@ -26,34 +26,45 @@ impl Plait {
             .and_then(|project| project.identity.as_ref())
     }
 
-    /// Blocking identity work uses the same core checkout key as repository jobs.
+    /// Resolve and verify the checkout on the host that owns it.
     pub(super) fn identify_settings_checkout(
+        client: &plait_client::host::Client,
         checkout: &Path,
-        expected: Option<plait_core::ownership::CheckoutKey>,
-    ) -> Result<plait_core::ownership::CheckoutKey, plait_core::host::Error> {
-        use plait_core::ownership::{CheckoutKey, HostKey};
-        let identity = match expected {
-            Some(identity) => identity,
-            None => CheckoutKey::resolve(HostKey::local(), checkout)
-                .map_err(plait_core::host::Error::Protocol)?,
-        };
-        identity
-            .verify()
-            .map_err(plait_core::host::Error::Protocol)?;
-        Ok(identity)
+        supported: bool,
+        _local: bool,
+        expected: Option<plait_client::ownership::CheckoutKey>,
+    ) -> Result<plait_client::ownership::CheckoutKey, plait_client::host::Error> {
+        if !supported {
+            return Err(plait_client::host::Error::Protocol(
+                "Update the host to verify the checkout.".into(),
+            ));
+        }
+        let id = expected
+            .as_ref()
+            .map(|key| plait_protocol::lease::DirIdentity {
+                dev: key.device,
+                ino: key.inode,
+            });
+        let read = plait_client::host::git::identity(client, checkout, id)?;
+        Ok(plait_client::ownership::CheckoutKey {
+            host: expected.and_then(|key| key.host),
+            root: read.result.root,
+            device: read.identity.dev,
+            inode: read.identity.ino,
+        })
     }
 
     pub(super) fn remember_settings_checkout_key(
         &mut self,
         key: &(u64, PathBuf),
-        identity: plait_core::ownership::CheckoutKey,
-    ) -> Result<(), plait_core::host::Error> {
+        identity: plait_client::ownership::CheckoutKey,
+    ) -> Result<(), plait_client::host::Error> {
         if self.host.connection.epoch != key.0
             || self
                 .settings_checkout_key(&key.1)
                 .is_some_and(|expected| expected != &identity)
         {
-            return Err(plait_core::host::Error::Protocol(
+            return Err(plait_client::host::Error::Protocol(
                 "Checkout identity changed.".into(),
             ));
         }
@@ -94,6 +105,7 @@ impl Plait {
                     .child(self.policy_settings(cx))
                     .child(self.agent_settings(cx))
                     .child(self.isolation_settings(cx))
+                    .child(self.project_linear_settings(cx))
                     .child(
                         super::theme::button("project-settings-worktrees", "Worktrees")
                             .on_activate(cx, |this, window, cx| {

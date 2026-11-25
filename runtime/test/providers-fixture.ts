@@ -33,5 +33,5 @@ fake.flows.subscription.listen = async interaction => {
 const registry = await fake.source.load();
 const runtime = new Runtime(store, registry.models, registry.authenticated);
 runtime.providers = new Providers(runtime, fake.source, registry);
-try { await serve(runtime); }
+try { await runtime.recover(); await serve(runtime); }
 finally { await runtime.close(); writeFileSync(join(store, 'sidecar-closed'), String(process.pid)); }

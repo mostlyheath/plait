@@ -3678,24 +3678,36 @@ checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 name = "plait"
 version = "0.1.0"
 dependencies = [
+ "async-channel",
+ "base64",
+ "block2 0.6.2",
  "gpui",
  "gpui_apple",
  "gpui_platform",
  "gpui_wgpu",
  "image",
- "plait-core",
+ "libc",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
+ "plait-client",
+ "plait-engine",
+ "plait-protocol",
+ "plait-release",
  "serde",
  "serde_json",
  "unicode-segmentation",
 ]
 
 [[package]]
-name = "plait-core"
+name = "plait-client"
 version = "0.1.0"
 dependencies = [
  "base64",
  "ed25519-dalek",
  "libc",
+ "plait-protocol",
+ "plait-release",
+ "plait-transport",
  "pulldown-cmark",
  "serde",
  "serde_json",
@@ -3704,13 +3716,76 @@ dependencies = [
 ]
 
 [[package]]
+name = "plait-engine"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "libc",
+ "plait-client",
+ "plait-protocol",
+ "plait-release",
+ "plait-transport",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "plait-host"
 version = "0.1.0"
 dependencies = [
  "libc",
- "plait-core",
+ "plait-engine",
+ "plait-protocol",
+ "plait-release",
+ "plait-transport",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "plait-interop-tests"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "plait-client",
+ "plait-engine",
+ "plait-protocol",
+ "plait-release",
+ "plait-transport",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "plait-protocol"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "ed25519-dalek",
+ "serde",
+ "serde_json",
+ "sha2",
+ "unicode-properties",
+]
+
+[[package]]
+name = "plait-release"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "plait-protocol",
+ "plait-transport",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "plait-transport"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "plait-protocol",
 ]
 
 [[package]]

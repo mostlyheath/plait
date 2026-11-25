@@ -3,8 +3,8 @@ use super::{
     composer::{Composer, ComposerEvent},
 };
 use gpui::{prelude::*, *};
-use plait_core::{
-    host::{self, Client, Request, Snapshot},
+use plait_client::{
+    host::{self, Request, Snapshot},
     host_state::request_id,
     transcript::{self, Update},
 };
@@ -19,6 +19,45 @@ pub(super) struct Created {
     /// The selection when it was sent; a direct creation opens only if it is unchanged.
     pub(super) selection_epoch: u64,
     pub(super) checkout: Option<std::path::PathBuf>,
+}
+
+/// Asks the host whether the expected checkout is still the same folder. The
+/// host accepts a volume whose device number changed after a restart, and the
+/// key comes back refreshed so later requests carry the current identity.
+pub(super) fn verified_checkout(
+    client: &host::Client,
+    expected: Option<&plait_client::ownership::CheckoutKey>,
+    supported: bool,
+) -> Result<Option<plait_client::ownership::CheckoutKey>, host::Error> {
+    let Some(expected) = expected else {
+        return Ok(None);
+    };
+    if !supported {
+        return Err(host::Error::Protocol(
+            "Update the host to verify the checkout.".into(),
+        ));
+    }
+    let reply = host::git::identity(
+        client,
+        &expected.root,
+        Some(plait_protocol::lease::DirIdentity {
+            dev: expected.device,
+            ino: expected.inode,
+        }),
+    )?;
+    Ok(
+        (reply.identity.dev != expected.device).then(|| plait_client::ownership::CheckoutKey {
+            device: reply.identity.dev,
+            ..expected.clone()
+        }),
+    )
+}
+
+pub(super) fn is_checkout_identity_changed(error: &host::Error) -> bool {
+    matches!(error, host::Error::Rejected(reason)
+        if reason.code == "checkout_identity_changed"
+            || (reason.code == "invalid_request"
+                && reason.message == "This folder changed since it was opened."))
 }
 
 pub(super) struct WatchLease {
@@ -46,19 +85,35 @@ impl Plait {
         complete: impl FnOnce(&mut Self, Result<T, host::Error>, &mut Window, &mut Context<Self>)
         + 'static,
     ) {
+        let supported = self.host.connection.has_checkout_identity;
+        if let Request::ListThreads { checkout, identity }
+        | Request::CreateThread {
+            checkout, identity, ..
+        } = &mut request
+        {
+            *identity = self.host.connection.checkout_identity(
+                self.state
+                    .checkout_key()
+                    .filter(|key| key.root == *checkout),
+            );
+        }
         let epoch = self.host.connection.epoch;
         let identity = self.host.identity.clone();
         let acknowledgement = matches!(
             request,
             Request::Submit { .. } | Request::SubmitCheckout { .. } | Request::CreateThread { .. }
         );
-        let expected = if let Request::Submit { thread_id, .. }
-        | Request::SubmitCheckout { thread_id, .. } = &request
-        {
-            self.host.expected_checkout(thread_id).cloned()
-        } else {
-            None
+        let expected = match &request {
+            Request::Submit { thread_id, .. } | Request::SubmitCheckout { thread_id, .. } => {
+                self.host.expected_checkout(thread_id).cloned()
+            }
+            _ => None,
         };
+        if let Request::Submit { identity, .. } | Request::SubmitCheckout { identity, .. } =
+            &mut request
+        {
+            *identity = self.host.connection.checkout_identity(expected.as_ref());
+        }
         let persist = matches!(
             request,
             Request::Submit { .. } | Request::SubmitCheckout { .. }
@@ -88,48 +143,73 @@ impl Plait {
         let image_pins = uploads
             .as_ref()
             .filter(|(_, images)| !images.is_empty())
-            .map(|(_, images)| plait_core::images::pin(images))
+            .map(|(_, images)| plait_client::images::pin(images))
             .transpose();
         let journal = self.session.journal.clone();
+        let client = self.host_client();
+        let is_status =
+            self.host.connection.connecting && matches!(request, Request::Status { .. });
         let task = cx.background_executor().spawn(async move {
-            let image_pins = image_pins.map_err(host::Error::Protocol)?;
-            let result = (|| {
-                if persist {
-                    let journal = journal.ok_or_else(|| {
-                        std::io::Error::other(
-                            "Desktop recovery is unavailable. Submission was not sent.",
-                        )
-                    })?;
-                    journal.flush().map_err(std::io::Error::other)?;
+            let capability = if is_status {
+                Some(
+                    host::release::host_info(&client)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|info| {
+                            info.capabilities
+                                .iter()
+                                .any(|c| c == "checkout_identity_v1")
+                        }),
+                )
+            } else {
+                None
+            };
+            let image_pins = image_pins.map_err(host::Error::Protocol);
+            let result = image_pins.and_then(|image_pins| {
+                let result = (|| {
+                    if persist {
+                        let journal = journal.ok_or_else(|| {
+                            std::io::Error::other(
+                                "Desktop recovery is unavailable. Submission was not sent.",
+                            )
+                        })?;
+                        journal.flush().map_err(std::io::Error::other)?;
+                    }
+                    if !supported
+                        && (expected.is_some()
+                            || matches!(
+                                request,
+                                Request::ListThreads { .. } | Request::CreateThread { .. }
+                            ))
+                    {
+                        return Err(host::Error::Protocol(
+                            "Update the host to verify the checkout.".into(),
+                        ));
+                    }
+                    if let Some((thread, images)) = uploads {
+                        client.upload_images(&thread, &images)?;
+                    }
+                    client.request(&request)
+                })();
+                let collect = image_pins.is_some();
+                drop(image_pins);
+                if collect && let Err(error) = plait_client::images::collect() {
+                    eprintln!("Plait draft images: {error}");
                 }
-                if let Request::ListThreads { checkout } | Request::CreateThread { checkout, .. } =
-                    &mut request
-                {
-                    *checkout = std::fs::canonicalize(&*checkout)?;
-                }
-                if let Some(expected) = &expected {
-                    expected.verify().map_err(host::Error::Protocol)?;
-                }
-                let client = Client::from_environment()?;
-                if let Some((thread, images)) = uploads {
-                    client.upload_images(&thread, &images)?;
-                }
-                client.request(&request)
-            })();
-            let collect = image_pins.is_some();
-            drop(image_pins);
-            if collect && let Err(error) = plait_core::images::collect() {
-                eprintln!("Plait draft images: {error}");
-            }
-            result
+                result
+            });
+            (result, capability)
         });
         cx.spawn_in(window, async move |this, cx| {
-            let result = task.await;
+            let (result, capability) = task.await;
             let _ = this.update_in(cx, |this, window, cx| {
                 if this.host.identity != identity
                     || (!acknowledgement && this.host.connection.epoch != epoch)
                 {
                     return;
+                }
+                if let Some(capability) = capability {
+                    this.host.connection.has_checkout_identity = capability;
                 }
                 complete(this, result, window, cx);
                 this.sync_composer(cx);
@@ -143,6 +223,11 @@ impl Plait {
         if self.host.connection.connecting {
             return;
         }
+        // A remote machine reconnects over a new SSH link; this runs again
+        // once that link is made.
+        if self.relink_before_reconnect(window, cx) {
+            return;
+        }
         self.workspace.reset_for_reconnect();
         self.navigation.watch = None;
         self.navigation.generation += 1;
@@ -152,6 +237,8 @@ impl Plait {
                 Some("Thread change not confirmed. Refresh to check before trying again.".into());
         }
         self.tabs.identity.pending = None;
+        // A reconnected host may hold other threads; old alerts no longer apply.
+        self.clear_toasts();
         self.tabs.model.disconnected(&self.tabs.host);
         self.refresh_tab_rows();
         for draft in std::iter::once(&mut self.draft).chain(self.tabs.lifecycle.drafts.values_mut())
@@ -193,6 +280,10 @@ impl Plait {
                 Err(error) => {
                     this.host.connection.connecting = false;
                     this.host.connection.error = Some(error.to_string());
+                    // A fresh install has no server yet; set one up once.
+                    if matches!(error, host::Error::Transport(_)) {
+                        this.offer_server_setup(window, cx);
+                    }
                 }
             },
         );
@@ -209,12 +300,15 @@ impl Plait {
         }
         let checkout = self.host.creation.checkout.clone();
         self.host_request::<host::ThreadsReply>(
-            Request::ListThreads { checkout },
+            Request::ListThreads {
+                checkout,
+                identity: None,
+            },
             window,
             cx,
             |this, result, window, cx| match result {
                 Ok(reply) => {
-                    this.host.connection.threads = reply.threads;
+                    this.host.connection.set_threads(reply.threads);
                     this.rebuild_projects(cx);
                     this.restore_thread_selection(window, cx);
                 }
@@ -241,10 +335,15 @@ impl Plait {
             .and_then(|tab| self.tabs.model.get(tab))
             .is_some_and(|tab| {
                 matches!(tab.session().target(),
-                plait_core::tabs::TabTarget::Existing { id: target, .. } if target == &id)
+                plait_client::tabs::TabTarget::Existing { id: target, .. } if target == &id)
             });
         if bound {
+            // The tab in front already shows this thread, so its checkout change
+            // presents that tab. Otherwise a worktree thread would open a stray
+            // draft and stay bound to the project's main checkout (#153).
+            let presenting = std::mem::replace(&mut self.tabs.lifecycle.presenting, true);
             self.select_host_thread_content(id.clone(), window, cx);
+            self.tabs.lifecycle.presenting = presenting;
         } else {
             self.select_host_thread(id.clone(), window, cx);
         }
@@ -269,15 +368,17 @@ impl Plait {
         let Some(checkout) = self
             .host
             .connection
-            .threads
+            .threads()
             .iter()
             .find(|t| t.id == id)
             .map(|t| t.checkout.clone())
         else {
             return;
         };
+        // Selecting the thread already open changes no tab, so nothing else closes it.
+        self.close_overview(window, cx);
         self.open_tab_target(
-            plait_core::tabs::TabTarget::Existing {
+            plait_client::tabs::TabTarget::Existing {
                 id,
                 checkout: self.tab_checkout(checkout),
             },
@@ -295,7 +396,7 @@ impl Plait {
         let Some(checkout) = self
             .host
             .connection
-            .threads
+            .threads()
             .iter()
             .find(|thread| thread.id == id)
             .map(|thread| thread.checkout.clone())
@@ -350,7 +451,20 @@ impl Plait {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        cx.observe(&composer, |this, _, cx| this.capture_session(cx))
+        let mut last = composer.read(cx).box_state();
+        cx.observe(&composer, move |this, composer, cx| {
+            this.capture_session(cx);
+            let next = composer.read(cx).box_state();
+            if next != last {
+                last = next;
+                cx.notify();
+            }
+        })
+        .detach();
+        let focus = composer.read(cx).focus_handle(cx);
+        cx.on_focus_in(&focus, window, |_, _, cx| cx.notify())
+            .detach();
+        cx.on_focus_out(&focus, window, |_, _, _, cx| cx.notify())
             .detach();
         let thread_id = id.clone();
         cx.subscribe_in(&composer, window, move |this, _, event, window, cx| {
@@ -382,8 +496,9 @@ impl Plait {
         let watch_id = id.clone();
         let protocol = self.host.protocol();
         let executor = cx.background_executor().clone();
+        let client = self.host_client();
         let task = cx.background_executor().spawn(async move {
-            let snapshots = Client::from_environment()?.subscribe(watch_id, protocol)?;
+            let snapshots = client.subscribe(watch_id, protocol)?;
             let lease = WatchLease {
                 cancel: Some(snapshots.cancel_handle()),
                 executor,
@@ -443,6 +558,9 @@ impl Plait {
                                     this.sync_composer(cx);
                                     cx.notify();
                                     return false;
+                                }
+                                if let Some(live) = this.host.thread.snapshot.as_deref() {
+                                    this.tabs.model.observe_active_snapshot(live);
                                 }
                                 let review_changed = previous.as_ref().is_none_or(|old| {
                                     this.host.thread.snapshot.as_ref().is_some_and(|new| {
@@ -516,6 +634,104 @@ impl Plait {
         cx.notify();
     }
 
+    fn build_live_layout(&self, snapshot: &Snapshot) -> plait_client::folding::Layout {
+        let live_end = !self.workspace.history.cache.detached;
+        let find_match_message = self
+            .workspace
+            .conversation_find
+            .open
+            .then(|| self.current_hit().map(|hit| hit.message))
+            .flatten();
+        let unknown = Default::default();
+        let outcomes = self
+            .tabs
+            .model
+            .active()
+            .and_then(|id| self.tabs.model.get(id))
+            .map_or(&unknown, |tab| tab.session().outcomes());
+        plait_client::folding::build_layout(
+            snapshot,
+            live_end,
+            &self.workspace.turn_records.data,
+            &self.workspace.opened_turns,
+            find_match_message.as_deref(),
+            self.preferences.value.fold_earlier_turns(),
+            outcomes,
+        )
+    }
+
+    /// Re-apply folding rules to the snapshot already on screen without
+    /// rebuilding unrelated row measurements.
+    pub(super) fn reconcile_live_folding(&mut self) {
+        let Some(snapshot) = self.workspace.history.display.clone() else {
+            return;
+        };
+        let next_layout = self.build_live_layout(&snapshot);
+        if next_layout.rows == self.workspace.live_layout.rows {
+            self.workspace.live_layout = next_layout;
+            return;
+        }
+        match plait_client::folding::diff_layout(
+            Some((
+                snapshot.as_ref(),
+                self.workspace.live_layout.rows.as_slice(),
+            )),
+            Some((snapshot.as_ref(), next_layout.rows.as_slice())),
+        ) {
+            Update::Reset(count) => self.workspace.live_scroll.reset(count),
+            Update::Patch { splices, remeasure } => {
+                for splice in splices {
+                    self.workspace
+                        .live_scroll
+                        .splice(splice.range, splice.count);
+                }
+                for range in remeasure {
+                    self.workspace.live_scroll.remeasure_items(range);
+                }
+            }
+        }
+        self.workspace.live_layout = next_layout;
+        self.workspace.live_count = self.workspace.live_layout.len();
+        debug_assert_eq!(
+            self.workspace.live_scroll.item_count(),
+            self.workspace.live_count
+        );
+    }
+
+    /// Open a folded earlier turn for the lifetime of this tab while keeping
+    /// the activated row where it sits on screen.
+    pub(super) fn open_folded_turn(&mut self, turn_id: &str, cx: &mut Context<Self>) {
+        self.workspace.opened_turns.insert(turn_id.to_owned());
+        if let Some(tab_id) = self.tabs.model.active() {
+            self.tabs.model.open_turn(tab_id, turn_id.to_owned());
+        }
+        let folded_ix = self.workspace.live_layout.folded_row_index(turn_id);
+        // A bottom-aligned list pinned to its end would push an opened earlier
+        // turn upward; pin the current viewport top first so the row stays put.
+        if self.workspace.live_scroll.logical_scroll_top().item_ix >= self.workspace.live_count {
+            let scroll = &self.workspace.live_scroll;
+            // Resolve the end sentinel against the measured height, including
+            // the blank space above a short, bottom-aligned transcript.
+            scroll.scroll_to_end();
+            let height = -scroll.scroll_px_offset_for_scrollbar().y;
+            let top = height + px(super::live_conversation::LIST_TOP_PADDING)
+                - scroll.viewport_bounds().size.height;
+            scroll.scroll_to(ListOffset {
+                item_ix: 0,
+                offset_in_item: top.min(px(0.)),
+            });
+            if top > px(0.) {
+                scroll.scroll_by(top);
+            }
+        }
+        let anchor = self.workspace.live_scroll.logical_scroll_top();
+        self.reconcile_live_folding();
+        if folded_ix == Some(anchor.item_ix) {
+            self.workspace.live_scroll.scroll_to(anchor);
+        }
+        cx.notify();
+    }
+
     pub(super) fn refresh_live_list(&mut self, previous: Option<&Snapshot>) {
         self.workspace.history.display = self.host.thread.snapshot.clone();
         self.reconcile_live_list(previous);
@@ -526,8 +742,14 @@ impl Plait {
     /// measured heights.
     pub(super) fn reconcile_live_list(&mut self, previous: Option<&Snapshot>) -> bool {
         let next = self.workspace.history.display.as_deref();
+        let next_layout = next
+            .map(|snapshot| self.build_live_layout(snapshot))
+            .unwrap_or_default();
         let mut spliced = false;
-        match transcript::changes(previous, next) {
+        match plait_client::folding::diff_layout(
+            previous.map(|snap| (snap, self.workspace.live_layout.rows.as_slice())),
+            next.map(|snap| (snap, next_layout.rows.as_slice())),
+        ) {
             Update::Reset(count) => {
                 self.workspace.live_scroll.reset(count);
                 self.workspace.expanded_live_tools.clear();
@@ -553,8 +775,8 @@ impl Plait {
                 });
             }
         }
-        // Cached once per snapshot; rendering resolves visible rows by position.
-        self.workspace.live_layout = next.map(transcript::layout).unwrap_or_default();
+        // Cached once per snapshot or fold change; rendering resolves visible rows by position.
+        self.workspace.live_layout = next_layout;
         self.workspace.live_count = self.workspace.live_layout.len();
         debug_assert_eq!(
             self.workspace.live_scroll.item_count(),
@@ -570,24 +792,30 @@ impl Plait {
     pub(super) fn remeasure_records(
         &mut self,
         previous: Option<&Snapshot>,
-        before: &plait_core::markdown::Transcript,
+        before: &plait_client::markdown::Transcript,
     ) {
         let (Some(previous), Some(next)) = (previous, self.workspace.history.display.as_deref())
         else {
             return;
         };
-        let moved = plait_core::history::moved_records(
+        let moved = plait_client::history::moved_records(
             (previous, &before.turn_summaries),
             (next, &self.workspace.formatted.turn_summaries),
         );
         for message in moved {
             let slot = transcript::Slot::Message(message);
-            if let Some(row) = self
-                .workspace
-                .live_layout
-                .iter()
-                .position(|shown| *shown == slot)
-            {
+            if let Some(row) = self.workspace.live_layout.rows.iter().position(|shown| {
+                matches!(
+                    shown,
+                    plait_client::folding::DisplayRow::Slot(shown) if *shown == slot
+                ) || matches!(
+                    shown,
+                    plait_client::folding::DisplayRow::FoldedTurn {
+                        closing_slot: Some(shown),
+                        ..
+                    } if *shown == slot
+                )
+            }) {
                 self.workspace.live_scroll.remeasure_items(row..row + 1);
             }
         }
@@ -666,7 +894,7 @@ impl Plait {
         cx: &mut Context<Self>,
     ) {
         let Created {
-            draft_id: _,
+            draft_id,
             request_id,
             choice,
             harness,
@@ -686,12 +914,13 @@ impl Plait {
             {
                 self.host.creation.pending_create = None;
                 let id = reply.thread.id.clone();
-                if !self.host.connection.threads.iter().any(|thread| thread.id == id) {
+                if !self.host.connection.threads().iter().any(|thread| thread.id == id) {
                     self.host
-                        .connection.threads
+                        .connection.threads_mut()
                         .insert(0, host::ThreadSummary::from(&reply.thread));
                     self.rebuild_projects(cx);
                 }
+                self.link_created_thread(draft_id.as_deref(), &id, cx);
                 if self.new_thread_open && self.host.thread.watch_epoch == selection_epoch {
                     self.open_created_thread(id, window, cx);
                 }
@@ -704,10 +933,15 @@ impl Plait {
             Err(error) => {
                 if matches!(error, host::Error::Rejected(_)) {
                     self.host.creation.pending_create = None;
+                    let message = if is_checkout_identity_changed(&error) {
+                        let path = checkout.clone().unwrap_or_else(|| self.host.creation.checkout.clone());
+                        self.tabs.identity.recovery = Some((path.clone(), false));
+                        Self::identity_message(&path)
+                    } else { error.to_string() };
                     if drafted {
-                        self.draft_rejected(error.to_string());
+                        self.draft_rejected(message);
                     } else {
-                        self.host.connection.error = Some(error.to_string());
+                        self.host.connection.error = Some(message);
                     }
                 } else {
                     self.host.connection.error = Some(format!(
@@ -838,7 +1072,14 @@ impl Plait {
                         if matches!(error, host::Error::Rejected(_)) {
                             if matches!(&error, host::Error::Rejected(reason) if reason.code == "busy") { this.admission.refused_busy = Some(id.clone()); }
                             this.host.submissions.finish(&id, &pending.request_id);
-                            this.set_thread_notice(id.clone(), error.to_string(), true);
+                            let message = if is_checkout_identity_changed(&error) {
+                                let path = this.host.connection.threads().iter().find(|thread| thread.id == id)
+                                    .map(|thread| thread.checkout.clone())
+                                    .unwrap_or_else(|| this.host.creation.checkout.clone());
+                                this.tabs.identity.recovery = Some((path.clone(), false));
+                                Self::identity_message(&path)
+                            } else { error.to_string() };
+                            this.set_thread_notice(id.clone(), message, true);
                             this.refresh_cleanup(cx);
                         } else {
                             this.host
@@ -1078,5 +1319,37 @@ impl Plait {
             );
         });
         self.sync_prompt_history(cx);
+    }
+}
+
+#[cfg(test)]
+mod identity_error_tests {
+    use super::is_checkout_identity_changed;
+    use plait_client::host;
+
+    #[test]
+    fn classifies_only_identity_refusals() {
+        let rejected = |code: &str, message: &str| {
+            host::Error::Rejected(host::HostError {
+                retry_after_seconds: None,
+                code: code.into(),
+                message: message.into(),
+            })
+        };
+        assert!(is_checkout_identity_changed(&rejected(
+            "checkout_identity_changed",
+            "Checkout identity changed."
+        )));
+        assert!(is_checkout_identity_changed(&rejected(
+            "invalid_request",
+            "This folder changed since it was opened."
+        )));
+        assert!(!is_checkout_identity_changed(&rejected(
+            "invalid_request",
+            "Another error."
+        )));
+        assert!(!is_checkout_identity_changed(&host::Error::Protocol(
+            "This folder changed since it was opened.".into()
+        )));
     }
 }

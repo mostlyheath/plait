@@ -5,6 +5,7 @@
 # render, layout, prepaint, and paint. No GPU submission, no native window.
 # Scenes hold generated data; no host is contacted and no agent runs.
 # PLAIT_BENCH_FRAMES sets the measured frames per scenario (default 30).
+# PLAIT_BENCH_COMPOSER_ONLY=1 selects the four 1380x860 composer scenarios.
 # Pass --debug for a quick unoptimized run; the default is the release profile.
 set -euo pipefail
 

@@ -8,13 +8,30 @@
   `https://api.linear.app/graphql`, additive host operations for auth, teams,
   project binding, bounded paged issue reads and SQLite caching with offline
   fallback, local thread-to-issue links, and two durably recorded person-initiated
-  writes (post comment and change workflow state). Nothing is visible in the
-  desktop app yet.
-- **Planned next.** A persistent project-level issue view adds search, ticket
-  details, references in existing threads, and starting a thread from an issue.
-  Settings holds the API key; a source-issue label links back to Linear.
-  The view does not depend on issue-triggered runs. Those remain separate,
-  with permissions and execution rules not yet agreed.
+  writes (post comment and change workflow state).
+- **Rust client for the read and link operations (`plait-client::host::linear`).**
+  Typed requests and validated replies for sign-in status, the API key, teams,
+  project binding, issue lists and details, exact resolution, and thread links,
+  with the key redacted from debug output and typed rejections (offline, rate
+  limited with its wait, conflict, not found, rejected key, signed out, older
+  host). `linear_update_issue_state` is modelled for the desktop's status
+  control; `linear_post_comment` and `linear_get_write` are not modelled yet.
+- **Desktop sign-in and project team (Settings → Linear, Project settings →
+  Linear).** Save, replace, and sign out of the host's Linear key, and link a
+  project to one Linear team, with the state models in
+  `plait-client::linear_settings`.
+- **Issues tab.** A persistent project tab lists, filters, and searches the
+  linked team's issues, resolves a pasted identifier or URL exactly, and
+  shows an issue's description and comments as formatted Markdown, with Open
+  in Linear. Links stay inert and show their destination; images are not
+  loaded. A Status menu moves the issue to another of its team's workflow
+  states on a person's choice, with the outcome shown inline. State lives in
+  `plait-client::linear_issues`. Start thread fills a new draft and links the
+  thread once the host creates it; Add to thread appends the reference to an
+  existing thread's draft; a linked thread shows its source issue. Links are
+  read once per connection with `linear_list_thread_links` (first 500).
+- **Planned:** issue-triggered runs remain separate, with permissions and
+  execution rules not yet agreed.
 - **Unverified against Linear.** Nothing in this stage has been tried against
   Linear's live GraphQL API or MCP server. Every automated test runs against a
   local loopback fake server. An opt-in manual probe (`scripts/probe-linear.mjs`)
@@ -61,7 +78,7 @@ refuses to combine a historical link with another workspace's current data.
 Rate-limit replies include typed wait seconds. Teams and states expose nullable
 completeness evidence, but remain capped at 50 each without a continuation API;
 comments still have no declared order or total. These are additive host
-contracts: there is still no desktop UI or automatic Linear activity.
+contracts; automatic Linear activity remains unbuilt.
 
 ## Using Linear's MCP server from an agent
 

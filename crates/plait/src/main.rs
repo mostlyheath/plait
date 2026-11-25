@@ -1,4 +1,8 @@
+mod handoff;
+#[cfg(target_os = "macos")]
+mod reduce_motion;
 mod ui;
+mod update;
 
 use gpui::{prelude::*, *};
 use std::{path::PathBuf, time::Instant};
@@ -33,6 +37,9 @@ fn main() {
     gpui_platform::application()
         .with_assets(ui::theme::Assets)
         .run(move |cx| {
+            ui::theme::load_bundled_fonts(cx.text_system());
+            #[cfg(target_os = "macos")]
+            reduce_motion::observe(cx);
             ui::menus(cx);
             cx.on_window_closed(|cx, _| {
                 if cx.windows().is_empty() {

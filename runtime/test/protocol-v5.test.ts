@@ -24,7 +24,7 @@ test('version 5 validates its operations and strictly rejects malformed fields',
     { op: 'undo_turn', thread_id: 't', record_id: 'r', request_id: 'u', leave_changed: 'true' },
     { op: 'undo_turn', thread_id: 't', record_id: 'r' },
   ]) assert.throws(() => validate({ protocol_version: 5, ...input }));
-  for (const protocol_version of [1, 2, 3, 4, 7]) {
+  for (const protocol_version of [1, 2, 3, 4, 8]) {
     assert.throws(() => validate({ protocol_version, op: 'turn_records', thread_id: 't' }));
     assert.throws(() => validate({ protocol_version, op: 'undo_turn', thread_id: 't', record_id: 'r', request_id: 'u' }));
   }
@@ -55,6 +55,8 @@ for (const [name, setup] of [['Codex', codex], ['Claude Code', claude]] as const
     const page = (await call({ op: 'turn_records' })).result;
     assert.equal(page.records.length, 1);
     const record = page.records[0];
+    assert.equal('outcome' in record, false);
+    assert.deepEqual((await h.call({ op: 'turn_records', thread_id: thread.id }, 6)).result, page);
     assert.equal(record.state, 'ready'); assert.equal(record.kind, 'turn');
     assert.deepEqual(record.request_ids, ['r1']); assert.equal(record.after_restart, false);
     assert.equal(record.paths.length, 1);
@@ -75,6 +77,7 @@ for (const [name, setup] of [['Codex', codex], ['Claude Code', claude]] as const
     assert.equal(redo.result?.state, 'undone', JSON.stringify(redo));
     assert.deepEqual(await readFile(path), bytes);
     const latest = (await call({ op: 'turn_records' })).result.records;
+    assert.equal('outcome' in (await h.call({ op: 'turn_records', thread_id: thread.id }, 7)).result.records[0], false);
     assert.equal(latest[0].kind, 'undo'); assert.equal(latest[0].undoes, result.result.record_id);
   });
 }
@@ -147,9 +150,9 @@ test('record pages cover paths, exclusions and steering IDs inside the frame bou
   let before: string | undefined; const paths: string[] = [], uncovered: unknown[] = [], ids: string[] = [];
   let pages = 0;
   do {
-    const reply = await h.call({ op: 'turn_records', thread_id: thread.id, ...(before ? { before } : {}) }, 5);
+    const reply = await h.call({ op: 'turn_records', thread_id: thread.id, ...(before ? { before } : {}) }, 7);
     assert.equal(reply.ok, true, JSON.stringify(reply)); assert.ok(Buffer.byteLength(JSON.stringify(reply)) < 1048576);
-    const page = reply.result.records[0]; assert.ok(page.paths.length <= 500);
+    const page = reply.result.records[0]; assert.ok(page.paths.length <= 500); assert.equal(page.outcome, 'finished');
     assert.equal(page.paths_offset, paths.length); assert.equal(page.not_covered_offset, uncovered.length); assert.equal(page.request_ids_offset, ids.length);
     paths.push(...page.paths.map((p: any) => p.path)); uncovered.push(...page.not_covered); ids.push(...page.request_ids);
     before = reply.result.before ?? undefined; assert.ok(++pages < 100);
@@ -236,7 +239,7 @@ test('interrupted undo recovers only completed writes, warns after restart, and 
   await writeFile(join(h.root, 'unrelated-down'), 'person while down');
   const { Runtime } = await import('../src/runtime.ts');
   const { models } = await import('./support/record-runtime.ts');
-  const recovered = new Runtime(h.store, models(), new Set(['faux'])); t.after(() => recovered.close());
+  const recovered = new Runtime(h.store, models(), new Set(['faux'])); await recovered.recover(); t.after(() => recovered.close());
   await until(async () => recovered.store.db.prepare('SELECT * FROM records WHERE id=?').get(undoId), row => row?.state === 'ready');
   const page = await recovered.handle({ op: 'turn_records', protocol_version: 5, thread_id: thread.id }) as any;
   assert.equal(page.records[0].after_restart, true);
@@ -282,7 +285,7 @@ test('a zero-effect failed undo keeps the original action and survives restart w
   await h.close();
   const { Runtime } = await import('../src/runtime.ts');
   const { models } = await import('./support/record-runtime.ts');
-  const recovered = new Runtime(h.store, models(), new Set(['faux'])); t.after(() => recovered.close());
+  const recovered = new Runtime(h.store, models(), new Set(['faux'])); await recovered.recover(); t.after(() => recovered.close());
   await recovered.records.settled(h.root);
   assert.equal((await recovered.reply({ ...undo, protocol_version: 5 }) as any).error.code, 'undo_no_effect');
   assert.deepEqual(await readFile(path), bytes);

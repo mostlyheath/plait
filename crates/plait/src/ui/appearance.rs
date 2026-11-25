@@ -10,7 +10,10 @@ use super::{
     thread_controls::TextTooltip,
 };
 use gpui::{prelude::*, *};
-use plait_core::theme::{self as themes, Appearance, DEFAULT_DARK, DEFAULT_LIGHT, Theme};
+use plait_client::{
+    preferences::InterfaceFont,
+    theme::{self as themes, Appearance, DEFAULT_DARK, DEFAULT_LIGHT, Theme},
+};
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 /// The code font choice: the families installed on this Mac, read in the
@@ -34,7 +37,8 @@ pub(super) struct CodeFont {
     _changed: Option<Subscription>,
 }
 
-#[cfg(test)]
+// Only the macOS font scenes measure installed families.
+#[cfg(all(test, target_os = "macos"))]
 impl CodeFont {
     /// Nothing is being read or measured in the background.
     pub fn settled(&self) -> bool {
@@ -192,6 +196,8 @@ impl Plait {
         if set_colors(&self.themes.palette(name, light)) {
             cx.refresh_windows();
         }
+        // Keep the interface font aligned when preferences load on startup.
+        self.apply_interface_font(cx);
     }
 
     fn light_appearance(&self, appearance: Appearance, cx: &App) -> bool {
@@ -298,6 +304,70 @@ impl Plait {
             self.workspace.live_scroll.remeasure();
             cx.refresh_windows();
         }
+    }
+
+    /// Draw the interface in the saved font choice (falling back to System if
+    /// the bundled IBM Plex Sans faces did not load), remeasuring open views
+    /// and tabs when the family changes.
+    pub(super) fn apply_interface_font(&mut self, cx: &mut Context<Self>) {
+        if set_ui_font(self.preferences.value.interface_font) {
+            self.workspace.live_scroll.remeasure();
+            self.invalidate_tab_measurement();
+            cx.refresh_windows();
+        }
+    }
+
+    /// Save a new interface font choice and apply it immediately to open views.
+    pub(super) fn set_interface_font(&mut self, choice: InterfaceFont, cx: &mut Context<Self>) {
+        let mut value = self.preferences.value.clone();
+        value.interface_font = choice;
+        self.set_preferences(value, PreferenceGroup::View, cx);
+        self.apply_interface_font(cx);
+    }
+
+    /// Settings → Appearance: the font interface labels, prose, and controls use.
+    fn interface_font_setting(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let chosen = self.preferences.value.interface_font;
+        let bundled = bundled_ui_font_loaded();
+        let mut choices = segmented();
+        for (index, choice) in InterfaceFont::ALL.into_iter().enumerate() {
+            let selected = choice == chosen;
+            let label = choice.label();
+            choices = choices.child(
+                segment(("interface-font", index), label, selected)
+                    .role(Role::RadioButton)
+                    .aria_toggled(if selected {
+                        Toggled::True
+                    } else {
+                        Toggled::False
+                    })
+                    .aria_label(format!("Interface font: {label}"))
+                    .on_activate(cx, move |this, _, cx| this.set_interface_font(choice, cx)),
+            );
+        }
+        let detail = if chosen == InterfaceFont::Plex && !bundled {
+            "Bundled IBM Plex Sans faces could not be loaded; using the system font."
+        } else {
+            "Labels, controls, and conversation text. Plex Sans is bundled; System uses macOS's interface font."
+        };
+        super::settings::setting("Interface font", detail, choices)
+    }
+
+    /// Draw code at the saved point size, remeasuring open views when it changes.
+    pub(super) fn apply_code_size(&mut self, cx: &mut Context<Self>) {
+        if set_code_size(self.preferences.value.code_size()) {
+            // A different point size changes wrapped code, diff, and tool heights.
+            self.workspace.live_scroll.remeasure();
+            cx.refresh_windows();
+        }
+    }
+
+    /// Save a new code font size and apply it immediately to open views.
+    pub(super) fn set_code_size(&mut self, size: u8, cx: &mut Context<Self>) {
+        let mut value = self.preferences.value.clone();
+        value.set_code_size(size);
+        self.set_preferences(value, PreferenceGroup::View, cx);
+        self.apply_code_size(cx);
     }
 
     /// Settings is opening: make the field that names a family, show the
@@ -502,11 +572,175 @@ impl Plait {
         )
     }
 
+    /// Settings → Appearance: the point size code, paths, and commands are drawn at.
+    fn code_size_setting(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let chosen = self.preferences.value.code_size();
+        let mut choices = segmented();
+        for (index, (label, size)) in [("12 pt", 12u8), ("13 pt", 13), ("14 pt", 14)]
+            .into_iter()
+            .enumerate()
+        {
+            choices = choices.child(
+                segment(("code-size", index), label, size == chosen)
+                    .role(Role::RadioButton)
+                    .aria_toggled(if size == chosen {
+                        Toggled::True
+                    } else {
+                        Toggled::False
+                    })
+                    .aria_label(format!("Code size: {label}"))
+                    .on_activate(cx, move |this, _, cx| this.set_code_size(size, cx)),
+            );
+        }
+        super::settings::setting(
+            "Code size",
+            "Point size for code, file paths, and commands (12–14).",
+            choices,
+        )
+    }
+
     fn set_appearance(&mut self, appearance: Appearance, cx: &mut Context<Self>) {
         let mut value = self.preferences.value.clone();
         value.appearance = appearance;
         self.set_preferences(value, PreferenceGroup::View, cx);
         self.apply_theme(cx);
+    }
+
+    pub(super) fn set_fold_earlier_turns(&mut self, fold: bool, cx: &mut Context<Self>) {
+        let mut value = self.preferences.value.clone();
+        value.fold_earlier_turns = Some(fold);
+        self.set_preferences(value, PreferenceGroup::View, cx);
+        self.reconcile_live_folding();
+        cx.notify();
+    }
+
+    pub(super) fn set_turns(
+        &mut self,
+        style: plait_client::preferences::Turns,
+        cx: &mut Context<Self>,
+    ) {
+        let mut value = self.preferences.value.clone();
+        value.turns = style;
+        self.set_preferences(value, PreferenceGroup::View, cx);
+        self.workspace.live_scroll.remeasure();
+        cx.notify();
+    }
+
+    fn turns_setting(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        use plait_client::preferences::Turns;
+        let mut choices = segmented();
+        for (index, (label, style)) in [("Bubbles", Turns::Bubbles), ("Line", Turns::Line)]
+            .into_iter()
+            .enumerate()
+        {
+            let selected = self.preferences.value.turns == style;
+            choices = choices.child(
+                segment(("turns", index), label, selected)
+                    .role(Role::RadioButton)
+                    .aria_toggled(if selected {
+                        Toggled::True
+                    } else {
+                        Toggled::False
+                    })
+                    .aria_label(format!("Turns: {label}"))
+                    .on_activate(cx, move |this, _, cx| this.set_turns(style, cx)),
+            );
+        }
+        super::settings::setting(
+            "Turns",
+            "Show requests in bubbles or connect turns with a line.",
+            choices,
+        )
+    }
+
+    pub(super) fn thread_tabs_setting(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        use plait_client::preferences::ThreadTabs;
+        let mut choices = segmented()
+            .id("thread-tabs-setting")
+            .role(Role::RadioGroup)
+            .aria_label("Thread tabs")
+            .audited();
+        for (label, choice) in [("Hide", ThreadTabs::Hide), ("Show", ThreadTabs::Show)] {
+            let selected = self.preferences.value.thread_tabs.unwrap_or_default() == choice;
+            choices = choices.child(
+                segment(
+                    SharedString::from(format!("thread-tabs-{label}")),
+                    label,
+                    selected,
+                )
+                .role(Role::RadioButton)
+                .aria_label(format!("Thread tabs: {label}"))
+                .aria_toggled(if selected {
+                    Toggled::True
+                } else {
+                    Toggled::False
+                })
+                .on_activate(cx, move |this, _, cx| {
+                    let mut value = this.preferences.value.clone();
+                    value.thread_tabs = Some(choice);
+                    this.set_preferences(value, PreferenceGroup::View, cx);
+                }),
+            );
+        }
+        super::settings::setting(
+            "Thread tabs",
+            "Show open tabs in the header. Tab shortcuts work in either setting.",
+            choices,
+        )
+    }
+
+    fn fold_earlier_turns_setting(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let fold = self.preferences.value.fold_earlier_turns();
+        let mut choices = segmented();
+        for (index, (label, value)) in [("On", true), ("Off", false)].into_iter().enumerate() {
+            choices = choices.child(
+                segment(("fold-earlier-turns", index), label, value == fold)
+                    .role(Role::RadioButton)
+                    .aria_toggled(if value == fold {
+                        Toggled::True
+                    } else {
+                        Toggled::False
+                    })
+                    .aria_label(format!("Fold earlier turns: {label}"))
+                    .on_activate(cx, move |this, _, cx| {
+                        this.set_fold_earlier_turns(value, cx)
+                    }),
+            );
+        }
+        super::settings::setting(
+            "Fold earlier turns",
+            "Show turns before the latest as their request and closing line. Activate a folded request to open it.",
+            choices,
+        )
+    }
+
+    fn finished_work_setting(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let enabled = self.preferences.value.fold_finished_work();
+        let mut choices = segmented();
+        for (index, (label, value)) in [("On", true), ("Off", false)].into_iter().enumerate() {
+            let selected = value == enabled;
+            choices = choices.child(
+                segment(("fold-finished-work", index), label, selected)
+                    .role(Role::RadioButton)
+                    .aria_toggled(if selected {
+                        Toggled::True
+                    } else {
+                        Toggled::False
+                    })
+                    .aria_label(format!("Fold finished work: {label}"))
+                    .on_activate(cx, move |this, _, cx| {
+                        let mut preferences = this.preferences.value.clone();
+                        preferences.fold_finished_work = Some(value);
+                        this.set_preferences(preferences, PreferenceGroup::View, cx);
+                        cx.notify();
+                    }),
+            );
+        }
+        super::settings::setting(
+            "Fold finished work",
+            "Show the steps before a finished turn’s final reply in one expandable row.",
+            choices,
+        )
     }
 
     fn set_theme(&mut self, light: bool, name: String, cx: &mut Context<Self>) {
@@ -620,7 +854,12 @@ impl Plait {
                             .line_height(px(16.))
                     })),
             )
+            .child(self.interface_font_setting(cx))
             .child(self.code_font_setting(cx))
+            .child(self.code_size_setting(cx))
+            .child(self.turns_setting(cx))
+            .child(self.fold_earlier_turns_setting(cx))
+            .child(self.finished_work_setting(cx))
     }
 
     fn theme_list(&self, light: bool, cx: &mut Context<Self>) -> impl IntoElement {
@@ -685,6 +924,7 @@ impl Plait {
                         .min_w_0()
                         .truncate()
                         .text_size(px(12.))
+                        .when(selected, |el| el.text_color(rgb(colors().strong)))
                         .child(theme.name.clone()),
                 )
                 .on_activate(cx, move |this, _, cx| {
@@ -716,6 +956,24 @@ fn swatch(palette: &themes::Palette) -> Div {
 #[cfg(test)]
 mod tests {
     use super::{family_suggestions, installed_family};
+
+    #[test]
+    fn saved_stillwater_remains_selected_when_the_default_changes() {
+        let path =
+            std::env::temp_dir().join(format!("plait-old-theme-{}.json", std::process::id()));
+        std::fs::write(&path, br#"{"dark_theme":"Stillwater"}"#).unwrap();
+        let preferences = plait_client::preferences::load(&path).unwrap();
+        std::fs::remove_file(path).unwrap();
+        let themes = super::Themes::default();
+        assert_eq!(
+            themes.palette(preferences.dark_theme.as_deref(), false),
+            plait_client::theme::STILLWATER
+        );
+        assert_eq!(
+            themes.palette(None, false),
+            plait_client::theme::STILLWATER_DEEP
+        );
+    }
 
     fn installed() -> Vec<String> {
         [

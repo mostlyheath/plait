@@ -6,7 +6,7 @@ use super::{
 };
 use crate::ui::{Workspace, a11y::A11yFrame, settings_agent::AgentView};
 use gpui::Role;
-use plait_core::{
+use plait_client::{
     handoff::{EditorChoice, TerminalChoice},
     host::{
         MessageRole,
@@ -42,12 +42,15 @@ fn named_drafts_keep_accessibility_ids_through_title_edits() {
     let mut h = Harness::new(&repo, None, 1380., 860.);
     h.connect(&repo, false);
     h.update(|p, w, cx| {
+        // Tabs are shown, but a draft keeps its own title in the header; the
+        // tab list reaches every tab, and the strip returns on a thread.
+        p.preferences.value.thread_tabs = Some(plait_client::preferences::ThreadTabs::Show);
         // Keep the thread and add the other tab kind without asking the host.
         let checkout = p.tab_checkout(repo.clone());
         p.tabs
             .model
             .open(
-                plait_core::tabs::TabTarget::Worktrees { checkout },
+                plait_client::tabs::TabTarget::Worktrees { checkout },
                 Some(p.host.connection.epoch),
             )
             .unwrap();
@@ -62,28 +65,41 @@ fn named_drafts_keep_accessibility_ids_through_title_edits() {
         let worktrees = p.tabs.rows.iter().find(|row| row.worktrees).unwrap();
         assert_eq!(worktrees.title, "Worktrees");
         assert_eq!(worktrees.word, "");
-        p.tabs.list_open = true;
     });
+    // Show All Tabs, as the person opens it.
+    h.keystroke("cmd-shift-\\");
+    h.update(|p, _, _| assert!(p.tabs.list_open));
     let first = steady_frame(&mut h, "same draft titles");
-    for role in [Role::Tab, Role::MenuItem] {
-        assert!(first.has_node(role, |n| {
-            n.label
-                .as_deref()
-                .is_some_and(|label| label.starts_with("Worktrees"))
-        }));
-        let nodes: Vec<_> = first
+    let header_title = |frame: &A11yFrame| {
+        frame
+            .nodes
+            .iter()
+            .find(|n| n.path.contains("header-title"))
+            .and_then(|n| n.value.clone().or(n.label.clone()))
+    };
+    assert_eq!(header_title(&first).as_deref(), Some("Same first line"));
+    assert!(!first.has_node(Role::Tab, |n| n.path.contains("thread-tab-")));
+    assert!(first.has_node(Role::MenuItem, |n| {
+        n.label
+            .as_deref()
+            .is_some_and(|label| label.starts_with("Worktrees"))
+    }));
+    let named = |frame: &A11yFrame, role: Role, prefix: &str| {
+        frame
             .nodes
             .iter()
             .filter(|n| {
                 n.role == role
                     && n.label
                         .as_deref()
-                        .is_some_and(|label| label.starts_with("Same first line"))
+                        .is_some_and(|label| label.starts_with(prefix))
             })
-            .collect();
-        assert_eq!(nodes.len(), 2);
-        assert_ne!(nodes[0].node_id, nodes[1].node_id);
-    }
+            .map(|n| n.node_id)
+            .collect::<Vec<_>>()
+    };
+    let entries = named(&first, Role::MenuItem, "Same first line");
+    assert_eq!(entries.len(), 2);
+    assert_ne!(entries[0], entries[1]);
     let identities = |frame: &A11yFrame| {
         frame
             .nodes
@@ -101,28 +117,143 @@ fn named_drafts_keep_accessibility_ids_through_title_edits() {
         h.type_draft(text);
         let frame = steady_frame(&mut h, "edited draft title");
         assert_eq!(identities(&frame), expected);
-        assert!(frame.has_node(Role::Tab, |n| {
-            n.label
-                .as_deref()
-                .is_some_and(|s| s.starts_with("Same first line renamed"))
-        }));
+        assert!(
+            header_title(&frame).is_some_and(|title| title.starts_with("Same first line renamed"))
+        );
+        assert_eq!(
+            named(&frame, Role::MenuItem, "Same first line renamed").len(),
+            1
+        );
         assert!(frame.has_node(Role::TreeItem, |n| {
             n.label
                 .as_deref()
                 .is_some_and(|s| s.starts_with("Same first line renamed"))
         }));
     }
+    // The list opens a real thread; its header then draws the pills.
+    let position = |p: &crate::ui::Plait, id| p.tabs.model.tabs().iter().position(|t| t.id() == id);
+    let (mut thread, mut thread_index, mut active_index) = (None, 0, 0);
+    h.update(|p, _, _| {
+        let tab = p
+            .tabs
+            .model
+            .tabs()
+            .iter()
+            .find(|t| {
+                matches!(
+                    t.session().target(),
+                    plait_client::tabs::TabTarget::Existing { .. }
+                )
+            })
+            .expect("the thread's tab")
+            .id();
+        thread = Some(tab);
+        thread_index = position(p, tab).unwrap();
+        active_index = position(p, p.tabs.model.active().unwrap()).unwrap();
+    });
+    let thread = thread.unwrap();
+    // Typing moved the keyboard to the draft: Show All Tabs again takes it
+    // back. The list's cursor starts on the open tab and follows tab order.
+    h.update(|p, _, _| p.tabs.list_open = false);
+    h.keystroke("cmd-shift-\\");
+    let key = if thread_index < active_index {
+        "up"
+    } else {
+        "down"
+    };
+    for _ in 0..thread_index.abs_diff(active_index) {
+        h.keystroke(key);
+    }
+    h.keystroke("enter");
+    h.update(|p, _, _| {
+        assert_eq!(p.tabs.model.active(), Some(thread));
+        assert!(p.host.thread.selected.is_some());
+        p.tabs.list_open = false;
+    });
+    let strip = steady_frame(&mut h, "thread tabs");
+    let pills = |frame: &A11yFrame| {
+        let mut pills = frame
+            .nodes
+            .iter()
+            .filter(|n| n.role == Role::Tab && n.path.contains("thread-tab-"))
+            .map(|n| (n.label.clone().unwrap_or_default(), n.node_id))
+            .collect::<Vec<_>>();
+        pills.sort();
+        pills
+    };
+    assert_eq!(pills(&strip).len(), 4);
+    let drafts = named(&strip, Role::Tab, "Same first line");
+    assert_eq!(drafts.len(), 2);
+    assert_ne!(drafts[0], drafts[1]);
+    assert!(!strip.nodes.iter().any(|n| n.path.contains("header-title")));
+    // Moving the thread's pill keeps each pill's ID.
+    let mut before = None;
+    h.update(|p, _, _| before = position(p, thread));
+    h.keystroke(if before == Some(0) {
+        "ctrl-shift-right"
+    } else {
+        "ctrl-shift-left"
+    });
+    let moved = steady_frame(&mut h, "moved thread tab");
+    h.update(|p, _, _| assert_ne!(position(p, thread), before));
+    assert_eq!(pills(&moved), pills(&strip));
+    // With tabs hidden the thread's header draws its title; the list keeps
+    // every tab, with the same IDs.
+    h.update(|p, _, _| {
+        p.preferences.value.thread_tabs = Some(plait_client::preferences::ThreadTabs::Hide)
+    });
+    h.keystroke("cmd-shift-\\");
+    let hidden = steady_frame(&mut h, "tabs hidden");
+    assert!(!hidden.has_node(Role::Tab, |n| n.path.contains("thread-tab-")));
+    let list = |frame: &A11yFrame| {
+        frame
+            .nodes
+            .iter()
+            .filter(|n| n.role == Role::MenuItem && n.path.contains("tab-list"))
+            .map(|n| (n.path.clone(), n.node_id))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(list(&hidden).len(), 4);
+    assert!(
+        list(&first)
+            .iter()
+            .all(|entry| list(&hidden).contains(entry))
+    );
     drop(h);
     std::fs::remove_dir_all(scratch).unwrap();
 }
 
-fn assert_views_reachable(frame: &A11yFrame, scene: &str) {
-    for view in ["Conversation", "Changes", "History", "Files"] {
-        assert!(
-            frame.has_node(Role::Tab, |node| node.label.as_deref() == Some(view)),
-            "{scene}: missing view tab {view:?} in accessibility tree"
+/// The header has no view switcher: the panel toggle is always reachable, and
+/// an open panel names its tabs and the close control that returns to the
+/// conversation.
+fn assert_views_reachable(frame: &A11yFrame, scene: &str, panel_open: bool) {
+    assert!(
+        frame.has_node(Role::Button, |node| node.label.as_deref()
+            == Some("Toggle Panel")),
+        "{scene}: missing the header's Toggle Panel control"
+    );
+    for view in ["Changes", "History", "Files"] {
+        let found = frame.has_node(Role::Tab, |node| {
+            node.label
+                .as_deref()
+                .is_some_and(|label| label.split(' ').next() == Some(view))
+        });
+        assert_eq!(
+            found, panel_open,
+            "{scene}: panel tab {view:?} reachable only while the panel is open"
         );
     }
+    assert_eq!(
+        frame.has_node(Role::Button, |node| node.label.as_deref()
+            == Some("Close panel")),
+        panel_open,
+        "{scene}: Close panel returns to the conversation"
+    );
+    assert!(
+        !frame.has_node(Role::Tab, |node| node.label.as_deref()
+            == Some("Conversation")),
+        "{scene}: the retired view switcher is drawn"
+    );
 }
 
 fn assert_workspace_reachable(
@@ -136,7 +267,7 @@ fn assert_workspace_reachable(
     let mut expected_messages = Vec::new();
     let mut expected_streaming = None;
     harness.update(|plait, _, _| {
-        for thread in &plait.host.connection.threads {
+        for thread in plait.host.connection.threads() {
             expected_threads.push((thread.id.clone(), plait.thread_title(&thread.id)));
         }
         for meta in &plait.tabs.rows {
@@ -199,7 +330,7 @@ fn assert_workspace_reachable(
         );
     }
 
-    assert_views_reachable(frame, scene);
+    assert_views_reachable(frame, scene, false);
 
     assert!(
         !expected_messages.is_empty(),
@@ -419,17 +550,17 @@ fn assert_views_and_overlays(harness: &mut Harness, repository: &Path) {
     // Changes, History, and Files views.
     harness.update(|plait, window, cx| plait.show_tab(Workspace::Changes, window, cx));
     let changes = steady_frame(harness, "workspace-changes");
-    assert_views_reachable(&changes, "workspace-changes");
+    assert_views_reachable(&changes, "workspace-changes", true);
 
     harness.update(|plait, window, cx| plait.show_tab(Workspace::History, window, cx));
     harness.settle();
     let history = steady_frame(harness, "workspace-history");
-    assert_views_reachable(&history, "workspace-history");
+    assert_views_reachable(&history, "workspace-history", true);
 
     harness.update(|plait, _, cx| plait.open_file("src/review.rs".into(), Some(1), cx));
     harness.settle();
     let files = steady_frame(harness, "workspace-files");
-    assert_views_reachable(&files, "workspace-files");
+    assert_views_reachable(&files, "workspace-files", true);
 
     // Approval card over the conversation with tabs and sidebar.
     harness.connect(repository, true);
@@ -474,6 +605,8 @@ fn a11y_tree_has_no_duplicates_and_exposes_required_nodes() {
     let _ = std::fs::remove_dir_all(&scratch);
     let repository = fixture_repository(&scratch);
     let mut harness = Harness::new(&repository, None, 1380., 860.);
+    // This audit checks the full message nodes of earlier turns.
+    harness.update(|p, _, _| p.preferences.value.fold_earlier_turns = Some(false));
     harness.connect(&repository, false);
     tabs::install(&mut harness, 3);
 
@@ -499,7 +632,7 @@ fn a11y_tree_has_no_duplicates_and_exposes_required_nodes() {
 fn thread_row_ids(harness: &mut Harness, frame: &A11yFrame) -> Vec<(String, u64, Option<u64>)> {
     let mut threads = Vec::new();
     harness.update(|plait, _, _| {
-        for thread in &plait.host.connection.threads {
+        for thread in plait.host.connection.threads() {
             threads.push((thread.id.clone(), plait.thread_name(&thread.id)));
         }
     });
@@ -555,7 +688,7 @@ fn sidebar_rows_keep_their_ids_when_threads_reorder() {
     );
 
     harness.update(|plait, _, cx| {
-        plait.host.connection.threads.reverse();
+        plait.host.connection.threads_mut().reverse();
         cx.notify();
     });
     let after = steady_frame(&mut harness, "threads-reversed");
@@ -822,7 +955,7 @@ fn assert_admission_controls(harness: &mut Harness) {
     const WAIT: &str = "Wait needs a newer host. Nothing is queued.";
     // An idle thread whose checkout another thread is writing.
     harness.change_snapshot(|snapshot| {
-        snapshot.status = plait_core::host::ThreadStatus::Idle;
+        snapshot.status = plait_client::host::ThreadStatus::Idle;
         snapshot.pending_approval = None;
     });
     harness.update(|plait, _, _| {
@@ -830,12 +963,12 @@ fn assert_admission_controls(harness: &mut Harness) {
         let other = plait
             .host
             .connection
-            .threads
+            .threads_mut()
             .iter_mut()
             .find(|thread| thread.id != snapshot.id)
             .unwrap();
         other.checkout = snapshot.checkout.clone();
-        other.status = plait_core::host::ThreadStatus::Running;
+        other.status = plait_client::host::ThreadStatus::Running;
         let other = other.id.clone();
         plait.admission.capabilities =
             Some((plait.host.connection.epoch, snapshot.checkout.clone(), true));
@@ -878,12 +1011,12 @@ fn assert_admission_controls(harness: &mut Harness) {
     harness.update(|plait, window, cx| {
         plait.show_project_settings(window, cx);
         let checkout = plait.settings_checkout().to_owned();
-        let identity = plait_core::git::worktree::Identity {
+        let identity = plait_client::git::worktree::Identity {
             dev: "1".into(),
             ino: "2".into(),
         };
         plait.admission.settings_key = Some((plait.host.connection.epoch, checkout.clone()));
-        plait.admission.info = Some(plait_core::host::admission::Info {
+        plait.admission.info = Some(plait_client::host::admission::Info {
             schema: 1,
             worktree_at_start_v1: true,
             linked_continuation_v1: true,
@@ -958,9 +1091,12 @@ fn checkout_queue_states_remain_accessible_wide_and_narrow() {
         for (label, state) in [
             (
                 "Waiting",
-                Some(plait_core::host::checkout_queue::State::Waiting),
+                Some(plait_client::host::checkout_queue::State::Waiting),
             ),
-            ("Held", Some(plait_core::host::checkout_queue::State::Held)),
+            (
+                "Held",
+                Some(plait_client::host::checkout_queue::State::Held),
+            ),
             ("Cancelled", None),
         ] {
             super::isolation::install_queue(&mut h, state);
@@ -1012,8 +1148,8 @@ fn checkout_queue_states_remain_accessible_wide_and_narrow() {
                 .as_mut()
                 .unwrap()
                 .protocol_version = 6;
-            for thread in &mut plait.host.connection.threads {
-                thread.status = plait_core::host::ThreadStatus::Idle;
+            for thread in plait.host.connection.threads_mut() {
+                thread.status = plait_client::host::ThreadStatus::Idle;
             }
         });
         let frame = steady_frame(&mut h, "stale-idle-summary");

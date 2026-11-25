@@ -1,7 +1,7 @@
 //! Tab preferences are disposable; draft durability remains with the journal.
 use super::Plait;
 use gpui::*;
-use plait_core::{
+use plait_client::{
     session::Journal,
     tabs::{
         self, CheckoutKey, TabId, TabTarget,
@@ -19,8 +19,30 @@ use std::{
     time::Duration,
 };
 
+/// Where this device's tabs for the connected machine are kept: a host that
+/// keeps a workspace stores them for this device; otherwise a file on this Mac.
+#[derive(Clone)]
+pub(super) enum Target {
+    File(PathBuf),
+    Host {
+        client: plait_client::host::Client,
+        device: String,
+        /// The device state revision last read or written, for compare-and-set.
+        revision: Arc<AtomicU64>,
+    },
+}
+
+/// The host keeps at most this much state per device; tabs over it are not saved.
+const HOST_TABS_LIMIT: usize = 56_000;
+
 #[derive(Default)]
 pub(super) struct Persistence {
+    /// Set once the connected host's tabs for this device have been read.
+    pub host_loaded: bool,
+    pub host_loading: bool,
+    /// Advances when the window moves to another machine; older reads are dropped.
+    pub host_generation: u64,
+    pub target: Option<Target>,
     pub requested: bool,
     pub loaded: bool,
     pub restored: bool,
@@ -45,7 +67,7 @@ pub(super) struct SaveRequest {
     document: SavedWindow,
     active: Option<(TabId, ThreadBookmark)>,
     journal: Arc<Journal>,
-    path: PathBuf,
+    target: Target,
     gate: Arc<WriteGate>,
     revision: u64,
 }
@@ -115,7 +137,7 @@ impl SaveRequest {
             .lock()
             .map_err(|_| "Tab writer is unavailable.")?;
         if last.as_ref() != Some(&bytes) {
-            storage::write(&self.path, &bytes)?;
+            write_target(&self.target, &bytes)?;
             *last = Some(bytes);
         }
         // Only the record this saver wrote earlier is removed; restored and parked
@@ -132,7 +154,132 @@ impl SaveRequest {
     }
 }
 
+/// Stores the tab document. A host keeps it as this device's state; a write
+/// that lost a race with another of this device's windows rereads and retries once.
+fn write_target(target: &Target, bytes: &[u8]) -> Result<(), String> {
+    use plait_client::host::device;
+    let (client, device, revision) = match target {
+        Target::File(path) => return storage::write(path, bytes),
+        Target::Host {
+            client,
+            device,
+            revision,
+        } => (client, device, revision),
+    };
+    if bytes.len() > HOST_TABS_LIMIT {
+        return Err("Too many tabs to keep on the host; previous saved tabs are intact.".into());
+    }
+    let saved = match device::set_field(
+        client,
+        device,
+        revision.load(Ordering::Acquire),
+        "tabs",
+        bytes,
+    ) {
+        Err(error) if device::is_conflict(&error) => {
+            let (current, _) =
+                device::get_field(client, device, "tabs").map_err(|e| e.to_string())?;
+            device::set_field(client, device, current, "tabs", bytes)
+        }
+        other => other,
+    }
+    .map_err(|e| format!("The host did not keep this device's tabs: {e}"))?;
+    revision.store(saved, Ordering::Release);
+    Ok(())
+}
+
 impl Plait {
+    /// This device's stable ID on every host, made once.
+    pub(super) fn device_id(&mut self, cx: &mut Context<Self>) -> String {
+        if self.preferences.value.device_id.is_empty() {
+            let mut preferences = self.preferences.value.clone();
+            preferences.device_id = plait_client::host_state::request_id();
+            self.set_preferences(preferences, super::jump::PreferenceGroup::View, cx);
+        }
+        self.preferences.value.device_id.clone()
+    }
+
+    /// Reads this device's tabs from a host that keeps them. The first time on
+    /// this Mac's own host, the tabs saved on this Mac stand in for them.
+    pub(super) fn load_host_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let device = self.device_id(cx);
+        let client = self.host_client();
+        let local = self.host_is_local();
+        let generation = self.tabs.persistence.host_generation;
+        let task = cx.background_executor().spawn({
+            let client = client.clone();
+            let device = device.clone();
+            async move { plait_client::host::device::get_field(&client, &device, "tabs") }
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = task.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                let state = &mut this.tabs.persistence;
+                if state.host_generation != generation {
+                    return;
+                }
+                state.host_loaded = true;
+                state.host_loading = false;
+                match result {
+                    Ok((revision, tabs)) => {
+                        if tabs.is_some() || !local {
+                            state.bytes = tabs;
+                        }
+                        state.target = Some(Target::Host {
+                            client,
+                            device,
+                            revision: Arc::new(AtomicU64::new(revision)),
+                        });
+                        state.writable = true;
+                    }
+                    // An older host keeps no device state: this Mac's file, or nothing for another machine.
+                    Err(_) if local => {}
+                    Err(_) => {
+                        state.bytes = None;
+                        state.writable = false;
+                    }
+                }
+                this.try_restore_tabs(window, cx);
+            });
+        })
+        .detach();
+    }
+
+    /// Another machine's tabs are its own: save these where they belong, then
+    /// start empty until the new machine's tabs are read from its host.
+    pub(super) fn switch_machine_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(request) = self.flush_tab_preferences(Some(window), cx) {
+            cx.background_executor()
+                .spawn(async move {
+                    let _ = request.write();
+                })
+                .detach();
+        }
+        self.tabs.model = tabs::WindowTabs::new(super::tabs::fresh_window_id());
+        let state = &mut self.tabs.persistence;
+        state.host_generation += 1;
+        state.host_loaded = false;
+        state.host_loading = false;
+        state.target = None;
+        state.bytes = None;
+        state.restored = false;
+        state.edited = false;
+        self.refresh_tab_rows();
+        // An older local host keeps tabs in this Mac's file; read it again.
+        self.load_tab_preferences(window, cx);
+    }
+
+    /// Whether the connected machine's tab store is known yet.
+    fn tab_store_ready(&self) -> bool {
+        use super::host_workspace::Source;
+        match self.host_workspace.source {
+            Source::Host(_) => self.tabs.persistence.host_loaded,
+            Source::Legacy => true,
+            // No stream was asked for, or it failed: this Mac's file.
+            Source::Pending => !self.host_workspace_started() || self.host_workspace_failed(),
+        }
+    }
+
     pub(super) fn tab_save_input(&self, cx: &Context<Self>) -> impl IntoElement {
         let owner = cx.weak_entity();
         // Scrollers consume bubbling events; capture before they do and save after settling.
@@ -186,7 +333,8 @@ impl Plait {
     }
 
     fn verified_tab_checkouts(&self) -> Vec<CheckoutKey> {
-        self.tabs
+        let local = self
+            .tabs
             .identity
             .checkouts
             .iter()
@@ -194,8 +342,13 @@ impl Plait {
                 host: self.tabs.host.clone(),
                 root: root.clone(),
                 directory: Some(*identity),
-            })
-            .collect()
+            });
+        let remote = self.tabs.identity.remote.iter().map(|root| CheckoutKey {
+            host: self.tabs.host.clone(),
+            root: root.clone(),
+            directory: None,
+        });
+        local.chain(remote).collect()
     }
 
     pub(super) fn try_restore_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -208,6 +361,7 @@ impl Plait {
             || self.session.loading
             || self.session.data.is_none()
             || self.tabs.lifecycle.busy
+            || !self.tab_store_ready()
         {
             return;
         }
@@ -215,7 +369,7 @@ impl Plait {
         let checkouts = self.verified_tab_checkouts();
         let context = RestoreContext {
             host: &self.tabs.host,
-            threads: &self.host.connection.threads,
+            threads: self.host.connection.threads(),
             checkouts: &checkouts,
             drafts: &drafts,
             connection: self
@@ -332,7 +486,9 @@ impl Plait {
             .iter()
             .filter_map(|tab| match tab.session().target() {
                 TabTarget::Draft { id, .. } => Some(id.clone()),
-                TabTarget::Existing { .. } | TabTarget::Worktrees { .. } => None,
+                TabTarget::Existing { .. }
+                | TabTarget::Worktrees { .. }
+                | TabTarget::Issues { .. } => None,
             })
             .collect();
         kept.extend(self.draft.id.clone());
@@ -381,7 +537,7 @@ impl Plait {
         let checkouts = self.verified_tab_checkouts();
         let context = RestoreContext {
             host: &self.tabs.host,
-            threads: &self.host.connection.threads,
+            threads: self.host.connection.threads(),
             checkouts: &checkouts,
             drafts: &drafts,
             connection: self
@@ -398,7 +554,10 @@ impl Plait {
                 .active()
                 .filter(|_| !self.worktrees_visible())
                 .map(|id| (id, self.capture_tab_bookmark(window, cx))),
-            path: state.path.clone()?,
+            target: state
+                .target
+                .clone()
+                .or_else(|| state.path.clone().map(Target::File))?,
             journal: self.session.journal.clone()?,
             gate: state.gate.clone(),
             revision: state.gate.revision.load(Ordering::Acquire),

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Decide what a CI run does.
 
-A change is tested once, on its pull request, and built once, when it reaches
-main. `pull-request <base>` says whether the request needs the tests at all;
-`main` says whether main holds code that ships and has not been released, and
-which preview it would be.
+A change is tested on its pull request and again when it reaches main. A
+merge releases nothing: a person starts a release by hand. `pull-request
+<base>` says whether the request needs the tests at all; `merged <before>`
+says the same for a push to main; `main`, used by a release, says whether main
+holds code that ships and has not been released, and which preview it would be.
 
 Prints `key=value` lines for `$GITHUB_OUTPUT`.
 """
@@ -27,10 +28,12 @@ UNSHIPPED = PROSE + (
     "scripts/acceptance/*",
     "scripts/acceptance-macos.sh",
     "scripts/bench-*.sh",
+    "scripts/changelog.py",
     "scripts/check.sh",
     "scripts/probe-*.mjs",
     "scripts/readme-screenshots.sh",
     "scripts/release_plan.py",
+    "scripts/release_reuse.py",
     "scripts/snapshots.sh",
     "scripts/test_*.py",
 )
@@ -89,6 +92,10 @@ def main(argv):
         print(f"test={str(needs_tests(changed(argv[1]))).lower()}")
         print("release=false")
         return 0
+    if argv[:1] == ["merged"] and len(argv) == 2:
+        print(f"test={str(needs_tests(changed(argv[1]))).lower()}")
+        print("release=false")
+        return 0
     if argv == ["main"]:
         version = cargo_version()
         tags = git("tag", "--list").splitlines()
@@ -99,7 +106,7 @@ def main(argv):
         print(f"tag={next_tag(version, tags)}")
         print(f"previous={previous or ''}")
         return 0
-    print("Usage: release_plan.py pull-request <base> | main", file=sys.stderr)
+    print("Usage: release_plan.py pull-request <base> | merged <before> | main", file=sys.stderr)
     return 2
 
 

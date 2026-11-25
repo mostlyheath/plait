@@ -1,90 +1,22 @@
 //! Staging and committing from Changes.
 //!
-//! plait-core runs each write on the background executor and refreshes status
+//! plait-client runs each write on the background executor and refreshes status
 //! afterwards; this file asks for writes and shows how they went. A write is
 //! refused while another is queued or running, so a double click is one write.
 
 use super::{Plait, theme::*};
 use gpui::{prelude::*, *};
-use plait_core::{
+use plait_client::{
     git::WriteOp,
-    model::{Change, Snapshot, Tracking},
+    git_step::{Sync, sync},
+    model::{Change, Snapshot},
 };
 use std::path::PathBuf;
 
 pub(super) struct CommitAttempt {
-    pub(super) thread: Option<plait_core::ownership::ThreadKey>,
+    pub(super) thread: Option<plait_client::ownership::ThreadKey>,
     pub(super) revision: u64,
     pub(super) message: String,
-}
-
-/// What sending commits to the remote means for this branch right now.
-#[derive(Debug, PartialEq, Eq)]
-pub(super) struct Sync {
-    pub label: String,
-    /// The write the Push button runs, if the branch can push at all.
-    pub op: Option<WriteOp>,
-    /// Why that write is unavailable now, in words.
-    pub blocker: Option<&'static str>,
-    /// There is an upstream to fetch from.
-    pub fetch: bool,
-    /// Such as `origin/main`, for the accessible description.
-    pub upstream: Option<String>,
-}
-
-/// Counts come from the status read; nothing here runs Git.
-pub(super) fn sync(named: bool, tracking: Option<&Tracking>) -> Sync {
-    let publish = |label: String| Sync {
-        label,
-        op: Some(WriteOp::Publish),
-        blocker: None,
-        fetch: false,
-        upstream: None,
-    };
-    let Some(tracking) = tracking.filter(|_| named) else {
-        return if named {
-            publish("Not on the remote yet".into())
-        } else {
-            Sync {
-                label: "No branch to push".into(),
-                op: None,
-                blocker: None,
-                fetch: false,
-                upstream: None,
-            }
-        };
-    };
-    let up = &tracking.upstream;
-    if tracking.gone {
-        return publish(format!("{up} was deleted"));
-    }
-    let upstream = Some(up.clone());
-    let (ahead, behind) = (tracking.ahead, tracking.behind);
-    let label = match (ahead, behind) {
-        (0, 0) => "Up to date".to_owned(),
-        (a, 0) => format!("{a} to push"),
-        (0, b) => format!("{b} to pull"),
-        (a, b) => format!("{a} to push, {b} to pull"),
-    };
-    // Only behind: the one useful move is a fast-forward pull.
-    let (op, blocker) = match (ahead, behind) {
-        (0, 0) => (WriteOp::Push, Some("Nothing to push.")),
-        (0, _) => (WriteOp::Pull, None),
-        (_, 0) => (WriteOp::Push, None),
-        _ => (
-            WriteOp::Push,
-            Some(
-                "This branch and its upstream have each moved on. Merge or rebase them in Terminal.",
-            ),
-        ),
-    };
-    Sync {
-        label,
-        op: Some(op),
-        blocker,
-        fetch: true,
-        upstream,
-    }
 }
 
 fn sync_of(snapshot: &Snapshot) -> Sync {
@@ -112,7 +44,7 @@ impl Plait {
 
     pub(super) fn git_write_for(
         &mut self,
-        owner: plait_core::state::CheckoutId,
+        owner: plait_client::state::CheckoutId,
         op: WriteOp,
         cx: &mut Context<Self>,
     ) {
@@ -200,7 +132,7 @@ impl Plait {
     /// if it was edited while the commit ran.
     pub(super) fn after_git_write(
         &mut self,
-        owner: plait_core::state::CheckoutId,
+        owner: plait_client::state::CheckoutId,
         cx: &mut Context<Self>,
     ) {
         if owner == self.state.checkout_id() {
@@ -355,6 +287,9 @@ impl Plait {
 
     /// Put the cursor in the commit message, on the Changes tab.
     pub(super) fn focus_commit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.panel_recorded() {
+            return;
+        }
         self.show_tab(super::Workspace::Changes, window, cx);
         window.focus(&self.workspace.commit_message.focus_handle(cx), cx);
         cx.notify();
@@ -365,11 +300,7 @@ impl Plait {
         let Some(root) = self.state.repository.snapshot().ready().map(|s| &s.root) else {
             return false;
         };
-        self.host
-            .connection
-            .threads
-            .iter()
-            .any(|thread| thread.status.busy() && &thread.checkout == root)
+        self.host.connection.checkout_has_run(root)
     }
 
     /// Stage-all controls, the message field, Commit, and the last result.
@@ -515,11 +446,8 @@ impl Plait {
 
 #[cfg(test)]
 mod tests {
-    use super::{change_paths, sync};
-    use plait_core::{
-        git::WriteOp,
-        model::{Change, Tracking},
-    };
+    use super::change_paths;
+    use plait_client::model::Change;
     use std::path::PathBuf;
 
     #[test]
@@ -536,32 +464,5 @@ mod tests {
             change_paths(&change),
             [PathBuf::from("new.rs"), PathBuf::from("old.rs")]
         );
-    }
-
-    #[test]
-    fn push_follows_the_branch_and_its_upstream() {
-        let up = |ahead, behind, gone| Tracking {
-            upstream: "origin/main".into(),
-            ahead,
-            behind,
-            gone,
-        };
-        let none = sync(false, None);
-        assert_eq!((none.op, none.fetch), (None, false));
-        let local = sync(true, None);
-        assert_eq!(local.op, Some(WriteOp::Publish));
-        assert_eq!(sync(true, Some(&up(0, 0, true))).op, Some(WriteOp::Publish));
-        let even = sync(true, Some(&up(0, 0, false)));
-        assert_eq!(even.label, "Up to date");
-        assert_eq!(even.upstream.as_deref(), Some("origin/main"));
-        assert!(even.blocker.is_some() && even.fetch);
-        let ahead = sync(true, Some(&up(2, 0, false)));
-        assert_eq!(ahead.label, "2 to push");
-        assert_eq!((ahead.op, ahead.blocker), (Some(WriteOp::Push), None));
-        let behind = sync(true, Some(&up(0, 3, false)));
-        assert_eq!((behind.op, behind.blocker), (Some(WriteOp::Pull), None));
-        let diverged = sync(true, Some(&up(1, 3, false)));
-        assert_eq!(diverged.label, "1 to push, 3 to pull");
-        assert!(diverged.blocker.unwrap().contains("Merge or rebase"));
     }
 }

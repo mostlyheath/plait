@@ -9,13 +9,7 @@ import type {
   UserMessageItem, WebSearchItem,
 } from './protocol.ts';
 
-/**
- * One persisted transcript entry, in the shape Pi's conversation view uses, so
- * `update()` in ../transcript.ts and the history pages read Codex threads unchanged.
- */
-export type Entry = { id: number; kind: 'message'; model: Message[] };
-export type Placed = { clientId: string; entry: number };
-export type Applied = { append: Entry[]; changed: boolean; placed: Placed[] };
+import type { Applied, Entry } from '../external/entries.ts';
 
 const VIEW_ENTRIES = 100;
 /** Live buffers keep their tail; the snapshot shows at most 16 KiB of each. */

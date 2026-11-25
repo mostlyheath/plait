@@ -2,13 +2,9 @@
 //! here is labeled sample text; no host is contacted and no agent runs.
 
 use super::{Harness, THREAD, fixture_repository, isolated, reading};
-use crate::ui::{
-    Plait, Workspace,
-    selection::Owner,
-    theme::{CHROME_HEIGHT, ROW_HEIGHT},
-};
+use crate::ui::{Plait, Workspace, selection::Owner};
 use gpui::{prelude::*, *};
-use plait_core::{
+use plait_client::{
     conversation_find::Matches,
     host::{Message, MessageRole, Snapshot, ThreadStatus},
 };
@@ -29,7 +25,7 @@ fn reading_at_top(harness: &mut Harness, repository: &Path) {
     harness.connect(repository, false);
     harness.change_snapshot(reading);
     harness.update(|plait, _, cx| {
-        plait.host.connection.threads[0].status = ThreadStatus::Idle;
+        plait.host.connection.threads_mut()[0].status = ThreadStatus::Idle;
         plait.sync_composer(cx);
         plait.workspace.live_scroll.scroll_to(ListOffset::default());
     });
@@ -183,26 +179,29 @@ fn the_keyboard_leaves_a_hidden_composer_and_returns_to_it() {
     let tab = |harness: &mut Harness| {
         harness
             .window
-            .update(&mut harness.cx, |plait, _, _| plait.workspace.tab)
+            .update(&mut harness.cx, |plait, _, _| plait.selected_view())
             .unwrap()
     };
     // By shortcut: Changes, where the composer is not drawn, so the root
     // takes the keyboard and the next shortcut still reaches the app.
     harness.keystroke("cmd-shift-2");
     assert_eq!(tab(&mut harness), Workspace::Changes);
-    let (_, composer, root) = composer_state(&mut harness);
-    assert!(
-        !composer && root,
-        "the hidden composer gives up the keyboard"
-    );
+    let (_, composer, _) = composer_state(&mut harness);
+    assert!(!composer, "the hidden composer gives up the keyboard");
     harness.keystroke("cmd-shift-3");
     assert_eq!(tab(&mut harness), Workspace::History);
-    // By click: Files, the last tab, just inside its right edge. Right of it
-    // are the segment's inset, a gap, and the inspector toggle.
-    let files_tab = point(
-        px(900. - 12. - ROW_HEIGHT - 12. - 3. - 10.),
-        px(CHROME_HEIGHT + 18.),
-    );
+    // By click: Files, found by its name, since other controls share the bar.
+    #[cfg(debug_assertions)]
+    let files_tab = harness
+        .draw_a11y()
+        .nodes
+        .iter()
+        .find(|node| node.label.as_deref() == Some("Files"))
+        .expect("the Files view control")
+        .bounds
+        .center();
+    #[cfg(not(debug_assertions))]
+    let files_tab = point(px(0.), px(0.));
     click(&mut harness, files_tab);
     assert_eq!(tab(&mut harness), Workspace::Files);
     let find_open = |harness: &mut Harness| {
@@ -231,9 +230,25 @@ fn the_keyboard_leaves_a_hidden_composer_and_returns_to_it() {
     harness.keystroke("cmd-shift-1");
     assert_eq!(tab(&mut harness), Workspace::Conversation);
     assert_eq!(composer_state(&mut harness), (draft.clone(), true, false));
-    // A click on Files straight from the composer leaves Find working too.
-    click(&mut harness, files_tab);
+    // The header has no view switcher. Its panel toggle, clicked straight
+    // from the composer, reopens the panel on Files and leaves Find working.
+    #[cfg(debug_assertions)]
+    let toggle = harness
+        .draw_a11y()
+        .nodes
+        .iter()
+        .find(|node| node.label.as_deref() == Some("Toggle Panel"))
+        .expect("the header's panel toggle")
+        .bounds
+        .center();
+    #[cfg(not(debug_assertions))]
+    let toggle = point(px(0.), px(0.));
+    click(&mut harness, toggle);
     assert_eq!(tab(&mut harness), Workspace::Files);
+    assert!(
+        !composer_state(&mut harness).1,
+        "the panel takes the keyboard"
+    );
     harness.keystroke("cmd-f");
     assert!(find_open(&mut harness));
     harness.keystroke("escape");
@@ -296,7 +311,7 @@ fn a_stale_conversation_search_is_dropped() {
         .window
         .update(&mut harness.cx, |plait, _, _| {
             let stale = plait.found_now("fixture", invented());
-            plait.workspace.formatted = Arc::new(plait_core::markdown::Transcript::update(
+            plait.workspace.formatted = Arc::new(plait_client::markdown::Transcript::update(
                 &plait.workspace.formatted,
                 plait.host.thread.snapshot.as_ref().unwrap(),
             ));

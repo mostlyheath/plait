@@ -5,7 +5,7 @@ use super::{
     new_thread::{Draft, Sending},
 };
 use gpui::*;
-use plait_core::{
+use plait_client::{
     host::{
         self,
         admission::{self, Placement, Request, Stage},
@@ -31,7 +31,7 @@ impl Draft {
             approval: self.approval,
         }
     }
-    pub(super) fn legacy_creation(&self) -> Option<plait_core::session::DraftCreation> {
+    pub(super) fn legacy_creation(&self) -> Option<plait_client::session::DraftCreation> {
         let pending = self.pending.as_ref()?;
         let sending = self.sending.as_ref()?;
         if pending.choice {
@@ -44,7 +44,7 @@ impl Draft {
                 if let Request::CreateAdmittedThread { placement, .. } = &mut request {
                     (*placement, wait) = placement.journaled();
                 }
-                plait_core::session::DraftCreation {
+                plait_client::session::DraftCreation {
                     request, approval: sending.approval, choice: sending.choice, wait,
                 }
             })
@@ -82,7 +82,7 @@ impl Draft {
             approval: *approval,
             message_approval: sending.approval,
             thread_approval: sending.choice,
-            message: plait_core::session::Draft {
+            message: plait_client::session::Draft {
                 text: sending.text.clone(),
                 revision: sending.revision,
                 images: sending.images.clone(),
@@ -134,7 +134,7 @@ impl Plait {
         if let Some(composer) = draft.composer.take() {
             let composer = composer.read(cx);
             let (text, revision, submitted) = composer.saved_draft();
-            draft.saved = plait_core::session::Draft {
+            draft.saved = plait_client::session::Draft {
                 text: text.into(),
                 revision,
                 submitted: submitted.clone(),
@@ -208,7 +208,7 @@ impl Plait {
             let Some(choice) = self.draft_model() else {
                 return;
             };
-            let request_id = plait_core::host_state::request_id();
+            let request_id = plait_client::host_state::request_id();
             let harness = self.draft_harness();
             let approval = self.draft_approval();
             self.draft.pending = Some(Pending {
@@ -422,10 +422,26 @@ impl Plait {
                             "Creation is still preparing. Retry with the same request.".into(),
                         )
                     });
+                if super::host::is_checkout_identity_changed(&error) {
+                    let path = created
+                        .checkout
+                        .clone()
+                        .unwrap_or_else(|| self.host.creation.checkout.clone());
+                    draft.error = Some(Self::identity_message(&path));
+                    self.tabs.identity.recovery = Some((path, false));
+                }
                 fail(&mut draft, error);
                 None
             }
             Err(error) => {
+                if super::host::is_checkout_identity_changed(&error) {
+                    let path = created
+                        .checkout
+                        .clone()
+                        .unwrap_or_else(|| self.host.creation.checkout.clone());
+                    draft.error = Some(Self::identity_message(&path));
+                    self.tabs.identity.recovery = Some((path, false));
+                }
                 fail(&mut draft, error);
                 None
             }
@@ -496,7 +512,7 @@ impl Plait {
             if let Some(identity) = tree.identity {
                 self.tabs.identity.checkouts.insert(
                     tree.path.clone(),
-                    plait_core::tabs::DirectoryIdentity {
+                    plait_client::tabs::DirectoryIdentity {
                         device: identity.dev.parse().unwrap(),
                         inode: identity.ino.parse().unwrap(),
                     },
@@ -509,10 +525,10 @@ impl Plait {
             ));
             self.refresh_host_worktrees(cx);
         }
-        if !self.host.connection.threads.iter().any(|t| t.id == id) {
+        if !self.host.connection.threads().iter().any(|t| t.id == id) {
             self.host
                 .connection
-                .threads
+                .threads_mut()
                 .insert(0, host::ThreadSummary::from(&reply.thread));
             self.rebuild_projects(cx);
         }
@@ -530,7 +546,7 @@ impl Plait {
             .as_ref()
             .is_some_and(|data| data.threads.contains_key(&id))
         {
-            Err(plait_core::tabs::TabError::AlreadyOpen)
+            Err(plait_client::tabs::TabError::AlreadyOpen)
         } else {
             self.tabs.model.bind_draft_target(&draft_target, target)
         };
@@ -552,7 +568,7 @@ impl Plait {
             let mut saved = data
                 .draft_tab(&draft_id, &source_root)
                 .map(|tab| tab.draft.clone())
-                .unwrap_or_else(|| plait_core::session::Draft {
+                .unwrap_or_else(|| plait_client::session::Draft {
                     text: sending.text.clone(),
                     images: sending.images.clone(),
                     revision: sending.revision,
@@ -566,7 +582,7 @@ impl Plait {
                 Thread {
                     checkout: reply.thread.checkout.clone(),
                     model: reply.thread.model.clone(),
-                    title: plait_core::session::title(&sending.text),
+                    title: plait_client::session::title(&sending.text),
                     draft: saved,
                     pending: None,
                     pending_submissions: Vec::new(),
@@ -612,7 +628,10 @@ impl Plait {
 }
 
 fn fail(draft: &mut Draft, error: host::Error) {
-    if matches!(error, host::Error::Rejected(_)) {
+    if super::host::is_checkout_identity_changed(&error) {
+        draft.pending = None;
+        draft.sending = None;
+    } else if matches!(error, host::Error::Rejected(_)) {
         draft.pending = None;
         draft.sending = None;
         draft.error = Some(format!("Thread not created. {error}"));

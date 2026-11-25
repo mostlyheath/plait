@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { connect } from 'node:net';
+import { DatabaseSync } from 'node:sqlite';
+import { rootIdentity } from '../../src/safety.ts';
 import { mkdtemp, readFile, writeFile, rm, stat, realpath, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -48,7 +50,7 @@ export function raw(store: string, input: string): Promise<Reply> {
     socket.once('end', () => reject(new Error('Connection closed before reply')));
   });
 }
-export async function setup(t: { after: (fn: () => Promise<void>) => void }, scenario = 'answer', storeAlias = false, sandboxed = true) {
+export async function setup(t: { after: (fn: () => Promise<void>) => void }, scenario = 'answer', storeAlias = false, sandboxed = true, extraEnv: NodeJS.ProcessEnv = {}) {
   const base = await realpath(await mkdtemp(join(storeAlias ? '/tmp' : tmpdir(), 'plait-host-test-')));
   const repo = join(base, 'repo'); const store = join(storeAlias ? base.replace('/private/tmp/', '/tmp/') : base, 'store');
   await exec('/bin/mkdir', ['-p', repo, store]);
@@ -61,7 +63,7 @@ export async function setup(t: { after: (fn: () => Promise<void>) => void }, sce
   const start = async (mode = scenario) => {
     const deadline = Date.now() + 15000;
     for (;;) {
-      const child = spawn(binary, ['run', '--store', store, '--runtime', fixture], { stdio: ['ignore', 'ignore', 'pipe'], env: { ...process.env, PLAIT_TEST_SCENARIO: mode } });
+      const child = spawn(binary, ['run', '--store', store, '--runtime', fixture], { stdio: ['ignore', 'ignore', 'pipe'], env: { PLAIT_RUNNER_TEST_SUPPORT: import.meta.dirname, ...process.env, ...extraEnv, PLAIT_TEST_SCENARIO: mode } });
       children.push(child);
       let stderr = ''; child.stderr!.on('data', chunk => { stderr = (stderr + chunk.toString()).slice(-8192); });
       const gone = () => child.exitCode !== null || child.signalCode !== null;
@@ -83,7 +85,12 @@ export async function setup(t: { after: (fn: () => Promise<void>) => void }, sce
   });
   const host = await start();
   // Most suites test the sandbox, which is now opt-in; trusted suites switch per test.
-  if (sandboxed) assert.equal((await request(store, { op: 'set_command_policy', checkout: repo, policy: 'sandboxed' })).ok, true);
+  if (sandboxed && process.platform === 'linux') {
+    // Simulate a pre-existing sandboxed store without bypassing the policy operation.
+    const db = new DatabaseSync(join(store, 'host.sqlite'));
+    try { db.prepare('INSERT INTO settings VALUES (?,?)').run(`command_policy:${repo}`, JSON.stringify({ policy: 'sandboxed', root: await rootIdentity(repo) })); }
+    finally { db.close(); }
+  } else if (sandboxed) assert.equal((await request(store, { op: 'set_command_policy', checkout: repo, policy: 'sandboxed' })).ok, true);
   const create = async (id = 'create-1') => {
     const reply = await request(store, { op: 'create_thread', checkout: repo, provider: 'faux', model_id: 'faux-1', request_id: id });
     assert.equal(reply.ok, true, JSON.stringify(reply)); return reply.result.thread;

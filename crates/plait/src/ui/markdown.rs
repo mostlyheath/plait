@@ -6,7 +6,7 @@ use super::{
     theme::*,
 };
 use gpui::{prelude::*, *};
-use plait_core::{
+use plait_client::{
     diff::Change,
     highlight::Token,
     markdown::{self, Align, Block, DiffLine, Kind, Style, Table},
@@ -60,12 +60,28 @@ fn highlight(style: &Style) -> HighlightStyle {
     }
 }
 
+/// Spans are sorted and non-overlapping, so only this slice can intersect.
+pub(super) fn overlapping_spans<'a>(
+    block: &'a Block,
+    range: &Range<usize>,
+) -> &'a [(Range<usize>, Style)] {
+    if range.is_empty() {
+        return &block.spans[..0];
+    }
+    let start = block
+        .spans
+        .partition_point(|(span, _)| span.end <= range.start);
+    let end = block
+        .spans
+        .partition_point(|(span, _)| span.start < range.end)
+        .max(start);
+    &block.spans[start..end]
+}
+
 /// Clip a block's spans to `range` and make them relative to it.
 fn local_spans(block: &Block, range: &Range<usize>) -> Vec<(Range<usize>, Style)> {
-    block
-        .spans
+    overlapping_spans(block, range)
         .iter()
-        .filter(|(span, _)| span.start < range.end && range.start < span.end)
         .map(|(span, style)| {
             let local =
                 span.start.max(range.start) - range.start..span.end.min(range.end) - range.start;
@@ -95,7 +111,12 @@ impl Plait {
             .collect();
         // Found text first, so a selection over it still reads as selected.
         self.mark_found(site, &range, &mut runs);
-        if let Some(selected) = self.workspace.reading.selected(site, block, &range) {
+        if let Some(selected) = self.workspace.reading.selected(
+            self.workspace.live_layout.raw_index(site.row),
+            site.block,
+            block,
+            &range,
+        ) {
             markdown::restyle(&mut runs, selected, |style| {
                 style.background_color = Some(selection_fill())
             });
@@ -103,7 +124,7 @@ impl Plait {
         let text = StyledText::new(SharedString::from(block.text[range.clone()].to_owned()))
             .with_highlights(runs)
             .with_font_family_overrides(code);
-        self.selectable(site, block, range, text, by_line)
+        self.selectable(site, block, range, text, by_line, &spans)
     }
 
     /// The monospace body of a code block: one line per source line, scrolling sideways.
@@ -113,8 +134,8 @@ impl Plait {
             .w_full()
             .overflow_x_scroll()
             .font_family(mono())
-            .text_size(px(12.))
-            .line_height(px(19.))
+            .text_size(px(code_size()))
+            .line_height(px(code_line_height()))
             .whitespace_nowrap()
             .child(self.block_text(site, block, 0..block.text.len(), true))
     }
@@ -324,8 +345,8 @@ impl Plait {
             .overflow_x_scroll()
             .py_1()
             .font_family(mono())
-            .text_size(px(12.))
-            .line_height(px(19.))
+            .text_size(px(code_size()))
+            .line_height(px(code_line_height()))
             .whitespace_nowrap()
             // Tints reach the widest line, or the edge when every line is short.
             .child(column().flex_none().min_w_full().children(rows))
@@ -465,5 +486,26 @@ impl Plait {
             .min_w_0()
             .children(blocks.collect::<Vec<_>>())
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod span_tests {
+    use super::{Block, Style, overlapping_spans};
+
+    #[test]
+    fn overlapping_slice_tracks_range_and_boundaries() {
+        let block = Block {
+            spans: vec![
+                (0..3, Style::default()),
+                (3..6, Style::default()),
+                (8..10, Style::default()),
+            ],
+            ..Block::default()
+        };
+        assert_eq!(overlapping_spans(&block, &(3..5)).len(), 1);
+        assert_eq!(overlapping_spans(&block, &(5..9)).len(), 2);
+        assert!(overlapping_spans(&block, &(6..8)).is_empty());
+        assert!(overlapping_spans(&block, &(4..4)).is_empty());
     }
 }

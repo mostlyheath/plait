@@ -16,9 +16,12 @@ and [fairness rules](https://github.com/zqkra/ademark/blob/119a5f7b99247cffbe7f9
 Check for upstream changes before starting a measured run.
 
 V1 ranks tests separately, not with a composite quality score. Track A normally
-uses a local replay server; Tracks B and C use live model requests. Plait runs
-its own Pi Durable integration, not Claude Code. Any adapter must disclose that
-and attribute the desktop, Rust host, Node sidecar, LaunchAgent, and child processes.
+uses a local replay server; Tracks B and C use live model requests. ADEMark
+measures Claude Code at full access. Plait can run a Claude Code thread on the
+person's own install, so that configuration is the comparable one; Pi and Codex
+threads are separate configurations. An adapter must name the harness of each
+result and attribute the desktop, Rust host, Node sidecar, LaunchAgent, the
+harness process, and child processes.
 
 ## Current gaps
 
@@ -26,16 +29,17 @@ and attribute the desktop, Rust host, Node sidecar, LaunchAgent, and child proce
 | --- | --- |
 | Launch and first response | Measure installed launch/input-to-pixel latency and prove replay routing |
 | Idle, memory, and post-quit state | Count every attributed process, including the intentionally persistent host |
-| Five-stream workloads | One active run per checkout is currently enforced; five saved threads are not five concurrent streams |
+| Five-stream workloads | One writer per checkout is enforced. A queued thread is not a concurrent stream, and a thread in its own worktree is a different-checkout workload |
 | Long conversations | The UI receives a bounded transcript tail, not 2,000 accessible history items |
 | Tokens and repository rules | Capture real requests, model/effort settings, side calls, and instruction handling |
-| Permissions | Exact-call approvals and offline, read-only command access are not equivalent to full-access benchmark settings |
+| Permissions | Record the exact mode: Plait's `ask` or `auto` approval and the project's command policy for Pi, or Claude Code's own permission mode. Only the last is ADEMark's full-access setting |
 | Orchestration | Not part of Plait; do not add swarms or mandatory worktrees for a ranking |
 
-The runtime permits at most eight active checkouts and 20 turns per run. Separate
+The host sets no default limit on active checkouts (`PLAIT_MAX_ACTIVE_CHECKOUTS`
+is an explicit host setting), and a Pi run pauses after 300 tool rounds. Separate
 checkouts can support an internal load probe, but do not claim equivalence to a
-same-workspace workload without upstream agreement. Read-only concurrency,
-history paging, and explicit effort settings need contract and persistence review.
+same-workspace workload without upstream agreement. Read-in-place concurrency and
+history paging need contract and persistence review.
 
 ## Development probes
 
@@ -70,8 +74,9 @@ or end-to-end latency. Headless Linux renders are layout evidence only.
    honors another client's environment variables. Restarting the desktop does
    not replace the running host or its environment.
 3. Calibrate reset, project opening, model selection, send, completion, and
-   quit/relaunch on a dedicated Mac account. Use Pi-specific completion evidence;
-   another harness's session-log reader is not sufficient.
+   quit/relaunch on a dedicated Mac account. Use completion evidence from the
+   thread's own harness: Claude Code's session logs for Claude Code threads
+   only, and Pi-specific evidence for Pi threads.
 4. Validate the adapter and run upstream conformance/smoke checks. Record invalid
    and unsupported tests. A partial baseline is not a complete Track A pass.
 5. Run timed measurements under the pinned methodology, with its window size,

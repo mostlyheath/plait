@@ -6,8 +6,8 @@ use super::{
     thread_controls::TextTooltip,
 };
 use gpui::{prelude::*, *};
-use plait_core::host::{
-    self, CancelWatch, Client,
+use plait_client::host::{
+    self, CancelWatch,
     build_output::{self, Info, Kind, Phase, Progress, Request},
 };
 use std::{collections::BTreeMap, path::PathBuf};
@@ -87,9 +87,13 @@ impl Plait {
         let previous = self.build_output.info.clone();
         let root = key.1.clone();
         self.build_output.busy = true;
+        let client = self.host_client();
+        let supported = self.host.connection.has_checkout_identity;
+        let local = self.host_is_local();
         let task = cx.background_executor().spawn(async move {
-            let identity = Self::identify_settings_checkout(&root, expected)?;
-            let client = Client::from_environment()?;
+            let identity =
+                Self::identify_settings_checkout(&client, &root, supported, local, expected)?;
+
             let info = if let Some(paths) = paths {
                 let info = previous.ok_or_else(|| {
                     host::Error::Protocol("Load build output choices before saving.".into())
@@ -106,7 +110,13 @@ impl Plait {
             } else {
                 build_output::info(&client, identity.root.clone(), refresh)?
             };
-            identity.verify().map_err(host::Error::Protocol)?;
+            Self::identify_settings_checkout(
+                &client,
+                &identity.root,
+                supported,
+                local,
+                Some(identity.clone()),
+            )?;
             Ok::<_, host::Error>((info, identity))
         });
         cx.spawn(async move |this, cx| {
@@ -141,7 +151,7 @@ impl Plait {
         if paths.contains(&value) {
             return;
         }
-        if let Err(error) = plait_core::build_output::relative(&value) {
+        if let Err(error) = plait_client::build_output::relative(&value) {
             self.build_output.note = Some(error);
             cx.notify();
             return;
@@ -169,7 +179,7 @@ impl Plait {
                 let path = path.clone();
                 let value = path.clone();
                 content = content.child(row().gap_2().flex_wrap()
-                    .child(tag(("build-path", i), path, colors().text))
+                    .child(tag(("build-path", i), path, colors().subtle))
                     .child(button(("build-remove", i), "Remove").disabled(!enabled)
                         .tooltip(|_, cx| cx.new(|_| TextTooltip("Stop treating this directory as build output. Existing output stays; it will block worktree removal until approved again or removed manually.".into())).into())
                         .on_activate(cx, move |this, _, cx| {
@@ -184,7 +194,7 @@ impl Plait {
             {
                 let value = path.clone();
                 content = content.child(row().gap_2().flex_wrap()
-                    .child(tag(("build-suggestion", i), format!("Suggested · {path}"), colors().muted))
+                    .child(tag(("build-suggestion", i), format!("Suggested · {path}"), colors().subtle))
                     .child(button(("build-approve", i), "Approve").disabled(!enabled)
                         .tooltip(|_, cx| cx.new(|_| TextTooltip("Approve this ignored directory for copy-on-write cloning and removal with its worktree. A manifest only suggests it; nothing is approved automatically.".into())).into())
                         .on_activate(cx, move |this, _, cx| this.approve_build_directory(value.clone(), cx))));
@@ -256,9 +266,10 @@ impl Plait {
         self.build_output.prepare_progress();
         let epoch = self.host.connection.epoch;
         let id = request.clone();
+        let client = self.host_client();
         let task = cx
             .background_executor()
-            .spawn(async move { build_output::subscribe(&Client::from_environment()?, id, kind) });
+            .spawn(async move { build_output::subscribe(&client, id, kind) });
         cx.spawn(async move |this, cx| {
             let mut updates = match task.await {
                 Ok(updates) => updates,
@@ -324,12 +335,14 @@ impl Plait {
     pub(super) fn build_progress_bar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let (id, kind, label) = self.build_output.label.as_ref()?;
         let (id, kind, label) = (id.clone(), *kind, label.clone());
+        let client = self.host_client();
         Some(row().px_4().py_2().gap_2().flex_wrap()
             .child(tag("build-progress", label, colors().muted))
             .child(button("build-skip", "Skip").tooltip(|_, cx| cx.new(|_| TextTooltip("Discard this clone and start the worktree cold. The first message waits until partial output has been removed.".into())).into())
                 .on_activate(cx, move |_, _, cx| {
                     let request = id.clone();
-                    let task = cx.background_executor().spawn(async move { build_output::skip(&Client::from_environment()?, request, kind) });
+                    let client = client.clone();
+        let task = cx.background_executor().spawn(async move { build_output::skip(&client, request, kind) });
                     cx.spawn(async move |this, cx| { if let Err(error) = task.await { let _ = this.update(cx, |this, cx| { this.notice = Some(error.to_string()); cx.notify(); }); } }).detach();
                 })).into_any_element())
     }

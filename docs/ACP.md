@@ -23,6 +23,33 @@ includes the prerequisite routing and transcript-store refactor below.
    store. Keep Pi's execution path and existing on-disk formats unchanged.
    This is a small prerequisite refactor, not a general agent plugin framework.
 
+### Decisions for the prerequisite refactor
+
+Recorded before the refactor starts; the step plan is on
+[issue #31](https://github.com/heath0xFF/plait/issues/31).
+
+6. **A saved harness this host does not know.** Read operations (history,
+   watch, rename, archive) keep working on the thread's stored transcript.
+   Every operation that would run, steer, configure, or queue work for it is
+   refused before admission. Nothing falls back to Pi or another harness.
+7. **A harness that cannot steer.** The host refuses a steering request with
+   `invalid_request` before queueing or accepting it, including from older
+   clients. The desktop reads `capabilities.steer` and does not offer
+   Option-Enter steering for such a thread. The refusal lands with the
+   refactor; the desktop change lands with the Antigravity adapter.
+8. **A harness with a single permission mode.** The Permissions chip shows the
+   mode as a fixed label with its explanation, not a menu, and
+   `configure_thread` accepts only that mode.
+9. **Run instructions.** The run header Plait builds today is passed only to
+   adapters that ask for it (Codex and Claude Code keep their current
+   behaviour). Antigravity receives none, as decision 1 requires.
+10. **Host downgrade.** Downgrading to a host older than the refactor is not
+    supported once a thread uses a new harness; the release notes say so. No
+    store-level guard is added.
+11. **Test seams.** The runtime keeps its `codex` and `claude` properties,
+    backed by the new dispatch, so existing tests keep injecting fakes the
+    same way during the refactor.
+
 ## Evidence and version pins
 
 Antigravity's guide describes ACP **1**, over newline-delimited JSON-RPC on
@@ -62,6 +89,19 @@ also has a Pi fallback. Replace these with exhaustive selection before adding a
 harness. Unknown saved IDs must fail before admission or startup, never select
 another agent. Extract the shared `CodexEntries` store without changing Codex
 or Claude file names or table formats. No arbitrary ACP-server registry is added.
+
+**Progress.** Step 1 is done: the store is `ExternalEntries` in
+`runtime/src/external/entries.ts`, with `transcriptPath` naming
+`<thread>.codex.sqlite` and `<thread>.claude.sqlite` exactly as before. Step 2
+is done: `runtime/src/external/registry.ts` resolves a thread to Pi, a known
+external harness, or an unknown ID, and an unknown saved harness is refused
+before admission everywhere while its history stays readable (decision 6).
+Step 3 is done: a running external thread holds one `ExternalRun` handle
+(its transcript store, its run, any server lease, an optional live mode
+switch, and one `close()`), and a steering request for a harness without
+`supportsSteer` is refused before acceptance (decision 7). Codex and Claude
+Code both still steer. Step 4 (compatibility tests) follows the plan on
+[issue #31](https://github.com/heath0xFF/plait/issues/31).
 
 ## Discovery and authentication
 

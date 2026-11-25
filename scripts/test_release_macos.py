@@ -7,17 +7,35 @@ import unittest
 import xml.etree.ElementTree as ET
 
 from release_macos import (
-    AGENT_LABEL, HOST_BASE, client_preinstall, component_manifests, distribution,
-    host_package_id, host_postinstall, host_preinstall, launch_agent, manifest, normalize_modes, payload_digest, platform_preflight,
+    ROOT, copy_runtime_sources, AGENT_LABEL, HOST_BASE, client_preinstall, component_manifests, distribution,
+    host_package_id, host_postinstall, host_preinstall, launch_agent, manifest, normalize_modes, payload_digest, platform_preflight, stage_font_notices,
 )
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_client_stages_complete_bundled_font_notices(self):
+        with tempfile.TemporaryDirectory() as directory:
+            resources = Path(directory)
+            stage_font_notices(resources)
+            for name in ("OFL.txt", "README.md"):
+                self.assertEqual((ROOT / "assets/fonts" / name).read_bytes(),
+                                 (resources / "fonts" / name).read_bytes())
+
+    def test_runtime_package_contains_every_runner_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = Path(directory) / "runtime"
+            copy_runtime_sources(runtime)
+            source = ROOT / "runtime/src/runner"
+            expected = {path.relative_to(source) for path in source.rglob("*") if path.is_file()}
+            self.assertTrue({Path("main.ts"), Path("pi-runner.ts")} <= expected)
+            self.assertEqual(expected, {path.relative_to(runtime / "src/runner") for path in (runtime / "src/runner").rglob("*") if path.is_file()})
+            self.assertFalse((runtime / "test").exists())
+
     def test_component_contracts_are_separate_and_inputs_are_bounded(self):
         for component in ["client", "host"]:
             value = manifest(component, "0.1.0", "a" * 12)
             self.assertEqual(value["component"], component)
-            self.assertEqual(value["protocol_version"], 6)
+            self.assertEqual(value["protocol_version"], 7)
         for component, version, revision in [
             ("other", "0.1.0", "a" * 12),
             ("host", "../escape", "a" * 12),

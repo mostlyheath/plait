@@ -2,7 +2,7 @@
 
 use super::{Plait, composer::Composer};
 use gpui::*;
-use plait_core::{
+use plait_client::{
     host::{MessageRole, ThreadSummary},
     session::{self, Draft, Journal, Session, Thread},
 };
@@ -96,17 +96,15 @@ impl Plait {
             let (journal, mut data) = Journal::open(&directory, host)?;
             data.import_legacy_drafts();
             let path = requested
-                .or_else(|| data.checkout.clone())
+                .or_else(|| data.checkout.clone().filter(|path| path.is_dir()))
                 .unwrap_or_else(|| PathBuf::from("."));
-            let path = std::fs::canonicalize(&path)
-                .or_else(|_| {
-                    if path.is_absolute() {
-                        Ok(path.clone())
-                    } else {
-                        std::env::current_dir().map(|root| root.join(&path))
-                    }
-                })
-                .map_err(|error| format!("Cannot restore checkout: {error}"))?;
+            let path = if path.is_absolute() {
+                path
+            } else {
+                std::env::current_dir()
+                    .map(|root| root.join(&path))
+                    .map_err(|error| format!("Cannot restore checkout: {error}"))?
+            };
             Ok::<_, String>((journal, data, path))
         });
         cx.spawn_in(window, async move |this, cx| {
@@ -149,7 +147,9 @@ impl Plait {
                             this.restore_composer(id, composer, cx);
                         }
                         // A folder chosen while disk state loaded wins over the saved folder.
-                        if this.host.creation.generation == checkout_generation {
+                        if this.host.creation.generation == checkout_generation
+                            && !this.host_workspace.checkout_carried
+                        {
                             this.change_checkout(path, window, cx);
                             this.session.restore_thread = selected;
                         }
@@ -245,9 +245,7 @@ impl Plait {
                 ..Default::default()
             };
         }
-        let mut preferences = self.preferences.value.clone();
-        preferences.navigation.open(&path);
-        self.persist_navigation(preferences, cx);
+        self.update_lists(|lists| lists.open(&path), cx);
         let live = match self.host.change_checkout(path.clone()) {
             Ok(live) => live,
             Err(error) => {
@@ -256,6 +254,7 @@ impl Plait {
                 return;
             }
         };
+        self.host_workspace.checkout_carried = false;
         self.workspace.file_viewer.clear_checkout();
         self.workspace.line_pick = None;
         self.workspace.thread_files.reset();
@@ -290,7 +289,7 @@ impl Plait {
             && let Some(summary) = self
                 .host
                 .connection
-                .threads
+                .threads()
                 .iter()
                 .find(|thread| thread.id == id)
             && self.saved_thread(summary).is_some()
@@ -306,7 +305,7 @@ impl Plait {
     pub(super) fn session_accepts_thread(&self, id: &str) -> bool {
         self.host
             .connection
-            .threads
+            .threads()
             .iter()
             .find(|summary| summary.id == id)
             .is_some_and(|summary| {
@@ -326,15 +325,16 @@ impl Plait {
         if let Some(saved) = self
             .host
             .connection
-            .threads
+            .threads()
             .iter()
             .find(|thread| thread.id == id)
             .and_then(|summary| self.saved_thread(summary))
         {
             let draft = saved.draft.clone();
+            let client = self.host_client();
             composer.update(cx, |composer, cx| {
                 composer.restore_draft(draft.text, draft.revision, draft.submitted, cx);
-                composer.restore_thread_images(draft.images, id.to_owned(), cx)
+                composer.restore_thread_images_with_client(draft.images, id.to_owned(), client, cx)
             });
         }
     }
@@ -353,7 +353,7 @@ impl Plait {
             let (text, revision, submitted) = composer.saved_draft();
             next.set_draft_tab(
                 id.clone(),
-                plait_core::session::DraftTab {
+                plait_client::session::DraftTab {
                     legacy: false,
                     creation: self.draft.saved_creation(),
                     checkout: self.host.creation.checkout.clone(),
@@ -371,9 +371,9 @@ impl Plait {
         // An open empty tab still survives restart before its composer is mounted.
         if self.draft.composer.is_none()
             && let Some(id) = &self.draft.id
-            && self.tabs.model.tabs().iter().any(|tab| matches!(tab.session().target(), plait_core::tabs::TabTarget::Draft { id: open, .. } if open == id))
+            && self.tabs.model.tabs().iter().any(|tab| matches!(tab.session().target(), plait_client::tabs::TabTarget::Draft { id: open, .. } if open == id))
         {
-            next.set_draft_tab(id.clone(), plait_core::session::DraftTab {
+            next.set_draft_tab(id.clone(), plait_client::session::DraftTab {
                 legacy: false,
                 creation: self.draft.saved_creation(),
                 checkout: self.host.creation.checkout.clone(),
@@ -381,7 +381,10 @@ impl Plait {
                 draft: self.draft.saved.clone(),
             });
         }
-        if self.host.creation.checkout.is_absolute() {
+        if self.host_is_local()
+            && !self.host_workspace.checkout_carried
+            && self.host.creation.checkout.is_absolute()
+        {
             next.checkout = Some(self.host.creation.checkout.clone());
         }
         next.selected = self
@@ -390,7 +393,7 @@ impl Plait {
             .selected
             .clone()
             .or_else(|| self.session.restore_thread.clone());
-        for summary in &self.host.connection.threads {
+        for summary in self.host.connection.threads() {
             let Some(composer) = self.workspace.composers.get(&summary.id) else {
                 continue;
             };
@@ -527,12 +530,8 @@ impl Plait {
     }
 
     pub(super) fn thread_title(&self, id: &str) -> String {
-        self.host
-            .connection
-            .threads
-            .iter()
-            .find(|thread| thread.id == id)
-            .map(|summary| self.summary_title(summary))
+        self.thread_index(id)
+            .map(|index| self.summary_title(&self.host.connection.threads()[index]))
             .unwrap_or_else(|| UNTITLED.to_owned())
     }
 
@@ -540,11 +539,8 @@ impl Plait {
     /// thread", so theirs adds the start of the ID to tell them apart.
     pub(super) fn thread_name(&self, id: &str) -> String {
         match self
-            .host
-            .connection
-            .threads
-            .iter()
-            .find(|thread| thread.id == id)
+            .thread_index(id)
+            .map(|index| &self.host.connection.threads()[index])
             .and_then(|summary| self.chosen_title(summary))
         {
             Some(title) => title,
@@ -556,7 +552,7 @@ impl Plait {
     pub(super) fn rename_text(&self, id: &str) -> String {
         self.host
             .connection
-            .threads
+            .threads()
             .iter()
             .find(|thread| thread.id == id)
             .and_then(|summary| self.chosen_title(summary))

@@ -2,13 +2,13 @@
 //!
 //! Every piece of selectable text paints through [`Selectable`], which records
 //! where it landed. Pointer events map those records to positions in the
-//! conversation; `plait_core::selection` decides order, ranges, and the copied
+//! conversation; `plait_client::selection` decides order, ranges, and the copied
 //! text. The selection is drawn as a background on the text runs, so it follows
 //! wrapping exactly, and it is kept by row identity so it survives streaming.
 
 use super::{Plait, theme::*};
 use gpui::{prelude::*, *};
-use plait_core::{
+use plait_client::{
     markdown::{self, Block},
     selection::{self, Position, Span},
     transcript::{self, Row},
@@ -20,7 +20,10 @@ use std::{
     rc::Rc,
 };
 
-actions!(plait, [CopySelection, HistoryStart, HistoryEnd]);
+actions!(
+    plait,
+    [CopySelection, QuoteSelection, HistoryStart, HistoryEnd]
+);
 
 pub(super) fn bind_keys(cx: &mut App) {
     // The composer binds Cmd-C in its own, deeper context and wins while it has focus.
@@ -47,14 +50,13 @@ pub(super) enum Owner {
 }
 
 impl Owner {
-    fn is(&self, row: Row<'_>) -> bool {
-        match (self, row) {
-            (Self::Message(id), Row::Message(message)) => **id == *message.id,
-            (Self::Stream, Row::Streaming(_)) => true,
-            (Self::Reasoning(id), Row::Reasoning(message)) => **id == *message.id,
-            (Self::LiveReasoning, Row::LiveReasoning(_)) => true,
-            (Self::Tool(id), Row::Tool(tool)) => **id == *tool.id,
-            _ => false,
+    fn key(&self) -> String {
+        match self {
+            Owner::Message(id) => format!("message:{id}"),
+            Owner::Reasoning(id) => format!("reasoning:{id}"),
+            Owner::Tool(id) => format!("tool:{id}"),
+            Owner::Stream => "stream".into(),
+            Owner::LiveReasoning => "live-reasoning".into(),
         }
     }
 }
@@ -126,18 +128,12 @@ impl Reading {
     pub(super) fn bookmark_selection(
         &self,
     ) -> Option<(
-        plait_core::tabs::bookmark::TextPosition,
-        plait_core::tabs::bookmark::TextPosition,
+        plait_client::tabs::bookmark::TextPosition,
+        plait_client::tabs::bookmark::TextPosition,
     )> {
         let selection = self.selection.as_ref()?;
-        let position = |a: &Anchor| plait_core::tabs::bookmark::TextPosition {
-            source: match &a.owner {
-                Owner::Message(id) => format!("message:{id}"),
-                Owner::Reasoning(id) => format!("reasoning:{id}"),
-                Owner::Tool(id) => format!("tool:{id}"),
-                Owner::Stream => "stream".into(),
-                Owner::LiveReasoning => "live-reasoning".into(),
-            },
+        let position = |a: &Anchor| plait_client::tabs::bookmark::TextPosition {
+            source: a.owner.key(),
             block: a.block as u32,
             byte: a.offset as u32,
         };
@@ -147,11 +143,11 @@ impl Reading {
     pub(super) fn restore_selection(
         &mut self,
         thread: &str,
-        details: &plait_core::tabs::bookmark::ViewDetails,
+        details: &plait_client::tabs::bookmark::ViewDetails,
     ) {
         self.groups_thread = thread.into();
         self.open_groups = details.folded.iter().cloned().collect();
-        let anchor = |p: &plait_core::tabs::bookmark::TextPosition| -> Option<Anchor> {
+        let anchor = |p: &plait_client::tabs::bookmark::TextPosition| -> Option<Anchor> {
             let owner = if let Some(id) = p.source.strip_prefix("message:") {
                 Owner::Message(id.to_owned().into())
             } else if let Some(id) = p.source.strip_prefix("reasoning:") {
@@ -183,14 +179,15 @@ impl Reading {
     /// The selected part of a block's `range`, relative to that range.
     pub(super) fn selected(
         &self,
-        site: &Site,
+        row: usize,
+        block_index: usize,
         block: &Block,
         range: &Range<usize>,
     ) -> Option<Range<usize>> {
         let all = self
             .span
             .get()?
-            .within(site.row, site.block, block.text.len())?;
+            .within(row, block_index, block.text.len())?;
         let start = selection::clamp(&block.text, all.start.max(range.start));
         let end = selection::clamp(&block.text, all.end.min(range.end));
         (start < end).then(|| start - range.start..end - range.start)
@@ -383,16 +380,13 @@ impl Plait {
         range: Range<usize>,
         text: StyledText,
         by_line: bool,
+        spans: &[(Range<usize>, plait_client::markdown::Style)],
     ) -> Selectable {
-        let links = block
-            .spans
+        let links = spans
             .iter()
-            .filter(|(span, _)| span.start < range.end && range.start < span.end)
             .filter_map(|(span, style)| {
                 let url = block.links.get(usize::from(style.link?))?;
-                let local = span.start.max(range.start) - range.start
-                    ..span.end.min(range.end) - range.start;
-                Some((local, SharedString::from(url.clone())))
+                Some((span.clone(), SharedString::from(url.clone())))
             })
             .collect();
         Selectable {
@@ -412,18 +406,21 @@ impl Plait {
         let entity = cx.weak_entity();
         canvas(
             // Text paints after this and records itself for the new frame.
-            move |_, _, _| fresh.borrow_mut().clear(),
-            move |bounds, _, window, _| {
+            move |bounds, window, _| {
+                fresh.borrow_mut().clear();
+                window.insert_hitbox(bounds, HitboxBehavior::Normal)
+            },
+            move |bounds, surface, window, _| {
                 let (press_regions, press_entity) = (regions.clone(), entity.clone());
                 window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
-                    if phase != DispatchPhase::Bubble || event.button != MouseButton::Left {
+                    if phase != DispatchPhase::Bubble
+                        || event.button != MouseButton::Left
+                        || !surface.is_hovered(window)
+                    {
                         return;
                     }
-                    if !bounds.contains(&event.position) {
-                        return;
-                    }
-                    let hit = under(&press_regions.borrow(), event.position, window);
                     let (count, extend) = (event.click_count, event.modifiers.shift);
+                    let hit = under(&press_regions.borrow(), event.position, window);
                     let _ = press_entity.update(cx, |this, cx| {
                         this.press_text(hit, count, extend, window, cx)
                     });
@@ -502,12 +499,9 @@ impl Plait {
 
     fn anchored_block(&self, anchor: &Anchor) -> Option<&Block> {
         let snapshot = self.conversation_snapshot()?;
-        let row = self
-            .workspace
-            .live_layout
-            .iter()
-            .filter_map(|slot| transcript::resolve(snapshot, *slot))
-            .find(|row| anchor.owner.is(*row))?;
+        let layout = &self.workspace.live_layout;
+        let index = *layout.raw_index_by_key.get(&anchor.owner.key())?;
+        let row = transcript::resolve(snapshot, layout.slots[index])?;
         self.row_blocks(row).get(anchor.block).copied()
     }
 
@@ -524,9 +518,11 @@ impl Plait {
             return;
         }
         let position = |anchor: &Anchor| {
-            let row = self.workspace.live_layout.iter().position(|slot| {
-                transcript::resolve(snapshot, *slot).is_some_and(|row| anchor.owner.is(row))
-            })?;
+            let row = *self
+                .workspace
+                .live_layout
+                .raw_index_by_key
+                .get(&anchor.owner.key())?;
             Some(Position {
                 row,
                 block: anchor.block,
@@ -658,14 +654,15 @@ impl Plait {
     pub(super) fn selected_text(&self) -> Option<String> {
         let span = self.workspace.reading.span.get()?;
         let snapshot = self.conversation_snapshot()?;
-        let rows = self
-            .workspace
-            .live_layout
+        let layout = &self.workspace.live_layout;
+        let rows = layout
+            .slots
+            .get(span.start.row..=span.end.row)?
             .iter()
             .enumerate()
-            .skip(span.start.row)
-            .take(span.end.row - span.start.row + 1)
-            .filter_map(|(index, slot)| Some((index, transcript::resolve(snapshot, *slot)?)));
+            .filter_map(|(i, slot)| {
+                Some((span.start.row + i, transcript::resolve(snapshot, *slot)?))
+            });
         let blocks = rows.flat_map(|(index, row)| {
             self.row_blocks(row)
                 .into_iter()
@@ -673,6 +670,91 @@ impl Plait {
                 .map(move |(block, content)| (index, block, content))
         });
         Some(selection::text(blocks, &span)).filter(|text| !text.is_empty())
+    }
+
+    fn selected_reply(&self, expected: Option<&str>) -> Option<&str> {
+        let selection = self.workspace.reading.selection.as_ref()?;
+        if self.settings_open
+            || self.workspace.tab != super::Workspace::Conversation
+            || self.host.thread.selected.as_deref() != Some(selection.thread.as_str())
+            || self.conversation_snapshot()?.id != selection.thread
+            || selection.anchor.owner != selection.head.owner
+        {
+            return None;
+        }
+        let Owner::Message(id) = &selection.anchor.owner else {
+            return None;
+        };
+        let id = id.as_ref();
+        if expected.is_some_and(|expected| id != expected) {
+            return None;
+        }
+        let row = *self.workspace.live_layout.row_of_message.get(id)?;
+        if self.work_open_at(row) == Some(false) {
+            return None;
+        }
+        // Two distinct carets can enclose only the gap between paragraphs.
+        let reading = &self.workspace.reading;
+        let span = reading.span.get()?;
+        let message = self.workspace.formatted.messages.get(id)?;
+        let blocks = message.blocks.get(span.start.block..=span.end.block)?;
+        blocks
+            .iter()
+            .zip(span.start.block..)
+            .any(|(block, index)| {
+                reading
+                    .selected(span.start.row, index, block, &(0..block.text.len()))
+                    .is_some()
+            })
+            .then_some(id)
+    }
+
+    pub(super) fn can_quote_reply(&self, id: &str, cx: &App) -> bool {
+        self.selected_reply(Some(id)).is_some()
+            && self
+                .visible_composer()
+                .is_some_and(|composer| composer.read(cx).accepts_quote())
+    }
+
+    pub(super) fn quote_reply_selection(
+        &mut self,
+        expected: Option<&str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.resolve_selection();
+        let Some(reply) = self.selected_reply(expected) else {
+            return false;
+        };
+        let Some(snapshot) = self.conversation_snapshot() else {
+            return false;
+        };
+        if !snapshot.messages.iter().any(|message| {
+            message.id == reply && message.role == plait_client::host::MessageRole::Assistant
+        }) {
+            return false;
+        }
+        let composer = self.visible_composer().cloned();
+        let (Some(text), Some(composer)) = (self.selected_text(), composer) else {
+            return false;
+        };
+        if let Some(snapshot) = &self.host.thread.snapshot
+            && self.host.thread.selected.as_deref() == Some(snapshot.id.as_str())
+            && let Some(approval) = &snapshot.pending_approval
+            && !text.is_empty()
+            && composer.read(cx).accepts_quote()
+        {
+            self.workspace
+                .show_composer_for_approval(approval.id.clone());
+        }
+        if !composer.update(cx, |composer, cx| {
+            composer.quote_selection(&text, window, cx)
+        }) {
+            return false;
+        }
+        self.clear_reading_selection();
+        cx.notify();
+        true
     }
 
     pub(super) fn on_selection_actions(
@@ -708,6 +790,11 @@ impl Plait {
                 None => cx.propagate(),
             },
         ))
+        .on_action(cx.listener(|this, _: &QuoteSelection, window, cx| {
+            if !this.quote_reply_selection(None, window, cx) {
+                cx.propagate();
+            }
+        }))
     }
 
     /// The middle of the caret before `offset` of a block, where it was last

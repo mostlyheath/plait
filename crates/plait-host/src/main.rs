@@ -1,14 +1,19 @@
+mod bridge;
 mod build_output;
 mod command;
 mod files;
 mod fingerprint;
+mod git_read;
 mod installation;
 mod lease;
+#[cfg(target_os = "linux")]
+mod linux_service;
 mod mcp;
 mod record;
 mod review;
 mod service;
 mod startup;
+mod tailnet;
 mod transport;
 mod update;
 mod worktree;
@@ -43,6 +48,14 @@ fn run() -> io::Result<()> {
     if operation == "lock-fd" {
         return lease::acquire(args.collect());
     }
+    if operation == "runner-lock-fd" {
+        return lease::runner_lock();
+    }
+    if operation == "runner-peer-fd" {
+        use std::os::fd::FromRawFd;
+        let socket = unsafe { std::os::unix::net::UnixStream::from_raw_fd(3) };
+        return plait_transport::local_socket::require_same_user(&socket);
+    }
     if operation == "cleanup" {
         return lease::cleanup_operation(args.collect());
     }
@@ -62,6 +75,8 @@ fn run() -> io::Result<()> {
     match operation.as_str() {
         "record" => return record::run(),
         "review" => return review::run(),
+        "git-read" => return git_read::run(),
+        "git-write" => return git_read::write(),
         "worktree" => return worktree::run(),
         "build-output" => return build_output::run(),
         "worktree-git" => return worktree::git_run(),
@@ -81,20 +96,117 @@ fn run() -> io::Result<()> {
         "prune-contained" => return record::prune_contained(),
         _ => {}
     }
+    if operation == "serve" || operation == "tailnet" {
+        let mut store = env::var_os("PLAIT_HOST_STORE")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                PathBuf::from(env::var_os("HOME").unwrap_or_default()).join(".local/share/plait")
+            });
+        let values: Vec<_> = args.collect();
+        if operation == "tailnet" {
+            if values.len() != 2 {
+                return Err(io::Error::other(
+                    "usage: plait-host tailnet allow <login>|--me or allow-node <name>",
+                ));
+            }
+            return tailnet::add(&store, &values[0], &values[1]);
+        }
+        let mut port = 7419;
+        let mut enabled = false;
+        let mut iter = values.iter();
+        while let Some(option) = iter.next() {
+            match option.as_str() {
+                "--tailnet" => enabled = true,
+                "--port" => {
+                    port = iter
+                        .next()
+                        .and_then(|v| v.parse::<u16>().ok())
+                        .filter(|p| *p != 0)
+                        .ok_or_else(|| io::Error::other("invalid port"))?
+                }
+                "--store" => {
+                    store = iter
+                        .next()
+                        .ok_or_else(|| io::Error::other("missing store"))?
+                        .into()
+                }
+                _ => return Err(io::Error::other("unknown option")),
+            }
+        }
+        if !enabled || !store.is_absolute() {
+            return Err(io::Error::other(
+                "serve requires --tailnet and an absolute store path",
+            ));
+        }
+        return tailnet::serve(&store, port);
+    }
+    if operation == "install-service" || operation == "uninstall-service" {
+        let tailnet = match (args.next().as_deref(), args.next()) {
+            (None, None) => false,
+            (Some("--tailnet"), None) if operation == "install-service" => true,
+            _ => return Err(io::Error::other("unknown service option")),
+        };
+        #[cfg(target_os = "linux")]
+        return if operation == "install-service" {
+            linux_service::install(tailnet)
+        } else {
+            linux_service::uninstall()
+        };
+        #[cfg(not(target_os = "linux"))]
+        return {
+            let _ = tailnet;
+            Err(io::Error::other("service commands are Linux-only"))
+        };
+    }
+    if operation == "active-runs" {
+        if args.next().is_some() {
+            return Err(io::Error::other("usage: plait-host active-runs"));
+        }
+        let home = env::var_os("HOME").ok_or_else(|| io::Error::other("HOME is not set"))?;
+        let store = PathBuf::from(home).join(".local/share/plait");
+        let count = plait_release::install::active_runs(&store).map_err(io::Error::other)?;
+        println!("{count}");
+        return Ok(());
+    }
     if operation == "version" {
         serde_json::to_writer(
             io::stdout(),
             &serde_json::json!({
                 "component": "host", "version": env!("CARGO_PKG_VERSION"),
                 "revision": option_env!("PLAIT_BUILD_REVISION").unwrap_or("development"),
-                "release": plait_core::update::current_version().map(|version| version.to_string()),
-                "protocol_version": 6,
+                "release": plait_protocol::update::current_version().map(|version| version.to_string()),
+                "protocol_version": plait_protocol::host::PROTOCOL_VERSION,
             }),
         )?;
         return Ok(());
     }
     if operation == "update" {
         return update::run(args.collect());
+    }
+    if operation == "bridge" {
+        let mut store = env::var_os("PLAIT_HOST_STORE")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                PathBuf::from(env::var_os("HOME").unwrap_or_default()).join(".local/share/plait")
+            });
+        while let Some(option) = args.next() {
+            if option != "--store" {
+                return Err(io::Error::other("unknown option"));
+            }
+            store = args
+                .next()
+                .ok_or_else(|| io::Error::other("missing option value"))?
+                .into();
+        }
+        if !store.is_absolute() {
+            return Err(io::Error::other("store path must be absolute"));
+        }
+        // Unbuffered descriptors: io::Stdin buffers internally, so a partial-
+        // frame deadline that polls fd 0 would wait on bytes already read.
+        use std::os::fd::AsFd;
+        let input = std::fs::File::from(io::stdin().as_fd().try_clone_to_owned()?);
+        let output = std::fs::File::from(io::stdout().as_fd().try_clone_to_owned()?);
+        return bridge::run(input, output, &store);
     }
     let paths = installation::runtime_paths(&env::current_exe()?)?;
     let service_home = (operation == "run-user")

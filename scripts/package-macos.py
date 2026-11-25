@@ -12,7 +12,7 @@ import shutil
 import subprocess
 import tempfile
 
-from release_macos import build_installers, embed_host, manifest, stage_host, write_json
+from release_macos import build_installers, embed_host, manifest, stage_font_notices, stage_host, write_json
 from distribution_macos import build_distribution
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -32,6 +32,8 @@ def verify_bundle(bundle):
         dependency = line.strip().split(" (", 1)[0]
         assert dependency.startswith(("/System/Library/", "/usr/lib/")), f"Unbundled dependency: {dependency}"
     assert (bundle / "Contents/Resources/LICENSE").read_text().startswith("MIT License")
+    for name in ("OFL.txt", "README.md"):
+        assert (bundle / "Contents/Resources/fonts" / name).read_bytes() == (ROOT / "assets/fonts" / name).read_bytes()
     host = json.loads((bundle / "Contents/Resources/host.json").read_text())
     assert host["component"] == "host" and (bundle / "Contents/Resources/Host.tar.gz").stat().st_size > 0
     assert info["CFBundleIconFile"] == "Plait.icns"
@@ -70,6 +72,7 @@ def main():
         shutil.copy2(ROOT / "Cargo.lock", resources / "Cargo.lock")
         shutil.copy2(ROOT / "scripts/update-installed-macos.sh", resources / "install-user.sh")
         shutil.copy2(ROOT / "target/THIRD_PARTY_NOTICES.txt", resources / "THIRD_PARTY_NOTICES.txt")
+        stage_font_notices(resources)
         iconset = work / "Plait.iconset"
         iconset.mkdir()
         for size in (16, 32, 128, 256, 512):
@@ -122,7 +125,7 @@ def main():
         host_archive = work / f"Plait-Host-{host_version}-{revision}-macos-arm64.tar.gz"
         shutil.copy2(resources / "Host.tar.gz", host_archive)
         installers.append(host_archive)
-        installers += build_distribution(installers, version, revision, work, archive)
+        installers += build_distribution(installers, version, revision, work, archive, bundle)
         # Only replace generated output after both the bundle and its archive pass verification.
         destination = dist / "Plait.app"
         if destination.exists():

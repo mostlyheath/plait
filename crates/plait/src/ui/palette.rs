@@ -12,7 +12,7 @@ use super::{
     theme::*,
 };
 use gpui::{prelude::*, *};
-use plait_core::fuzzy::fuzzy_match;
+use plait_client::fuzzy::fuzzy_match;
 use std::{collections::HashSet, ops::Range, rc::Rc, sync::Arc};
 
 /// Rows shown before the list scrolls.
@@ -384,6 +384,7 @@ pub(super) enum PaletteEvent {
 
 pub(super) struct Palette {
     options: Options,
+    corner: f32,
     field: Entity<TextField>,
     /// The caller's items, then the typed item when there is one.
     items: Vec<Item>,
@@ -401,6 +402,9 @@ pub(super) struct Palette {
     generation: u64,
     /// The query generation `rows` belongs to.
     arranged: u64,
+    /// The control that opened this picker, so it opens beside that control
+    /// instead of at the top of the window.
+    pub(super) anchor: Option<Bounds<Pixels>>,
     _subscriptions: [Subscription; 2],
 }
 
@@ -428,6 +432,7 @@ impl Palette {
         let this = Self {
             selected: start(&rows, &entries, options.initial.as_deref()),
             options,
+            corner: PALETTE_CORNER,
             field,
             base: items.len(),
             items,
@@ -438,10 +443,16 @@ impl Palette {
             scroll: UniformListScrollHandle::new(),
             generation: 0,
             arranged: 0,
+            anchor: None,
             _subscriptions: subscriptions,
         };
         this.reveal();
         this
+    }
+
+    pub fn picker(mut self) -> Self {
+        self.corner = SURFACE_CORNER;
+        self
     }
 
     /// Whether the caller supplied no items; a typed item does not count.
@@ -462,7 +473,7 @@ impl Palette {
             return;
         };
         self.items.truncate(self.base);
-        let typed = typed(query.trim(), &self.items);
+        let typed = typed(query, &self.items);
         self.typed_leads = typed.as_ref().is_some_and(|(_, leads)| *leads);
         self.items.extend(typed.map(|(item, _)| item));
         self.entries = self.items.iter().map(Entry::from).collect();
@@ -504,6 +515,32 @@ impl Palette {
             self.scroll.scroll_to_item(row, ScrollStrategy::Nearest);
         }
         cx.notify();
+    }
+
+    /// Keep recovery actions reachable while preserving an unsuccessful query.
+    pub fn set_recovery_items(
+        &mut self,
+        items: Vec<Item>,
+        failed_query: &str,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_items(items, cx);
+        if self.field.read(cx).text() != failed_query {
+            return;
+        }
+        self.rows = arrange(&self.entries[..self.base], "");
+        self.selected = start(&self.rows, &self.entries, None);
+        if let Some(row) = self.selected {
+            self.scroll.scroll_to_item(row, ScrollStrategy::Nearest);
+        }
+        cx.notify();
+    }
+
+    /// Empty the search field, as when the picker shows another folder.
+    pub fn clear_query(&mut self, cx: &mut Context<Self>) {
+        if !self.field.read(cx).text().is_empty() {
+            self.field.update(cx, |field, cx| field.set_text("", cx));
+        }
     }
 
     /// Replace the search text, as typing would. Scenes use it; drop the
@@ -643,28 +680,9 @@ impl Palette {
     /// A quiet text button for the row's second action.
     fn aside_button(&self, row: usize, label: SharedString, cx: &mut Context<Self>) -> Control {
         let entity = cx.weak_entity();
-        div()
-            .id(("palette-aside", row))
-            .role(Role::Button)
-            .aria_label(label.clone())
-            .audited()
-            .flex_shrink_0()
-            .px(px(6.))
-            .h(px(20.))
-            .flex()
-            .items_center()
-            .rounded_md()
-            .border_1()
-            .border_color(rgb(colors().edge))
-            .cursor_pointer()
-            .text_size(px(11.))
-            .text_color(rgb(colors().muted))
-            .hover(|style| {
-                style
-                    .bg(rgba(colors().hover))
-                    .text_color(rgb(colors().text))
-            })
-            .child(label)
+        button(("palette-aside", row), label)
+            .h(px(24.))
+            .tab_stop(false)
             .on_click(cx.listener(move |this, _, _, cx| {
                 // The row underneath would otherwise run the item.
                 cx.stop_propagation();
@@ -744,7 +762,9 @@ impl Palette {
                     .flex_shrink_0()
                     .max_w(relative(0.7))
                     .truncate()
-                    .text_color(rgb(if item.enabled {
+                    .text_color(rgb(if selected && item.enabled {
+                        colors().strong
+                    } else if item.enabled {
                         colors().text
                     } else {
                         colors().muted
@@ -770,9 +790,7 @@ impl Palette {
                 el.child(self.toggle(row, item, on, cx))
             })
             .when(!item.hint.is_empty(), |el| {
-                el.child(
-                    tag("palette-row-hint", item.hint.clone(), colors().subtle).flex_shrink_0(),
-                )
+                el.child(key_hint("palette-row-hint", item.hint.clone()).flex_shrink_0())
             })
             .when(item.enabled, |el| {
                 el.cursor_pointer()
@@ -796,7 +814,7 @@ impl Palette {
         }
     }
 
-    fn list(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn list(&self, max_height: Option<Pixels>, cx: &mut Context<Self>) -> AnyElement {
         if self.items.is_empty() {
             return message(self.options.empty.clone());
         }
@@ -826,7 +844,12 @@ impl Palette {
                 )
                 .track_scroll(&self.scroll)
                 .w_full()
-                .h(px(ROW_HEIGHT * count.min(VISIBLE_ROWS) as f32)),
+                .h(max_height.map_or(
+                    px(ROW_HEIGHT * count.min(VISIBLE_ROWS) as f32),
+                    |height| {
+                        px(ROW_HEIGHT * count.min(VISIBLE_ROWS) as f32).min(height.max(px(0.)))
+                    },
+                )),
             )
             .into_any_element()
     }
@@ -912,9 +935,18 @@ impl Focusable for Palette {
 impl EventEmitter<PaletteEvent> for Palette {}
 
 impl Render for Palette {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _above = super::theme::AboveModal::enter();
         let searching = !self.field.read(cx).text().trim().is_empty();
+        let place = self
+            .anchor
+            .map(|anchor| anchored_place(anchor, window.viewport_size()));
+        // Search field, padding, border and footer occupy fixed space.
+        let viewport = window.viewport_size();
+        let top = px(72.).min((viewport.height * 0.15).max(px(16.)));
+        let max_panel = (viewport.height - top - px(24.)).max(px(0.));
+        let list_height =
+            Some((place.as_ref().map_or(max_panel, |place| place.height) - px(88.)).max(px(0.)));
         let panel = column()
             .id("palette")
             .role(Role::Dialog)
@@ -953,36 +985,148 @@ impl Render for Palette {
             .w_full()
             .max_w(px(620.))
             .overflow_hidden()
-            .rounded_xl()
+            .rounded(px(self.corner))
+            .shadow(floating_shadow())
             .border_1()
             .border_color(rgb(colors().edge))
-            .bg(rgb(colors().rail))
+            .bg(rgb(colors().raised))
             .child(div().p_2().child(self.field.clone()))
-            .child(self.list(cx))
+            .child(self.list(list_height, cx))
             .child(self.footer(searching));
-        // A full-window layer: it blocks the workspace behind and dims it,
-        // because the panel has no shadow to lift it.
-        div()
+        // A full-window layer blocks and dims the workspace behind the panel.
+        let layer = div()
             .absolute()
             .top_0()
             .left_0()
             .size_full()
             .occlude()
+            .bg(rgba(colors().scrim));
+        let Some(place) = place else {
+            return layer
+                .flex()
+                .flex_col()
+                .items_center()
+                .px_6()
+                .pt(top)
+                .pb_6()
+                .child(panel.max_h(max_panel));
+        };
+        let panel = panel.max_w(place.width).max_h(place.height);
+        let positioned = div()
+            .absolute()
+            .left(place.left)
+            .w(place.width)
             .flex()
             .flex_col()
-            .items_center()
-            .px_6()
-            .pt(px(72.))
-            .pb_6()
-            .bg(rgba(colors().scrim))
-            .child(panel)
+            .when(place.above, |el| el.bottom(place.edge).justify_end())
+            .when(!place.above, |el| el.top(place.edge))
+            .child(panel);
+        layer.child(positioned)
+    }
+}
+
+/// Where an anchored picker goes: beside its control, on the side with more
+/// room, kept inside the window.
+#[derive(Debug, PartialEq)]
+struct Place {
+    left: Pixels,
+    width: Pixels,
+    /// Opening upward, `edge` is the distance from the window's bottom;
+    /// otherwise from its top.
+    above: bool,
+    edge: Pixels,
+    height: Pixels,
+}
+
+fn anchored_place(anchor: Bounds<Pixels>, window: Size<Pixels>) -> Place {
+    const MARGIN: f32 = 16.;
+    const GAP: f32 = 6.;
+    let width = px(480.).min(window.width - px(2. * MARGIN)).max(px(240.));
+    let left = anchor
+        .left()
+        .min(window.width - width - px(MARGIN))
+        .max(px(MARGIN));
+    let room_above = anchor.top() - px(MARGIN + GAP);
+    let room_below = window.height - anchor.bottom() - px(MARGIN + GAP);
+    let above = room_above > room_below;
+    let min_h = px(160.).min((window.height - px(2. * MARGIN)).max(px(0.)));
+    let height = room_above.max(room_below).max(min_h);
+    let edge = if above {
+        window.height - anchor.top() + px(GAP)
+    } else {
+        anchor.bottom() + px(GAP)
+    }
+    .min((window.height - px(MARGIN) - height).max(px(MARGIN)));
+    Place {
+        left,
+        width,
+        above,
+        edge,
+        height,
     }
 }
 
 #[cfg(test)]
 mod tests {
     // Named imports: a glob would bring in GPUI's own `test` attribute.
-    use super::{Entry, Row, arrange, nearest, runs, start, step};
+    use super::{Entry, Row, anchored_place, arrange, nearest, runs, start, step};
+    use gpui::{Bounds, point, px, size};
+
+    #[gpui::test]
+    fn command_palette_and_picker_use_distinct_corners(cx: &mut gpui::TestAppContext) {
+        use super::{Options, PALETTE_CORNER, Palette, SURFACE_CORNER};
+        let options = || Options {
+            name: "Search".into(),
+            placeholder: "".into(),
+            empty: "".into(),
+            initial: None,
+            mark: None,
+            aside: None,
+            note: None,
+        };
+        let palette = cx.add_window(|window, cx| Palette::new(options(), Vec::new(), window, cx));
+        let picker =
+            cx.add_window(|window, cx| Palette::new(options(), Vec::new(), window, cx).picker());
+        cx.update(|cx| {
+            palette
+                .update(cx, |palette, _, _| {
+                    assert_eq!(palette.corner, PALETTE_CORNER)
+                })
+                .unwrap();
+            picker
+                .update(cx, |picker, _, _| assert_eq!(picker.corner, SURFACE_CORNER))
+                .unwrap();
+        });
+    }
+
+    #[core::prelude::v1::test]
+    fn a_picker_opens_beside_its_control_and_stays_in_the_window() {
+        let window = size(px(1200.), px(800.));
+        // A chip under the composer: the picker opens upward from its top edge.
+        let chip = Bounds::new(point(px(400.), px(740.)), size(px(120.), px(24.)));
+        let place = anchored_place(chip, window);
+        assert!(place.above);
+        assert_eq!(place.left, px(400.));
+        assert_eq!(place.edge, px(800. - 740. + 6.));
+        assert_eq!(place.width, px(480.));
+        // A control near the top: it opens downward from the control's bottom edge.
+        let row = Bounds::new(point(px(300.), px(40.)), size(px(24.), px(24.)));
+        let place = anchored_place(row, window);
+        assert!(!place.above);
+        assert_eq!(place.edge, px(70.));
+        // Near the right edge it moves left to stay inside the window.
+        let right = Bounds::new(point(px(1150.), px(740.)), size(px(40.), px(24.)));
+        assert_eq!(anchored_place(right, window).left, px(1200. - 480. - 16.));
+        let short = size(px(600.), px(220.));
+        let middle = Bounds::new(point(px(200.), px(98.)), size(px(100.), px(24.)));
+        let place = anchored_place(middle, short);
+        assert_eq!(place.height, px(160.));
+        assert!(place.edge + place.height <= short.height - px(16.));
+        // A narrow window shrinks the picker but keeps the margin.
+        let narrow = anchored_place(chip, size(px(400.), px(800.)));
+        assert_eq!(narrow.width, px(368.));
+        assert_eq!(narrow.left, px(16.));
+    }
     use std::ops::Range;
 
     fn entry(key: &str, title: &str, detail: &str, section: &str, enabled: bool) -> Entry {
@@ -1105,6 +1249,34 @@ mod tests {
         assert_eq!(runs("héllo", &[0, 1, 4]), vec![0..3, 4..5]);
         // Offsets that do not fit the text are skipped, not sliced.
         assert_eq!(runs("héllo", &[2, 99]), Vec::<Range<usize>>::new());
+    }
+
+    #[test]
+    fn a_thread_is_found_by_its_folder_and_its_title_together() {
+        // Two projects of one name: only the folder's path tells them apart.
+        let entries = vec![
+            entry(
+                "a",
+                "Repair the tests",
+                "api · Done · p/m · /work/customer-a/api",
+                "Threads",
+                true,
+            ),
+            entry(
+                "b",
+                "Repair the tests",
+                "api · Done · p/m · /work/customer-b/api",
+                "Threads",
+                true,
+            ),
+        ];
+        // Matching is fuzzy, so the other may follow; the named folder is first.
+        for (query, first) in [("customer-a repair", 0), ("customer-b repair", 1)] {
+            let rows = arrange(&entries, query);
+            assert_eq!(rows[0].item(), Some(first), "{query}");
+        }
+        assert_eq!(arrange(&entries, "api repair").len(), 2);
+        assert!(arrange(&entries, "customer-c repair").is_empty());
     }
 
     #[test]

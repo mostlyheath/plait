@@ -14,14 +14,18 @@ use super::{
     ways_out,
 };
 use gpui::{prelude::*, *};
-use plait_core::{
+use plait_client::{
     file_view::{self, Contents, FIND_LIMIT, LINE_CLIP, Opened},
     highlight::{Span, Token},
     state::Load,
 };
 use std::{ops::Range, path::PathBuf, sync::Arc};
 
-pub(super) const LINE_HEIGHT: f32 = 20.;
+/// Row height for file lines: 8 points of leading over the code size
+/// (20 at 12, 21 at 13, 22 at 14) so lines never clip at 13 or 14 points.
+pub(super) fn line_height() -> f32 {
+    code_size() + 8.
+}
 const TAB_WIDTH: usize = 4;
 
 #[derive(Default)]
@@ -46,6 +50,10 @@ impl FileViewer {
     pub(super) fn clear_checkout(&mut self) {
         *self = Self {
             generation: self.generation + 1,
+            find: Find {
+                generation: self.find.generation + 1,
+                ..Default::default()
+            },
             ..Default::default()
         };
     }
@@ -59,8 +67,8 @@ impl FileViewer {
 /// A file is local: a host reconnect must not strand its read. Selecting a
 /// thread or changing checkout also retires the viewer's generation.
 fn same_file_owner(
-    owner: &plait_core::ownership::ReadStamp,
-    now: &plait_core::ownership::ReadStamp,
+    owner: &plait_client::ownership::ReadStamp,
+    now: &plait_client::ownership::ReadStamp,
 ) -> bool {
     owner.checkout == now.checkout && owner.thread == now.thread
 }
@@ -68,6 +76,7 @@ fn same_file_owner(
 /// What a find bar searches. Both share one bar, its keys, and its counts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum FindIn {
+    Changes,
     File,
     Conversation,
 }
@@ -78,16 +87,19 @@ pub(super) struct Find {
     pub field: Option<Entity<TextField>>,
     pub matches: Arc<Vec<Range<usize>>>,
     pub current: usize,
-    restore_match: Option<plait_core::tabs::bookmark::TextPosition>,
+    restore_match: Option<plait_client::tabs::bookmark::TextPosition>,
     generation: u64,
     _events: Option<Subscription>,
 }
 
 impl Find {
-    pub(super) fn bookmark_match(&self) -> Option<plait_core::tabs::bookmark::TextPosition> {
+    pub(super) fn bookmark_match(&self) -> Option<plait_client::tabs::bookmark::TextPosition> {
+        if self.restore_match.is_some() {
+            return self.restore_match.clone();
+        }
         self.matches
             .get(self.current)
-            .map(|hit| plait_core::tabs::bookmark::TextPosition {
+            .map(|hit| plait_client::tabs::bookmark::TextPosition {
                 source: "file".into(),
                 block: 0,
                 byte: hit.start as u32,
@@ -99,10 +111,11 @@ impl Plait {
     pub(super) fn restore_find_bookmark(
         &mut self,
         target: FindIn,
-        bookmark: &plait_core::tabs::bookmark::FindBookmark,
+        bookmark: &plait_client::tabs::bookmark::FindBookmark,
         cx: &mut Context<Self>,
     ) {
         let name = match target {
+            FindIn::Changes => "Find in changes",
             FindIn::File => "Find in file",
             FindIn::Conversation => "Find in conversation",
         };
@@ -114,11 +127,19 @@ impl Plait {
         let events = cx.subscribe(
             &field,
             move |this, _, _: &TextFieldEvent, cx| match target {
+                FindIn::Changes => this.search_panel_diff(cx),
                 FindIn::File => this.update_find(cx),
                 FindIn::Conversation => this.search_conversation(cx),
             },
         );
         match target {
+            FindIn::Changes => {
+                let find = &mut self.workspace.diff_find;
+                find.field = Some(field);
+                find.open = bookmark.open;
+                find.restore_match = bookmark.current.clone();
+                find._events = Some(events);
+            }
             FindIn::File => {
                 let find = &mut self.workspace.file_viewer.find;
                 find.open = bookmark.open;
@@ -132,12 +153,99 @@ impl Plait {
             }
         }
     }
+    fn panel_patch(&self) -> Option<&Arc<plait_client::model::Diff>> {
+        if self.panel_recorded() {
+            self.workspace.turn_review.diff.as_ref()
+        } else {
+            self.state.repository.diff().ready()
+        }
+    }
+    pub(super) fn search_panel_diff(&mut self, cx: &mut Context<Self>) {
+        if !self.workspace.diff_find.open || !self.panel_is_open() {
+            return;
+        }
+        let patch = self.panel_patch().cloned();
+        let find = &mut self.workspace.diff_find;
+        let query = find
+            .field
+            .as_ref()
+            .map(|f| f.read(cx).text().to_owned())
+            .unwrap_or_default();
+        let source = patch.as_ref().map(Arc::downgrade).unwrap_or_default();
+        if self
+            .workspace
+            .diff_search
+            .as_ref()
+            .is_some_and(|(last, text)| last.ptr_eq(&source) && text == &query)
+        {
+            return;
+        }
+        self.workspace.diff_search = Some((source, query.clone()));
+        find.generation += 1;
+        let generation = find.generation;
+        find.matches = Arc::default();
+        find.current = 0;
+        let Some(patch) = patch.filter(|_| !query.is_empty()) else {
+            cx.notify();
+            return;
+        };
+        let source = patch.clone();
+        let task = cx
+            .background_executor()
+            .spawn(async move { plait_client::panes::matching_diff_rows(&patch, &query) });
+        let tab = self.tabs.model.active();
+        cx.spawn(async move |this, cx| {
+            let rows = task.await;
+            let _ = this.update(cx, |this, cx| {
+                if this.tabs.model.active() == tab
+                    && this.workspace.diff_find.generation == generation
+                    && this
+                        .panel_patch()
+                        .is_some_and(|now| Arc::ptr_eq(now, &source))
+                {
+                    let find = &mut this.workspace.diff_find;
+                    find.current = find
+                        .restore_match
+                        .take()
+                        .and_then(|pos| rows.iter().position(|r| r.start == pos.byte as usize))
+                        .unwrap_or(0);
+                    find.matches = Arc::new(rows);
+                    this.show_diff_match(cx);
+                }
+            });
+        })
+        .detach();
+    }
+    fn show_diff_match(&self, cx: &mut Context<Self>) {
+        let find = &self.workspace.diff_find;
+        if let Some(hit) = find.matches.get(find.current) {
+            self.workspace
+                .diff_scroll
+                .scroll_to_item(hit.start, ScrollStrategy::Center);
+        }
+        cx.notify();
+    }
     /// The root quick-open paths are relative to: the repository's top level.
     pub(super) fn file_root(&self) -> PathBuf {
         self.state.repository.snapshot().ready().map_or_else(
             || self.state.repository.path().to_path_buf(),
             |s| s.root.clone(),
         )
+    }
+
+    pub(super) fn open_file_in_view(
+        &mut self,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_file(path, None, cx);
+        if self.shows_kind(plait_client::panes::PaneKind::Files) {
+            window.focus(
+                &self.panel_focus[plait_client::panes::PaneKind::Files as usize],
+                cx,
+            );
+        }
     }
 
     /// Show `path` in the Files tab, at `line` (zero-based) when given.
@@ -147,13 +255,16 @@ impl Plait {
             return;
         }
         self.tabs.lifecycle.view_revision += 1;
-        self.pause_conversation(None, cx);
+        if let Some(panel) = self.tabs.model.panel_mut() {
+            panel.open_on(plait_client::panel::PanelKind::Files);
+        }
+        self.workspace.tab = Workspace::Conversation;
+        self.panels.focused = Some(plait_client::panes::PaneKind::Files);
         self.workspace.restore_pending[3] = false;
         let root = self.file_root();
         let viewer = &mut self.workspace.file_viewer;
         let same = viewer.path.as_ref() == Some(&path) && viewer.root == root;
         viewer.reveal = line;
-        self.workspace.tab = Workspace::Files;
         self.queue_tab_save(cx);
         self.settings_open = false;
         if same && self.workspace.file_viewer.opened.is_some() {
@@ -172,6 +283,7 @@ impl Plait {
     }
 
     fn read_file(&mut self, reload: bool, cx: &mut Context<Self>) {
+        let backend = self.repository_backend();
         let owner = self.host.read_stamp();
         let cancelled = self.workspace.cancelled.clone();
         let expected = self.state.checkout_key().cloned();
@@ -183,16 +295,9 @@ impl Plait {
         viewer.loading = !reload;
         let generation = viewer.generation;
         let root = viewer.root.clone();
-        let task = cx.background_executor().spawn(async move {
-            let expected = expected.ok_or("Checkout identity is not verified.")?;
-            expected.verify()?;
-            if root != expected.root {
-                return Err("Checkout identity changed.".into());
-            }
-            let opened = file_view::read(&root, &path)?;
-            expected.verify()?;
-            Ok(opened)
-        });
+        let task = cx
+            .background_executor()
+            .spawn(async move { backend.file(&root, expected.as_ref(), &path) });
         cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
@@ -239,15 +344,16 @@ impl Plait {
 
     /// Reread the open file if its size or time changed. Cheap: one stat.
     pub(super) fn check_file(&mut self, cx: &mut Context<Self>) {
-        if self.workspace.tab != Workspace::Files {
+        if self.workspace.tab != Workspace::Files
+            && !self.shows_kind(plait_client::panes::PaneKind::Files)
+        {
             return;
         }
         let owner = self.host.read_stamp();
         let cancelled = self.workspace.cancelled.clone();
         let expected = self.state.checkout_key().cloned();
         let viewer = &self.workspace.file_viewer;
-        if self.workspace.tab == Workspace::Files
-            && viewer.path.is_some()
+        if viewer.path.is_some()
             && viewer.opened.is_none()
             && viewer.error.is_none()
             && !viewer.loading
@@ -263,12 +369,10 @@ impl Plait {
         }
         let root = viewer.root.clone();
         let generation = viewer.generation;
-        let task = cx.background_executor().spawn(async move {
-            expected
-                .ok_or("Checkout identity is not verified.")?
-                .verify()?;
-            file_view::stamp(&root, &path)
-        });
+        let backend = self.repository_backend();
+        let task = cx
+            .background_executor()
+            .spawn(async move { backend.file_stamp(&root, expected.as_ref(), &path) });
         cx.spawn(async move |this, cx| {
             let stamp = task.await;
             let _ = this.update(cx, |this, cx| {
@@ -373,7 +477,7 @@ impl Plait {
 
     /// Cmd-F: show the find field over the open file.
     pub(super) fn open_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.workspace.tab != Workspace::Files || self.workspace.file_viewer.opened.is_none() {
+        if self.find_target() != Some(FindIn::File) || self.workspace.file_viewer.opened.is_none() {
             return;
         }
         let field = match self.workspace.file_viewer.find.field.clone() {
@@ -404,7 +508,11 @@ impl Plait {
         find.matches = Arc::default();
         // Whatever search is running now answers nothing.
         find.generation += 1;
-        window.focus(&self.focus, cx);
+        if self.panel_is_open() {
+            window.focus(&self.panel_focus[self.panel_focus_kind() as usize], cx);
+        } else {
+            window.focus(&self.focus, cx);
+        }
         cx.notify();
     }
 
@@ -523,8 +631,15 @@ impl Plait {
             )),
             _ => None,
         };
+        let in_pane = self.shows_kind(plait_client::panes::PaneKind::Files);
         let header = row()
-            .h(px(44.))
+            .map(|el| {
+                if in_pane {
+                    el.flex_wrap().min_h(px(44.)).py_1()
+                } else {
+                    el.h(px(44.))
+                }
+            })
             .px_4()
             .gap_2()
             .flex_shrink_0()
@@ -532,7 +647,8 @@ impl Plait {
             .border_color(rgb(colors().border))
             .child(
                 div()
-                    .flex_shrink_0()
+                    .min_w_0()
+                    .truncate()
                     .font_weight(FontWeight::MEDIUM)
                     .child(name),
             )
@@ -565,9 +681,16 @@ impl Plait {
                 "file-editor",
                 &display,
                 self.shortcut_aria("file.open_in_editor"),
+                self.host_is_local(),
+                false,
                 cx,
             ))
-            .child(ways_out::finder_button("file-finder", &display, cx));
+            .child(ways_out::finder_button(
+                "file-finder",
+                &display,
+                self.host_is_local(),
+                cx,
+            ));
         let body = match (&viewer.error, viewer.opened.as_deref(), viewer.loading) {
             (Some(error), _, _) => {
                 empty("This file cannot be shown", error.clone()).into_any_element()
@@ -612,6 +735,15 @@ impl Plait {
         if self.settings_open {
             return None;
         }
+        if let Some(kind) = self.focused_panel_kind() {
+            use plait_client::panes::PaneKind;
+            return match kind {
+                PaneKind::Thread => Some(FindIn::Conversation),
+                PaneKind::Changes => Some(FindIn::Changes),
+                PaneKind::Files => Some(FindIn::File),
+                PaneKind::History => None,
+            };
+        }
         match self.workspace.tab {
             Workspace::Files => Some(FindIn::File),
             Workspace::Conversation if self.host.thread.selected.is_some() => {
@@ -628,6 +760,24 @@ impl Plait {
         cx: &mut Context<Self>,
     ) {
         match target {
+            FindIn::Changes => {
+                if self.workspace.diff_find.field.is_none() {
+                    self.restore_find_bookmark(target, &Default::default(), cx);
+                }
+                self.workspace.diff_find.open = true;
+                self.search_panel_diff(cx);
+                window.focus(
+                    &self
+                        .workspace
+                        .diff_find
+                        .field
+                        .as_ref()
+                        .unwrap()
+                        .focus_handle(cx),
+                    cx,
+                );
+                cx.notify();
+            }
             FindIn::File => self.open_find(window, cx),
             FindIn::Conversation => self.open_conversation_find(window, cx),
         }
@@ -635,6 +785,15 @@ impl Plait {
 
     pub(super) fn step_find_in(&mut self, target: FindIn, forward: bool, cx: &mut Context<Self>) {
         match target {
+            FindIn::Changes => {
+                let find = &mut self.workspace.diff_find;
+                find.current = plait_client::conversation_find::step(
+                    find.current,
+                    find.matches.len(),
+                    forward,
+                );
+                self.show_diff_match(cx);
+            }
             FindIn::File => self.step_find(forward, cx),
             FindIn::Conversation => self.step_conversation_find(forward, cx),
         }
@@ -642,6 +801,15 @@ impl Plait {
 
     fn close_find_in(&mut self, target: FindIn, window: &mut Window, cx: &mut Context<Self>) {
         match target {
+            FindIn::Changes => {
+                self.workspace.diff_find.open = false;
+                if self.panel_is_open() {
+                    window.focus(&self.panel_focus[self.panel_focus_kind() as usize], cx);
+                } else {
+                    window.focus(&self.focus, cx);
+                }
+                cx.notify();
+            }
             FindIn::File => self.close_find(window, cx),
             FindIn::Conversation => self.close_conversation_find(window, cx),
         }
@@ -651,6 +819,16 @@ impl Plait {
     /// conversation's also says, briefly, when not all of it is loaded.
     pub(super) fn find_bar(&self, target: FindIn, cx: &mut Context<Self>) -> AnyElement {
         let (prefix, field, current, count, unsearched) = match target {
+            FindIn::Changes => {
+                let find = &self.workspace.diff_find;
+                (
+                    "diff-find",
+                    &find.field,
+                    find.current,
+                    find.matches.len(),
+                    None,
+                )
+            }
             FindIn::File => {
                 let find = &self.workspace.file_viewer.find;
                 (
@@ -752,8 +930,10 @@ impl Plait {
         };
         let count = text.lines.len();
         let digits = count.to_string().len().max(3);
-        let gutter = digits as f32 * 7.5 + 24.;
-        let widest = widest_index(text, text.widest);
+        let size = code_size();
+        let row_height = line_height();
+        let gutter = digits as f32 * (size * 0.65) + 24.;
+        let widest = text.widest_index;
         let matches = self.workspace.file_viewer.find.matches.clone();
         let current = self.workspace.file_viewer.find.current;
         uniform_list(
@@ -772,10 +952,10 @@ impl Plait {
                             .collect::<Vec<_>>();
                         row()
                             .id(("file-line", index))
-                            .h(px(LINE_HEIGHT))
+                            .h(px(row_height))
                             .font_family(mono())
-                            .text_size(px(12.))
-                            .line_height(px(LINE_HEIGHT))
+                            .text_size(px(size))
+                            .line_height(px(row_height))
                             .child(
                                 div()
                                     .w(px(gutter))
@@ -805,14 +985,6 @@ impl Plait {
         .min_h_0()
         .into_any_element()
     }
-}
-
-/// The index of a widest line, so the list sizes its scroll width from it.
-fn widest_index(text: &file_view::Text, widest: usize) -> usize {
-    text.lines
-        .iter()
-        .position(|line| text.text[line.clone()].chars().count().min(LINE_CLIP) == widest)
-        .unwrap_or(0)
 }
 
 /// How one stretch of a line is drawn.
@@ -974,7 +1146,7 @@ fn find_status(query_empty: bool, current: usize, count: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use plait_core::file_view::prepare;
+    use plait_client::file_view::prepare;
 
     #[core::prelude::v1::test]
     fn find_status_names_the_current_match_and_the_cap() {

@@ -40,7 +40,7 @@ def manifest(component, version, revision):
         "schema_version": 1, "component": component, "version": version,
         "revision": revision,
         # Newest protocol spoken; both components still accept version 1.
-        "protocol_version": 6,
+        "protocol_version": 7,
         "update_policy": "manual, component-specific installer",
     }
 
@@ -156,6 +156,13 @@ def verify_macho(binary):
     run("codesign", "--verify", "--strict", binary)
 
 
+def stage_font_notices(resources):
+    destination = resources / "fonts"
+    destination.mkdir()
+    for name in ("OFL.txt", "README.md"):
+        shutil.copy2(ROOT / "assets/fonts" / name, destination / name)
+
+
 def stage_node(destination):
     config = json.loads((ROOT / "packaging/macos/node.json").read_text())
     archive_name = f"node-v{config['version']}-darwin-arm64.tar.xz"
@@ -192,6 +199,11 @@ def stage_node(destination):
     return config["version"]
 
 
+def copy_runtime_sources(runtime):
+    """Keep runner imports adjacent to the packaged runtime entry point."""
+    shutil.copytree(ROOT / "runtime/src", runtime / "src")
+
+
 def stage_host(work, version, revision):
     host = work / "host-tree"
     (host / "bin").mkdir(parents=True)
@@ -200,7 +212,7 @@ def stage_host(work, version, revision):
     verify_macho(host / "bin/plait-host")
     node_version = stage_node(host)
     runtime = host / "runtime"
-    shutil.copytree(ROOT / "runtime/src", runtime / "src")
+    copy_runtime_sources(runtime)
     for name in ["package.json", "package-lock.json"]:
         shutil.copy2(ROOT / "runtime" / name, runtime / name)
     environment = {**os.environ, "NPM_CONFIG_USERCONFIG": "/dev/null"}

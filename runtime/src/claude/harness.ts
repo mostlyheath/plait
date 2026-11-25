@@ -80,6 +80,7 @@ type Check = { install: ClaudeInstall; env?: NodeJS.ProcessEnv; models: ClaudeMo
 
 /** Finds and checks Claude Code. Each run starts its own Claude Code process, so nothing is shared. */
 export class ClaudeHarness {
+  readonly supportsSteer: boolean = true;
   private check?: Promise<Check>;
   private latest?: Check;
   private setup?: Promise<void>;
@@ -164,7 +165,7 @@ export class ClaudeHarness {
   private async sdk(): Promise<ClaudeSdk> {
     return loadSdk(this.deps.sdk).catch(() => fail('The Agent SDK on this Mac is damaged. Set up Claude Code threads again.'));
   }
-  private forget() { this.check = undefined; this.latest = undefined; }
+  forget() { this.check = undefined; this.latest = undefined; }
   private remember(check: Check) {
     this.latest = check; this.check = Promise.resolve(check);
     return check;
@@ -180,10 +181,10 @@ export class ClaudeHarness {
     check.catch(() => { if (this.check === check) this.check = undefined; });
     return check;
   }
-  private async probe() {
+  async probe() {
     const configured = this.path();
     const env = await this.deps.environment();
-    return { env, install: await this.deps.find(configured === undefined ? { env } : { path: configured, env }) };
+    return { env, install: await this.deps.find(configured === undefined ? { env, directory: join(this.deps.cwd, 'tools') } : { path: configured, env }) };
   }
   private base(install: ClaudeInstall | undefined) {
     return {

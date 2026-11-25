@@ -4,7 +4,7 @@ use crate::ui::{
     Workspace,
     turn_records::{Stamp, TurnRecords},
 };
-use plait_core::{
+use plait_client::{
     history::records,
     host::{self, TurnRecord, UndoTurnReply},
 };
@@ -79,7 +79,6 @@ pub(super) fn prepare(harness: &mut Harness, repository: &Path) {
             .protocol_version = 5;
         plait.workspace.turn_records = Default::default();
         plait.workspace.thread_files = Default::default();
-        plait.preferences.value.hide_inspector = true;
         plait.settings_open = false;
         plait.overlay = None;
         plait.workspace.history = Default::default();
@@ -247,9 +246,9 @@ fn undo_control_and_shortcut_share_the_gate() {
         plait.toggle_command_palette(window, cx);
         assert!(plait.shortcut_undo().is_none());
         plait.overlay = None;
-        plait.host.connection.threads[1].status = ThreadStatus::Running;
+        plait.host.connection.threads_mut()[1].status = ThreadStatus::Running;
         assert_eq!(plait.undo_refusal(&line).unwrap().0, "Wait");
-        plait.host.connection.threads[1].status = ThreadStatus::Idle;
+        plait.host.connection.threads_mut()[1].status = ThreadStatus::Idle;
         for (state, label) in [("recording", "Recording"), ("failed", "Unavailable")] {
             inject(plait, vec![record("last", &["last"], state)]);
             assert_eq!(
@@ -627,11 +626,11 @@ fn redo_shortcut_keeps_the_control_refusals() {
                     Arc::make_mut(p.host.thread.snapshot.as_mut().unwrap()).status =
                         ThreadStatus::Running
                 }
-                2 => p.host.connection.threads[1].status = ThreadStatus::Running,
+                2 => p.host.connection.threads_mut()[1].status = ThreadStatus::Running,
                 _ => assert!(
                     p.state
                         .repository
-                        .request_write(plait_core::git::WriteOp::StageAll)
+                        .request_write(plait_client::git::WriteOp::StageAll)
                 ),
             }
             let line = p.workspace.turn_records.lines.latest.as_ref().unwrap();
@@ -651,7 +650,7 @@ fn redo_shortcut_keeps_the_control_refusals() {
             assert!(p.workspace.turn_records.pending.is_none());
             p.host.thread.controlling = false;
             Arc::make_mut(p.host.thread.snapshot.as_mut().unwrap()).status = ThreadStatus::Idle;
-            p.host.connection.threads[1].status = ThreadStatus::Idle;
+            p.host.connection.threads_mut()[1].status = ThreadStatus::Idle;
             *p.state.repository.write_mut() = Default::default();
         });
     }
@@ -1040,12 +1039,22 @@ fn a_blocked_earlier_run_remeasures_its_row() {
         })
     });
     harness.draw();
+    // The disclosure and closing line share one measured list item.
+    let closing_item = harness
+        .window
+        .update(&mut harness.cx, |p, _, _| {
+            p.workspace
+                .live_layout
+                .folded_row_index("request-first")
+                .unwrap()
+        })
+        .unwrap();
     let before = harness
         .window
         .update(&mut harness.cx, |p, _, _| {
             p.workspace
                 .live_scroll
-                .bounds_for_item(1)
+                .bounds_for_item(closing_item)
                 .unwrap()
                 .size
                 .height
@@ -1059,7 +1068,7 @@ fn a_blocked_earlier_run_remeasures_its_row() {
         .update(&mut harness.cx, |p, _, _| {
             p.workspace
                 .live_scroll
-                .bounds_for_item(1)
+                .bounds_for_item(closing_item)
                 .unwrap()
                 .size
                 .height
@@ -1075,7 +1084,7 @@ fn a_blocked_earlier_run_remeasures_its_row() {
         assert_eq!(
             p.workspace
                 .live_scroll
-                .bounds_for_item(1)
+                .bounds_for_item(closing_item)
                 .unwrap()
                 .size
                 .height,

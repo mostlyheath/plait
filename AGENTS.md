@@ -5,7 +5,7 @@
   No web UI, embedded terminal, or mandatory worktrees.
 - Keep models and Git free of GPUI. State owns transitions; UI owns presentation.
 - Run all filesystem and Git work on the background executor, never in render.
-- Git reads in the app stay hardened: disable optional locks, external diff,
+- Git reads through the host stay hardened: disable optional locks, external diff,
   textconv, and filters. Git writes are limited to what docs/ROADMAP.md agrees
   (staging by file or hunk, unstaging, committing, push, publish, fetch,
   fast-forward pull, confirmed, undoable discard, creating and switching
@@ -23,13 +23,16 @@
 - Pin dependencies. Check upstream source at the pinned revision before using APIs.
 - Use small functions, explicit errors, and short comments explaining why.
 - Test parsers, async result guards, and repository edge cases.
+- Add a note to changes/ for anything a person using Plait will notice; see
+  changes/README.md.
 - Run cargo fmt --all -- --check, cargo clippy --workspace --all-targets -- -D warnings,
   and cargo test --workspace. Build and inspect the native app after UI changes.
-- Run builds and tests directly. Rex is optional and not a build dependency.
+- Run builds and tests directly.
 - Do not run `scripts/acceptance-macos.sh` while a person is using this Mac: it
   takes over the pointer and keyboard. It runs on CI for each release build.
 - Work on a branch. `main` changes only through a pull request whose checks
-  passed; merging one that changes the app publishes the next preview. See
-  docs/RELEASING.md.
+  passed. A merge is tested again on `main`, unless its exact tree already
+  passed on the pull request, and publishes nothing; a preview is published
+  only when a person starts a release. See docs/RELEASING.md.
 - Read CONTRIBUTING.md for the work split. Agree before changing shared contracts;
   docs/ROADMAP.md records what is agreed for the current milestone.

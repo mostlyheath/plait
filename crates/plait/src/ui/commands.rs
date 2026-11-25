@@ -13,7 +13,7 @@ use super::{
     theme::*,
 };
 use gpui::{prelude::*, *};
-use plait_core::host::{ModelChoice, harness::HarnessId};
+use plait_client::host::{ModelChoice, harness::HarnessId};
 use std::{collections::HashMap, time::Instant};
 
 pub(super) enum Command {
@@ -21,25 +21,35 @@ pub(super) enum Command {
     Action(Box<dyn Action>),
     OpenThread(String),
     ReviewAll,
-    ReviewRecord(plait_core::review::recorded::Target),
+    ReviewRecord(plait_client::review::recorded::Target),
     SignIn(String),
     OpenProject(std::path::PathBuf),
+    OpenRemoteProject(String),
+    /// Show this folder of the remote machine in the open picker.
+    BrowseRemote(std::path::PathBuf),
     NewThread(ModelChoice),
     /// A model chosen in the model picker. The picker's purpose gives it meaning.
     Model(ModelChoice),
+    NamingModel {
+        choice: ModelChoice,
+        epoch: u64,
+    },
     /// A model of a harness other than Pi, chosen in the model picker.
     HarnessModel(HarnessId, ModelChoice),
     /// Open Settings → Agents, where harnesses are listed.
     HarnessSettings,
+    /// Open Settings → Agents and set up a harness there, where its progress
+    /// and any failure are shown.
+    SetUpHarness(HarnessId),
     Thinking {
         thread_id: String,
         epoch: u64,
-        level: plait_core::host::ThinkingLevel,
+        level: plait_client::host::ThinkingLevel,
     },
     /// A thread's own approval mode; `None` follows the default.
     Approval {
         thread_id: String,
-        mode: Option<plait_core::host::ApprovalMode>,
+        mode: Option<plait_client::host::ApprovalMode>,
     },
     /// A harness's own permission mode, chosen from a Permissions menu.
     Permissions {
@@ -49,17 +59,21 @@ pub(super) enum Command {
     /// The new-thread draft's project, harness, and Pi approvals.
     DraftProject(std::path::PathBuf),
     DraftHarness(HarnessId),
-    DraftApproval(Option<plait_core::host::ApprovalMode>),
+    DraftApproval(Option<plait_client::host::ApprovalMode>),
     /// The thinking level the draft's thread starts at.
-    DraftThinking(plait_core::host::ThinkingLevel),
+    DraftThinking(plait_client::host::ThinkingLevel),
     /// The thinking level new threads start at.
-    DefaultThinking(plait_core::host::ThinkingLevel),
+    DefaultThinking(plait_client::host::ThinkingLevel),
     /// A checkout-relative path, from quick open.
     OpenFile(String),
     /// A local branch to switch to, from the branch picker.
     SwitchBranch(String),
     /// A new branch's name, as typed in the branch picker.
     CreateBranch(String),
+    /// A thread to add the offered Linear issue to.
+    IssueToThread(String),
+    /// The workflow state to move the shown Linear issue to.
+    IssueState(String),
 }
 
 impl Clone for Command {
@@ -72,12 +86,21 @@ impl Clone for Command {
             Self::OpenFile(path) => Self::OpenFile(path.clone()),
             Self::SwitchBranch(name) => Self::SwitchBranch(name.clone()),
             Self::CreateBranch(name) => Self::CreateBranch(name.clone()),
+            Self::IssueToThread(id) => Self::IssueToThread(id.clone()),
+            Self::IssueState(id) => Self::IssueState(id.clone()),
             Self::SignIn(id) => Self::SignIn(id.clone()),
             Self::OpenProject(path) => Self::OpenProject(path.clone()),
+            Self::OpenRemoteProject(path) => Self::OpenRemoteProject(path.clone()),
+            Self::BrowseRemote(path) => Self::BrowseRemote(path.clone()),
             Self::NewThread(choice) => Self::NewThread(choice.clone()),
             Self::Model(choice) => Self::Model(choice.clone()),
+            Self::NamingModel { choice, epoch } => Self::NamingModel {
+                choice: choice.clone(),
+                epoch: *epoch,
+            },
             Self::HarnessModel(id, choice) => Self::HarnessModel(*id, choice.clone()),
             Self::HarnessSettings => Self::HarnessSettings,
+            Self::SetUpHarness(id) => Self::SetUpHarness(*id),
             Self::Thinking {
                 thread_id,
                 epoch,
@@ -140,19 +163,29 @@ fn shortcut(action: &dyn Action, window: &Window) -> String {
 
 /// Every action in the table that has a menu item, with the shortcut it is
 /// bound to now. The palette lists itself nowhere: it is already open.
-fn action_items(window: &Window) -> Vec<Item> {
+fn action_items(view: &Plait, window: &Window) -> Vec<Item> {
     ACTIONS
         .iter()
         .filter(|action| action.place != Place::Hidden && action.id != "palette.toggle")
         .map(|action| {
             let run = action.action();
             let hint = shortcut(run.as_ref(), window);
+            let refusal = match action.id {
+                "pane.next" | "pane.previous" if view.overview.is_some() => {
+                    Some("Close Every Thread to focus a pane.")
+                }
+                "pane.next" | "pane.previous" if view.settings_open || !view.panel_is_open() => {
+                    Some("Open the panel first.")
+                }
+                _ => None,
+            };
             Item::new(
                 format!("action:{}", action.id),
                 action.title,
                 Command::Action(run),
             )
-            .detail(action.category)
+            .enabled(refusal.is_none())
+            .detail(refusal.unwrap_or(action.category))
             .section("Commands")
             .hint(hint)
         })
@@ -166,10 +199,10 @@ impl Plait {
         let target = self.preferences.value.jump_target;
         let mut numbers = HashMap::new();
         for number in 1..=9 {
-            if let Some(jump) = plait_core::navigation::jump(
-                &self.preferences.value.navigation,
+            if let Some(jump) = plait_client::navigation::jump(
+                self.lists(),
                 &self.state.projects,
-                &self.host.connection.threads,
+                self.host.connection.threads(),
                 &indices,
                 target,
                 number,
@@ -180,7 +213,7 @@ impl Plait {
         let threads = self
             .host
             .connection
-            .threads
+            .threads()
             .iter()
             .enumerate()
             .filter(|(_, thread)| self.navigation.archived || thread.archived != Some(true));
@@ -192,10 +225,13 @@ impl Plait {
                     self.summary_title(thread),
                     Command::OpenThread(thread.id.clone()),
                 )
+                // The folder's path is last: two projects of one name are
+                // told apart, and searched, by where they are.
                 .detail(format!(
-                    "{} · {} · {model}",
-                    plait_core::state::project_name(&thread.checkout),
-                    plait_core::navigation::state_label(thread)
+                    "{} · {} · {model} · {}",
+                    plait_client::state::project_name(&thread.checkout),
+                    plait_client::navigation::state_label(thread),
+                    thread.checkout.display()
                 ))
                 .section("Threads")
                 .glyph("thread", colors().violet)
@@ -251,13 +287,14 @@ impl Plait {
     /// Everything the command palette lists, in the order shown before typing.
     fn command_items(&self, window: &Window, cx: &App) -> Vec<Item> {
         let mut items = self.thread_items(cx);
-        let mut preferences = self.preferences.value.navigation.clone();
+        let mut preferences = self.lists().clone();
         preferences.hidden.clear();
-        for project in plait_core::navigation::projects(
-            &self.host.connection.threads,
+        for project in plait_client::navigation::projects(
+            self.host.connection.threads(),
             &preferences,
             &self.host.creation.checkout,
-            &self.active_project().machines[0].name,
+            &self.active_project().machines[0],
+            self.host_is_local(),
         ) {
             items.push(
                 Item::new(
@@ -270,7 +307,7 @@ impl Plait {
                 .glyph("folder", colors().mint),
             );
         }
-        items.extend(action_items(window));
+        items.extend(action_items(self, window));
         items.extend(self.new_thread_items());
         items.extend(
             self.providers
@@ -286,6 +323,7 @@ impl Plait {
                     .section("Providers")
                 }),
         );
+        items.extend(super::harnesses::setup_items(self.harness_rows()));
         items
     }
 
@@ -322,6 +360,9 @@ impl Plait {
         cx: &mut Context<Self>,
     ) {
         self.close_overlay(true, window, cx);
+        if let Some(anchor) = self.pending_anchor.take() {
+            palette.update(cx, |palette, _| palette.anchor = Some(anchor));
+        }
         let restore = window.focused(cx);
         let events = cx.subscribe_in(&palette, window, Self::on_palette_event);
         window.focus(&palette.focus_handle(cx), cx);
@@ -389,6 +430,10 @@ impl Plait {
             }
             PaletteEvent::Aside(_) => {}
 
+            // Browsing a remote machine's folders keeps the picker open.
+            PaletteEvent::Run(Command::BrowseRemote(path)) => {
+                self.browse_remote((!path.as_os_str().is_empty()).then(|| path.clone()), cx)
+            }
             PaletteEvent::Run(command) => {
                 // Restore focus first, so an action runs where the user was.
                 self.close_overlay(true, window, cx);
@@ -397,7 +442,7 @@ impl Plait {
         }
     }
 
-    fn run_command(
+    pub(super) fn run_command(
         &mut self,
         command: Command,
         purpose: Option<ModelPurpose>,
@@ -417,7 +462,7 @@ impl Plait {
                 if self
                     .host
                     .connection
-                    .threads
+                    .threads()
                     .iter()
                     .any(|thread| thread.id == id)
                 {
@@ -426,9 +471,9 @@ impl Plait {
                     self.focus_composer(window, cx);
                 }
             }
-            Command::OpenFile(path) => self.open_file(path.into(), None, cx),
+            Command::OpenFile(path) => self.open_file_in_view(path.into(), window, cx),
             Command::SwitchBranch(name) => {
-                self.branch_write(plait_core::git::WriteOp::SwitchBranch(name), window, cx)
+                self.branch_write(plait_client::git::WriteOp::SwitchBranch(name), window, cx)
             }
             Command::ReviewAll => {
                 self.clear_turn_review();
@@ -437,7 +482,7 @@ impl Plait {
             }
             Command::ReviewRecord(target) => self.open_turn_review(target, window, cx),
             Command::CreateBranch(name) => {
-                self.branch_write(plait_core::git::WriteOp::CreateBranch(name), window, cx)
+                self.branch_write(plait_client::git::WriteOp::CreateBranch(name), window, cx)
             }
             Command::DefaultThinking(level) => {
                 let mut preferences = self.preferences.value.clone();
@@ -460,7 +505,7 @@ impl Plait {
                 if self
                     .host
                     .connection
-                    .threads
+                    .threads()
                     .iter()
                     .any(|thread| thread.id == thread_id)
                 {
@@ -472,7 +517,18 @@ impl Plait {
                 self.show_settings(true, window, cx);
                 self.settings_tab = SettingsTab::Agents;
             }
+            Command::SetUpHarness(id) => {
+                self.show_settings(true, window, cx);
+                self.settings_tab = SettingsTab::Agents;
+                // The list can change while the menu is open; a harness set
+                // up meanwhile is not downloaded again.
+                if self.harness_row(id).is_some_and(|row| row.setup) {
+                    self.set_up_harness(id, cx);
+                }
+            }
             Command::DraftProject(path) => self.choose_draft_project(path, window, cx),
+            Command::IssueToThread(id) => self.add_issue_to_thread(id, window, cx),
+            Command::IssueState(id) => self.change_issue_state(&id, cx),
             Command::DraftHarness(id) => self.choose_draft_harness(id, cx),
             Command::DraftApproval(mode) => self.choose_draft_approval(mode, cx),
             Command::DraftThinking(level) => self.choose_draft_thinking(level, cx),
@@ -481,6 +537,16 @@ impl Plait {
                 Some(ModelPurpose::ThreadModel) => self.choose_thread_model(choice, window, cx),
                 _ => {}
             },
+            // Handled while the picker stays open; reaching here means it closed first.
+            Command::BrowseRemote(_) => {}
+            Command::OpenRemoteProject(path) => {
+                if !self.host_is_local() && super::valid_remote_path(&path) {
+                    let path = std::path::PathBuf::from(path);
+                    self.update_lists(|lists| lists.open(&path), cx);
+                    self.rebuild_projects(cx);
+                    self.change_checkout(path, window, cx);
+                }
+            }
             Command::OpenProject(path) => {
                 if self.host.creation.pending_create.is_none() && !self.host.creation.creating {
                     self.change_checkout(path, window, cx);
@@ -491,6 +557,7 @@ impl Plait {
                 self.choose_draft_harness(HarnessId::Pi, cx);
                 self.choose_draft_model(HarnessId::Pi, choice, cx);
             }
+            Command::NamingModel { choice, epoch } => self.choose_naming_model(choice, epoch, cx),
             Command::Model(choice) => match purpose {
                 Some(ModelPurpose::NewThread) => self.choose_draft_model(HarnessId::Pi, choice, cx),
                 Some(ModelPurpose::DefaultModel) => self.choose_default_model(choice, window, cx),

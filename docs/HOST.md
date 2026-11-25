@@ -1,10 +1,10 @@
-# Local host contract (M2.5)
+# Host contract (M2.5)
 
 This is the version 1 contract plus the opt-in additions described in
 [Protocol version 2](#protocol-version-2) and
 [Protocol version 3](#protocol-version-3), [Protocol version 4](#protocol-version-4),
-[Protocol version 5](#protocol-version-5), and
-[Protocol version 6](#protocol-version-6). Changes require compatibility review.
+[Protocol version 5](#protocol-version-5),
+[Protocol version 6](#protocol-version-6), and [Protocol version 7](#protocol-version-7). Changes require compatibility review.
 All values below are JSON. The desktop has no dependency on the host crate and
 does not own its process.
 
@@ -12,7 +12,7 @@ does not own its process.
 
 Build `cargo build -p plait-host`; install runtime packages with
 `cd runtime && npm ci --ignore-scripts`. Node 22.19 or newer is required for
-source development. The [Mac host package](MACOS.md) includes pinned Node and
+source development. The [Mac host package](GUIDE.md#install-and-updates) includes pinned Node and
 runtime dependencies; it does not need a development checkout or shell Node.
 
 - `plait-host run [--store ABSOLUTE_PATH] [--runtime ABSOLUTE_PATH]`: foreground
@@ -29,24 +29,47 @@ runtime dependencies; it does not need a development checkout or shell Node.
   Socket: `STORE/host.sock`. Store overrides must be absolute.
 - The store directory is mode 0700 and socket mode 0600. A lifetime OS writer
   lock on `STORE/host.lock` rejects a second host, including after a crash.
-- The Rust host owns and monitors the Node sidecar. No TCP port is opened,
-  except the loopback callback of a pending [provider sign-in](#provider-sign-in).
+- The Rust host owns and monitors the Node sidecar. The optional Tailscale
+  listener accepts authorized peers; provider sign-in may open a loopback
+  callback. See [Remote hosts](REMOTE.md).
   Sidecar failure closes the host. Development restart is explicit through
   `start`; the installed Mac LaunchAgent restarts failed hosts. Neither route
   replays interrupted work. The packaged host uses adjacent immutable Node and
   runtime paths, not a build-machine source path. It removes inherited
   `NODE_OPTIONS` and `NODE_PATH` before starting its sidecar.
-- Startup marks interrupted work as `interrupted`. It does not run the model
+- Startup marks work without a surviving detached runner as `interrupted`. It does not run the model
   or replay commands. A new user submission resumes the saved conversation.
   Thread IDs, submitted request IDs, and exact model choice survive restart.
+
+## Detached runners
+
+Detached Pi runners are available with `PLAIT_DETACHED_RUNNERS=1` in the host
+runtime environment. The default is off pending verification. When enabled, an
+accepted Pi run can continue through a host or sidecar restart, including an
+approval wait. The restarted host reconnects to a live runner or applies its
+completion receipt; it does not replay the run. Other harnesses use the existing
+in-process behavior. Recovery checks for existing runners even if the flag is
+subsequently turned off. Host updates wait for active runs and live runner locks.
+
+`STORE/runners` holds runner manifests, locks, logs, and completion receipts;
+`STORE/r` holds their sockets. A detached runner writes command output to the
+per-thread `STORE/<thread_id>.outputs.sqlite`; older output remains readable from
+`host.sqlite`. The host remains the only writer of `host.sqlite`.
+
+If a runner dies without a completion receipt, the host marks the thread
+`interrupted`. The checkout can require cleanup confirmation before further
+writes; inspect its effects before confirming. If runner events needed for
+recovery have been lost, the host marks the run interrupted and stops the
+runner rather than applying later events over incomplete state. Interrupted
+commands and effects are not replayed.
 
 ## Transport
 
 Owner-only Unix stream socket, UTF-8 newline-delimited JSON, protocol version 1
-by default; versions 2–6 are opt-in per request.
+by default; versions 2–7 are opt-in per request.
 Clients and the daemon verify connected-peer user identity with `getpeereid` on
 macOS or `SO_PEERCRED` on Linux. Clients also check socket and parent ownership
-and private modes before connecting. This does not enable Linux commands.
+and private modes before connecting. Linux supports trusted commands and trusted MCP servers, but not sandboxed execution.
 One request and one reply per connection, then EOF, except `watch` and the
 version 3 `watch_threads`. No greeting.
 Request limit: 64 KiB including newline. Reply/event limit: 1 MiB including
@@ -146,7 +169,9 @@ Message roles: `user`, `assistant`. Tool statuses: `running`, `done`, `error`,
 `{"id":"HOST_UUID","tool_id":"STABLE_ID","kind":"edit","summary":"Change src/main.rs","details":"Full exact JSON tool arguments","dirty_paths":["notes.txt"],"risk":"Pre-existing dirty paths are protected."}`.
 `details` is never clipped: tool arguments over 16384 bytes are rejected.
 Approval kind is `edit` or `command`. Approval is bound to one tool call; it is
-not blanket permission. Stop and restart revoke pending approvals.
+not blanket permission. Stop and restart revoke pending approvals, except
+that a detached Pi runner (off by default, `PLAIT_DETACHED_RUNNERS=1`) that
+survives a host restart keeps its approval wait.
 Messages: latest 100, 4096 characters each. Tools: latest 50, 4096 characters
 per input/output. Live text: latest 16384 characters. These text budgets count
 UTF-16 code units; clipping keeps whole Unicode code points and does not increase
@@ -158,7 +183,7 @@ arguments are never clipped. `truncated` flags clipping.
 ## Protocol version 2
 
 Version 2 is negotiated per request, so desktops and hosts can update separately.
-Every operation accepts an optional `"protocol_version":1`, `2`, `3`, `4`, `5`, or `6`; omitting it
+Every operation accepts an optional `"protocol_version":1`, `2`, `3`, `4`, `5`, `6`, or `7`; omitting it
 means version 1, and version 1 replies are byte-for-byte unchanged.
 
 - **Negotiation.** A client sends `{"op":"status","protocol_version":2}`. A
@@ -234,8 +259,10 @@ A version 3 snapshot has every version 2 key, with these changes and additions:
   last message with text, as before. Redacted reasoning is never sent.
 - **`title`.** `""` until the first accepted message, then that message with
   whitespace runs collapsed to one space, control characters removed, and at
-  most 72 characters (Unicode scalar values). A renamed thread keeps its name.
-  Threads saved before version 3 get a title from their first message once.
+  most 72 characters (Unicode scalar values). With optional [thread naming](#thread-naming)
+  enabled, a background model call may replace this fallback with a short task
+  summary. A renamed thread keeps its name. Threads saved before version 3 get
+  a title from their first message once; enabling naming does not rename them.
 - **`created_at`, `updated_at`.** `updated_at` advances when the thread's status
   changes, which includes every accepted run. Streaming text, rename, and archive
   do not advance it. Threads saved before version 3 report the time the store
@@ -347,6 +374,45 @@ during a run. A title is normalized like a derived one, with a limit of 200
 characters; a title with no visible text is `invalid_request`. `"archived":false`
 restores a thread. Archiving changes only listing: the thread, its history, and
 its files are kept, and it can still run.
+
+### Thread naming
+
+These separate operations leave all existing status and thread reply shapes
+unchanged. An older host rejects them with `invalid_request`; the desktop shows
+an update notice instead of saving a device-only preference.
+
+```json
+{"op":"get_thread_naming"}
+{"op":"set_thread_naming","enabled":true,"model":{"provider":"local","model_id":"small-model"}}
+```
+
+Both return `{"enabled":true,"model":{"provider":"local","model_id":"small-model"}}`.
+The initial value is `{"enabled":false,"model":null}`. Enabling requires an
+exact, available model from the host's Pi provider catalog. A model can be
+kept while disabled even if it is no longer available. Credentials and local
+endpoints use the existing Providers setup, never Codex or Claude Code's
+private credentials. The host stores the setting as `thread_naming_v1` in its
+settings table; older hosts ignore it. No schema migration is required.
+
+After the first new submission is accepted, including a checkout-queued
+submission, the host can send its first 8,000 UTF-16 units (without splitting
+a surrogate pair) to the selected naming model. This is a separate text-only
+request with no tools, files, images, later messages, or conversation session.
+It works for every coding harness. Naming requests run one at a time, with
+at most 32 waiting, a 45-second deadline per call, a 2,048-token output budget,
+and no retry or provider fallback. An empty text prompt makes no call.
+Naming usage is not added to the coding conversation's usage field.
+
+A successful title is one plain line of at most 72 Unicode scalar values.
+An invalid response, error, deadline, full queue, or host shutdown leaves the
+fallback title unchanged. Work is not replayed after a restart, on a duplicate
+submission, or on a later message. Enabling naming does not scan old threads.
+Settings changes abort current naming work and drop waiting names. A late
+result must still match the initial title and settings; it never replaces a
+manual rename or changes the run's state or activity time. A saved name uses
+the existing snapshot and thread-summary notifications.
+
+### Thread-list watch
 
 `watch_threads` is a subscription shaped like `watch`. Its first frame is
 `{"ok":true,"result":{"threads":[SUMMARY]}}` with the 200 most recently updated
@@ -489,6 +555,8 @@ A client that steps down from 4 to 3 sees only Pi.
 {"op":"set_harness_path","protocol_version":4,"harness":"codex","path":"/absolute/path/to/codex"}
 {"op":"set_harness_mode","protocol_version":4,"harness":"codex","mode":"ask"}
 {"op":"set_up_harness","protocol_version":4,"harness":"claude"}
+{"op":"install_harness","protocol_version":4,"harness":"codex"}
+{"op":"start_harness_sign_in","harness":"codex"}
 {"op":"create_thread","protocol_version":4,"checkout":"/absolute/checkout","provider":"codex","model_id":"MODEL","request_id":"CLIENT_UUID","harness":"codex","thinking":"high","mode":"ask"}
 {"op":"configure_thread","protocol_version":4,"thread_id":"THREAD_ID","mode":"read_only"}
 ```
@@ -519,13 +587,31 @@ A client that steps down from 4 to 3 sees only Pi.
   is `invalid_request`.
 - **`set_up_harness`** sets up a harness that needs it; only `claude` does
   (see [Claude Code](#claude-code)), and any other harness is
-  `invalid_request`. It is the only operation that reaches the network for a
-  harness. It replies with the whole list, Claude Code checked again: a
+  `invalid_request`. It replies with the whole list, Claude Code checked again: a
   finished setup shows whatever the normal checks find, and a failed one stays
   `setup_required` with a `note` saying what went wrong. Setting up again
   when the copy is already in place downloads nothing. The download gives up
   after 15 seconds, inside the host's 20-second limit for any request, and
   setup can simply be tried again.
+- **`install_harness`** installs the Codex or Claude Code version Plait is
+  tested with into `tools/` in the host store, and for Claude Code also runs
+  setup. The host downloads the vendor's npm package for its own platform,
+  checks its pinned sha512, and unpacks only the executable's tree; a failed
+  install leaves nothing a lookup would use. A chosen path and the login
+  shell's `PATH` are searched first, so a copy the person installed always
+  wins. Older hosts reject the operation as `invalid_request`. It replies
+  with the whole list. Entries carry `installable` (the version this host can
+  install, or null when it has no build for its platform) and `managed`
+  (the copy that runs is the one the host installed). Only `set_up_harness`
+  and `install_harness` reach the network for a harness.
+- **`start_harness_sign_in`** runs the harness's own sign-in on the host:
+  `codex login --device-auth`, or `claude auth login`. It replies like
+  `start_sign_in`, with provider `harness:codex` or `harness:claude`, and
+  `sign_in_status`, `answer_sign_in`, and `cancel_sign_in` follow it. Codex shows
+  a link and code; Claude Code shows a link and asks for the code the page
+  gives. Credentials stay in the harness's own files; the host never reads
+  them or keeps a pasted code. A flow lasts at most 15 minutes, and
+  cancelling it stops the process.
 - **`create_thread`** takes an optional `harness`, `pi` when absent. A Codex
   thread's model has provider `codex` and a model ID from Codex's list, and a
   Claude Code thread's has provider `claude` and a model ID from Claude Code's
@@ -689,7 +775,7 @@ message: version and sign-in parsing, the model list, every flag a run starts
 Claude Code with, mode changes in every mode, and interrupting with no turn
 running. What happens inside a turn has been tested only against a scripted
 stand-in so far; opt-in live tests for it are described in
-[Verification](VERIFICATION.md#claude-code).
+[Verification](VERIFICATION.md#known-gaps).
 
 ## Internal authorization boundary
 
@@ -766,11 +852,25 @@ custom endpoints. The host store holds none of them.
 
 ### Reload
 
-`reload_providers` result: `{"providers":[PROVIDER]}`. The host reads `auth.json`,
+`reload_providers` result: `{"providers":[PROVIDER]}`. The host first reads the
+login shell's provider variables again (see below), then reads `auth.json`,
 `models.json`, and Pi's cached catalogs again, with no network request. It builds
 a complete registry first, then replaces the model catalog and the authenticated
-set of `status` in one step. If loading fails or exceeds 5 seconds, the reply is
-`internal` and the previous registry stays in use.
+set of `status` in one step. Each registry it publishes, including one the
+background login-shell read loads, moves the workspace's `providers_revision`
+and wakes workspace subscribers, so a client refreshes its catalog without
+polling. If loading fails or exceeds 5 seconds, the reply is
+`internal` and the previous registry stays in use. If Pi loads with an error,
+such as a `models.json` it cannot parse or a provider that fails to load, the
+reply is `conflict` and the previous registry stays in use; Pi would otherwise
+drop every custom endpoint. The same applies to the reload after a credential or
+endpoint change, so such a change can be saved while its reply is `conflict`.
+
+If the login shell cannot be read, the reload still runs with the previous
+login environment and the result also has
+`"warning":"login_environment_unavailable"`: a key changed in the shell since
+the last successful read is not yet in use. The field is absent otherwise, and
+older clients ignore it.
 
 A run in progress keeps the registry it started with, including a provider or
 endpoint that the reload removed. Credentials are read from Pi's store for each
@@ -778,6 +878,69 @@ model request, so signing out of a provider fails a run that needs it at its
 next model request.
 Every operation below that changes a credential or an endpoint reloads before it
 replies; the next `status` already shows the change.
+
+### Keys from the login shell
+
+Pi resolves a provider key written as `$NAME` or `${NAME}`, and the key
+variables of built-in providers such as `OPENAI_API_KEY`, through an
+environment lookup. The host runs as a per-user service without the variables a
+terminal's startup files export, so that lookup also consults the account's
+login shell, read the same way as a trusted command's environment (see
+[Command policy](#command-policy)):
+
+- **Scope.** The shell's values are kept in the provider registry and answer
+  only Pi's provider key and header resolution. They are never written to the
+  sidecar's process environment, so a child that inherits it (Git and its hooks,
+  the worktree helper) does not receive them because of this lookup. Trusted
+  commands, trusted MCP servers, Codex, and Claude Code read the login shell
+  themselves, as described in their sections.
+- **Detached runs.** Detached Pi runners (opt-in, off by default) resolve
+  credentials from the host environment only, without the login shell. Before
+  accepting a detached run, the host resolves the run's provider with its own
+  registry. If that credential uses a login-shell value, or the lookup fails,
+  the host refuses the run before accepting it with `model_unavailable`: "This
+  provider's key comes from your shell; detached runs can't use it yet. Turn
+  off detached runs or set the key on the host." A detached run never uses a
+  different credential from the host's.
+- **Precedence.** A variable the host process has wins over the shell's, even
+  when it is set to an empty or blank value, which Pi treats as unset.
+  `PLAIT_`-prefixed names are never answered from the shell. Neither are the
+  variables the Amazon Bedrock, Google Vertex, and Azure OpenAI SDKs read for
+  themselves (`AWS_*`, `GOOGLE_APPLICATION_CREDENTIALS`, `GOOGLE_CLOUD_PROJECT`,
+  `GCLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, and Azure's endpoint variables):
+  their requests could not see a shell-only value, so those providers would be
+  listed as usable and then fail.
+- **What resolves.** A `models.json` provider's `apiKey` and provider-level
+  `headers`, and built-in providers' keys, including the Cloudflare account and
+  gateway IDs. Per-model and `modelOverrides` headers resolve from the host
+  process only, as Pi resolves them outside the lookup. So do provider-level
+  `headers` of a provider signed in with OAuth: Pi's OAuth path resolves them
+  from the stored credential and the host process, not the lookup.
+- **When.** Host startup does not wait for the shell. Once the sidecar is ready,
+  it reads the shell in the background and reloads providers if the result
+  differs. Until then, a provider that depends on it is listed as not
+  authenticated. `reload_providers` reads the shell again first. Reads are
+  numbered; one that finishes after a newer read succeeded is dropped, so it
+  cannot restore a rotated or removed key.
+- **Together or not at all.** The environment a reload read is published with
+  the registry it built. If the load fails or exceeds its 5 seconds, both the
+  previous registry and its environment stay in use.
+- **Failure.** If the shell cannot be read within 10 seconds, or the read falls
+  back to the fixed environment, the previous login environment stays in use.
+  The background read reports nothing; `reload_providers` adds a `warning`
+  (see [Reload](#reload)).
+
+**Authority of `models.json`.** The host treats `models.json` as the account's
+own configuration, as the Pi CLI does: an entry's key and headers may name any
+variable of the login shell (except those above) or run a `!command`, and the
+resolved values are sent to that entry's `baseUrl`. Keys sent with
+`set_provider_key` stay literal text (see below), so a request cannot make the
+host read a variable or run a command. A request also cannot move such an entry
+to another server; see [Custom endpoints](#custom-endpoints).
+
+Pi's `!command` keys run with the sidecar's own environment, as before. A
+`$NAME` template stored in `auth.json` (for example by the Pi CLI) resolves from
+the host process only: Pi's credential store resolves it outside the lookup.
 
 ### Provider list
 
@@ -890,6 +1053,24 @@ Pi's `models.json`:
   host reloads and checks that Pi reports the endpoint. Pi ignores the whole
   file when any entry breaks its schema; in that case the host restores the
   previous file and returns `conflict`.
+- `update_endpoint` refuses with `conflict`, and writes nothing, when
+  `base_url` would change the entry's origin (scheme, host, or port) unless the
+  entry's credentials are only literal text: a literal `apiKey`, no `oauth`
+  field, and no `headers` (provider, model, or `modelOverrides`) that read a
+  variable or run a `!command`. Without a literal key, or with `oauth` such as
+  `"radius"`, Pi resolves a credential through a provider resolver that reads
+  the environment, so those entries cannot move either. Such credentials were
+  set up for one server; change the address in `models.json` itself. A new path
+  on the same origin can still be set.
+- **A saved key is bound to its server.** Pi uses a credential stored for an
+  entry in `auth.json` before the entry's own `apiKey`. When `update_endpoint`
+  moves an entry to another origin, the host removes that credential first,
+  then writes the new address, and only then stores the request's `key`, if
+  any. If removing fails, nothing changes. If a later step fails, the reply is
+  an error and the entry is left without a saved key (at its old address if the
+  address write failed), so a saved key is never sent to a server it was not
+  entered for. `add_endpoint` likewise
+  removes a credential left under the new entry's ID before writing the entry.
 - Built-in providers cannot be edited or removed here. `remove_endpoint` deletes
   the stored key first, then the entry.
 - With `key`, `add_endpoint` and `update_endpoint` save the entry first. If
@@ -921,6 +1102,19 @@ provider ID, an `answer_sign_in` when no input is pending, or a `models.json` th
 host will not rewrite. `internal`: Pi could not store, remove, or reload. Messages
 name the field at fault and never repeat its value.
 
+## Plain folders
+
+A project may be a plain folder when neither it nor any ancestor has a
+repository marker: a `.git` file, or a `.git` folder containing `HEAD`, as Git
+itself requires (an empty stray `.git` folder is no marker). A folder inside a
+Git repository resolves to the repository root; an inaccessible or broken
+repository is refused. Workspace projects report `vcs` (`git` or `folder`),
+and Git reads of a plain folder return an empty status marked `plain` and a
+file list walked without Git. The thread retains its kind even
+if the folder later becomes a repository. Threads, approvals, and file viewing
+work in plain folders. Undo, Changes, History, and worktrees are unavailable.
+Nothing in a plain folder is protected or can be undone.
+
 ## Command policy
 
 Each canonical checkout has a command policy: `trusted`, the default, or
@@ -938,7 +1132,7 @@ defaulted to `sandboxed`.
 
 All return `{"checkout":"/canonical/checkout","policy":"sandboxed"}`, with the
 policy now in force for that checkout. `checkout` is an absolute path inside a
-Git working tree and is resolved to its canonical root, as in `list_threads`.
+Git working tree or a plain folder and is resolved to its canonical root, as in `list_threads`.
 `policy` is `sandboxed` or `trusted`; anything else is `invalid_request`. Both
 operations accept the optional `protocol_version` and reply the same way for
 every version. A host without them rejects the unknown operation with
@@ -953,12 +1147,12 @@ snapshot does not yet report the policy its run used.
   is a row a host before the change wrote for a trusted checkout. A row that
   cannot be read is `sandboxed`, rather than a guess. Another host store never
   shares the setting.
-- **Who can set it.** Only this operation, sent by a local client as an explicit
-  user action. No tool, model output, thread, run, or snapshot carries or
+- **Who can set it.** Only this operation, sent by an authenticated client as
+  an explicit user action. No tool, model output, thread, run, or snapshot carries or
   changes the policy, and a thread cannot take it to another checkout.
 - **When it applies.** A run reads the policy once at admission and keeps it
   until it ends. A change applies to the next run. Recovery starts no run.
-- **Linux.** Commands are rejected in both modes.
+- **Linux.** Trusted commands and trusted MCP servers run as the user. Sandboxed commands and MCP servers are refused because a Linux containment backend is not yet enabled; see [Linux sandbox](LINUX-SANDBOX.md).
 
 | | `sandboxed` | `trusted` |
 | --- | --- | --- |
@@ -1439,7 +1633,8 @@ and parents, external changes, another thread's files, root replacements, and
 missing records remain protected. A crash after an effect but before its record
 never grants ownership. No ownership is inferred from an unrelated later read. Never reset, stash, or overwrite these paths. Reject
 symlinks, parent traversal, special files, Git metadata, and filesystem escapes.
-Command execution uses the macOS filesystem sandbox; other hosts reject commands.
+Sandboxed command execution uses the macOS filesystem sandbox; Linux refuses
+the sandboxed policy and supports trusted commands.
 Commands READ the checkout and WRITE ONLY private scratch and the current
 thread's private build cache. File edit/write tools are the sole checkout
 writers. HOME and TMPDIR use a new mode-0700 directory under `/private/tmp` for each
@@ -1562,13 +1757,13 @@ or transcript data in the production host.
 Use `bash scripts/check.sh` for the shared macOS/Linux development checks.
 `bash scripts/check.sh --require-command-sandbox` requires full command-sandbox
 coverage and currently fails on Linux. Runtime `npm test` labels its platform
-coverage; Linux runs common daemon/file tests and explicit execution-denial tests.
+coverage; Linux runs common daemon/file tests and trusted execution and sandbox-denial tests.
 See [Verification](VERIFICATION.md) for versioned results and
 [Linux containment](LINUX-SANDBOX.md) for the open backend decision. A Linux
 development pass is not full host-execution acceptance.
 
 Use [Contributing](../CONTRIBUTING.md#required-checks) for focused commands and
-[manual release acceptance](VERIFICATION.md#manual-release-acceptance) for native
+[manual release acceptance](VERIFICATION.md#scenes-and-native-checks) for native
 and live-model checks. Do not substitute scripted lifecycle fixtures for the
 actual platform containment tests.
 
@@ -1784,7 +1979,7 @@ writes have no alternates, preventing even Git's object-freshening timestamp
 write in the person's store. Object copies stream through Git pack/unpack
 commands from read-only alternates to the private store. Linux exercises this
 same recording code but has no recorder sandbox; it is not macOS containment
-evidence and does not enable Linux agent commands.
+evidence and does not establish sandboxed Linux agent commands.
 
 Records of archived threads are retained too. Startup and daily pruning remove
 pairs older than 30 days, waiting for active record helpers and holding back
@@ -1822,7 +2017,10 @@ maximum 50. Results are newest first, in the existing success envelope:
   record yet, its earlier record ID stands in. Match conversation closing
   lines by `request_ids`, not by this provisional ID. IDs include the initial
   request and inputs actually placed as steering, read from durable transcript
-  positions. A queued follow-up belongs to its own run.
+  positions. A queued follow-up belongs to its own run. A turn's IDs end at the
+  next turn's record, or at the next input stored as starting its own run (see
+  [Which run a restart interrupts](#protocol-version-7)), so a run an older
+  build started without a record does not join the earlier turn.
 - `state` is `recording`, `ready`, `failed`, `no_effect`, or `undone`.
   `no_effect` is a failed undo whose terminal journal proves that no file changed.
   It remains listed for diagnosis and request deduplication, but clients must skip
@@ -2041,8 +2239,66 @@ Pi receives `{type:"image",mimeType,data}` alongside text. Codex receives
 `{type:"image",url:"data:image/png;base64,..."}` in `turn/start` or `turn/steer`.
 Claude Code receives Anthropic base64 image source blocks through the pinned
 Agent SDK's streaming `SDKUserMessage` input. Image-only inputs contain no empty
-text block in any of the three adapters. [Verification](VERIFICATION.md#images-in-messages)
+text block in any of the three adapters. [Verification](VERIFICATION.md#known-gaps)
 records scripted coverage and the absence of live-model acceptance evidence.
+
+## Protocol version 7
+
+Clients request status at version 7 and step down on `invalid_request`. At
+version 7, each fragment of a `turn_records` turn record includes the same
+optional `outcome`: `finished`, `failed`, `stopped`, or `interrupted`. It
+describes how the run ended. The existing `state` describes checkout capture
+and undo. The host advances `records_revision` when the outcome becomes visible.
+
+Versions 5 and 6 omit the field. Version 7 also omits it for active runs,
+undo records, and runs whose outcome is unknown, including runs completed
+before this change. Only Git projects have checkout records, and the host
+prunes them after 30 days. A turn without a retained record has no reported outcome.
+
+**Which run a restart interrupts.** After a restart, the host closes the
+unfinished run that owns the latest placed input as `interrupted`, and closes
+any other unfinished run with no outcome. Each request row stores how its input
+was used: `started` its own run, or `steered` into one.
+
+- An input that started a run ends the turn before it, so an earlier run is
+  never given its outcome.
+- A steering input belongs to the nearest earlier input marked `started`, with
+  or without checkout records, so plain folders resolve too.
+- Codex and Claude Code store a steering placement before the thread's snapshot
+  shows it. If the host stops in between, the snapshot still names an earlier
+  input of that run: its own input or an earlier steer. Recovery accepts that
+  when both resolve to the same run; if they resolve to different runs, no run
+  gets the outcome.
+- For the same reason the saved head can trail a stored placement. A message
+  that starts a run is placed after the later of the two, so it ranks above
+  that placement if the host stops again before its own placement.
+- An input consumed before this column existed is unknown. For those rows the
+  host infers as before: a direct admission, or a follow-up with a before
+  record, started a turn, and other placed follow-ups count as steering.
+
+Two triggers stored in the schema fill the column for every writer, including
+an older build after a rollback. Every build writes the three cases the same way:
+
+- A direct admission saves the thread, then inserts its text input with no
+  state. Receipts such as thread creation use another scope and stay unmarked.
+- Starting a queued follow-up clears its state without an entry.
+- Placing a steering input clears its state and sets its entry.
+
+Each trigger only fills an empty value on the row being written, so an older
+build's writes still succeed. The host recreates both triggers each time it
+opens the store, so an earlier definition does not persist.
+A request still queued when the column was added is marked when it is consumed.
+The host itself marks a steering input placed after it was cancelled, which
+happens when a run took the message just before the cancellation.
+
+Verification: tests use the exact request statements of older builds, before
+and after the migration, including a follow-up queued across the upgrade. By
+hand, the store code of the previous release (revision `efefb79`) steered a
+message into, and separately started a follow-up after, a run in a store this
+change had migrated. Its writes were marked `steered` and `started`, and this
+build then gave the earlier run `interrupted` and no outcome respectively. That
+check drove the store directly, not a running previous host. No build without
+runs rows was run.
 
 ## Recorded turn review
 
@@ -2116,6 +2372,164 @@ raw bytes remain in the patch. Complete page validation and patch preparation
 run off the UI thread. These operations provide no staging,
 attribution proof, or reviewed baseline, and make no change to undo semantics.
 
+## Workspace
+
+The first step of [Host-first Plait](HOST-FIRST.md). These additive
+operations omit `protocol_version`; an older host answers `invalid_request`.
+The desktop reads its sidebar from this stream. With an older host it uses
+this Mac's saved lists for this Mac, and only what the window opened for
+another machine.
+
+- `{"op":"workspace_view"}` returns `{schema:1, host, revision, projects,
+  worktrees, seen, status, providers_revision}`.
+  - `host` is `{id, name, platform}`. The ID is stable for the store and
+    is the same one turn review reports. The name defaults to the machine's
+    hostname, and `{"op":"host_set_name","name":N}` changes it.
+  - `projects` lists `{path, hidden}` in the order they were opened. Hosts
+    with `project_fingerprint_v1` add, when known, `vcs` (`git` or
+    `folder`), `fingerprint` `{roots, remote}`, `branch`
+    `{branch, named, tracking}` and `main_checkout` (a path), from the
+    `checkout_summary` read below. Clients match copies of one project on
+    several machines by shared `roots`; `remote` is only a hint, since it
+    changes when an account or repository is renamed. The host reads at
+    most two summaries at a time, walks root commits only when a project
+    is opened or its roots are unknown, refreshes the branch when the
+    checkout's refs change, and persists fingerprints so a restarted host
+    serves them at once. A summary change moves the revision.
+  - `worktrees` lists `{folder, main, branch, creation_id, identity}`:
+    which project each worktree belongs to.
+  - `status` maps watched checkout paths to in-memory change counters, starting
+    at zero when a watch starts. The host watches visible projects and listed
+    worktrees, up to 64 folders; failed watches are omitted. Counters signal
+    that Git status may have changed and reset when the host restarts.
+  - `seen` lists `{thread_id, updated_at, state, unread}`, newest first,
+    with at most 1000 entries.
+  - `providers_revision` counts the provider registries the host has published
+    since it started (see [Reload](#reload)); it starts at zero. A change means
+    the model catalog in `status` changed, for example after the host read the
+    login shell. A client whose catalog was loaded at another value requests
+    `status` again. Hosts before it omit the field.
+- `{"op":"workspace_subscribe"}` replies with the same view, then sends
+  `{"event":"workspace","seq":N,"workspace":VIEW}` each time the revision, status,
+  or providers revision changes, numbered from 1. A thread change alone is not a workspace change. A
+  subscriber that cannot keep up is disconnected and subscribes again for a
+  fresh view.
+- Workspace writes accept an optional `op_id`: retries with the same ID and input return the first outcome for up to 24 hours.
+- Writes, each committed with a new revision, then announced to subscribers:
+  - `workspace_open_project {path}` accepts an accessible Git working tree
+    or plain folder on this host, and returns its top folder. Opening a
+    hidden project shows it again. A path that does not exist is refused
+    with `checkout_missing`, so a client can offer to choose the project
+    again; other inaccessible paths are `invalid_request`. Checkout-taking
+    operations that resolve a project, such as `command_policy` and
+    `agent_resources`, refuse a missing path the same way.
+  - `workspace_hide_project {path, hidden}`.
+  - `workspace_set_worktree {folder, main, branch, creation_id?, identity?}`
+    and `workspace_forget_worktree {folder}`. The host also records a
+    worktree it creates itself, and forgets it when it removes it.
+  - `workspace_mark_seen {entries}` takes up to 1000 entries. An entry older
+    than the one kept for a thread is ignored, so a late write never marks a
+    thread unread again.
+  - `workspace_import {device, projects, hidden, worktrees, seen}` merges a
+    device's lists once. A repeat from the same device changes nothing and
+    returns `imported:false`.
+- Paths are absolute, at most 4096 bytes, without control characters; IDs
+  match `[A-Za-z0-9_-]{1,128}`; a request is at most 65,000 bytes.
+
+## Device state
+
+The additive `device_state_get {device}` and `device_state_set {device, revision,
+state}` operations store an opaque JSON object per device. They omit
+`protocol_version`. A missing device returns revision 0 and null state. A set
+succeeds only at the current revision and returns the next revision; a stale
+write returns `conflict`, so the client can reread and retry. Device IDs match
+`[A-Za-z0-9_-]{1,128}` and serialized state is limited to 60,000 bytes. The
+host retains at most 64 devices, evicting the least recently updated on insertion.
+The desktop uses these operations for per-device tabs, layout, and selection.
+
+## Folders
+
+The additive read-only `browse_folder {path?, hidden?}` operation omits
+`protocol_version`. An omitted path starts at the host user's home; a supplied
+path must be absolute, at most 4096 bytes, and contain no control characters.
+The reply contains the resolved `path`, its `parent` (null at the root), `home`,
+a `git` marker, sorted subfolder `entries` with their own Git markers, and
+`truncated` when more than 1000 folders match. Hidden names are omitted unless
+`hidden` is true. Folder symlinks are included by their link names. Git markers
+check for a `.git` file or directory without running Git; checks stop after two
+seconds and remaining markers are false. Missing, unreadable, and non-directory
+paths return `not_found`, `permission_denied`, and `invalid_request`, respectively.
+
+The `checkout_cleanup`, `command_policy`, `agent_resources`, `create_thread`,
+and `list_threads` requests also accept an optional `identity` object with
+string `dev` and `ino`. When present, a mismatch returns `invalid_request`
+with “This folder changed since it was opened.” Omitting it preserves the
+previous behavior. `list_threads` requires a checkout when identity is given.
+
+## Checkout Git reads for remote desktops
+
+These additive, read-only operations omit `protocol_version`. They let a
+desktop read a checkout on its host; see
+[Remote hosts](REMOTE.md#working-remotely). An older host rejects them with
+`invalid_request`, which the client reports as "Update this machine's host to
+see its Git."
+
+- `{"op":"git_read","checkout":B64,"identity":null|{"dev":"D","ino":"I"},"read":KIND,...}`
+  runs one read. `checkout` is base64 of the absolute path's bytes. `KIND`
+  and its fields are `status`, `files`, `branches`, `diff` (`change`,
+  `mode`), `log` (`tip`, `skip`, `limit`), `show` (`id`), `line_counts`
+  (`paths`), `graph` (`heads`), `file` (`path`), `file_stamp` (`path`),
+  `checkout_summary` (`roots`, a boolean), and
+  `worktree_size` (`worktree`, `worktree_identity`, `thread`, `removed`,
+  `others`, `build_directories`). For `worktree_size` the runtime adds the
+  host store, so a thread's retained build output is measured there; a
+  client cannot send a store, and a thread must be an id.
+  `main_checkout` returns the base64 path of the first worktree, including
+  for an unborn repository. `identity` returns `{root, identity}` with the
+  canonical root as a base64 path and its device/inode identity, using no Git
+  process. `main_checkout` currently requires a UTF-8 checkout path.
+  `checkout_summary` returns `{vcs, fingerprint, branch, main_checkout}`
+  from refs alone, never the working tree. `fingerprint` is null when
+  `roots` is false or for a plain folder; its `roots` are the sorted root
+  commits reachable from HEAD (at most 32, empty when unborn) and its
+  `remote` is the origin (or first) remote normalized to `host/path`
+  without credentials, port or `.git`, or null for local remotes.
+  Any other field is refused.
+- The reply is `{total, data, token}`: `data` is base64 of the first part of
+  the serialized outcome, and `token` is null when `data` is all of it.
+  `{"op":"git_read_page","token":T,"offset":N}` returns the part starting at
+  byte `N`. Pages are at most 600 KiB before encoding. Tokens expire two
+  minutes after their last use, at most four are kept, and the last page ends
+  one. An expired token is `not_found`.
+- The outcome is `{"ok":{"identity":{dev,ino},"result":R}}`, with the same
+  result the desktop's local read returns, or `{"error":{"message":M}}` with
+  the same message. Paths inside results are base64 of their bytes.
+- Except for `main_checkout` and `identity`, the `plait-host git-read` helper runs the read with the desktop's hardened
+  Git builder and limits. It refuses a relative path, a folder that is not
+  the top of its work tree, and a checkout whose inode differs from
+  `identity` or that changes during the read. A different device number with
+  the same inode is accepted only for the canonical path, since macOS can
+  renumber a volume after a restart; the outcome's `identity` is then the
+  current one, and clients store it. Files are opened beneath the
+  checkout without following symlinks. A file over 8 MiB returns only its
+  stamp.
+- Results over 64 MiB, a helper that fails, and a read over 60 seconds are
+  refused without helper diagnostics.
+- `{"op":"git_write","checkout":B64,"identity":{"dev":"D","ino":"I"},"write":OP}` accepts an optional `op_id` to replay the first outcome for up to 24 hours.
+  runs one of the desktop's agreed writes (`WriteOp`: stage, unstage, stage
+  or unstage all, a hunk, commit, push, publish, fetch, pull, discard,
+  restore, create or switch branch) through `plait-host git-write`. The
+  identity is required. The checkout must be the top of its work tree, and
+  the write takes the same checkout leases as a desktop write on this
+  machine, so it is refused while a thread writes there. The reply has the
+  same shape, with the write's outcome. A discard's backup is a blob in the
+  repository's object store, so `restore` works on the host unchanged.
+- A write runs with the host's environment: its Git configuration, hooks,
+  credential helpers, and `SSH_AUTH_SOCK` if the host has one. Prompts are
+  off, so a missing credential fails with Git's own message. A write is
+  stopped after 240 seconds; a helper that fails reports only "The host could
+  not finish this change. Refresh to see the checkout as it is."
+
 ## Linear
 
 These additive host operations let the desktop manage Linear sign-in, read
@@ -2124,13 +2538,14 @@ thread-to-issue links, and perform two explicit person-initiated writes. Like
 [Recorded turn review](#recorded-turn-review), they omit `protocol_version`:
 versions 1–6 retain their existing request, `ThreadSummary`, and `Snapshot`
 shapes unchanged. New result fields and typed error fields apply only to Linear
-operations, which the current desktop does not call; existing desktop reply
+operations, which the desktop calls only from Settings → Linear for sign-in;
+existing desktop reply
 shapes remain unchanged, so no protocol version bump is required. An older host rejects these operation names with
 `invalid_request`. Unknown fields (including `protocol_version`) are refused.
 
 No agent, model tool, or MCP server can call these operations, and nothing runs
 in the background or polls Linear on a timer. Requests are made only when a
-local client asks over the owner-only host socket.
+authenticated client asks through the owner-only host socket.
 
 ### What crosses the socket and where the key lives
 
@@ -2412,11 +2827,10 @@ non-replay rule, not remote compare-and-swap. No live API behavior is claimed.
   Write refusals also include their `outcome`. Other operations' errors retain
   their existing two-field shape; clients need not parse the message for a wait.
 
-### Not built in this stage
+The desktop supports Settings key entry, a project issue view, draft
+references, and a source-issue thread label. See [Linear](LINEAR.md).
 
-- No desktop UI yet. The agreed first step adds Settings key entry, a
-  persistent project-level issue view, draft references, and a source-issue
-  thread label. It does not depend on issue-triggered runs. See [Linear](LINEAR.md).
+### Not built in this stage
 - No browser OAuth sign-in or token refresh yet.
 - No automatic writes, background polling, or Linear change notifications.
 - No issue-triggered autonomous runs (their rules are not yet agreed).
@@ -2697,7 +3111,7 @@ never authorize deletion. External programs do not participate in these leases.
 ## Busy-project admission
 
 These additive operations omit `protocol_version`. They do not change existing
-request, snapshot or summary shapes, so the protocol remains version 6. Probe
+request, snapshot or summary shapes, so this operation requires no protocol bump. Probe
 `admission_info` before offering placement or linked continuation; an older host's
 `invalid_request` means unavailable, never permission to imitate the operation.
 An older desktop continues to receive the existing `busy` refusal.
@@ -2888,3 +3302,21 @@ leases, harness permissions and containment enforce it.
 The saved admission binds the checkout directory identity. The host rechecks it
 after model discovery, before saving a thread, so replacement at the same path
 fails explicitly instead of redirecting the draft.
+
+## Remote bridge
+
+`plait-host bridge` multiplexes an authenticated byte stream onto the host's
+owner-only socket. It connects only to the invoking owner's socket, using the
+default store or `--store PATH`; it does not expose a network listener. The
+[remote transport](REMOTE.md#transport-limits-and-verification) describes the
+limits. Each link allows at most 32 streams; requests are limited to 64 KiB, replies to 1 MiB,
+and a partial frame has a 15-second deadline. SSH uses the bridge.
+
+### Host release information and draining
+
+These additive operations are versionless and do not change protocol versions 1–6. Requests accept only the `op` field; unknown fields return `invalid_request`.
+
+- `{"op":"host_info"}` returns `{"schema":1,"release":null,"build_id":null,"protocol_min":1,"protocol_max":7,"capabilities":["drain_v1","checkout_identity_v1","project_fingerprint_v1"],"storage_schema":1}`. Release and build ID are strings when packaged metadata is available.
+- `{"op":"drain_for_update"}` returns `{"draining":true,"active_runs":N}`. Running and approval-waiting threads count as active. New work returns `busy` while accepted work, Stop, approvals, reads and watches continue. Repeating the request is safe.
+- `{"op":"cancel_drain"}` returns `{"draining":false}` and wakes the checkout queue. Drain state is in memory and does not survive a host restart.
+- While draining, a retried request that would admit work also returns `busy`, even if an earlier attempt was already accepted; after the update the same request ID returns its saved result as usual, so a client retries after `busy` rather than treating it as a refusal of the original.

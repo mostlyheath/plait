@@ -1,7 +1,7 @@
 //! Tool calls in the conversation: one compact line each, a presentation per
 //! tool when opened, and one summary line for a long run of calls.
 //!
-//! What each call shows is prepared in `plait_core::tool_view`. A folded call
+//! What each call shows is prepared in `plait_client::tool_view`. A folded call
 //! keeps its list row and draws nothing, so row identity and the scroll anchor
 //! are the same whether a group is open or closed.
 
@@ -11,36 +11,53 @@ use super::{
     theme::*,
 };
 use gpui::{prelude::*, *};
-use plait_core::{
-    host::{Tool, ToolStatus},
+use plait_client::{
+    host::{Snapshot, Tool, ToolStatus},
     markdown::Kind,
     tool_view::{Part, Run, Section, ToolView},
-    transcript::{self, Slot},
+    transcript,
 };
 use std::{collections::HashMap, sync::Arc};
 
-fn tool_tint(status: ToolStatus) -> u32 {
-    match status {
-        ToolStatus::Running => colors().blue,
+/// A tool can be listed before authorization, or lack a final status after a run ends.
+fn tool_row_status(tool: &Tool, live: Option<&Snapshot>) -> (&'static str, u32, bool) {
+    let tint = match tool.status {
+        ToolStatus::Running => {
+            let Some(live) = live.filter(|s| s.status.busy()) else {
+                return ("Final status unknown", colors().subtle, false);
+            };
+            if live
+                .pending_approval
+                .as_ref()
+                .is_some_and(|a| a.tool_id == tool.id)
+            {
+                return ("Needs approval", colors().amber, false);
+            }
+            return (tool.status.label(), colors().blue, true);
+        }
         ToolStatus::Done => colors().subtle,
         ToolStatus::Error => colors().red,
         ToolStatus::Interrupted => colors().amber,
-    }
+    };
+    (tool.status.label(), tint, false)
 }
 
-/// Line height of a call's row, so a wrapped subject and its chevron align.
-const TOOL_LINE: f32 = 18.;
+/// Line height of a call's row, so a wrapped subject and its chevron align:
+/// 6 points of leading over the code size (18 at 12, 19 at 13, 20 at 14).
+fn tool_line_height() -> f32 {
+    code_size() + 6.
+}
 /// A collapsed call's subject wraps to at most this many lines.
 const SUBJECT_LINES: usize = 4;
 
 /// A chevron centered on the first line of a row that may wrap.
-fn line_icon(name: &'static str) -> Div {
+fn line_icon(mark: Svg) -> Div {
     div()
         .flex()
         .flex_shrink_0()
         .items_center()
-        .h(px(TOOL_LINE))
-        .child(icon(name))
+        .h(px(tool_line_height()))
+        .child(mark)
 }
 
 /// Rounded surface for a tool's content, matching fenced code.
@@ -75,22 +92,18 @@ impl Plait {
             .runs
             .place(id)
             .is_some_and(|place| place.folded() && !self.group_open(place.run.key()));
-        self.workspace.expanded_live_tools.contains(id) && !hidden
+        let hidden_work = self
+            .workspace
+            .live_layout
+            .row_of_tool
+            .get(id)
+            .and_then(|&row| self.work_open_at(row))
+            == Some(false);
+        self.workspace.expanded_live_tools.contains(id) && !hidden && !hidden_work
     }
 
     pub(super) fn toggle_live_tool(&mut self, id: &str, cx: &mut Context<Self>) {
-        let Some(snapshot) = self.conversation_snapshot() else {
-            return;
-        };
-        let Some(offset) = snapshot.tools.iter().position(|tool| tool.id == id) else {
-            return;
-        };
-        let Some(index) = self
-            .workspace
-            .live_layout
-            .iter()
-            .position(|slot| *slot == Slot::Tool(offset))
-        else {
+        let Some(&index) = self.workspace.live_layout.row_of_tool.get(id) else {
             return;
         };
         if !self.workspace.expanded_live_tools.remove(id) {
@@ -141,8 +154,10 @@ impl Plait {
                     position < run.grouped && !open,
                     position == 0 && run.grouped > 0,
                 );
-                let row = run.first_row + position;
-                if previous.get(id).is_some_and(|drawn| *drawn != state) && row < rows {
+                if let Some(&row) = self.workspace.live_layout.row_of_tool.get(id)
+                    && previous.get(id).is_some_and(|drawn| *drawn != state)
+                    && row < rows
+                {
                     self.workspace.live_scroll.remeasure_items(row..row + 1);
                 }
                 folds.insert(id.clone(), state);
@@ -170,7 +185,7 @@ impl Plait {
                     self.workspace.expanded_live_tools.contains(&tool.id),
                     |el| {
                         el.children(self.history_parts(
-                            plait_core::history::Key::Tool(tool.id.clone()),
+                            plait_client::history::Key::Tool(tool.id.clone()),
                             None,
                             cx,
                         ))
@@ -234,6 +249,7 @@ impl Plait {
     ) -> AnyElement {
         let expanded = self.workspace.expanded_live_tools.contains(&tool.id);
         let id = tool.id.clone();
+        let (status, tint, running) = tool_row_status(tool, self.host.thread.snapshot.as_deref());
         let subject = transcript::tool_subject(tool);
         let view = self.workspace.formatted.tools.get(&tool.id);
         let facts = view.and_then(|view| view.facts.clone());
@@ -259,7 +275,7 @@ impl Plait {
                     .h_auto()
                     .py(px(4.))
                     .items_start()
-                    .line_height(px(TOOL_LINE))
+                    .line_height(px(tool_line_height()))
                     .aria_label(format!(
                         "{} tool{} · {}",
                         tool.name,
@@ -267,10 +283,14 @@ impl Plait {
                             .as_ref()
                             .map(|subject| format!(" {subject}"))
                             .unwrap_or_default(),
-                        tool.status.label()
+                        status
                     ))
                     .aria_expanded(expanded)
-                    .child(line_icon(if expanded { "down" } else { "right" }))
+                    .child(line_icon(if self.host.connection.connected && running {
+                        running_mark(px(13.))
+                    } else {
+                        icon(if expanded { "down" } else { "right" })
+                    }))
                     .child(
                         div()
                             .flex_shrink_0()
@@ -284,7 +304,7 @@ impl Plait {
                                 // The opened call shows the whole command.
                                 .line_clamp(SUBJECT_LINES)
                                 .font_family(mono())
-                                .text_size(px(12.))
+                                .text_size(px(code_size()))
                                 .text_color(rgb(colors().muted))
                                 .child(subject),
                         )
@@ -298,16 +318,13 @@ impl Plait {
                     })
                     // Completion is the normal case; only call out the others.
                     .when(tool.status != ToolStatus::Done, |el| {
-                        el.child(
-                            tag("tool-status", tool.status.label(), tool_tint(tool.status))
-                                .flex_shrink_0(),
-                        )
+                        el.child(tag("tool-status", status, tint).flex_shrink_0())
                     })
                     .on_activate(cx, move |this, _, cx| this.toggle_live_tool(&id, cx)),
                 ),
             )
             .when(expanded, |el| {
-                el.child(self.tool_details(tool, view.map(Arc::as_ref), index, cx))
+                el.child(self.tool_details(tool, view.cloned(), index, cx))
             })
             .into_any_element()
     }
@@ -315,15 +332,19 @@ impl Plait {
     fn tool_details(
         &self,
         tool: &Tool,
-        view: Option<&ToolView>,
+        view: Option<Arc<ToolView>>,
         index: usize,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let group = SharedString::from(format!("tool-details-{}", tool.id));
         let sections = view
+            .as_ref()
             .map(|view| view.sections.as_slice())
             .unwrap_or_default();
-        let copy = view.map(ToolView::text).unwrap_or_default();
+        let has_copy = sections.len() > 1
+            || sections
+                .iter()
+                .any(|section| !section.block.text.is_empty());
         let body = sections.iter().enumerate().map(|(section_index, section)| {
             let site = Site {
                 owner: Owner::Tool(tool.id.clone().into()),
@@ -334,7 +355,7 @@ impl Plait {
         });
         code_block()
             // Captions and notes are prose; each code body sets its own font.
-            .font_family(".SystemUIFont")
+            .font_family(ui_font())
             .group(group.clone())
             .relative()
             .gap_2()
@@ -350,7 +371,7 @@ impl Plait {
                     colors().subtle,
                 ))
             })
-            .when(!copy.is_empty(), |el| {
+            .when(has_copy, |el| {
                 el.child(
                     div().absolute().top(px(4.)).right(px(4.)).child(
                         quiet_button(
@@ -361,7 +382,9 @@ impl Plait {
                         .bg(rgb(colors().panel))
                         .aria_label("Copy tool details")
                         .on_activate(cx, move |_, _, cx| {
-                            cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()))
+                            if let Some(view) = &view {
+                                cx.write_to_clipboard(ClipboardItem::new_string(view.text()));
+                            }
                         }),
                     ),
                 )
@@ -394,8 +417,8 @@ impl Plait {
                 .w_full()
                 .min_w_0()
                 .font_family(mono())
-                .text_size(px(12.))
-                .line_height(px(19.))
+                .text_size(px(code_size()))
+                .line_height(px(code_line_height()))
                 .child(
                     div()
                         .w(px(16.))
@@ -447,4 +470,23 @@ impl Plait {
             })
             .into_any_element()
     }
+}
+
+#[cfg(test)]
+pub(super) fn assert_tool_caption_font(
+    plait: &Plait,
+    tool: &Tool,
+    cx: &mut Context<Plait>,
+    expected: &str,
+) {
+    let mut details = plait.tool_details(tool, None, 0, cx);
+    assert_eq!(
+        details
+            .downcast_mut::<Div>()
+            .unwrap()
+            .text_style()
+            .font_family
+            .as_deref(),
+        Some(expected)
+    );
 }

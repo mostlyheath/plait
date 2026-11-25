@@ -68,7 +68,7 @@ test('user LaunchAgent and isolated packaged host start without developer Node',
   assert(childCommand.includes(node));
   assert.equal((await exec(node, ['--version'])).stdout.trim(), 'v' + release.host.node_version);
   const version = JSON.parse((await exec(binary, ['version'])).stdout);
-  assert.equal(version.protocol_version, 6);
+  assert.equal(version.protocol_version, 7);
   assert.equal(version.version, release.host.version);
   assert(version.revision.startsWith(release.revision));
 });

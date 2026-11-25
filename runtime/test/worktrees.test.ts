@@ -58,7 +58,7 @@ test('worktree restart reconciles creation and window closure before acknowledge
   const journalPath = join(h.store, 'worktrees', `${ready.thread_id}.json`);
   const journal = JSON.parse(await readFile(journalPath, 'utf8')); journal.stage = 'creating';
   await writeFile(journalPath, JSON.stringify(journal));
-  await h.close(); const reopened = h.reopen();
+  await h.close(); const reopened = await h.reopen();
   const recovered = await done(reopened.runtime, 'restart'); assert.equal(recovered.state, 'ready', JSON.stringify(recovered));
   assert.equal(recovered.thread_id, ready.thread_id); assert.equal(recovered.worktree!.path, ready.worktree!.path);
   const listed: any = await reopened.runtime.reply({ op: 'list_worktrees' }); assert.equal(listed.result.operations[0].thread_id, ready.thread_id);
@@ -82,6 +82,9 @@ test('host removal refuses uncommitted, unpushed and stale busy summaries and ke
   await h.runtime.reply({ op: 'create_worktree_thread', request_id: 'create', parent: info.result.parent, harness: 'codex', provider: 'codex', model_id: 'gpt-fake', approval: 'ask' });
   const ready = await done(h.runtime, 'create'); assert.equal(ready.state, 'ready', JSON.stringify(ready));
   const tree = ready.worktree!;
+  // The host records which project its worktree belongs to, for every client.
+  const owned = async () => ((await h.runtime.reply({ op: 'workspace_view' })).result as any).worktrees;
+  assert.deepEqual(await owned(), [{ folder: tree.path, main: h.root, branch: tree.branch, creation_id: 'create', identity: tree.identity }]);
   const remove = async (id: string, allow = false) => {
     const result = await h.runtime.reply({ op: 'remove_worktree', request_id: id, creation_id: 'create', identity: tree.identity, allow_unpushed: allow });
     assert.equal(result.ok, true, JSON.stringify(result)); return done(h.runtime, id);
@@ -92,7 +95,9 @@ test('host removal refuses uncommitted, unpushed and stale busy summaries and ke
   await writeFile(join(tree.path, 'source.txt'), 'committed\n');
   const lease = await acquireCheckout(tree.path);
   try { assert.match((await remove('stale-summary', true)).error!.message, /in use|busy/); } finally { await lease.close(); }
+  assert.equal((await owned()).length, 1, 'a refused removal kept the worktree');
   const removed = await remove('remove', true); assert.equal(removed.state, 'removed', JSON.stringify(removed));
+  assert.deepEqual(await owned(), []);
   assert.equal((await remove('remove', true)).state, 'removed');
   assert.equal(h.runtime.snapshot(ready.thread_id).checkout, tree.path);
   await exec('/usr/bin/git', ['-C', h.root, 'show-ref', '--verify', `refs/heads/${tree.branch}`]);
@@ -160,6 +165,34 @@ test('worktree supervisor reclaims a background checkout hook before acknowledgi
   const ready = await done(h.runtime, 'hook'); assert.equal(ready.state, 'ready', JSON.stringify(ready));
   await new Promise(resolve => setTimeout(resolve, 1200));
   await assert.rejects(readFile(later), { code: 'ENOENT' });
+});
+
+test('provider keys from the login shell never reach a worktree hook', async t => {
+  const { piProviders } = await import('../src/pi-providers.ts');
+  const { Providers } = await import('../src/providers.ts');
+  const sentinel = 'sk-SHELL_ONLY_SENTINEL_DO_NOT_LEAK';
+  const h = await codex(t); await chmod(h.store, 0o700); await commit(h.root);
+  // Pi's providers live in this process beside the runtime, as in the sidecar.
+  const agent = join(h.store, 'pi-agent'); await mkdir(agent, { mode: 0o700 });
+  await writeFile(join(agent, 'models.json'), JSON.stringify({ providers: {
+    lab: { baseUrl: 'http://127.0.0.1:9/v1', api: 'openai-completions', apiKey: '$SHELL_ONLY_KEY', models: [{ id: 'a' }] },
+  } }));
+  const source = piProviders(agent, async () => ({ SHELL_ONLY_KEY: sentinel }));
+  const registry = await source.load();
+  const holder = { models: registry.models, authenticated: registry.authenticated };
+  const providers = new Providers(holder, source, registry); t.after(() => providers.close());
+  await providers.adoptEnvironment();
+  assert.equal(holder.authenticated.has('lab'), true, 'the shell key is in use');
+
+  const dump = join(h.store, 'hook-environment');
+  const hook = join(h.root, '.git', 'hooks', 'post-checkout');
+  await writeFile(hook, `#!/bin/sh\nenv > '${dump}'\n`); await chmod(hook, 0o755);
+  const info: any = await h.runtime.reply({ op: 'worktree_info', checkout: h.root });
+  await h.runtime.reply({ op: 'create_worktree_thread', request_id: 'keys', parent: info.result.parent, harness: 'codex', provider: 'codex', model_id: 'gpt-fake', approval: 'ask' });
+  const ready = await done(h.runtime, 'keys'); assert.equal(ready.state, 'ready', JSON.stringify(ready));
+  const seen = await readFile(dump, 'utf8');
+  assert.match(seen, /^PATH=/m, 'the hook ran');
+  assert(!seen.includes(sentinel) && !seen.includes('SHELL_ONLY_KEY'));
 });
 
 test('killed worktree worker leaves checkout and common leases with Git descendants', { timeout: 30_000 }, async t => {

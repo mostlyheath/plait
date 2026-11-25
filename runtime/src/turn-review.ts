@@ -1,3 +1,4 @@
+import { threadKind } from './store.ts';
 // Additive immutable turn review. The desktop receives bytes, never store paths.
 import { randomUUID } from 'node:crypto';
 import { fail } from './protocol.ts';
@@ -48,10 +49,9 @@ export class TurnReview {
     if (request.op === 'turn_review_page') return this.page(String(request.token), Number(request.offset));
     const thread = String(request.thread_id);
     const snapshot = this.store.get(thread);
-    const identity = this.store.rootIdentity(thread);
-    await checkRoot(snapshot.checkout, identity);
+    const identity = await this.store.refreshRootIdentity(thread, snapshot.checkout);
     const checkout = this.checkout(snapshot.checkout, identity);
-    if (request.op === 'turn_review_info') return { schema: 1, checkout, features: { record_diff: true, attribution: false, stage_turn: false, since_review: false }, retention_days: 30 };
+    if (request.op === 'turn_review_info') return { schema: 1, checkout, features: { record_diff: threadKind(this.store, String(request.thread_id)) === 'git', attribution: false, stage_turn: false, since_review: false }, retention_days: 30 };
     return this.records.read(async () => {
       const row = this.store.db.prepare(`SELECT r.*,roots.identity FROM records r JOIN roots ON roots.id=r.thread WHERE r.id=? AND r.checkout=? AND r.kind IN ('after','undo')`).get(String(request.record_id), snapshot.checkout);
       if (!row) fail('not_found', "This turn's record is no longer retained.");

@@ -2,16 +2,14 @@
 
 use super::{Plait, host::WatchLease};
 use gpui::*;
-use plait_core::{
-    host::{self, Client, Request, ThreadSummary},
+use plait_client::{
+    host::{self, Request, ThreadSummary},
     navigation,
 };
 use std::collections::HashSet;
 
 impl Plait {
     pub(super) fn initialize_navigation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let field = self.navigation.filter.clone();
-        cx.subscribe(&field, |_, _, _, cx| cx.notify()).detach();
         cx.observe_window_activation(window, |this, window, cx| {
             // Another app may have changed the open file.
             if window.is_window_active() {
@@ -45,7 +43,7 @@ impl Plait {
                     if this
                         .host
                         .connection
-                        .threads
+                        .threads()
                         .iter()
                         .any(|thread| thread.id == id)
                     {
@@ -58,10 +56,14 @@ impl Plait {
     }
 
     pub(super) fn mark_thread_read(&mut self, id: &str, cx: &mut Context<Self>) {
-        if self.preferences.value.navigation.unread.contains(id) {
-            let mut preferences = self.preferences.value.clone();
-            preferences.navigation.unread.remove(id);
-            self.persist_navigation(preferences, cx);
+        self.dismiss_toast(id, cx);
+        if self.lists().unread.contains(id) {
+            self.update_lists(
+                |lists| {
+                    lists.unread.remove(id);
+                },
+                cx,
+            );
             self.refresh_tab_rows();
         }
         if !cfg!(test) {
@@ -71,6 +73,7 @@ impl Plait {
     }
 
     pub(super) fn watch_all_threads(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.watch_workspace(window, cx);
         self.refresh_host_worktrees(cx);
         self.navigation.watch = None;
         self.admission.queue = false;
@@ -79,8 +82,9 @@ impl Plait {
         self.navigation.loading = true;
         self.navigation.error = None;
         let executor = cx.background_executor().clone();
+        let client = self.host_client();
         let task = cx.background_executor().spawn(async move {
-            let client = Client::from_environment()?;
+
             // Subscribe first, so changes during pagination remain in the inbox.
             let queue = host::checkout_queue::available(&client)?;
             let lists = client.subscribe_threads_queue(true, queue)?;
@@ -117,7 +121,7 @@ impl Plait {
                     this.navigation.watch = Some(lease);
                     this.admission.queue = queue;
                     this.navigation.loading = false;
-                    this.host.connection.threads = all;
+                    this.host.connection.set_threads(all);
                     this.apply_thread_activity(true, window, cx);
                     this.reconcile_checkout_waits(window, cx);
                     this.rebuild_projects(cx);
@@ -150,13 +154,13 @@ impl Plait {
                                         && this
                                             .host
                                             .connection
-                                            .threads
+                                            .threads()
                                             .iter()
                                             .find(|old| old.id == new.id)
                                             .is_none_or(|old| old.status != new.status)
                                 });
                                 if let Err(error) = navigation::merge_threads(
-                                    &mut this.host.connection.threads,
+                                    this.host.connection.threads_mut(),
                                     live,
                                 ) {
                                     this.thread_list_failed(
@@ -222,35 +226,42 @@ impl Plait {
             && self.conversation_snapshot().is_some())
         .then_some(self.host.thread.selected.as_deref())
         .flatten();
-        let mut preferences = self.preferences.value.clone();
-        let notifications =
-            preferences
-                .navigation
-                .observe(&self.host.connection.threads, visible, initial);
-        if preferences != self.preferences.value {
-            self.persist_navigation(preferences, cx);
-        }
+        let mut lists = self.lists().clone();
+        let notifications = lists.observe(self.host.connection.threads(), visible, initial);
+        self.update_lists(|current| *current = lists, cx);
         if cfg!(test) {
             return;
         }
+        self.retain_toasts(cx);
+        // In front, an alert is a toast; in the background, or behind Settings
+        // or an enlarged image, a system notification.
+        let active = window.is_window_active() && self.toasts_visible();
         for id in notifications {
-            if let Some(thread) = self
+            let Some(thread) = self
                 .host
                 .connection
-                .threads
+                .threads()
                 .iter()
                 .find(|thread| thread.id == id)
-            {
+            else {
+                continue;
+            };
+            let title = self.thread_title(&id);
+            let detail = format!(
+                "{} · {}",
+                plait_client::state::project_name(&thread.checkout),
+                navigation::state_label(thread)
+            );
+            if active {
+                self.show_toast(&id, title, detail, cx);
+            } else {
+                // A newer state replaces a toast this thread showed earlier.
+                self.dismiss_toast(&id, cx);
                 window.request_attention();
                 cx.show_system_notification(SystemNotification {
                     tag: format!("plait-thread:{id}").into(),
-                    title: self.thread_title(&id).into(),
-                    body: format!(
-                        "{} · {}",
-                        plait_core::state::project_name(&thread.checkout),
-                        navigation::state_label(thread)
-                    )
-                    .into(),
+                    title: title.into(),
+                    body: detail.into(),
                     actions: Vec::new(),
                 });
             }
@@ -260,6 +271,9 @@ impl Plait {
     /// Git resolves subdirectories and symlinks to the same checkout root as
     /// the host. Only an accepted repository result reaches this method.
     pub(super) fn normalize_checkout(&mut self, cx: &mut Context<Self>) {
+        if self.host_workspace.checkout_carried {
+            return;
+        }
         let Some(root) = self
             .state
             .repository
@@ -274,25 +288,32 @@ impl Plait {
         }
         let previous = std::mem::replace(&mut self.host.creation.checkout, root.clone());
         self.state.repository.data.path = root.clone();
-        let mut preferences = self.preferences.value.clone();
-        preferences
-            .navigation
-            .opened
-            .retain(|path| path != &previous);
-        preferences.navigation.open(&root);
-        self.persist_navigation(preferences, cx);
+        self.update_lists(
+            |lists| {
+                lists.opened.retain(|path| path != &previous);
+                lists.open(&root);
+            },
+            cx,
+        );
         self.rebuild_projects(cx);
         self.capture_session(cx);
     }
 
     pub(super) fn rebuild_projects(&mut self, cx: &mut Context<Self>) {
-        let machine = self.state.projects[0].machines[0].name.clone();
+        self.navigation.invalidate_projects();
+        let machine = self.current_machine();
         self.state.projects = navigation::projects(
-            &self.host.connection.threads,
-            &self.preferences.value.navigation,
+            self.host.connection.threads(),
+            self.lists(),
             &self.host.creation.checkout,
             &machine,
+            self.host_is_local() && !self.host_workspace.checkout_carried,
         );
+        self.no_project = plait_client::model::Project {
+            checkout: self.host.creation.checkout.clone(),
+            name: "No project".into(),
+            machines: vec![machine],
+        };
         self.refresh_tab_rows();
         let paths = self
             .state
@@ -308,11 +329,13 @@ impl Plait {
             return;
         }
         let generation = self.navigation.generation;
+        let local = self.host_is_local();
         let task = cx.background_executor().spawn(async move {
             pending
                 .into_iter()
                 .map(|path| {
-                    let available = path.is_dir();
+                    // The remote host owns checkout availability.
+                    let available = !local || path.is_dir();
                     (path, available)
                 })
                 .collect::<Vec<_>>()
@@ -336,7 +359,7 @@ impl Plait {
         summary: ThreadSummary,
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
-        navigation::merge_threads(&mut self.host.connection.threads, vec![summary])?;
+        navigation::merge_threads(self.host.connection.threads_mut(), vec![summary])?;
         self.rebuild_projects(cx);
         self.capture_session(cx);
         cx.notify();

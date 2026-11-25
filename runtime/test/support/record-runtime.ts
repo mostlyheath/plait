@@ -21,10 +21,17 @@ type Row = Record<string, unknown> & { id: string; kind: string; state: string; 
 export type Pair = { run: string; before: Row; after?: Row };
 
 function rows(db: DatabaseSync): Row[] {
-  const paths = db.prepare('SELECT record,path FROM record_paths ORDER BY path').all();
-  return db.prepare('SELECT * FROM records ORDER BY rowid').all().map(row => ({
-    ...row, paths: paths.filter(path => path.record === row.id).map(path => String(path.path)),
-  }) as Row);
+  // One read transaction. The runtime commits a record's state and its paths
+  // together; two separate reads could see the new state with the old paths.
+  db.exec('BEGIN');
+  try {
+    const paths = db.prepare('SELECT record,path FROM record_paths ORDER BY path').all();
+    return db.prepare('SELECT * FROM records ORDER BY rowid').all().map(row => ({
+      ...row, paths: paths.filter(path => path.record === row.id).map(path => String(path.path)),
+    }) as Row);
+  } finally {
+    db.exec('COMMIT');
+  }
 }
 export function pairs(db: DatabaseSync): Pair[] {
   const all = rows(db);
@@ -40,8 +47,8 @@ export async function codex(t: Context, scenario = 'turn', writeCwd = false) {
   const store = join(base, 'store');
   await mkdir(store, { recursive: true });
   const log = join(store, 'frames.jsonl');
-  const open = () => {
-    const runtime = new Runtime(store, models(), new Set(['faux']));
+  const open = async () => {
+    const runtime = new Runtime(store, models(), new Set(['faux'])); await runtime.recover();
     runtime.codex = new CodexHarness(runtime.store, {
       environment: async () => codexEnv({ FAKE_CODEX_SCENARIO: scenario, FAKE_CODEX_LOG: log, ...(writeCwd ? { FAKE_CODEX_WRITE_CWD: '1' } : { FAKE_CODEX_WRITE: root }) }),
       find: async () => ({ state: 'ready', path: FAKE_CODEX, version: '0.169.0', message: 'ready' }),
@@ -51,7 +58,7 @@ export async function codex(t: Context, scenario = 'turn', writeCwd = false) {
     return harnessed(t, runtime, root, store, { provider: 'codex', model_id: 'gpt-fake', harness: 'codex', mode: 'ask' });
   };
   // Ask mode, so a run waits on its first command until the test allows it.
-  const h = open();
+  const h = await open();
   /** Turns Codex was asked to start. */
   const turns = async () => (await readFile(log, 'utf8').catch(() => '')).trim().split('\n').filter(Boolean)
     .filter(line => JSON.parse(line).method === 'turn/start').length;
@@ -64,8 +71,8 @@ export async function claude(t: Context, scenario = 'turn', mode = 'auto') {
   const store = join(base, 'store');
   const sessions = join(store, 'fake-sessions');
   await mkdir(sessions, { recursive: true });
-  const open = () => {
-    const runtime = new Runtime(store, models(), new Set(['faux']));
+  const open = async () => {
+    const runtime = new Runtime(store, models(), new Set(['faux'])); await runtime.recover();
     runtime.codex = new CodexHarness(runtime.store, {
       environment: async () => ({ PATH: '/nonexistent' }), find: async () => ({ state: 'not_installed', message: 'Codex was not found.' }),
     });
@@ -77,7 +84,7 @@ export async function claude(t: Context, scenario = 'turn', mode = 'auto') {
     });
     return harnessed(t, runtime, root, store, { provider: 'claude', model_id: 'default', harness: 'claude', mode });
   };
-  return { ...open(), reopen: open };
+  return { ...await open(), reopen: open };
 }
 
 function harnessed(t: Context, runtime: Runtime, root: string, store: string, thread: Record<string, string>) {

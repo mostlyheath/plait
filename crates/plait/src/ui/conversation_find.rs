@@ -12,7 +12,7 @@ use super::{
     text_field::{TextField, TextFieldEvent},
 };
 use gpui::{prelude::*, *};
-use plait_core::conversation_find::{self, Matches};
+use plait_client::conversation_find::{self, Matches};
 use std::{ops::Range, sync::Arc};
 
 /// How far inside the list's edges a match must sit to count as in view.
@@ -24,7 +24,7 @@ pub(super) struct ConversationFind {
     pub field: Option<Entity<TextField>>,
     pub matches: Arc<Matches>,
     pub current: usize,
-    pub(super) restore_match: Option<plait_core::tabs::bookmark::TextPosition>,
+    pub(super) restore_match: Option<plait_client::tabs::bookmark::TextPosition>,
     /// A loaded message shows only part of its text.
     pub partial: bool,
     /// The query `matches` answer. A different one moves to a match; the
@@ -52,17 +52,20 @@ enum Reveal {
 pub(super) struct Found {
     pub generation: u64,
     pub query: String,
-    pub transcript: Arc<plait_core::markdown::Transcript>,
+    pub transcript: Arc<plait_client::markdown::Transcript>,
     pub matches: Matches,
     pub partial: bool,
 }
 
 impl ConversationFind {
-    pub(super) fn bookmark_match(&self) -> Option<plait_core::tabs::bookmark::TextPosition> {
+    pub(super) fn bookmark_match(&self) -> Option<plait_client::tabs::bookmark::TextPosition> {
+        if self.restore_match.is_some() {
+            return self.restore_match.clone();
+        }
         self.matches
             .hits
             .get(self.current)
-            .map(|hit| plait_core::tabs::bookmark::TextPosition {
+            .map(|hit| plait_client::tabs::bookmark::TextPosition {
                 source: hit.message.clone(),
                 block: hit.block as u32,
                 byte: hit.range.start as u32,
@@ -120,6 +123,8 @@ impl Plait {
         find.reveal = None;
         // Whatever search is running now answers nothing.
         find.generation += 1;
+        // A turn opened only because it held the current match folds back.
+        self.reconcile_live_folding();
         let focus = self
             .conversation_find_focus
             .take()
@@ -223,6 +228,7 @@ impl Plait {
                 })
                 .unwrap_or(0);
             find.reveal = None;
+            self.reconcile_live_folding();
             cx.notify();
             return;
         }
@@ -231,11 +237,12 @@ impl Plait {
             // A new query starts at the first match from the top of the view,
             // or at the newest when the list rests on its end.
             let top = self.workspace.live_scroll.logical_scroll_top().item_ix;
+            let raw_top = self.workspace.live_layout.raw_index(top);
             let find = &mut self.workspace.conversation_find;
             find.current = if top >= self.workspace.live_count {
                 count.saturating_sub(1)
             } else {
-                find.matches.first_from(top)
+                find.matches.first_from(raw_top)
             };
             self.reveal_match();
         } else {
@@ -243,6 +250,7 @@ impl Plait {
             find.current = previous
                 .and_then(|hit| find.matches.position(&hit))
                 .unwrap_or(find.current.min(count.saturating_sub(1)));
+            self.reconcile_live_folding();
         }
         cx.notify();
     }
@@ -261,21 +269,37 @@ impl Plait {
     /// Scroll the current match into view, using where it was last drawn.
     /// A row not drawn yet is scrolled to first and placed after it is.
     fn reveal_match(&mut self) {
-        let Some(hit) = self.current_hit() else {
+        let hit = self.current_hit();
+        if self.preferences.value.fold_earlier_turns()
+            || self
+                .workspace
+                .live_layout
+                .work_find_changed(hit.as_ref().map(|h| h.message.as_str()))
+        {
+            self.reconcile_live_folding();
+        }
+        let Some(hit) = hit else {
             return;
         };
         if self.place_match(&hit) {
             self.workspace.conversation_find.reveal = None;
             return;
         }
+        let item_ix = self
+            .workspace
+            .live_layout
+            .row_of_message
+            .get(&hit.message)
+            .copied()
+            .unwrap_or(hit.row);
         self.workspace.live_scroll.scroll_to(ListOffset {
-            item_ix: hit.row,
+            item_ix,
             offset_in_item: px(0.),
         });
         self.workspace.conversation_find.reveal = Some(Reveal::AfterDraw);
     }
 
-    fn current_hit(&self) -> Option<conversation_find::Hit> {
+    pub(super) fn current_hit(&self) -> Option<conversation_find::Hit> {
         let find = &self.workspace.conversation_find;
         find.matches.hits.get(find.current).cloned()
     }
@@ -343,7 +367,7 @@ impl Plait {
             let local = hit.range.start.max(range.start) - range.start
                 ..hit.range.end.min(range.end) - range.start;
             let current = first + index == find.current;
-            plait_core::markdown::restyle(runs, local, |style| find_highlight(style, current));
+            plait_client::markdown::restyle(runs, local, |style| find_highlight(style, current));
         }
     }
 

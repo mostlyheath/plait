@@ -1,10 +1,10 @@
-use plait_core::lease::{
+use plait_engine::lease::{
     CHECKOUT_BUSY, COMMON_METADATA_BUSY, DirIdentity, LIFECYCLE_BUSY, LeaseError, LeaseErrorKind,
     MAX_COMMON_METADATA_WAIT, WRITER_BUSY, checkout_lock_name, common_lock_name, default_lease_dir,
     flock_fd_wait, open_lease_dir, open_lock_file, open_verified_dir, prepare_checkout_lock,
     prepare_common_lock, try_flock_fd, verify_dir_still,
 };
-use plait_core::lease::{acquire_for_cleanup, cleanup, git_cleanup};
+use plait_engine::lease::{acquire_for_cleanup, cleanup, git_cleanup};
 use serde_json::json;
 use std::{
     fs::File,
@@ -87,7 +87,7 @@ pub fn acquire(args: Vec<String>) -> io::Result<()> {
     verify_inherited_lock_fd(3, expected_lock_id)?;
     if matches!(mode, "writer" | "exclusive") {
         verify_inherited_dir_fd(4, id)?;
-        plait_core::lease::seed::yield_to_run(&canonical).map_err(io::Error::other)?;
+        plait_engine::lease::seed::yield_to_run(&canonical).map_err(io::Error::other)?;
     }
     if let Err(error) = lock_mode(mode, id, timeout_ms) {
         // A lent Git child may hold these locks: explain its saved state. A
@@ -454,6 +454,26 @@ fn verify_inherited_dir_fd(fd: i32, expected: DirIdentity) -> io::Result<()> {
     #[allow(clippy::unnecessary_cast)]
     if file_type != (libc::S_IFDIR as u32) || dev != expected.dev || ino != expected.ino {
         return Err(io::Error::other("invalid checkout writer lease"));
+    }
+    Ok(())
+}
+
+/// Lock an owner-only regular runner lock inherited on fd 3.
+pub fn runner_lock() -> io::Result<()> {
+    let stat = fstat_fd(3)?;
+    #[allow(clippy::unnecessary_cast)]
+    if (stat.st_mode as u32 & libc::S_IFMT as u32) != libc::S_IFREG as u32
+        || stat.st_mode as u32 & 0o077 != 0
+        || stat.st_uid != unsafe { libc::geteuid() }
+        || stat.st_nlink != 1
+    {
+        return Err(io::Error::other("invalid runner lock"));
+    }
+    if !try_flock_fd(3, libc::LOCK_EX).map_err(io::Error::other)? {
+        return Err(io::Error::new(
+            io::ErrorKind::WouldBlock,
+            "runner lock busy",
+        ));
     }
     Ok(())
 }

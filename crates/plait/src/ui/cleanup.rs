@@ -1,7 +1,8 @@
 //! One checkout-scoped control. Disk and socket work stay off render.
 use super::{Plait, theme::*, thread_controls::TextTooltip};
 use gpui::{prelude::*, *};
-use plait_core::{host, lease::cleanup::Cleanup, ownership::CheckoutKey};
+use plait_client::{host, ownership::CheckoutKey};
+use plait_protocol::lease::cleanup::Cleanup;
 use std::{path::PathBuf, time::Duration};
 
 type Key = (u64, u64, PathBuf);
@@ -50,17 +51,33 @@ impl Plait {
         self.cleanup.busy = true;
         let root = key.2.clone();
         let expected = confirm.as_ref().and(self.cleanup.identity.clone());
+        let client = self.host_client();
+        let supported = self.host.connection.has_checkout_identity;
+        let local = self.host_is_local();
         let task = cx.background_executor().spawn(async move {
             let identity = match expected {
                 Some(value) => value,
-                None => CheckoutKey::resolve(None, &root).map_err(host::Error::Protocol)?,
+                None if !supported => {
+                    Self::identify_settings_checkout(&client, &root, supported, local, None)?
+                }
+                None => {
+                    let read = host::git::identity(&client, &root, None)?;
+                    CheckoutKey {
+                        host: None,
+                        root: read.result.root,
+                        device: read.identity.dev,
+                        inode: read.identity.ino,
+                    }
+                }
             };
             let value = host::cleanup::read(
-                &host::Client::from_environment()?,
+                &client,
                 &identity,
                 confirm
                     .as_ref()
                     .map(|(token, stop)| (token.as_str(), *stop)),
+                supported,
+                local,
             )?;
             Ok::<_, host::Error>((identity, value))
         });

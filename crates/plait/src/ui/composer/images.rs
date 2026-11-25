@@ -1,6 +1,6 @@
-use super::super::{images::decode, thread_controls::TextTooltip};
+use super::super::{images::decode, theme::ButtonAction, thread_controls::TextTooltip};
 use super::*;
-use plait_core::images::{self, ImageRef};
+use plait_client::images::{self, ImageRef};
 use std::{collections::HashMap, path::PathBuf};
 
 #[derive(Default)]
@@ -75,20 +75,36 @@ impl Composer {
         }
     }
     pub fn restore_images(&mut self, references: Vec<ImageRef>, cx: &mut Context<Self>) {
-        self.restore_originals(references, None, cx);
+        self.restore_originals(references, None, None, cx);
     }
+    #[cfg(test)]
     pub fn restore_thread_images(
         &mut self,
         references: Vec<ImageRef>,
         thread: String,
         cx: &mut Context<Self>,
     ) {
-        self.restore_originals(references, Some(thread), cx);
+        self.restore_thread_images_with_client(
+            references,
+            thread,
+            plait_client::host::Client::from_environment().expect("local host configuration"),
+            cx,
+        );
+    }
+    pub fn restore_thread_images_with_client(
+        &mut self,
+        references: Vec<ImageRef>,
+        thread: String,
+        client: plait_client::host::Client,
+        cx: &mut Context<Self>,
+    ) {
+        self.restore_originals(references, Some(thread), Some(client), cx);
     }
     fn restore_originals(
         &mut self,
         references: Vec<ImageRef>,
         thread: Option<String>,
+        client: Option<plait_client::host::Client>,
         cx: &mut Context<Self>,
     ) {
         self.images.generation += 1;
@@ -106,7 +122,7 @@ impl Composer {
             let prepared = references
                 .into_iter()
                 .map(|reference| {
-                    let result = restore_original(&reference, thread.as_deref());
+                    let result = restore_original(&reference, thread.as_deref(), client.as_ref());
                     (reference.id, result)
                 })
                 .collect::<HashMap<_, _>>();
@@ -191,7 +207,7 @@ impl Composer {
         }
         self.add_images(Vec::new(), Some(bytes), cx);
     }
-    pub(super) fn drop_images(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+    pub(crate) fn drop_images(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
         if !self.enabled {
             return;
         }
@@ -356,13 +372,15 @@ impl Composer {
 fn restore_original(
     reference: &ImageRef,
     thread: Option<&str>,
+    client: Option<&plait_client::host::Client>,
 ) -> Result<Arc<RenderImage>, String> {
     let bytes = images::local(reference).or_else(|error| {
         let Some(thread) = thread else {
             return Err(error);
         };
-        let bytes = plait_core::host::Client::from_environment()
-            .and_then(|client| client.image(thread, reference))
+        let bytes = client
+            .ok_or_else(|| "Host client unavailable.".to_string())?
+            .image(thread, reference)
             .map_err(|error| error.to_string())?;
         images::persist(&bytes)?;
         Ok(bytes)

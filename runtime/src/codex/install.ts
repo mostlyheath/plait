@@ -1,3 +1,4 @@
+import { managedPath } from '../agent-tools.ts';
 import { execFile } from 'node:child_process';
 import { constants } from 'node:fs';
 import { access, stat } from 'node:fs/promises';
@@ -9,7 +10,7 @@ import type { AppServer } from './server.ts';
 
 export type CodexInstall = {
   state: 'ready' | 'not_installed' | 'unsupported_version' | 'signed_out' | 'error';
-  path?: string; version?: string; untested?: boolean;
+  path?: string; version?: string; untested?: boolean; managed?: boolean;
   /** One short sentence for the person, saying how to fix it when something is wrong. */
   message: string;
 };
@@ -88,21 +89,21 @@ export function judgeVersion(path: string, version: string): CodexInstall {
 }
 
 /** Finds the person's installed Codex and checks its version. Reads no credentials. */
-export async function findCodex(options: { path?: string; env?: NodeJS.ProcessEnv }): Promise<CodexInstall> {
-  let path = options.path; let env = options.env ?? process.env;
+export async function findCodex(options: { path?: string; env?: NodeJS.ProcessEnv; directory?: string }): Promise<CodexInstall> {
+  let path = options.path; let env = options.env ?? process.env; let managed = false;
   if (path !== undefined) {
     if (!isAbsolute(path) || !(await executable(path))) {
       return { state: 'not_installed', path, message: 'No Codex program was found at the chosen path. Choose another path or install Codex.' };
     }
   } else {
     const found = await search(options.env);
-    env = found.env; path = found.path;
+    env = found.env; path = found.path ?? (options.directory ? await managedPath('codex', options.directory) : undefined); managed = !found.path && !!path;
     if (!path) return { state: 'not_installed', message: `Codex was not found. Install Codex ${SUPPORTED} or newer.` };
   }
   const output = await runVersion(path, env);
   const version = output === undefined ? undefined : parseVersionOutput(output);
   if (!version) return { state: 'error', path, message: 'Codex did not report its version. Reinstall Codex or choose another path.' };
-  return judgeVersion(path, version);
+  return { ...judgeVersion(path, version), managed };
 }
 
 /** Whether Codex can run turns. Asks the app-server, so no auth file is read. */

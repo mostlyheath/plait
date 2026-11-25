@@ -7,8 +7,11 @@ const REQUEST: &str = "> Keep the public API.\n\nYes, build it.\nKeep the implem
 const ANSWER: &str =
     "I’ll keep the API unchanged and separate the new presentation from the thread state.";
 
-fn stage(harness: &mut Harness, repository: &Path) {
+pub(super) fn stage(harness: &mut Harness, repository: &Path) {
     harness.connect(repository, false);
+    harness.update(|plait, _, _| {
+        plait.preferences.value.turns = plait_client::preferences::Turns::Line
+    });
     harness.change_snapshot(|snapshot| {
         snapshot.status = ThreadStatus::Idle;
         snapshot.messages = vec![
@@ -53,7 +56,7 @@ pub(super) fn walk(harness: &mut Harness, repository: &Path, suffix: &str) {
     harness.capture(&format!("message-roles-streaming-{suffix}"));
 }
 
-fn caret(harness: &mut Harness, id: &str, block: usize, offset: usize) -> Point<Pixels> {
+pub(super) fn caret(harness: &mut Harness, id: &str, block: usize, offset: usize) -> Point<Pixels> {
     harness.draw();
     harness
         .window
@@ -159,6 +162,7 @@ fn copy_message_cross_label_selection_and_image_only_requests() {
 
     let quote = caret(&mut harness, "request", 0, 0);
     let answer0 = caret(&mut harness, "answer", 0, 0);
+    #[cfg(not(debug_assertions))]
     let view = harness
         .window
         .update(&mut harness.cx, |plait, _, _| {
@@ -167,6 +171,16 @@ fn copy_message_cross_label_selection_and_image_only_requests() {
         .unwrap();
 
     // Copy message on the author line copies the original source with `>` marks.
+    #[cfg(debug_assertions)]
+    let copy_pt = harness
+        .draw_a11y()
+        .nodes
+        .iter()
+        .find(|n| n.label.as_deref() == Some("Copy message source"))
+        .expect("request copy button")
+        .bounds
+        .center();
+    #[cfg(not(debug_assertions))]
     let copy_pt = point(view.right() - px(48.), quote.y - px(12. + 4. + 11. + 10.5));
     harness.pointer(PlatformInput::MouseMove(MouseMoveEvent {
         position: copy_pt,

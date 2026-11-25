@@ -8,13 +8,17 @@
 
 use super::*;
 use crate::ui::Workspace;
-use plait_core::{
+use plait_client::{
     git::{Commit, History as CommitHistory},
     model::{Diff, DiffKind, DiffLine},
+    preferences::Turns,
     state::DiffKey,
 };
 
 const WARMUP: usize = 5;
+const COMPOSER_KEYS: &[&str] = &["r", "e", "v", "i", "e", "w", "space"];
+const COMPOSER_STREAM_START: &str = "The edit is applied.";
+const COMPOSER_SCROLL_STEP: f32 = -60.;
 
 pub struct Row {
     pub name: String,
@@ -97,6 +101,35 @@ impl Harness {
         self.cx
             .update_window(window, |_, window, cx| window.dispatch_event(event, cx))
             .expect("scroll");
+    }
+
+    fn composer_key(&mut self, round: usize) {
+        let key = Keystroke::parse(COMPOSER_KEYS[round % COMPOSER_KEYS.len()]).unwrap();
+        // Like wheel(), dispatch against the last frame without draining the
+        // harness executor before the next explicit draw.
+        let handled = self
+            .cx
+            .update_window(self.window.into(), |_, window, cx| {
+                window.dispatch_keystroke(key, cx)
+            })
+            .expect("composer keystroke");
+        assert!(handled, "the composer must receive the keystroke");
+    }
+
+    /// One key through the focused input handler to the end of the next frame.
+    fn typing(&mut self, name: &str, streaming: bool) -> Row {
+        let (mut samples, mut renders) = (Vec::new(), Vec::new());
+        for round in 0..frames() {
+            if streaming {
+                std::thread::sleep(Duration::from_millis(8));
+            }
+            let start = Instant::now();
+            self.composer_key(round);
+            self.draw();
+            samples.push(start.elapsed());
+            renders.push(self.render_us());
+        }
+        row(name, samples, renders)
     }
 
     /// Steady state: the same frame redrawn, as after a plain `notify`.
@@ -212,8 +245,8 @@ fn big_diff(count: usize) -> Arc<Diff> {
         })
         .collect();
     // Drawn rows and the widest of them, as the parser reports them.
-    let plait_core::patch::Rows { rows, widest } =
-        plait_core::patch::rows(&lines, plait_core::patch::FileHeaders::Omit);
+    let plait_client::patch::Rows { rows, widest } =
+        plait_client::patch::rows(&lines, plait_client::patch::FileHeaders::Omit);
     let hunks = (0..lines.len())
         .filter(|&index| matches!(lines[index].kind, DiffKind::Hunk))
         .collect();
@@ -345,6 +378,76 @@ fn scroll_conversation(harness: &mut Harness, fraction: f32) {
     harness.draw();
 }
 
+fn conversation_cases(harness: &mut Harness, label: &str, rows: &mut Vec<Row>) {
+    let count = harness
+        .window
+        .update(&mut harness.cx, |plait, _, _| plait.workspace.live_count)
+        .unwrap();
+    scroll_conversation(harness, 1.0);
+    rows.push(harness.steady(&format!("c1 {label} conversation, {count} rows, at bottom")));
+    scroll_conversation(harness, 0.5);
+    rows.push(harness.steady(&format!("c2 {label} conversation, middle (steady)")));
+    rows.push(harness.scrolling(
+        &format!("c3 {label} conversation, wheel-scrolling in the middle"),
+        point(px(700.), px(400.)),
+        -60.,
+    ));
+    // Find in that conversation: every reply's code matches, so each row
+    // drawn carries highlights. Typing waits for the background search.
+    let set_query = |harness: &mut Harness, query: &'static str| {
+        harness.update(move |plait, _, cx| {
+            let field = plait.workspace.conversation_find.field.clone().unwrap();
+            field.update(cx, |field, cx| field.set_text(query, cx));
+        });
+    };
+    harness.update(|plait, window, cx| plait.open_conversation_find(window, cx));
+    set_query(harness, "sample code");
+    scroll_conversation(harness, 0.5);
+    rows.push(harness.steady(&format!(
+        "c4 {label} conversation, middle, find with matches highlighted"
+    )));
+    let queries = ["explain", "fixture", "sample code"];
+    rows.push(harness.switching(
+        &format!("c5 {label} find, a new query over every row, to its frame"),
+        9,
+        |h, round| set_query(h, queries[round % 3]),
+    ));
+    harness.update(|plait, window, cx| plait.close_conversation_find(window, cx));
+}
+
+/// Isolate the work-fold cases so tab and repository timings retain their fixtures.
+fn finished_work_cases(repository: &Path, rows: &mut Vec<Row>) {
+    let mut h = super::this_turn::harness(repository, None, 1380., 860.);
+    h.connect(repository, false);
+    let mut snapshot = long_thread(THREAD, repository, 1500);
+    let mut records = Vec::with_capacity(750);
+    let (turns, _) = snapshot.messages.as_chunks_mut::<2>();
+    let (runs, _) = snapshot.tools.as_chunks_mut::<3>();
+    for ([request, _], tools) in turns.iter_mut().zip(runs) {
+        let mut record = super::undo::record(&request.id, &[&request.id], "ready");
+        record["outcome"] = "finished".into();
+        records.push(record);
+        request.id = format!("request-{}", request.id);
+        for tool in tools {
+            tool.after = Some(Some(request.id.clone()));
+        }
+    }
+    records.reverse();
+    h.change_snapshot(move |s| *s = snapshot);
+    h.update(|p, _, _| {
+        p.host.connection.status.as_mut().unwrap().protocol_version = 7;
+        p.preferences.value.fold_earlier_turns = Some(false);
+        p.preferences.value.fold_finished_work = Some(true);
+        super::undo::inject(p, records);
+        p.workspace.turn_records.totals =
+            super::super::turn_records::TurnRecords::file_totals(&p.workspace.turn_records.data);
+        p.reconcile_live_folding();
+        assert_eq!(p.workspace.live_count, 3750);
+        assert_eq!(p.workspace.live_layout.work.len(), 750);
+    });
+    conversation_cases(&mut h, "folded work", rows);
+}
+
 fn show(harness: &mut Harness, tab: Workspace) {
     harness.update(move |plait, window, cx| plait.show_tab(tab, window, cx));
 }
@@ -362,7 +465,7 @@ fn install_thread(harness: &mut Harness, id: &'static str, snapshot: Snapshot) {
         plait.host.thread.selected = Some(id.into());
         plait.workspace.history = Default::default();
         plait.host.thread.snapshot = Some(Arc::new(snapshot));
-        plait.workspace.formatted = Arc::new(plait_core::markdown::Transcript::update(
+        plait.workspace.formatted = Arc::new(plait_client::markdown::Transcript::update(
             &Default::default(),
             plait.host.thread.snapshot.as_ref().unwrap(),
         ));
@@ -377,28 +480,160 @@ fn install_thread(harness: &mut Harness, id: &'static str, snapshot: Snapshot) {
 
 fn baseline(scratch: &Path, rows: &mut Vec<Row>) {
     let small = fixture_repository(&scratch.join("small"));
-    let mut harness = Harness::new(&small, None, 1380., 860.);
-    rows.push(harness.steady("e1 idle redraw, default view (disconnected home)"));
-    harness.connect(&small, false);
-    rows.push(harness.steady("e2 idle redraw, small live conversation (3 msgs, 2 tools)"));
-    // A burst has landed and the reveal is drawing it in, one display frame at a time.
+    for (style, label) in [(Turns::Bubbles, "bubbles"), (Turns::Line, "line")] {
+        let mut harness = Harness::new(&small, None, 1380., 860.);
+        harness.update(|plait, _, _| plait.preferences.value.turns = style);
+        rows.push(harness.steady(&format!(
+            "e1 {label} idle redraw, default view (disconnected home)"
+        )));
+        harness.connect(&small, false);
+        rows.push(harness.steady(&format!(
+            "e2 {label} idle redraw, small live conversation (3 msgs, 2 tools)"
+        )));
+        // A burst has landed and the reveal is drawing it in, one display frame at a time.
+        harness.change_snapshot(|snapshot| {
+            snapshot
+                .live_text
+                // Paragraphs of about 400 bytes, as replies are usually written.
+                .push_str(
+                    &"\n\nThe streamed reply keeps arriving in bursts. "
+                        .repeat(8)
+                        .repeat(25),
+                )
+        });
+        rows.push(harness.revealing(&format!(
+            "e3 {label} streaming reveal frame, 120 Hz pacing (small conversation)"
+        )));
+    }
+}
+
+fn composer_harness(checkout: &Path) -> Harness {
+    std::fs::create_dir_all(checkout).expect("composer checkout");
+    let mut harness = Harness::with_host(checkout, None, 1380., 860., None);
+    harness.connect(checkout, false);
     harness.change_snapshot(|snapshot| {
-        snapshot
-            .live_text
-            // Paragraphs of about 400 bytes, as replies are usually written.
-            .push_str(
-                &"\n\nThe streamed reply keeps arriving in bursts. "
-                    .repeat(8)
-                    .repeat(25),
-            )
+        snapshot.status = ThreadStatus::Idle;
+        snapshot.live_text.clear();
+        snapshot.tools.last_mut().unwrap().status = ToolStatus::Done;
     });
-    rows.push(harness.revealing("e3 streaming reveal frame, 120 Hz pacing (small conversation)"));
+    harness.update(|plait, window, cx| plait.focus_composer(window, cx));
+    harness.draw();
+    harness
+}
+
+fn start_composer_stream(harness: &mut Harness) {
+    // Restore the same empty starting draft as the idle typing case.
+    harness.update(|plait, _, cx| {
+        plait.workspace.composers[THREAD].update(cx, |composer, cx| {
+            let revision = composer.saved_draft().1 + 1;
+            composer.restore_draft(String::new(), revision, None, cx);
+        });
+    });
+    harness.change_snapshot(|snapshot| {
+        snapshot.status = ThreadStatus::Running;
+        snapshot.live_text = COMPOSER_STREAM_START.into();
+    });
+    // The initial text establishes a reveal. The remaining text arrives as a burst.
+    harness.draw();
+    harness.change_snapshot(|snapshot| {
+        snapshot.live_text.push_str(
+            &"\n\nThe streamed reply keeps arriving in bursts. "
+                .repeat(8)
+                .repeat(25),
+        );
+    });
+}
+
+fn composer_scroll_target(harness: &mut Harness, checkout: &Path) -> Point<Pixels> {
+    harness.change_snapshot(|snapshot| *snapshot = long_thread(THREAD, checkout, 120));
+    scroll_conversation(harness, 0.5);
+    harness
+        .window
+        .update(&mut harness.cx, |plait, _, _| {
+            let bounds = plait.workspace.live_scroll.viewport_bounds();
+            // Stay inside the transcript, just above the composer.
+            point(bounds.center().x, bounds.bottom() - px(40.))
+        })
+        .unwrap()
+}
+
+fn composer_cases(checkout: &Path, rows: &mut Vec<Row>) {
+    let mut harness = composer_harness(checkout);
+    rows.push(harness.steady("composer-idle: focused composer in an idle thread"));
+    rows.push(harness.typing(
+        "composer-typing: keystroke to frame in an idle thread",
+        false,
+    ));
+    start_composer_stream(&mut harness);
+    rows.push(harness.typing(
+        "composer-streaming: keystroke to frame during 120 Hz reveal",
+        true,
+    ));
+    let target = composer_scroll_target(&mut harness, checkout);
+    rows.push(harness.scrolling(
+        "composer-scrolling: wheel to frame with the composer visible",
+        target,
+        COMPOSER_SCROLL_STEP,
+    ));
+}
+
+#[core::prelude::v1::test]
+fn composer_driver_smoke() {
+    if !isolated("frame_bench::composer_driver_smoke") {
+        return;
+    }
+    let checkout = PathBuf::from(std::env::var_os(SCENE_HOME).unwrap()).join("checkout");
+    let mut harness = composer_harness(&checkout);
+    let draft = |h: &mut Harness| {
+        h.window
+            .update(&mut h.cx, |plait, _, cx| {
+                plait.workspace.composers[THREAD].read(cx).text().to_owned()
+            })
+            .unwrap()
+    };
+    harness.composer_key(0);
+    harness.draw();
+    assert_eq!(draft(&mut harness), "r");
+
+    start_composer_stream(&mut harness);
+    harness.composer_key(0);
+    harness.draw();
+    assert_eq!(draft(&mut harness), "r");
+    harness
+        .window
+        .update(&mut harness.cx, |plait, _, _| {
+            let blocks = &plait.workspace.formatted.live.as_ref().unwrap().blocks;
+            let reveal = &plait.workspace.reveal;
+            assert!(!reveal.pending_text(COMPOSER_STREAM_START.len() + 1));
+            assert!(reveal.pending_text(plait_client::reveal::total(blocks)));
+        })
+        .unwrap();
+
+    let target = composer_scroll_target(&mut harness, &checkout);
+    let scroll_top = |h: &mut Harness| {
+        h.window
+            .update(&mut h.cx, |plait, _, _| {
+                plait.workspace.live_scroll.logical_scroll_top()
+            })
+            .unwrap()
+    };
+    let before = scroll_top(&mut harness);
+    harness.wheel(target, COMPOSER_SCROLL_STEP);
+    harness.draw();
+    assert_ne!(scroll_top(&mut harness), before);
+    harness.composer_key(1);
+    assert_eq!(draft(&mut harness), "re");
 }
 
 pub fn run() -> Vec<Row> {
     let scratch = std::env::temp_dir().join(format!("plait-bench-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&scratch);
     let mut rows = Vec::new();
+    if std::env::var_os("PLAIT_BENCH_COMPOSER_ONLY").as_deref() == Some("1".as_ref()) {
+        composer_cases(&scratch.join("composer"), &mut rows);
+        let _ = std::fs::remove_dir_all(&scratch);
+        return rows;
+    }
     baseline(&scratch, &mut rows);
     {
         let repo = fixture_repository(&scratch.join("worktrees"));
@@ -438,12 +673,6 @@ pub fn run() -> Vec<Row> {
     // c. Long conversation, the open thread while the other tabs are measured.
     let long = long_thread(THREAD, &heavy, 1500);
     harness.change_snapshot(move |snapshot| *snapshot = long);
-    let count = harness
-        .window
-        .update(&mut harness.cx, |plait, _, _| plait.workspace.live_count)
-        .unwrap();
-    scroll_conversation(&mut harness, 1.0);
-    rows.push(harness.steady(&format!("c1 conversation, {count} rows, at bottom")));
     super::tabs::install(&mut harness, 20);
     rows.push(harness.steady("tabs20 conversation, twenty tabs, five running summaries"));
     rows.push(harness.switching(
@@ -454,7 +683,7 @@ pub fn run() -> Vec<Row> {
                 let summaries = plait
                     .host
                     .connection
-                    .threads
+                    .threads()
                     .iter()
                     .enumerate()
                     .map(|(index, thread)| {
@@ -470,8 +699,8 @@ pub fn run() -> Vec<Row> {
                         thread
                     })
                     .collect();
-                plait_core::navigation::merge_threads(
-                    &mut plait.host.connection.threads,
+                plait_client::navigation::merge_threads(
+                    plait.host.connection.threads_mut(),
                     summaries,
                 )
                 .unwrap();
@@ -486,33 +715,16 @@ pub fn run() -> Vec<Row> {
     rows.push(harness.steady("tabs300 virtual overflow, visible rows only"));
     harness.update(|p, _, _| p.tabs.list_open = false);
     super::tabs::install(&mut harness, 1);
-    scroll_conversation(&mut harness, 0.5);
-    rows.push(harness.steady("c2 conversation, middle (steady)"));
-    rows.push(harness.scrolling(
-        "c3 conversation, wheel-scrolling in the middle",
-        point(px(700.), px(400.)),
-        -60.,
-    ));
-    // Find in that conversation: every reply's code matches, so each row
-    // drawn carries highlights. Typing waits for the background search.
-    let set_query = |harness: &mut Harness, query: &'static str| {
-        harness.update(move |plait, _, cx| {
-            let field = plait.workspace.conversation_find.field.clone().unwrap();
-            field.update(cx, |field, cx| field.set_text(query, cx));
+    for (style, label) in [(Turns::Line, "line"), (Turns::Bubbles, "bubbles")] {
+        harness.update(|plait, _, _| {
+            plait.preferences.value.turns = style;
+            plait.workspace.live_scroll.remeasure();
         });
-    };
-    harness.update(|plait, window, cx| plait.open_conversation_find(window, cx));
-    set_query(&mut harness, "sample code");
-    scroll_conversation(&mut harness, 0.5);
-    rows.push(harness.steady("c4 conversation, middle, find with matches highlighted"));
-    let queries = ["explain", "fixture", "sample code"];
-    rows.push(harness.switching(
-        "c5 find, a new query over every row, to its frame",
-        9,
-        |h, round| set_query(h, queries[round % 3]),
-    ));
-    harness.update(|plait, window, cx| plait.close_conversation_find(window, cx));
+        conversation_cases(&mut harness, label, &mut rows);
+    }
     scroll_conversation(&mut harness, 1.0);
+
+    finished_work_cases(&heavy, &mut rows);
 
     // a. Changes: 2,000 files, an injected 20k-line diff.
     harness.update(|plait, _, cx| {
@@ -713,6 +925,20 @@ pub fn run() -> Vec<Row> {
     rows.push(harness.steady("modal open, heavy conversation behind Settings"));
     harness.update(|plait, window, cx| plait.show_settings(false, window, cx));
     rows.push(harness.steady("modal closed, same heavy conversation"));
+
+    super::cards::install_many(&mut harness, &heavy);
+    harness.draw();
+    rows.push(harness.scrolling(
+        "d8 sidebar, wheel-scrolling 300 thread cards across six projects",
+        point(px(125.), px(400.)),
+        -85.,
+    ));
+
+    rows.push(harness.switching(
+        "d9 Every thread, open and close with 300 threads",
+        12,
+        |h, _| h.update(|plait, window, cx| plait.toggle_overview(window, cx)),
+    ));
 
     drop(harness);
     let _ = std::fs::remove_dir_all(&scratch);

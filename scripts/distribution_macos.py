@@ -43,36 +43,57 @@ def release_index(component_release, tag, app=None):
     }
 
 
-def build_distribution(installers, version, revision, work, archive):
+def verify_image(source, mount):
+    """The mounted image holds exactly what was verified: files byte for byte,
+    the app with an intact signature and the same host, and the shortcut."""
+    if sorted(path.name for path in source.iterdir()) != sorted(path.name for path in mount.iterdir()):
+        raise ValueError("Disk image contents differ from the verified installer")
+    for path in source.iterdir():
+        mounted = mount / path.name
+        if path.is_symlink():
+            if not mounted.is_symlink() or os.readlink(mounted) != os.readlink(path):
+                raise ValueError(f"Disk image shortcut {path.name} differs")
+        elif path.suffix == ".app":
+            run("codesign", "--verify", "--deep", "--strict", mounted)
+            host = "Contents/Resources/host.json"
+            if digest(path / host) != digest(mounted / host):
+                raise ValueError("Disk image app carries a different host")
+        elif digest(path) != digest(mounted):
+            raise ValueError(f"Disk image file {path.name} differs")
+
+
+def build_distribution(installers, version, revision, work, archive, bundle):
     image_root = work / "disk-image"
     image_root.mkdir()
-    shutil.copy2(archive, image_root / "Plait.zip")
-    command = image_root / "Install Plait.command"
+    # Drag Plait.app onto Applications. The app sets up its server on first launch.
+    run("ditto", bundle, image_root / "Plait.app")
+    (image_root / "Applications").symlink_to("/Applications")
+    # Only for moving an earlier system-wide package install; new installs drag.
+    command = image_root / "Move from system-wide install.command"
     command.write_text('''#!/bin/bash
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
-work=$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/plait-app.XXXXXXXX")
-trap '/bin/rm -rf -- "$work"' EXIT
-/usr/bin/ditto -x -k "$here/Plait.zip" "$work"
-/usr/bin/codesign --verify --deep --strict "$work/Plait.app"
-/bin/bash "$work/Plait.app/Contents/Resources/install-user.sh" --app "$work/Plait.app"
+/usr/bin/codesign --verify --deep --strict "$here/Plait.app"
+/bin/bash "$here/Plait.app/Contents/Resources/install-user.sh" --app "$here/Plait.app"
 ''')
     command.chmod(0o755)
     (image_root / "Read me first.txt").write_text(
         "PLAIT — LOCAL PREVIEW\n\n"
-        "Finish or Stop active tasks, then open Install Plait.command.\n"
-        "It installs the prebuilt app and bundled host for your user account.\n"
-        "No source checkout, Xcode, Rust, or Node installation is needed.\n"
-        "An older system-wide install needs your administrator password once.\n\n"
-        "This preview is ad-hoc signed and not notarized. Use macOS's explicit\n"
-        "per-item approval only if you trust this release. Do not disable Gatekeeper.\n\n"
-        "Open Plait from Applications, open a repository, and choose an authenticated\n"
-        "model in Settings. The host uses your existing Pi account.\n"
+        "Drag Plait into Applications, then open it from Applications.\n"
+        "On first launch Plait sets up its local server for your user account.\n"
+        "No source checkout, Xcode, Rust, Node, or Terminal command is needed.\n\n"
+        "This preview is ad-hoc signed and not notarized. The first time you open it,\n"
+        "macOS asks you to approve it in System Settings > Privacy & Security >\n"
+        "Open Anyway. Do that only if you trust this release. Do not disable Gatekeeper.\n\n"
+        "Installed an earlier preview with the Installer packages? Open\n"
+        "Move from system-wide install.command once instead; it needs your\n"
+        "administrator password once.\n\n"
+        "Open a repository and choose an authenticated model in Settings.\n"
         "Model requests need internet access. Project build tools are not bundled.\n\n"
         "Threads, drafts, and credentials are preserved. Future updates install from\n"
         "Plait > Check for Updates after active tasks finish.\n\n"
         "Setup, authentication, and updates:\n"
-        "https://github.com/heath0xFF/plait/blob/main/docs/MACOS.md\n"
+        "https://github.com/heath0xFF/plait/blob/main/docs/GUIDE.md\n"
     )
     image = work / f"Plait-{version}-{revision}-macos-arm64.dmg"
     run("hdiutil", "create", "-volname", "Plait", "-srcfolder", image_root,
@@ -82,9 +103,7 @@ trap '/bin/rm -rf -- "$work"' EXIT
     mount.mkdir()
     run("hdiutil", "attach", "-readonly", "-nobrowse", "-mountpoint", mount, image)
     try:
-        for source in image_root.iterdir():
-            if digest(source) != digest(mount / source.name):
-                raise ValueError("Disk image contents differ from the verified installer")
+        verify_image(image_root, mount)
     finally:
         run("hdiutil", "detach", mount)
     script = work / "install.sh"

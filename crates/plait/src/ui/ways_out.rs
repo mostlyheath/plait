@@ -2,15 +2,16 @@
 //!
 //! Each picks what is on screen (the file in Files, or the file selected in
 //! Changes, and a line in it), builds the command from Settings → Editor
-//! (plait_core::handoff), and starts it on the background executor. Plait
+//! (crate::handoff), and starts it on the background executor. Plait
 //! does not wait for it: only a command that cannot start, or exits at once
 //! with an error, is reported, in the notice line.
 
-use super::{Plait, Workspace, file_view::LINE_HEIGHT, theme::*, thread_controls::TextTooltip};
+use super::{Plait, Workspace, file_view::line_height, theme::*, thread_controls::TextTooltip};
+use crate::handoff::{self};
 use gpui::{prelude::*, *};
-use plait_core::{
+use plait_client::handoff::Launch;
+use plait_client::{
     file_view::{self, Contents},
-    handoff::{self, Launch},
     model::Change,
     state::Load,
 };
@@ -54,15 +55,15 @@ pub(super) fn on_disk(change: &Change) -> bool {
     change.worktree != b'D' && !(change.index == b'D' && change.worktree == b' ')
 }
 
-/// The first line on screen in a list of `LINE_HEIGHT` rows, zero-based. A
-/// scroll asked for but not yet drawn counts as done.
+/// The first line on screen in a list of `file_view::line_height()` rows,
+/// zero-based. A scroll asked for but not yet drawn counts as done.
 fn top_line(scroll: &UniformListScrollHandle) -> usize {
     let state = scroll.0.borrow();
     if let Some(deferred) = &state.deferred_scroll_to_item {
         return deferred.item_index;
     }
     let scrolled = -f32::from(state.base_handle.offset().y);
-    (scrolled / LINE_HEIGHT).floor().max(0.) as usize
+    (scrolled / line_height()).floor().max(0.) as usize
 }
 
 impl Plait {
@@ -78,8 +79,46 @@ impl Plait {
 
     /// What is on screen: the file in Files, or the file selected in Changes.
     pub(super) fn way_out_target(&self) -> Option<Target> {
-        if self.settings_open {
+        if !self.host_is_local() || self.settings_open {
             return None;
+        }
+        if self.panel_is_open() {
+            use plait_client::panel::PanelKind;
+            return match self.panel_kind()? {
+                PanelKind::Files => self.files_target(),
+                PanelKind::Changes if !self.panel_recorded() => self.changes_target(),
+                PanelKind::Changes => {
+                    let file = self.recorded_file()?;
+                    if file.label == "Deleted"
+                        || !file
+                            .path
+                            .components()
+                            .all(|part| matches!(part, std::path::Component::Normal(_)))
+                    {
+                        return None;
+                    }
+                    Some(Target {
+                        display: file.display_path.clone(),
+                        absolute: self.file_root().join(&file.path),
+                        line: self
+                            .workspace
+                            .turn_review
+                            .diff
+                            .as_ref()
+                            .and_then(|diff| handoff::first_changed_line(&diff.lines))
+                            .unwrap_or(1),
+                    })
+                }
+                PanelKind::History => None,
+            };
+        }
+        if let Some(kind) = self.focused_panel_kind() {
+            use plait_client::panes::PaneKind;
+            return match kind {
+                PaneKind::Changes if !self.panel_recorded() => self.changes_target(),
+                PaneKind::Files => self.files_target(),
+                _ => None,
+            };
         }
         match self.workspace.tab {
             Workspace::Files => self.files_target(),
@@ -143,6 +182,9 @@ impl Plait {
 
     /// Hover text for an Editor control: what it opens, where, and with what.
     pub(super) fn editor_hover(&self) -> String {
+        if !self.host_is_local() {
+            return super::REMOTE_UNAVAILABLE.into();
+        }
         let Some(target) = self.way_out_target() else {
             return NO_FILE.into();
         };
@@ -156,6 +198,9 @@ impl Plait {
     }
 
     pub(super) fn finder_hover(&self) -> String {
+        if !self.host_is_local() {
+            return super::REMOTE_UNAVAILABLE.into();
+        }
         self.way_out_target().map_or_else(
             || NO_FILE.into(),
             |target| format!("Shows {} in Finder", target.display),
@@ -163,6 +208,9 @@ impl Plait {
     }
 
     pub(super) fn open_in_editor(&mut self, cx: &mut Context<Self>) {
+        if !self.host_is_local() {
+            return self.way_out_failed(super::REMOTE_UNAVAILABLE.into(), cx);
+        }
         let Some(target) = self.way_out_target() else {
             return self.way_out_failed(NO_FILE.into(), cx);
         };
@@ -176,6 +224,9 @@ impl Plait {
     }
 
     pub(super) fn show_in_finder(&mut self, cx: &mut Context<Self>) {
+        if !self.host_is_local() {
+            return self.way_out_failed(super::REMOTE_UNAVAILABLE.into(), cx);
+        }
         let Some(target) = self.way_out_target() else {
             return self.way_out_failed(NO_FILE.into(), cx);
         };
@@ -184,12 +235,18 @@ impl Plait {
 
     /// A terminal at the open checkout, whatever is on screen.
     pub(super) fn open_terminal(&mut self, cx: &mut Context<Self>) {
+        if !self.host_is_local() {
+            return self.way_out_failed(super::REMOTE_UNAVAILABLE.into(), cx);
+        }
         let choice = &self.preferences.value.open_terminals_with;
         let launch = handoff::open_terminal(choice, &self.file_root());
         self.hand_off(launch, cx);
     }
 
     pub(super) fn hand_off(&mut self, launch: Result<Launch, String>, cx: &mut Context<Self>) {
+        if !self.host_is_local() {
+            return self.way_out_failed(super::REMOTE_UNAVAILABLE.into(), cx);
+        }
         match launch {
             Ok(launch) => {
                 // A new attempt replaces the last failure's sentence.
@@ -253,11 +310,19 @@ pub(super) fn editor_button(
     id: &'static str,
     name: &str,
     shortcut: String,
+    local: bool,
+    compact: bool,
     cx: &mut Context<Plait>,
 ) -> super::theme::Control {
     let plait = cx.weak_entity();
-    super::theme::button(id, "Editor")
-        .aria_label(format!("Open {name} in your editor"))
+    let label = format!("Open {name} in your editor");
+    let editor = if compact {
+        super::theme::icon_button(id, "open-external", label)
+    } else {
+        super::theme::button(id, "Editor").aria_label(label)
+    };
+    editor
+        .disabled(!local)
         .aria_keyshortcuts(shortcut)
         .tooltip(move |_, cx| {
             let text = plait
@@ -273,10 +338,12 @@ pub(super) fn editor_button(
 pub(super) fn finder_button(
     id: &'static str,
     name: &str,
+    local: bool,
     cx: &mut Context<Plait>,
 ) -> super::theme::Control {
     let plait = cx.weak_entity();
     super::theme::button(id, "Finder")
+        .disabled(!local)
         .aria_label(format!("Show {name} in Finder"))
         .tooltip(move |_, cx| {
             let text = plait

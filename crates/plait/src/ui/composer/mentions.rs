@@ -1,7 +1,7 @@
 //! Ranks checkout files against a mention query. Pure and potentially slow on
 //! a large checkout: the composer runs it on the background executor.
 
-use plait_core::fuzzy::fuzzy_match;
+use plait_client::fuzzy::fuzzy_match;
 use std::cmp::Reverse;
 
 /// A file that matches the query.
@@ -103,8 +103,8 @@ mod tests {
         [
             "Cargo.toml",
             "README.md",
-            "crates/plait-core/src/git.rs",
-            "crates/plait-core/src/git/tests.rs",
+            "crates/plait-client/src/git.rs",
+            "crates/plait-client/src/git/tests.rs",
             "crates/plait/src/ui/composer/mod.rs",
             "crates/plait/src/ui/mod.rs",
             "docs/GIT.md",
@@ -132,8 +132,8 @@ mod tests {
     fn file_name_matches_come_first_and_ties_prefer_the_shorter_path() {
         let found = ranked("git", 9);
         assert_eq!(found[0], "docs/GIT.md");
-        assert_eq!(found[1], "crates/plait-core/src/git.rs");
-        assert!(found.contains(&"crates/plait-core/src/git/tests.rs".to_owned()));
+        assert_eq!(found[1], "crates/plait-client/src/git.rs");
+        assert!(found.contains(&"crates/plait-client/src/git/tests.rs".to_owned()));
         assert!(!found.contains(&"README.md".to_owned()));
         assert_eq!(ranked("mod", 1), ["crates/plait/src/ui/mod.rs"]);
         assert!(ranked("zzz", 9).is_empty());

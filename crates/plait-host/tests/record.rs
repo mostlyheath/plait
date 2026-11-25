@@ -28,7 +28,7 @@ fn record_and_prune_descendants_release_both_leases_when_the_helper_dies() {
             assert!(helper("record", &request).0);
             let marker = store.join("records/descendants");
             let wrapper = base.0.join("git-wrapper");
-            let real = plait_core::git::record::git_binary();
+            let real = plait_engine::git::record::git_binary();
             fs::write(&wrapper, format!("#!/bin/sh\nif [ -n \"$GIT_DIR\" ]; then\n sleep 30 &\n echo \"$$ $!\" > '{}'\n wait\nfi\nexec '{}' \"$@\"\n", marker.display(), real.display())).unwrap();
             fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o700)).unwrap();
             let store_lock = fs::File::create(store.join("test.lock")).unwrap();
@@ -461,9 +461,9 @@ fn the_recorder_runs_inside_its_sandbox() {
     let root = repository(&base.0);
     let records = base.0.join("store/records");
     fs::create_dir_all(&records).unwrap();
-    let located = plait_core::git::record::locate(&root).unwrap();
-    let profile = plait_core::git::record::sandbox_profile(
-        &plait_core::git::record::protected_paths(&located),
+    let located = plait_engine::git::record::locate(&root).unwrap();
+    let profile = plait_engine::git::record::sandbox_profile(
+        &plait_engine::git::record::protected_paths(&located),
         &records,
     )
     .unwrap();
@@ -509,7 +509,7 @@ fn the_real_helper_denies_git_timestamp_writes() {
     let store = base.0.join("store");
     fs::create_dir(&store).unwrap();
     let wrapper = base.0.join("git-probe");
-    let real = plait_core::git::record::git_binary();
+    let real = plait_engine::git::record::git_binary();
     // Attempt the write only in private-store commands, after containment starts.
     fs::write(&wrapper, format!("#!/bin/sh\nif [ -n \"$GIT_DIR\" ]; then\n  if /usr/bin/touch '{}' 2>/dev/null; then exit 71; fi\n  /usr/bin/touch '{}/records/denied-write-observed' || exit 72\nfi\nexec '{}' \"$@\"\n", root.join(".git/index").display(), store.display(), real.display())).unwrap();
     fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o700)).unwrap();
@@ -641,7 +641,7 @@ fn distinct_hard_link_names_are_recorded_as_distinct_entries() {
 
 #[test]
 fn standalone_undo_respects_writer_reader_and_exclusive_leases() {
-    use plait_core::lease::{LeaseClass, acquire_checkout};
+    use plait_engine::lease::{LeaseClass, acquire_checkout};
     let base = Scratch::new();
     let root = repository(&base.0);
     let store = base.0.join("store");
@@ -695,7 +695,9 @@ fn standalone_undo_respects_writer_reader_and_exclusive_leases() {
 
 #[test]
 fn crash_releases_leases_while_uncertain_descendant_keeps_them_held() {
-    use plait_core::lease::{LeaseClass, LeaseErrorKind, acquire_checkout, prepare_checkout_lock};
+    use plait_engine::lease::{
+        LeaseClass, LeaseErrorKind, acquire_checkout, prepare_checkout_lock,
+    };
     use std::os::{fd::AsRawFd, unix::process::CommandExt};
     use std::time::{Duration, Instant};
 
@@ -830,7 +832,7 @@ fn crash_releases_leases_while_uncertain_descendant_keeps_them_held() {
 
 #[test]
 fn record_helper_crash_releases_store_writer_and_lifecycle_leases() {
-    use plait_core::lease::{LeaseClass, acquire_checkout, prepare_checkout_lock};
+    use plait_engine::lease::{LeaseClass, acquire_checkout, prepare_checkout_lock};
     use std::os::{
         fd::AsRawFd,
         unix::{fs::PermissionsExt, process::CommandExt},
@@ -844,7 +846,7 @@ fn record_helper_crash_releases_store_writer_and_lifecycle_leases() {
     assert!(helper("record", &request).0);
     let marker = store.join("records/lifecycle-descendants");
     let wrapper = base.0.join("git-wrapper-lifecycle");
-    let real = plait_core::git::record::git_binary();
+    let real = plait_engine::git::record::git_binary();
     fs::write(
         &wrapper,
         format!(
@@ -942,7 +944,7 @@ fn record_helper_crash_releases_store_writer_and_lifecycle_leases() {
 
 #[test]
 fn lease_prepare_rejects_hard_linked_lock_file() {
-    use plait_core::lease::{checkout_lock_name, open_lease_dir, open_verified_dir};
+    use plait_engine::lease::{checkout_lock_name, open_lease_dir, open_verified_dir};
     use std::os::unix::fs::PermissionsExt;
 
     let base = Scratch::new();
@@ -1003,7 +1005,7 @@ fn undo_with_inherited(request: &Value, lifecycle: &fs::File, writer: &fs::File)
 
 #[test]
 fn undo_never_converts_an_inherited_shared_lifecycle_lock() {
-    use plait_core::lease::{LeaseClass, acquire_checkout, prepare_checkout_lock};
+    use plait_engine::lease::{LeaseClass, acquire_checkout, prepare_checkout_lock};
     use std::os::fd::AsRawFd;
     use std::time::{Duration, Instant};
     let base = Scratch::new();
@@ -1076,7 +1078,9 @@ fn undo_never_converts_an_inherited_shared_lifecycle_lock() {
 
 #[test]
 fn host_tests_keep_lock_files_out_of_the_account_lease_directory() {
-    use plait_core::lease::{LeaseClass, acquire_checkout, checkout_lock_name, open_verified_dir};
+    use plait_engine::lease::{
+        LeaseClass, acquire_checkout, checkout_lock_name, open_verified_dir,
+    };
     let base = Scratch::new();
     let root = repository(&base.0);
     drop(acquire_checkout(&root, None, LeaseClass::Writer).unwrap());
@@ -1149,7 +1153,7 @@ fn worktree_checkout_gets_ordinary_modes_under_the_private_host_umask() {
 
 #[test]
 fn host_admission_checks_git_records_only_while_holding_the_checkout_locks() {
-    use plait_core::lease::{git_cleanup, open_verified_dir, prepare_checkout_lock};
+    use plait_engine::lease::{git_cleanup, open_verified_dir, prepare_checkout_lock};
     use std::os::{fd::AsRawFd, unix::process::CommandExt};
     use std::time::{Duration, Instant};
 

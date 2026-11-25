@@ -12,14 +12,13 @@ import type { BuildCache } from './build-cache.ts';
 import { fail, HostError } from './protocol.ts';
 import { rangeArgs, rangeText, outputTail } from './tool-output.ts';
 import type { CommandOutputs, TextRange } from './tool-output.ts';
-import type { Snapshot } from './protocol.ts';
 import type { AuthorizationPolicy, RunAuthorization } from './authorization.ts';
 import type { McpRun } from './mcp/tools.ts';
 import { readableFolders, skillFile } from './skills.ts';
 import type { SkillEntry } from './skills.ts';
 
 export type ToolState = {
-  snapshot: Snapshot; baseline: string[]; protected: FileIdentity[];
+  snapshot: { id: string; checkout: string }; vcs?: 'git' | 'folder'; baseline: string[]; protected: FileIdentity[];
   authorization: RunAuthorization;
   lease?: LeaseHandle;
   rootIdentity: FileIdentity;
@@ -80,8 +79,8 @@ export function registry(state: ToolState) {
         if (name !== 'command') {
           // File protections apply regardless of how the run obtains permission.
           safePath(args.path, state.baseline);
-          const currentDirty = await dirtyPaths(state.snapshot.checkout);
-          safePath(args.path, await ignoredPaths(state.snapshot.checkout, [args.path]));
+          const currentDirty = await dirtyPaths(state.snapshot.checkout, state.vcs);
+          safePath(args.path, await ignoredPaths(state.snapshot.checkout, [args.path], state.vcs));
           safePath(args.path, currentDirty.filter(path => !state.owned.has(pathKey(path))));
           if (name === 'edit') {
             const current = await fileAction(state.snapshot.checkout, 'inspect', args.path, undefined, state.lease?.fd, state.rootIdentity, state.lease?.lifecycleFd);

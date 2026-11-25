@@ -1,7 +1,7 @@
 //! Only the selected tab owns a GPUI workspace. Parking is a save boundary.
 use super::{Plait, composer::ParkedEditor, tabs::TabNavigation};
 use gpui::*;
-use plait_core::tabs::{
+use plait_client::tabs::{
     TabId, TabTarget,
     bookmark::{self, BookmarkRecord, ThreadBookmark},
 };
@@ -35,18 +35,41 @@ pub(super) struct Lifecycle {
 }
 
 impl Lifecycle {
+    pub(super) fn reopen_checkout(&mut self, key: &plait_client::tabs::CheckoutKey) {
+        let update = |target: &mut TabTarget| {
+            let checkout = match target {
+                TabTarget::Existing { checkout, .. }
+                | TabTarget::Draft { checkout, .. }
+                | TabTarget::Worktrees { checkout }
+                | TabTarget::Issues { checkout } => checkout,
+            };
+            if checkout.host == key.host && checkout.root == key.root {
+                *checkout = key.clone();
+            }
+        };
+        for (target, _) in &mut self.editors {
+            update(target);
+        }
+        for intent in &mut self.pending {
+            if let Intent::Open(target) = intent {
+                update(target);
+            }
+        }
+    }
+
     pub(super) fn verify_pending(
         &mut self,
-        previous: &plait_core::tabs::HostKey,
-        host: &plait_core::tabs::HostKey,
-        checkouts: &[plait_core::tabs::CheckoutKey],
+        previous: &plait_client::tabs::HostKey,
+        host: &plait_client::tabs::HostKey,
+        checkouts: &[plait_client::tabs::CheckoutKey],
     ) {
         for intent in &mut self.pending {
             if let Intent::Open(target) = intent {
                 let checkout = match target {
                     TabTarget::Existing { checkout, .. }
                     | TabTarget::Draft { checkout, .. }
-                    | TabTarget::Worktrees { checkout } => checkout,
+                    | TabTarget::Worktrees { checkout }
+                    | TabTarget::Issues { checkout } => checkout,
                 };
                 if &checkout.host == previous {
                     checkout.host = host.clone();
@@ -258,6 +281,18 @@ impl Plait {
 
     fn perform_tab(&mut self, intent: Intent, window: &mut Window, cx: &mut Context<Self>) {
         let previous = self.tabs.model.active();
+        // The workspace is rebuilt for the next tab; keep this tab's Find in Changes.
+        let find = &self.workspace.diff_find;
+        if let Some(field) = &find.field {
+            let saved = plait_client::tabs::bookmark::FindBookmark {
+                open: find.open,
+                query: field.read(cx).text().into(),
+                current: find.bookmark_match(),
+            };
+            if let Some(panel) = self.tabs.model.panel_mut() {
+                panel.diff_find = saved;
+            }
+        }
         let covered = self.settings_open;
         let connection = self
             .host
@@ -303,7 +338,7 @@ impl Plait {
                 TabNavigation::Jump(n) => self.tabs.model.jump(n),
                 TabNavigation::Reopen => self.tabs.model.reopen(|target| match target {
                     // As on restore: only a project the sidebar still verifies.
-                    TabTarget::Worktrees { checkout } => (checkout.host == self.tabs.host
+                    TabTarget::Worktrees { checkout } | TabTarget::Issues { checkout } => (checkout.host == self.tabs.host
                         && self.tabs.identity.checkouts.iter().any(|(root, identity)| {
                             *root == checkout.root && checkout.directory == Some(*identity)
                         }))
@@ -311,7 +346,7 @@ impl Plait {
                     TabTarget::Existing { id, checkout } => self
                         .host
                         .connection
-                        .threads
+                        .threads()
                         .iter()
                         .any(|t| &t.id == id && t.checkout == checkout.root)
                         .then_some(connection),
@@ -419,6 +454,7 @@ impl Plait {
         let owner = self.host.read_stamp();
         let target = tab.session().target().clone();
         let record = tab.session().bookmark().clone();
+        self.workspace.opened_turns = tab.session().opened_turns().clone();
         let editor = self
             .tabs
             .lifecycle
@@ -444,7 +480,7 @@ impl Plait {
         let task = cx.background_executor().spawn(async move {
             let bookmark = match record {
                 BookmarkRecord::Inline { .. } => record.inline(),
-                BookmarkRecord::Worktrees { .. } => None,
+                BookmarkRecord::Worktrees { .. } | BookmarkRecord::Issues { .. } => None,
                 BookmarkRecord::Stored { blob, .. } => journal
                     .read_record_bytes(&blob, bookmark::EXTENDED_BOOKMARK_LIMIT)?
                     .and_then(|bytes| bookmark::decode_extended(&bytes)),

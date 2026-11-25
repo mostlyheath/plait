@@ -1,13 +1,7 @@
 //! Storage fixtures never read or approve a real project's output.
 use super::*;
-use plait_core::{
-    build_output::{
-        Outcome,
-        store::{SeedSummary, policy::Policy},
-    },
-    git::worktree::Identity,
-    host::build_output::{Info, Kind, Phase, Progress},
-};
+use plait_client::host::build_output::{Info, Kind, Phase, Progress};
+use plait_protocol::build_output::Outcome;
 fn choice(h: &mut Harness) {
     h.update(|p, w, cx| {
         p.show_project_settings(w, cx);
@@ -15,22 +9,19 @@ fn choice(h: &mut Harness) {
         p.build_output.info = Some(Info {
             schema: 1,
             worktree_build_output_v1: true,
-            policy: Policy {
-                schema: 1,
-                project: p.host.creation.checkout.clone(),
-                identity: Identity {
-                    dev: "1".into(),
-                    ino: "1".into(),
-                },
-                revision: 1,
-                paths: vec!["target".into()],
-            },
+            policy: serde_json::from_value(serde_json::json!({
+                "schema": 1, "project": p.host.creation.checkout,
+                "identity": {"dev": "1", "ino": "1"},
+                "revision": 1, "paths": ["target"]
+            }))
+            .unwrap(),
             suggestions: vec!["runtime/node_modules".into()],
-            seed: Some(SeedSummary {
-                bytes: 2_576_980_378,
-                files: 130_000,
-                verified_at: 1,
-            }),
+            seed: Some(
+                serde_json::from_value(serde_json::json!({
+                    "bytes": 2_576_980_378u64, "files": 130_000, "verified_at": 1
+                }))
+                .unwrap(),
+            ),
         });
         p.build_output.note = None;
     });

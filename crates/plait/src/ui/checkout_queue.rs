@@ -1,7 +1,7 @@
 //! Checkout queue controls use the shared catalog; they own no watch or timer.
 use super::{Plait, theme::*, thread_controls::TextTooltip};
 use gpui::*;
-use plait_core::host::{Request, checkout_queue};
+use plait_client::host::{Request, checkout_queue};
 impl Plait {
     pub(super) fn wait_in_checkout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.admission.queue || !self.can_submit() {
@@ -38,7 +38,7 @@ impl Plait {
         let thread = self
             .host
             .connection
-            .threads
+            .threads()
             .iter()
             .find(|thread| &thread.id == id)?;
         let queue = thread.checkout_queue.as_ref()?;
@@ -121,7 +121,7 @@ impl Plait {
         let Some(checkout) = self
             .host
             .connection
-            .threads
+            .threads()
             .iter()
             .find(|thread| thread.id == id)
             .map(|thread| thread.checkout.clone())
@@ -189,6 +189,7 @@ impl Plait {
             return "";
         };
         self.host.submissions.forget_accepted(id, request_id);
+        let client = self.host_client();
         let restored = self
             .workspace
             .composers
@@ -199,7 +200,12 @@ impl Plait {
                     let revision = composer.saved_draft().1;
                     let restored = composer.restore_cancelled(&pending.text, revision, cx);
                     if restored {
-                        composer.restore_thread_images(pending.images.clone(), id.to_owned(), cx);
+                        composer.restore_thread_images_with_client(
+                            pending.images.clone(),
+                            id.to_owned(),
+                            client,
+                            cx,
+                        );
                     }
                     restored
                 })
@@ -229,7 +235,7 @@ impl Plait {
                     && self
                         .host
                         .connection
-                        .threads
+                        .threads()
                         .iter()
                         .any(|thread| thread.id == *id && thread.checkout_queue.is_none())
             })
@@ -243,7 +249,7 @@ impl Plait {
         let Some(checkout) = self
             .host
             .connection
-            .threads
+            .threads()
             .iter()
             .find(|thread| thread.id == id)
             .map(|thread| thread.checkout.clone())

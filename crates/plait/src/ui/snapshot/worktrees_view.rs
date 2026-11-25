@@ -1,7 +1,7 @@
 //! Branch graph fixtures are confined to scenes and tests.
 use super::super::worktrees_view::Again;
 use super::*;
-use plait_core::{
+use plait_client::{
     git::{
         log::{Commit, GraphCommit},
         worktree::inventory::Preservation,
@@ -46,14 +46,14 @@ pub(super) fn install(h: &mut Harness, count: usize) {
         let view = p.tabs.model.open(TabTarget::Worktrees {checkout:p.tab_checkout(root.clone())},Some(p.host.connection.epoch)).unwrap();
         p.tabs.model.open(TabTarget::Draft { id:"scene-draft".into(), checkout:p.tab_checkout(root.clone()) },Some(p.host.connection.epoch)).unwrap();
         p.tabs.model.activate(view).unwrap();
-        p.host.connection.threads.retain(|t| !t.id.starts_with("worktree-scene-"));
+        p.host.connection.threads_mut().retain(|t| !t.id.starts_with("worktree-scene-"));
         let mut rows=Vec::new();let mut commits=Vec::new();
         for i in 0..count {
             let path=if i==0 {root.clone()}else{root.with_extension("worktrees").join(format!("sample-{i}"))};
             let title=match i {0=>"Main checkout".into(),1=>"Retry requests after rate limits".into(),2=>"Read the local project settings".into(),3=>"Keep attachments across restarts".into(),_=>format!("Worktree {i}")};
             let id=format!("worktree-scene-{i}");
-            if i > 0 { p.host.connection.threads.push(ThreadSummary{id:id.clone(),checkout:path.clone(),title:Some(title),status:if i==1{ThreadStatus::Running}else if i==2{ThreadStatus::AwaitingApproval}else{ThreadStatus::Idle},..Default::default()}); }
-            rows.push(Checkout { build_directories: Vec::new(), build_output: None,path,main:i==0,branch:Some(if i==0{"main".into()}else{format!("plait/topic-{i}")}),head:Some(oid(if i==0{10}else{100+i})),base:(i>0).then(||oid(9-i.min(6))),thread_id:(i>0).then_some(id),identity:Some(plait_core::git::worktree::Identity{dev:"1".into(),ino:(i+1).to_string()}),missing:false,removed:false,preservation:Preservation { build_output: None,changed:Some(if i==2{3}else{0}),unpushed:Some(if i==1{2}else{0}),exclusive:Some(0),can_keep_local:i>0 && i!=2,refusal:if i==1{Some("This worktree has unpushed commits. Push them or explicitly confirm preserving only the local branch.".into())}else if i==2{Some("This worktree has uncommitted or ignored files. Preserve or remove them before removing the worktree.".into())}else if i==0{Some("The main checkout cannot be removed here.".into())}else{None}},creation_id:(i>0).then(||format!("creation-{i}")),last_used:Some(super::super::commits::now() as u64*1000-i as u64*300000)});
+            if i > 0 { p.host.connection.threads_mut().push(ThreadSummary{id:id.clone(),checkout:path.clone(),title:Some(title),status:if i==1{ThreadStatus::Running}else if i==2{ThreadStatus::AwaitingApproval}else{ThreadStatus::Idle},..Default::default()}); }
+            rows.push(Checkout { build_directories: Vec::new(), build_output: None,path,main:i==0,branch:Some(if i==0{"main".into()}else{format!("plait/topic-{i}")}),head:Some(oid(if i==0{10}else{100+i})),base:(i>0).then(||oid(9-i.min(6))),thread_id:(i>0).then_some(id),identity:Some(plait_client::git::worktree::Identity{dev:"1".into(),ino:(i+1).to_string()}),missing:false,removed:false,preservation:Preservation { build_output: None,changed:Some(if i==2{3}else{0}),unpushed:Some(if i==1{2}else{0}),exclusive:Some(0),can_keep_local:i>0 && i!=2,refusal:if i==1{Some("This worktree has unpushed commits. Push them or explicitly confirm preserving only the local branch.".into())}else if i==2{Some("This worktree has uncommitted or ignored files. Preserve or remove them before removing the worktree.".into())}else if i==0{Some("The main checkout cannot be removed here.".into())}else{None}},creation_id:(i>0).then(||format!("creation-{i}")),last_used:Some(super::super::commits::now() as u64*1000-i as u64*300000)});
             if i>0 {commits.push(commit(100+i,9-i.min(6),(if i==1{"Retry transient failures"}else if i==2{"Validate project overrides"}else{"Preserve draft attachments"}).to_string()));}
         }
         for n in (1..=10).rev(){commits.push(commit(n,n-1,match n {10=>"Keep thread tabs independent".into(),9=>"Read host-owned worktrees".into(),8=>"Preserve the checkout identity".into(),_=>format!("Project change {n}")}));}
@@ -74,6 +74,14 @@ pub(super) fn walk(repo: &Path, out: Option<&Path>, suffix: &str, width: f32, he
         let theme = if light { "light" } else { "dark" };
         install(&mut h, 4);
         h.capture(&format!("worktrees-graph-{theme}-{suffix}"));
+        // A remote host: its own graph and sizes; Finder and Terminal are off.
+        h.update(|p, _, cx| {
+            p.host_local = false;
+            cx.notify();
+        });
+        h.capture(&format!("worktrees-remote-{theme}-{suffix}"));
+        h.update(|p, _, _| p.host_local = true);
+        install(&mut h, 4);
         h.update(|p, _, _| p.worktrees.selected = 2);
         h.pointer(PlatformInput::MouseMove(MouseMoveEvent {
             position: point(
@@ -148,7 +156,7 @@ pub(super) fn walk(repo: &Path, out: Option<&Path>, suffix: &str, width: f32, he
         h.capture(&format!("worktrees-empty-{theme}-{suffix}"));
         h.update(|p, _, _| {
             p.worktrees.park();
-            p.worktrees.error = Some(plait_core::host::worktree::OLDER_HOST.into());
+            p.worktrees.error = Some(plait_client::host::worktree::OLDER_HOST.into());
         });
         h.capture(&format!("worktrees-old-host-{theme}-{suffix}"));
         h.update(|p, _, _| {
@@ -219,7 +227,7 @@ fn graph_accessibility_is_unique_stable_and_has_no_thread_view_bar() {
         let owner = p.worktrees.rows[1].thread_id.clone().unwrap();
         p.host
             .connection
-            .threads
+            .threads_mut()
             .iter_mut()
             .find(|t| t.id == owner)
             .unwrap()
@@ -227,7 +235,7 @@ fn graph_accessibility_is_unique_stable_and_has_no_thread_view_bar() {
         p.worktree_labels();
         assert_eq!(p.worktrees.titles[1], "Untitled thread");
         assert!(p.worktrees.openable[1]);
-        p.host.connection.threads.retain(|t| t.id != owner);
+        p.host.connection.threads_mut().retain(|t| t.id != owner);
         p.worktree_labels();
         assert_eq!(p.worktrees.titles[1], "Thread unavailable");
         assert!(!p.worktrees.openable[1]);
@@ -263,12 +271,12 @@ fn remove_asks_for_the_worktree_that_was_drawn() {
     install(&mut h, 4);
     h.update(|p, window, cx| {
         // No run is working here: Remove waits for one.
-        for t in &mut p.host.connection.threads {
+        for t in p.host.connection.threads_mut() {
             t.status = ThreadStatus::Idle;
         }
         p.host
             .connection
-            .threads
+            .threads_mut()
             .iter_mut()
             .filter(|t| t.id == "worktree-scene-1")
             .for_each(|t| t.status = ThreadStatus::Idle);
@@ -304,7 +312,7 @@ fn remove_asks_for_the_worktree_that_was_drawn() {
         p.worktrees.rows[other].preservation.refusal = None;
         p.ask_remove_view_worktree(&path, id.as_ref(), window, cx);
         assert!(p.worktrees.removal.asking.is_none());
-        let replaced = plait_core::git::worktree::Identity {
+        let replaced = plait_client::git::worktree::Identity {
             dev: "1".into(),
             ino: "999".into(),
         };
@@ -363,7 +371,7 @@ fn a_summary_reads_nothing_and_a_run_end_reads_one_row() {
         let summary = |p: &Plait, i: usize| {
             p.host
                 .connection
-                .threads
+                .threads()
                 .iter()
                 .find(|t| t.id == format!("worktree-scene-{i}"))
                 .unwrap()
@@ -374,7 +382,7 @@ fn a_summary_reads_nothing_and_a_run_end_reads_one_row() {
         let one = sample(1);
         let apply = |p: &mut Plait, live: Vec<ThreadSummary>, cx: &mut Context<Plait>| {
             let (relabel, ended) = p.worktree_summaries(&live);
-            plait_core::navigation::merge_threads(&mut p.host.connection.threads, live).unwrap();
+            plait_client::navigation::merge_threads(p.host.connection.threads_mut(), live).unwrap();
             p.worktrees_after_summaries(relabel, ended, cx);
         };
         // Mid-run: a new title and still working.
@@ -455,7 +463,7 @@ fn remove_waits_for_a_run_in_that_worktree() {
         for status in [ThreadStatus::Running, ThreadStatus::AwaitingApproval] {
             p.host
                 .connection
-                .threads
+                .threads_mut()
                 .iter_mut()
                 .find(|t| t.id == "worktree-scene-1")
                 .unwrap()
@@ -470,12 +478,12 @@ fn remove_waits_for_a_run_in_that_worktree() {
         // Another thread working in the same folder counts too.
         p.host
             .connection
-            .threads
+            .threads_mut()
             .iter_mut()
             .find(|t| t.id == "worktree-scene-1")
             .unwrap()
             .status = ThreadStatus::Idle;
-        p.host.connection.threads.push(ThreadSummary {
+        p.host.connection.threads_mut().push(ThreadSummary {
             id: "worktree-scene-guest".into(),
             checkout: path.clone(),
             status: ThreadStatus::Running,
@@ -484,7 +492,7 @@ fn remove_waits_for_a_run_in_that_worktree() {
         assert!(p.run_in_worktree(&p.worktrees.rows[at]));
         p.host
             .connection
-            .threads
+            .threads_mut()
             .retain(|t| t.id != "worktree-scene-guest");
         assert!(!p.run_in_worktree(&p.worktrees.rows[at]));
         p.ask_remove_view_worktree(&path, id.as_ref(), window, cx);
@@ -509,6 +517,12 @@ fn removal_here_marks_the_folder_missing_for_the_sidebar() {
     h.connect(&repo, false);
     install(&mut h, 4);
     h.update(|p, _, cx| {
+        // Lists change only for a host verified on this connection.
+        p.verify_identity_for_test(plait_client::tabs::HostKey {
+            id: "fixture-host".into(),
+            store: "/store".into(),
+        });
+        let machine = p.machines.active.clone();
         let row = p.worktrees.rows[3].clone();
         p.navigation.available.insert(row.path.clone(), true);
         assert!(
@@ -519,16 +533,16 @@ fn removal_here_marks_the_folder_missing_for_the_sidebar() {
         let attempt = p
             .worktrees
             .removal
-            .answer(Some(plait_core::worktree_removal::Choice::RemoveIfPushed))
+            .answer(Some(plait_client::worktree_removal::Choice::RemoveIfPushed))
             .unwrap();
-        let removed = plait_core::host::worktree::Operation {
+        let removed = plait_client::host::worktree::Operation {
             request_id: "creation-3".into(),
             thread_id: "12345678-1234-4abc-8abc-123456789abc".into(),
-            state: plait_core::host::worktree::Stage::Removed,
+            state: plait_client::host::worktree::Stage::Removed,
             worktree: None,
             error: None,
         };
-        p.settle_worktree_removal(&attempt, Ok(removed), cx);
+        p.settle_worktree_removal(&attempt, &machine, Ok(removed), cx);
         assert_eq!(p.navigation.available.get(&row.path), Some(&false));
         assert!(p.worktrees.removal.pending.is_none());
         // A refusal changes nothing about the folder.
@@ -545,20 +559,64 @@ fn removal_here_marks_the_folder_missing_for_the_sidebar() {
         let attempt = p
             .worktrees
             .removal
-            .answer(Some(plait_core::worktree_removal::Choice::RemoveIfPushed))
+            .answer(Some(plait_client::worktree_removal::Choice::RemoveIfPushed))
             .unwrap();
-        let refused = plait_core::host::worktree::Operation {
+        let refused = plait_client::host::worktree::Operation {
             request_id: "creation-1".into(),
             thread_id: "12345678-1234-4abc-8abc-123456789abc".into(),
-            state: plait_core::host::worktree::Stage::Ready,
+            state: plait_client::host::worktree::Stage::Ready,
             worktree: None,
-            error: Some(plait_core::host::HostError {
+            error: Some(plait_client::host::HostError {
+                retry_after_seconds: None,
                 code: "busy".into(),
                 message: "New work appeared.".into(),
             }),
         };
-        p.settle_worktree_removal(&attempt, Ok(refused), cx);
+        p.settle_worktree_removal(&attempt, &machine, Ok(refused), cx);
         assert_eq!(p.navigation.available.get(&other), Some(&true));
+
+        // A reply that lands after a machine switch settles the removal but
+        // leaves this machine's lists alone: the same path here is another
+        // folder (#132).
+        let removed = plait_client::host::worktree::Operation {
+            request_id: "creation-1".into(),
+            thread_id: "12345678-1234-4abc-8abc-123456789abc".into(),
+            state: plait_client::host::worktree::Stage::Removed,
+            worktree: None,
+            error: None,
+        };
+        let row = p.worktrees.rows[1].clone();
+        let ask = |p: &mut Plait, id: &str| {
+            assert!(
+                p.worktrees
+                    .removal
+                    .ask(&row, p.tabs.host.clone(), id.into())
+            );
+            p.worktrees
+                .removal
+                .answer(Some(plait_client::worktree_removal::Choice::RemoveIfPushed))
+                .unwrap()
+        };
+        let attempt = ask(p, "switched");
+        let elsewhere = plait_client::machines::MachineId::new("workstation").unwrap();
+        p.settle_worktree_removal(&attempt, &elsewhere, Ok(removed.clone()), cx);
+        assert!(p.worktrees.removal.pending.is_none());
+        assert_eq!(p.navigation.available.get(&row.path), Some(&true));
+        // Its result shows only in the asking machine's Worktrees tab.
+        let root = p.host.creation.checkout.clone();
+        p.worktrees.removal_project = Some((machine.clone(), root));
+        assert!(p.removal_here());
+        p.machines.active = elsewhere;
+        assert!(!p.removal_here());
+        p.machines.active = machine.clone();
+        // After a reconnect, before the host is checked again, a reply on the
+        // same machine changes no list either.
+        let attempt = ask(p, "reconnected");
+        p.host.connection.epoch += 1;
+        assert!(!p.host_verified_here());
+        p.settle_worktree_removal(&attempt, &machine, Ok(removed), cx);
+        assert!(p.worktrees.removal.pending.is_none());
+        assert_eq!(p.navigation.available.get(&row.path), Some(&true));
     });
     drop(h);
     let _ = std::fs::remove_dir_all(scratch);
@@ -594,7 +652,7 @@ fn an_unconfirmed_removal_stays_with_its_project() {
         let attempt = p
             .worktrees
             .removal
-            .answer(Some(plait_core::worktree_removal::Choice::RemoveIfPushed))
+            .answer(Some(plait_client::worktree_removal::Choice::RemoveIfPushed))
             .unwrap();
         assert!(
             p.worktrees
@@ -667,7 +725,7 @@ fn reopen_returns_worktrees_only_for_a_present_project() {
             }
             let root = p.host.creation.checkout.clone();
             let meta = std::fs::metadata(&root).unwrap();
-            let identity = plait_core::tabs::DirectoryIdentity {
+            let identity = plait_client::tabs::DirectoryIdentity {
                 device: meta.dev(),
                 inode: meta.ino(),
             };
@@ -773,7 +831,7 @@ fn removal_prompt_freezes_choices_and_identity_across_resort_and_refresh() {
     ) {
         return;
     }
-    use plait_core::{host::worktree::Request, worktree_removal::Choice};
+    use plait_client::{host::worktree::Request, worktree_removal::Choice};
     use std::{cell::RefCell, rc::Rc};
     let scratch =
         std::env::temp_dir().join(format!("plait-worktree-prompt-{}", std::process::id()));
@@ -809,7 +867,7 @@ fn removal_prompt_freezes_choices_and_identity_across_resort_and_refresh() {
             p.worktree_busy = false;
             p.host
                 .connection
-                .threads
+                .threads_mut()
                 .iter_mut()
                 .filter(|t| t.id == "worktree-scene-1")
                 .for_each(|t| t.status = ThreadStatus::Idle);
@@ -865,6 +923,58 @@ fn removal_prompt_freezes_choices_and_identity_across_resort_and_refresh() {
             }
         });
     }
+    drop(h);
+    let _ = std::fs::remove_dir_all(scratch);
+}
+/// A remote host's checkout paths name another machine's disk, so its sizes
+/// are measured by that host, never on this Mac.
+#[core::prelude::v1::test]
+fn a_remote_host_measures_its_own_worktrees() {
+    if !isolated("worktrees_view::a_remote_host_measures_its_own_worktrees") {
+        return;
+    }
+    let scratch =
+        std::env::temp_dir().join(format!("plait-worktree-remote-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    let mut h = Harness::new(&repo, None, 1380., 860.);
+    h.connect(&repo, false);
+    install(&mut h, 4);
+    h.update(|p, _, cx| {
+        // The scene leaves an earlier read cancelled; this is a fresh one.
+        p.worktrees.cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        // Point the remote host at an unavailable socket; this Mac must not measure the fixture.
+        p.host_local = false;
+        p.host_client = plait_client::host::Client::local_or_unavailable();
+        p.worktrees.rows[0].path = repo.clone();
+        p.worktrees.sizes[1] = Some(Err("The checkout folder is missing.".into()));
+        for i in [0, 2, 3] {
+            p.worktrees.sizes[i] = None;
+        }
+        let stamp = p
+            .tabs
+            .model
+            .active()
+            .and_then(|id| p.tabs.model.read_stamp(id))
+            .unwrap();
+        let generation = p.worktrees.generation;
+        p.measure_worktrees(stamp, generation, cx);
+    });
+    h.settle();
+    h.update(|p, _, _| {
+        for i in [0, 2, 3] {
+            assert!(
+                matches!(&p.worktrees.sizes[i], Some(Err(_))),
+                "row {i} was measured on this Mac: {:?}",
+                p.worktrees.sizes[i]
+            );
+        }
+        assert_eq!(
+            p.worktrees.sizes[1],
+            Some(Err("The checkout folder is missing.".into())),
+            "an earlier result was replaced"
+        );
+        assert_eq!(p.worktrees.total, "Size unavailable");
+    });
     drop(h);
     let _ = std::fs::remove_dir_all(scratch);
 }

@@ -1,37 +1,11 @@
 //! Checkout write-exclusion scene (`isolation-wait`) and desktop non-blocking render tests.
 
-use super::{Harness, fixture_repository, git, isolated};
-use crate::ui::{Plait, Workspace};
-use plait_core::{
-    git::WriteOp,
-    host::ThreadStatus,
-    lease::{CHECKOUT_BUSY, LeaseClass, acquire_checkout},
-    model::DiffMode,
-};
-use std::{
-    path::Path,
-    time::{Duration, Instant},
-};
+use super::Harness;
+use crate::ui::Workspace;
+use plait_client::{host::ThreadStatus, model::DiffMode};
+use std::path::Path;
 
-/// Run queued background work until `done` holds.
-fn wait(harness: &mut Harness, done: impl Fn(&Plait) -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        harness.settle();
-        let ready = harness
-            .window
-            .update(&mut harness.cx, |plait, _, _| done(plait))
-            .expect("window update");
-        if ready {
-            return;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "background Git work did not finish"
-        );
-        std::thread::sleep(Duration::from_millis(5));
-    }
-}
+const CHECKOUT_BUSY: &str = "This checkout is in use by an active run or another Plait write. Wait until it finishes, then try again.";
 
 /// Captures `isolation-wait`: Changes view when a desktop Git mutation is
 /// refused because an active run holds the checkout lease. No new control.
@@ -53,8 +27,8 @@ pub(super) fn walk(
             .unwrap()
             .root
             .clone();
-        plait.host.connection.threads[0].checkout = root;
-        plait.host.connection.threads[0].status = ThreadStatus::Running;
+        plait.host.connection.threads_mut()[0].checkout = root;
+        plait.host.connection.threads_mut()[0].status = ThreadStatus::Running;
         plait.show_tab(Workspace::Changes, window, cx);
         plait.select_file(1, DiffMode::Unstaged, window, cx);
         plait.state.repository.write_mut().note = Some((CHECKOUT_BUSY.into(), true));
@@ -68,7 +42,7 @@ pub(super) fn walk(
             plait.host.creation.generation,
             plait.host.creation.checkout.clone(),
         ));
-        plait.cleanup.value = Some(plait_core::lease::cleanup::Cleanup {
+        plait.cleanup.value = Some(plait_protocol::lease::cleanup::Cleanup {
             process: None,
             token: "sample-cleanup".into(),
             reason: "Codex did not confirm its turn ended and its app-server has not exited."
@@ -98,16 +72,17 @@ pub(super) fn walk(
             repository.into(),
             "plait/123456781234".into(),
         );
+        let model = plait.host.connection.threads()[0].model.clone();
         plait
             .host
             .connection
-            .threads
-            .push(plait_core::host::ThreadSummary {
+            .threads_mut()
+            .push(plait_client::host::ThreadSummary {
                 id: "isolated-background".into(),
                 checkout: path,
-                model: plait.host.connection.threads[0].model.clone(),
+                model,
                 title: Some("New worktree thread".into()),
-                harness: Some(plait_core::host::harness::HarnessId::Codex),
+                harness: Some(plait_client::host::harness::HarnessId::Codex),
                 ..Default::default()
             });
         plait.rebuild_projects(cx);
@@ -147,9 +122,10 @@ pub(super) fn walk(
             .as_mut()
             .unwrap()
             .protocol_version = 6;
-        plait.tabs.model = plait_core::tabs::WindowTabs::new(crate::ui::tabs::fresh_window_id());
+        plait.tabs.model = plait_client::tabs::WindowTabs::new(crate::ui::tabs::fresh_window_id());
         let mut first = None;
-        for (i, thread) in plait.host.connection.threads.iter_mut().enumerate() {
+        let epoch = plait.host.connection.epoch;
+        for (i, thread) in plait.host.connection.threads_mut().iter_mut().enumerate() {
             if i > 0 {
                 thread.checkout = repository
                     .with_extension("worktrees")
@@ -168,15 +144,15 @@ pub(super) fn walk(
                 .tabs
                 .model
                 .open(
-                    plait_core::tabs::TabTarget::Existing {
+                    plait_client::tabs::TabTarget::Existing {
                         id: thread.id.clone(),
-                        checkout: plait_core::tabs::CheckoutKey {
+                        checkout: plait_client::tabs::CheckoutKey {
                             host: plait.tabs.host.clone(),
                             root: thread.checkout.clone(),
                             directory: None,
                         },
                     },
-                    Some(plait.host.connection.epoch),
+                    Some(epoch),
                 )
                 .unwrap();
             first.get_or_insert(tab);
@@ -190,13 +166,13 @@ pub(super) fn walk(
         snapshot.live_text.clear();
         snapshot.live_reasoning.clear();
         for tool in &mut snapshot.tools {
-            tool.status = plait_core::host::ToolStatus::Done;
+            tool.status = plait_client::host::ToolStatus::Done;
         }
     });
     many.update(|plait, _, _| {
         plait.admission.preparing = Some((
             super::THREAD.into(),
-            Some(plait_core::host::admission::Phase::ResourceWait),
+            Some(plait_client::host::admission::Phase::ResourceWait),
         ));
     });
     many.capture(&format!("isolation-resource-wait-{suffix}"));
@@ -205,11 +181,11 @@ pub(super) fn walk(
     for (name, state) in [
         (
             "isolation-queued",
-            Some(plait_core::host::checkout_queue::State::Waiting),
+            Some(plait_client::host::checkout_queue::State::Waiting),
         ),
         (
             "isolation-queue-held",
-            Some(plait_core::host::checkout_queue::State::Held),
+            Some(plait_client::host::checkout_queue::State::Held),
         ),
         ("isolation-queue-cancelled", None),
     ] {
@@ -218,89 +194,10 @@ pub(super) fn walk(
     }
 }
 
-/// Holding a host writer lease on the open checkout must never block desktop
-/// render, and every desktop Git mutation must refuse truthfully off render.
-#[core::prelude::v1::test]
-fn host_locking_never_blocks_desktop_render() {
-    if !isolated("isolation::host_locking_never_blocks_desktop_render") {
-        return;
-    }
-    let scratch = std::env::temp_dir().join(format!("plait-isolation-ui-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&scratch);
-    let repository = fixture_repository(&scratch);
-    git(&repository, &["branch", "other"]);
-
-    // Hold a real host-style writer lease on the checkout before opening the desktop view.
-    let writer = acquire_checkout(&repository, None, LeaseClass::Writer).unwrap();
-    let mut harness = Harness::new(&repository, None, 1380., 860.);
-
-    // Drawing every view while the writer lease is held must not block.
-    for view in [
-        Workspace::Conversation,
-        Workspace::Changes,
-        Workspace::History,
-        Workspace::Files,
-    ] {
-        let start = Instant::now();
-        harness.update(|plait, window, cx| plait.show_tab(view, window, cx));
-        harness.draw();
-        assert!(
-            start.elapsed() < Duration::from_secs(2),
-            "render blocked while checkout lease was held on {view:?}"
-        );
-    }
-
-    // Attempt desktop Git writes (commit, stage, branch switch, discard) while the
-    // writer lease is held: every mutation runs off render and refuses with CHECKOUT_BUSY.
-    harness.update(|plait, window, cx| plait.show_tab(Workspace::Changes, window, cx));
-    for op in [
-        WriteOp::StageAll,
-        WriteOp::Commit {
-            message: "refused while writer holds lease".into(),
-        },
-        WriteOp::SwitchBranch("other".into()),
-        WriteOp::Discard {
-            path: "src/review.rs".into(),
-            untracked: false,
-            hunk: None,
-        },
-    ] {
-        harness.update(|plait, _, cx| plait.git_write(op, cx));
-        // Rendering while the write job is in flight must stay non-blocking.
-        harness.draw();
-        wait(&mut harness, |plait| !plait.state.repository.write().busy());
-        harness.update(|plait, _, _| {
-            let note = plait.state.repository.write().note.clone();
-            assert_eq!(note, Some((CHECKOUT_BUSY.into(), true)));
-            let snap = plait.state.repository.snapshot().ready().unwrap();
-            assert_eq!(snap.branch, "main");
-        });
-    }
-
-    // Once the writer lease drops, a desktop commit succeeds cleanly.
-    drop(writer);
-    harness.update(|plait, _, cx| {
-        plait.git_write(
-            WriteOp::Commit {
-                message: "commit after writer released".into(),
-            },
-            cx,
-        );
-    });
-    wait(&mut harness, |plait| !plait.state.repository.write().busy());
-    harness.update(|plait, _, _| {
-        let (note, failed) = plait.state.repository.write().note.clone().unwrap();
-        assert!(!failed && note.starts_with("Committed "), "{note}");
-    });
-
-    drop(harness);
-    std::fs::remove_dir_all(scratch).unwrap();
-}
-
 /// Queue facts are injected only into this test scene, just as catalog events arrive.
 pub(super) fn install_queue(
     harness: &mut Harness,
-    state: Option<plait_core::host::checkout_queue::State>,
+    state: Option<plait_client::host::checkout_queue::State>,
 ) {
     harness.change_snapshot(|snapshot| {
         snapshot.status = ThreadStatus::Idle;
@@ -318,14 +215,14 @@ pub(super) fn install_queue(
         let thread = plait
             .host
             .connection
-            .threads
+            .threads_mut()
             .iter_mut()
             .find(|t| t.id == super::THREAD)
             .unwrap();
         thread.status = ThreadStatus::Idle;
         thread.pending_approval = Some(false);
         thread.checkout_queue = state.map(|state| {
-            plait_core::host::checkout_queue::Summary::new("queued-first".into(), state, 3, 1)
+            plait_client::host::checkout_queue::Summary::new("queued-first".into(), state, 3, 1)
         });
         if state.is_none() {
             plait.set_thread_notice(
@@ -336,4 +233,78 @@ pub(super) fn install_queue(
         }
         plait.rebuild_projects(cx);
     });
+}
+
+/// A slow host write must not block drawing, and its refusal reaches the view.
+#[core::prelude::v1::test]
+fn host_write_wait_does_not_block_desktop_render() {
+    if !super::isolated("isolation::host_write_wait_does_not_block_desktop_render") {
+        return;
+    }
+    use std::{
+        sync::mpsc,
+        time::{Duration, Instant},
+    };
+    let (scratch, _, mut harness) = super::undo::setup("isolation-host-write");
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let host = super::undo::Host::start(move |request| {
+        if request["op"] == "git_write" {
+            started_tx.send(()).unwrap();
+            release_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+            Some(serde_json::json!({"ok":false,"error":{"code":"busy","message":CHECKOUT_BUSY}}))
+        } else {
+            Some(
+                serde_json::json!({"ok":false,"error":{"code":"unavailable","message":"Unavailable in test"}}),
+            )
+        }
+    });
+    // GPUI's `TestDispatcher` runs background tasks inline on this thread during
+    // `run_until_parked()`, so queue the write and draw every view before
+    // pumping the background executor; if `git_write`, `show_tab`, or `draw`
+    // waited on the host synchronously, they would block on `release_rx`.
+    harness
+        .window
+        .update(&mut harness.cx, |p, window, cx| {
+            p.show_tab(Workspace::Changes, window, cx);
+            p.git_write(plait_protocol::git::WriteOp::StageAll, cx);
+            assert!(p.state.repository.write().busy(), "write must be in flight");
+        })
+        .unwrap();
+    for view in [
+        Workspace::Conversation,
+        Workspace::Changes,
+        Workspace::History,
+        Workspace::Files,
+    ] {
+        let start = Instant::now();
+        harness
+            .window
+            .update(&mut harness.cx, |p, window, cx| {
+                p.show_tab(view, window, cx)
+            })
+            .unwrap();
+        harness.draw();
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "render blocked on {view:?}"
+        );
+    }
+    release_tx.send(()).unwrap();
+    super::undo::wait(&mut harness, |p| !p.state.repository.write().busy());
+    assert!(started_rx.try_recv().is_ok(), "write did not reach host");
+    harness.update(|p, _, _| {
+        let note = p.state.repository.write().note.as_ref().unwrap();
+        assert!(note.1 && note.0.contains(CHECKOUT_BUSY), "{note:?}");
+    });
+    assert!(
+        host.requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|request| request["op"] == "git_write")
+    );
+    drop(harness);
+    drop(host);
+    std::fs::remove_dir_all(scratch).unwrap();
 }

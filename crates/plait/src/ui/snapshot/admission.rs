@@ -31,7 +31,7 @@ fn choice_flow() {
     let done = stop.clone();
     let main = root.clone();
     let server = std::thread::spawn(move || {
-        let parent = plait_core::git::worktree::worktree_parent(&main).unwrap();
+        let parent = worktree_fixture::parent(&main);
         let mut receipt = Value::Null;
         let mut snapshot = Value::Null;
         let mut lost = false;
@@ -58,13 +58,7 @@ fn choice_flow() {
                 "create_admitted_thread" => {
                     if receipt.is_null() {
                         let id = "12345678-1234-4abc-8abc-123456789abc";
-                        let tree = plait_core::git::worktree::create_managed_worktree(
-                            &parent,
-                            id,
-                            None,
-                            |_| Ok(()),
-                        )
-                        .unwrap();
+                        let tree = worktree_fixture::create(&parent, id);
                         snapshot = json!({"id":id,"checkout":tree.path,"model":{"provider":request["provider"],"model_id":request["model_id"]},"status":"idle","messages":[],"live_text":"","tools":[],"pending_approval":null,"error":null,"truncated":false,"harness":{"id":request["harness"],"mode":request["mode"],"version":null,"reported":null}});
                         receipt = json!({"schema":1,"admission":{"request_id":request["request_id"],"state":"ready","thread_id":id,"checkout":tree.path,"worktree":tree,"source_thread_id":null,"error":null}});
                     }
@@ -137,16 +131,16 @@ fn choice_flow() {
     wait(&mut harness, |p| {
         p.host
             .connection
-            .threads
+            .threads()
             .iter()
             .any(|t| t.id == "12345678-1234-4abc-8abc-123456789abc")
     });
     harness.update(|p,_,_|{
         assert!(!p.draft_visible());
-        let created=p.host.connection.threads.iter().find(|t|t.id=="12345678-1234-4abc-8abc-123456789abc").unwrap();
+        let created=p.host.connection.threads().iter().find(|t|t.id=="12345678-1234-4abc-8abc-123456789abc").unwrap();
         assert_eq!(created.harness,Some(HarnessId::Claude));assert_ne!(created.checkout,root);
         assert_ne!(p.host.thread.selected.as_deref(),Some(created.id.as_str()));
-        let tab=p.tabs.model.tabs().iter().find(|tab|matches!(tab.session().target(),plait_core::tabs::TabTarget::Existing{id,..} if id==&created.id)).unwrap();
+        let tab=p.tabs.model.tabs().iter().find(|tab|matches!(tab.session().target(),plait_client::tabs::TabTarget::Existing{id,..} if id==&created.id)).unwrap();
         assert_eq!(tab.session().target().checkout().root,created.checkout);
 
         assert!(p.notice.as_deref().unwrap().contains("uncommitted files"));
@@ -201,7 +195,7 @@ fn concurrent_drafts() {
     let done = stop.clone();
     let main = root.clone();
     let server = std::thread::spawn(move || {
-        let parent = plait_core::git::worktree::worktree_parent(&main).unwrap();
+        let parent = worktree_fixture::parent(&main);
         let mut first = String::new();
         let mut tree = None;
         let mut ready = false;
@@ -243,15 +237,7 @@ fn concurrent_drafts() {
                             "bbbbbbbb-1234-4abc-8abc-123456789abc"
                         };
                         if request_id == first && tree.is_none() {
-                            tree = Some(
-                                plait_core::git::worktree::create_managed_worktree(
-                                    &parent,
-                                    id,
-                                    None,
-                                    |_| Ok(()),
-                                )
-                                .unwrap(),
-                            );
+                            tree = Some(worktree_fixture::create(&parent, id));
                         }
                         let checkout = if request_id == first {
                             tree.as_ref().unwrap().path.clone()
@@ -389,7 +375,7 @@ fn scripted_busy_host(
     mut lose_first: bool,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
-        let parent = plait_core::git::worktree::worktree_parent(&root).unwrap();
+        let parent = worktree_fixture::parent(&root);
         let mut receipt = Value::Null;
         let mut snapshot = Value::Null;
         while !done.load(Ordering::Relaxed) {
@@ -415,13 +401,7 @@ fn scripted_busy_host(
                 "create_admitted_thread" => {
                     if receipt.is_null() {
                         let id = "22345678-1234-4abc-8abc-123456789abc";
-                        let tree = plait_core::git::worktree::create_managed_worktree(
-                            &parent,
-                            id,
-                            None,
-                            |_| Ok(()),
-                        )
-                        .unwrap();
+                        let tree = worktree_fixture::create(&parent, id);
                         snapshot = json!({"id":id,"checkout":tree.path,"model":{"provider":request["provider"],"model_id":request["model_id"]},"status":"idle","messages":[],"live_text":"","tools":[],"pending_approval":null,"error":null,"truncated":false,"harness":{"id":request["harness"],"mode":request["mode"],"version":null,"reported":null}});
                         receipt = json!({"schema":1,"admission":{"request_id":request["request_id"],"state":"ready","thread_id":id,"checkout":tree.path,"worktree":tree,"source_thread_id":null,"error":null}});
                     }
@@ -508,6 +488,50 @@ fn edited_choice_draft() {
         std::thread::sleep(Duration::from_millis(5));
     };
     assert_eq!(submitted["text"], "Edited wording");
+    // The new thread is bound to its worktree, never to the busy main checkout,
+    // so its first send does not report the worktree as changed on disk (#153).
+    let id = "22345678-1234-4abc-8abc-123456789abc";
+    let main_identity = worktree_fixture::parent(&root).identity;
+    assert_ne!(
+        submitted["identity"],
+        serde_json::to_value(&main_identity).unwrap()
+    );
+    harness.update(|p, _, _| {
+        let created = p
+            .host
+            .connection
+            .threads()
+            .iter()
+            .find(|t| t.id == id)
+            .unwrap()
+            .checkout
+            .clone();
+        assert_ne!(created, root);
+        assert!(
+            p.host
+                .expected_checkout(id)
+                .is_none_or(|key| key.root == created),
+            "worktree thread bound to {:?}",
+            p.host.expected_checkout(id).map(|key| &key.root)
+        );
+        assert_ne!(p.notice.as_deref(), Some("Checkout identity changed."));
+        // Opening the created thread switches the window to its worktree; it does
+        // not leave a new-thread draft behind for that worktree.
+        let drafts: Vec<_> = p
+            .tabs
+            .model
+            .tabs()
+            .iter()
+            .filter_map(|tab| match tab.session().target() {
+                plait_client::tabs::TabTarget::Draft { checkout, .. } => {
+                    Some(checkout.root.clone())
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(drafts.is_empty(), "stray drafts: {drafts:?}");
+        assert_eq!(p.host.creation.checkout, created);
+    });
     stop.store(true, Ordering::Relaxed);
     server.join().unwrap();
     std::fs::remove_dir_all(scratch).unwrap();
@@ -565,7 +589,7 @@ fn reopened_creation() {
     harness.update(|p, w, cx| {
         p.host.connection.status.as_mut().unwrap().protocol_version = 6;
         let (id, tab) = saved.draft_tabs.iter().next().unwrap();
-        let target = plait_core::tabs::TabTarget::Draft {
+        let target = plait_client::tabs::TabTarget::Draft {
             id: id.clone(),
             checkout: p.tab_checkout(tab.checkout.clone()),
         };
