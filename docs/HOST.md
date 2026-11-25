@@ -1920,7 +1920,10 @@ maximum 50. Results are newest first, in the existing success envelope:
   record yet, its earlier record ID stands in. Match conversation closing
   lines by `request_ids`, not by this provisional ID. IDs include the initial
   request and inputs actually placed as steering, read from durable transcript
-  positions. A queued follow-up belongs to its own run.
+  positions. A queued follow-up belongs to its own run. A turn's IDs end at the
+  next turn's record, or at the next input stored as starting its own run (see
+  [Which run a restart interrupts](#protocol-version-7)), so a run an older
+  build started without a record does not join the earlier turn.
 - `state` is `recording`, `ready`, `failed`, `no_effect`, or `undone`.
   `no_effect` is a failed undo whose terminal journal proves that no file changed.
   It remains listed for diagnosis and request deduplication, but clients must skip
@@ -2164,15 +2167,24 @@ was used: `started` its own run, or `steered` into one.
   never given its outcome.
 - A steering input belongs to the nearest earlier input marked `started`, with
   or without checkout records, so plain folders resolve too.
+- Codex and Claude Code store a steering placement before the thread's snapshot
+  shows it. If the host stops in between, the snapshot still names the run's own
+  input. Recovery accepts that when the stored placement resolves to the same
+  run; if they name different requests, no run gets the outcome.
 - An input consumed before this column existed is unknown. For those rows the
   host infers as before: a direct admission, or a follow-up with a before
   record, started a turn, and other placed follow-ups count as steering.
 
 Two triggers stored in the schema fill the column for every writer, including
-an older build after a rollback. Every build inserts a direct admission with no
-state, dequeues a follow-up by clearing its state without an entry, and places
-a steering input by clearing its state with an entry. Each trigger only fills an
-empty value on the row being written, so an older build's writes still succeed.
+an older build after a rollback. Every build writes the three cases the same way:
+
+- A direct admission saves the thread, then inserts its text input with no
+  state. Receipts such as thread creation use another scope and stay unmarked.
+- Starting a queued follow-up clears its state without an entry.
+- Placing a steering input clears its state and sets its entry.
+
+Each trigger only fills an empty value on the row being written, so an older
+build's writes still succeed.
 A request still queued when the column was added is marked when it is consumed.
 The host itself marks a steering input placed after it was cancelled, which
 happens when a run took the message just before the cancellation.

@@ -110,8 +110,11 @@ export class Store {
       if (!this.db.prepare('PRAGMA table_info(requests)').all().some(row => row.name === 'consumed')) {
         this.db.exec('ALTER TABLE requests ADD COLUMN consumed TEXT');
       }
+      // Only a text input admitted to a thread starts a run. Receipts such as 'create' and
+      // 'worktree_create' use another scope; every build saves the thread before the row.
       this.db.exec(`CREATE TRIGGER IF NOT EXISTS requests_consumed_insert AFTER INSERT ON requests
-          WHEN NEW.consumed IS NULL AND NEW.state IS NULL AND NEW.input IS NOT NULL
+          WHEN NEW.consumed IS NULL AND NEW.state IS NULL AND substr(NEW.input,1,1)='"'
+            AND EXISTS (SELECT 1 FROM threads WHERE id=NEW.scope)
           BEGIN UPDATE requests SET consumed='started' WHERE rowid=NEW.rowid; END;
         CREATE TRIGGER IF NOT EXISTS requests_consumed_update AFTER UPDATE OF state ON requests
           WHEN NEW.consumed IS NULL AND OLD.state IS NOT NULL AND NEW.state IS NULL
@@ -143,9 +146,12 @@ export class Store {
       ORDER BY position DESC,pending DESC,('request-' || id=?) DESC LIMIT 2`).all(snapshot.id, user?.id ?? '');
     const [latest, prior] = inputs;
     const tied = prior && latest.position === prior.position && latest.pending === prior.pending;
-    const matches = latest && (user ? user.id === `request-${latest.id}` : !tied);
-    const owner = matches && latest.entry !== null && latest.consumed !== 'started'
+    const owner = latest && latest.entry !== null && latest.consumed !== 'started'
       ? this.turnStart(snapshot.id, Number(latest.entry), latest.consumed === 'steered') : undefined;
+    // Codex and Claude Code commit a steering placement before the snapshot shows it. The
+    // snapshot can then still name the run's own input, which the durable placement names too.
+    const shownOwner = latest?.consumed === 'steered' && owner !== undefined && user?.id === `request-${owner}`;
+    const matches = latest && (user ? user.id === `request-${latest.id}` || shownOwner : !tied);
     const current = matches && this.db.prepare(`SELECT run_id FROM runs WHERE thread_id=?
       AND request_id=? AND finished_at IS NULL`).get(snapshot.id, owner ?? latest.id);
     if (current) this.saveRunEvent(String(current.run_id), 0, snapshot, { state: 'dead', finished: true });

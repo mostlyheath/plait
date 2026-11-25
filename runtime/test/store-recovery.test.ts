@@ -200,10 +200,10 @@ async function consumedFixture(t: { after(fn: () => unknown): void }) {
     snapshot.messages.push(inputMessage(host.store.waitingInput('thread', id)));
     host.store.save(snapshot);
   };
-  /** Queues an input; a steering input is shown at once, as the active run takes it. */
-  const queue = (host: Runtime, id: string, mode: 'steer' | 'follow_up') => {
+  /** Queues an input; a steering input is shown at once, as the active run takes it, unless `shown` is false. */
+  const queue = (host: Runtime, id: string, mode: 'steer' | 'follow_up', shown = mode === 'steer') => {
     host.store.enqueue(id, id, { accepted: true }, { mode, approval: 'ask' }, snapshot);
-    if (mode === 'steer') show(host, id);
+    if (shown) show(host, id);
   };
   /** An older build starts a queued follow-up as its own run: no runs row, no before record. */
   const olderStart = (host: Runtime, id: string, entry: number) => {
@@ -217,9 +217,13 @@ async function consumedFixture(t: { after(fn: () => unknown): void }) {
     t.after(() => current.close());
     await current.recover();
     assert.equal(current.store.get('thread').status, 'interrupted');
+    lastHost = current;
     return current.store.db.prepare("SELECT outcome,state FROM runs WHERE run_id='run'").get()!;
   };
-  return { snapshot, open, identity, startA, queue, olderStart, recover };
+  let lastHost: Runtime | undefined;
+  /** The request IDs of each retained turn record, newest first, after `recover`. */
+  const turns = () => lastHost!.records.page('thread', undefined, 10, 7).records.map(record => record.request_ids);
+  return { snapshot, open, identity, startA, queue, olderStart, recover, turns };
 }
 
 test('a follow-up an older build starts as its own run ends the earlier turn', async t => {
@@ -231,6 +235,46 @@ test('a follow-up an older build starts as its own run ends the earlier turn', a
   await host.close();
   const row = await f.recover();
   assert.deepEqual({ ...row }, { outcome: null, state: 'dead' });
+  // The rowless follow-up has no record of its own, and it is not part of A's turn.
+  assert.deepEqual(f.turns(), [['original']]);
+});
+
+test('a steer placed before its snapshot was saved still resolves to the run the snapshot names', async t => {
+  const f = await consumedFixture(t);
+  const host = f.open();
+  f.startA(host, 1);
+  // Codex and Claude Code commit the placement first; the host stops before the snapshot shows it.
+  f.queue(host, 'next', 'steer', false);
+  host.store.place('thread', 'next', 2);
+  await host.close();
+  assert.equal((await f.recover()).outcome, 'interrupted');
+  assert.deepEqual(f.turns(), [['original', 'next']]);
+});
+
+test('a steer whose snapshot names another request is left unresolved', async t => {
+  const f = await consumedFixture(t);
+  const host = f.open();
+  f.startA(host, 1);
+  f.queue(host, 'next', 'steer', false);
+  host.store.place('thread', 'next', 2);
+  // The snapshot names a request that is neither the steer nor its run.
+  f.snapshot.messages.push(inputMessage({ request_id: 'elsewhere', text: 'elsewhere', entry: null, anchor: 0 }));
+  host.store.save(f.snapshot);
+  await host.close();
+  assert.equal((await f.recover()).outcome, null);
+});
+
+test('create and worktree receipts are not marked as run starts', async t => {
+  const f = await consumedFixture(t);
+  const host = f.open();
+  t.after(() => host.close());
+  const thread = (id: string): Snapshot => ({ ...f.snapshot, id, messages: [] });
+  // The shapes the host stores: create's argument list, and the worktree request object.
+  host.store.admit('create', 'create-request', [f.snapshot.checkout, 'faux', 'model'], { thread: thread('created') }, thread('created'), f.identity, [], 'git');
+  host.store.admit('worktree_create', 'worktree-request', { parent: f.snapshot.checkout, harness: 'pi' }, { thread_id: 'tree' }, thread('tree'), f.identity, [], 'git');
+  host.store.admit('created', 'first', 'first message', { accepted: true }, thread('created'));
+  const consumed = (scope: string) => host.store.db.prepare('SELECT consumed FROM requests WHERE scope=?').get(scope)?.consumed;
+  assert.deepEqual([consumed('create'), consumed('worktree_create'), consumed('created')], [null, null, 'started']);
 });
 
 test('a message an older build steers into the active run keeps that run its outcome', async t => {
@@ -328,7 +372,8 @@ test('migration leaves existing requests unknown and marks what older builds wri
       assert.equal(store.db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type='trigger' AND name LIKE 'requests_consumed_%'").get()?.n, 2);
       if (open === 0) {
         assert.equal(consumed('a'), null, 'consumed before the column existed');
-        // An older build's own statements, after the migration.
+        // An older build's own statements, after the migration. It saves the thread before admitting.
+        store.db.prepare(`INSERT INTO threads (id,snapshot,checkout) VALUES ('thread','{}','/checkout')`).run();
         store.db.prepare(`INSERT INTO requests (scope,id,hash,result,input,anchor) VALUES ('thread','b','h','{}','"b"',0)`).run();
         store.db.prepare(`INSERT INTO requests (scope,id,hash,result,input,anchor,state,queue) VALUES
           ('thread','queued','h','{}','"q"',0,'queued','{}'),('thread','steer','h','{}','"s"',0,'queued','{}')`).run();
