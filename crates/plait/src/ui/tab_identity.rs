@@ -11,6 +11,9 @@ use std::{collections::HashMap, path::PathBuf};
 pub(super) struct Identity {
     pub verified: bool,
     verified_epoch: Option<u64>,
+    /// The machine selected when `verified` was set. A switch changes the
+    /// selected machine before its link and identity are made.
+    pub machine: Option<plait_client::machines::MachineId>,
     pub pending: Option<(HostKey, Vec<CheckoutKey>)>,
     pub checkouts: HashMap<PathBuf, DirectoryIdentity>,
     /// Checkouts a remote host vouched for. This Mac cannot stat them, so they
@@ -263,6 +266,30 @@ impl Plait {
         cx.notify();
     }
 
+    /// Whether the selected machine's host identity was verified on this
+    /// connection. Not during a switch, a reconnect, or before the first check.
+    pub(super) fn host_verified_here(&self) -> bool {
+        self.tabs.identity.verified
+            && self.tab_identity_current()
+            && self.tabs.identity.machine.as_ref() == Some(&self.machines.active)
+    }
+
+    /// The open folder, unless it was carried over from the previous machine:
+    /// that folder is not this host's to identify.
+    pub(super) fn probed_checkout(&self) -> Option<PathBuf> {
+        (!self.host_workspace.checkout_carried).then(|| self.host.creation.checkout.clone())
+    }
+
+    /// Scenes have no host to ask: treat `host` as this connection's verified
+    /// identity for the selected machine, as a completed check would.
+    #[cfg(test)]
+    pub(super) fn verify_identity_for_test(&mut self, host: HostKey) {
+        self.tabs.host = host;
+        self.tabs.identity.verified = true;
+        self.tabs.identity.verified_epoch = Some(self.host.connection.epoch);
+        self.tabs.identity.machine = Some(self.machines.active.clone());
+    }
+
     pub(super) fn tab_identity_current(&self) -> bool {
         !self.tabs.identity.verified
             || self.tabs.identity.verified_epoch == Some(self.host.connection.epoch)
@@ -289,7 +316,7 @@ impl Plait {
             .map(|t| t.checkout.clone())
             .collect();
         roots.extend(self.lists().opened.iter().cloned());
-        roots.push(self.host.creation.checkout.clone());
+        roots.extend(self.probed_checkout());
         roots.extend(
             self.tabs
                 .model
@@ -432,6 +459,7 @@ impl Plait {
         self.tabs.host = host;
         self.tabs.identity.verified = true;
         self.tabs.identity.verified_epoch = Some(self.host.connection.epoch);
+        self.tabs.identity.machine = Some(self.machines.active.clone());
         self.tabs.identity.remote = checkouts
             .iter()
             .filter(|c| c.directory.is_none())

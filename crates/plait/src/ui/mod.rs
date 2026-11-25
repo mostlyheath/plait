@@ -273,11 +273,18 @@ impl Plait {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let another = self.machines.active != machine;
+        // Save the outgoing machine's work while its client and locality still
+        // describe it: a remote folder must not be saved as this computer's.
+        if another {
+            self.capture_session(cx);
+        }
         self.host_client = client;
         self.host_local = local;
         // A new link to the same machine keeps what is on screen; another
         // machine starts empty, so nothing of the previous one shows as its.
-        if std::mem::replace(&mut self.machines.active, machine) != self.machines.active {
+        if another {
+            self.machines.active = machine;
             self.host.connection.threads_mut().clear();
             self.navigation.available.clear();
             self.host_workspace = self.host_workspace.for_another_machine();
