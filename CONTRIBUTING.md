@@ -107,7 +107,8 @@ cargo test --workspace
 Build `plait-host`, install runtime dependencies with `npm ci --ignore-scripts`
 in `runtime/`, and run `npm run check` and `npm test` there. The shared CI entry
 point is `bash scripts/check.sh`; it installs locked runtime packages, checks and
-tests the applicable targets, and builds release binaries. Linux requires a C
+tests the applicable targets, and builds release binaries. `rust` or `runtime`
+runs one half, as CI does in parallel. Linux requires a C
 compiler and linker. Linux tests trusted execution and sandbox refusal, but do
 not establish command containment. `bash scripts/check.sh --require-command-sandbox`
 requires a supported sandbox; see the [Linux sandbox decision](docs/LINUX-SANDBOX.md).

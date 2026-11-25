@@ -104,7 +104,10 @@ publication. See [Releasing](RELEASING.md).
 ## CI
 
 The Linux job runs the headless checks. The macOS check runs the workspace
-and sandbox gate, Pi recovery probe, and release-script tests. Release jobs
+and sandbox gate, Pi recovery probe, and release-script tests, as a Rust job
+and a runtime job side by side; the required `check` passes only when both
+did. On `main` it reuses a pull request's passing result for the same tree
+(see [Releasing](RELEASING.md)). Release jobs
 build and test packages, including an installed-package smoke check; the
 separate native acceptance job is advisory. Consult the workflow files for
 conditions and the checks for a particular change.
