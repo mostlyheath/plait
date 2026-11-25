@@ -338,7 +338,12 @@ impl Plait {
                 plait_client::tabs::TabTarget::Existing { id: target, .. } if target == &id)
             });
         if bound {
+            // The tab in front already shows this thread, so its checkout change
+            // presents that tab. Otherwise a worktree thread would open a stray
+            // draft and stay bound to the project's main checkout (#153).
+            let presenting = std::mem::replace(&mut self.tabs.lifecycle.presenting, true);
             self.select_host_thread_content(id.clone(), window, cx);
+            self.tabs.lifecycle.presenting = presenting;
         } else {
             self.select_host_thread(id.clone(), window, cx);
         }

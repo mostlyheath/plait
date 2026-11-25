@@ -488,6 +488,50 @@ fn edited_choice_draft() {
         std::thread::sleep(Duration::from_millis(5));
     };
     assert_eq!(submitted["text"], "Edited wording");
+    // The new thread is bound to its worktree, never to the busy main checkout,
+    // so its first send does not report the worktree as changed on disk (#153).
+    let id = "22345678-1234-4abc-8abc-123456789abc";
+    let main_identity = worktree_fixture::parent(&root).identity;
+    assert_ne!(
+        submitted["identity"],
+        serde_json::to_value(&main_identity).unwrap()
+    );
+    harness.update(|p, _, _| {
+        let created = p
+            .host
+            .connection
+            .threads()
+            .iter()
+            .find(|t| t.id == id)
+            .unwrap()
+            .checkout
+            .clone();
+        assert_ne!(created, root);
+        assert!(
+            p.host
+                .expected_checkout(id)
+                .is_none_or(|key| key.root == created),
+            "worktree thread bound to {:?}",
+            p.host.expected_checkout(id).map(|key| &key.root)
+        );
+        assert_ne!(p.notice.as_deref(), Some("Checkout identity changed."));
+        // Opening the created thread switches the window to its worktree; it does
+        // not leave a new-thread draft behind for that worktree.
+        let drafts: Vec<_> = p
+            .tabs
+            .model
+            .tabs()
+            .iter()
+            .filter_map(|tab| match tab.session().target() {
+                plait_client::tabs::TabTarget::Draft { checkout, .. } => {
+                    Some(checkout.root.clone())
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(drafts.is_empty(), "stray drafts: {drafts:?}");
+        assert_eq!(p.host.creation.checkout, created);
+    });
     stop.store(true, Ordering::Relaxed);
     server.join().unwrap();
     std::fs::remove_dir_all(scratch).unwrap();
