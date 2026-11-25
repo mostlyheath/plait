@@ -424,6 +424,48 @@ pub fn list_thread_links(
         && opt(&v.next_cursor, 145);
     checked(v, ok)
 }
+/// Moves an issue to another state of its team, on a person's explicit choice.
+/// The host records the request before sending it and never resends one whose
+/// outcome is unknown; reuse `request_id` only to retry the same move.
+pub fn update_issue_state(
+    c: &Client,
+    issue_id: String,
+    state_id: String,
+    request_id: String,
+) -> Result<StateUpdate, Error> {
+    let v: StateUpdate = send(
+        c,
+        &Request::LinearUpdateIssueState {
+            issue_id: issue_id.clone(),
+            state_id: state_id.clone(),
+            request_id,
+        },
+    )?;
+    let ok = v.outcome == "accepted"
+        && opt(&v.warning, 2048)
+        && v.issue
+            .as_ref()
+            .is_none_or(|d| detail(d) && d.summary.id == issue_id);
+    checked(v, ok)
+}
+/// How a write that did not succeed ended, from the host's typed error.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WriteFailure {
+    /// Linear may have applied it. The host never resends it; check in Linear.
+    Unknown,
+    /// The host's reply was lost. Retrying with the same request ID is safe:
+    /// the host returns its saved outcome instead of sending twice.
+    Lost,
+    /// Refused or not sent. Retrying the same request may send it again.
+    Refused(Rejection),
+}
+pub fn write_failure(error: &Error) -> WriteFailure {
+    match error {
+        Error::Rejected(e) if e.code == "linear_write_unknown" => WriteFailure::Unknown,
+        Error::Transport(_) | Error::Protocol(_) => WriteFailure::Lost,
+        Error::Rejected(_) => WriteFailure::Refused(classify(error, false)),
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -558,5 +600,49 @@ mod tests {
             serde_json::from_value(json!({"thread_id":"OTHER","removed":true})).unwrap();
         assert!(!valid_unlinked(&v, "THREAD_ID"));
         assert!(valid_unlinked(&v, "OTHER"));
+    }
+}
+
+#[cfg(test)]
+mod write_tests {
+    use super::*;
+    use plait_protocol::host::HostError;
+
+    fn rejected(code: &str) -> Error {
+        Error::Rejected(HostError {
+            retry_after_seconds: None,
+            code: code.into(),
+            message: "ignored".into(),
+        })
+    }
+
+    #[test]
+    fn write_failures_say_whether_a_retry_is_safe() {
+        assert_eq!(
+            write_failure(&rejected("linear_write_unknown")),
+            WriteFailure::Unknown
+        );
+        assert_eq!(
+            write_failure(&Error::Transport("closed".into())),
+            WriteFailure::Lost
+        );
+        assert_eq!(
+            write_failure(&rejected("linear_offline")),
+            WriteFailure::Refused(Rejection::Offline)
+        );
+    }
+
+    #[test]
+    fn the_state_request_names_the_host_operation() {
+        let request = Request::LinearUpdateIssueState {
+            issue_id: "I".into(),
+            state_id: "S".into(),
+            request_id: "desktop-1".into(),
+        };
+        assert_eq!(
+            serde_json::to_value(&request).unwrap(),
+            serde_json::json!({"op": "linear_update_issue_state", "issue_id": "I",
+                "state_id": "S", "request_id": "desktop-1"})
+        );
     }
 }

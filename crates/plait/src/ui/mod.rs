@@ -23,6 +23,7 @@ mod history;
 mod host;
 mod host_workspace;
 mod images;
+mod issue_text;
 mod issues_view;
 mod jump;
 mod live_conversation;

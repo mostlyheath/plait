@@ -1,8 +1,18 @@
 //! The project's Linear issues, in a tab of their own. The host makes every
 //! Linear request; this view asks for pages and details off the UI thread and
-//! shows Linear's text as text. No link inside an issue is followed or fetched;
-//! Open in Linear opens the issue's own https address in the browser.
-use super::{Plait, settings, text_field::TextField, text_field::TextFieldEvent, theme::*};
+//! draws Linear's Markdown read-only (`issue_text`). No link inside an issue is
+//! followed or fetched; Open in Linear opens the issue's own https address in
+//! the browser. The one write here, a status change, runs only on a person's
+//! choice and is recorded by the host before it is sent.
+use super::{
+    Plait,
+    issue_text::{self, IssueText, READING_WIDTH},
+    settings,
+    tab_lifecycle::Intent,
+    text_field::TextField,
+    text_field::TextFieldEvent,
+    theme::*,
+};
 use gpui::{prelude::*, *};
 use plait_client::{
     host::linear::{self, IssueDetail, IssueSummary},
@@ -10,7 +20,7 @@ use plait_client::{
     linear_settings::Auth,
     tabs::{TabTarget, bookmark::BookmarkRecord},
 };
-use std::{collections::HashMap, path::PathBuf, time::Duration};
+use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
 actions!(plait, [Issues]);
 
@@ -32,6 +42,12 @@ pub(super) struct IssuesUi {
     /// Each thread's source issue, read once per connection.
     pub links: HashMap<String, linear::Link>,
     links_epoch: Option<u64>,
+    /// The shown issue's Markdown, parsed off the UI thread.
+    text: Option<Arc<IssueText>>,
+    /// The revision being parsed, so one issue is parsed once.
+    parsing: Option<(String, String)>,
+    /// `linear_info` is in flight.
+    checking_writes: bool,
 }
 
 /// Where a reference is waiting to be added.
@@ -61,13 +77,17 @@ impl Plait {
             self.show_settings(false, window, cx);
         }
         let project = self.project_of(&project).to_owned();
-        self.open_tab_target(
-            TabTarget::Issues {
-                checkout: self.tab_checkout(project),
-            },
-            window,
-            cx,
-        );
+        let target = TabTarget::Issues {
+            checkout: self.tab_checkout(project),
+        };
+        // A project the sidebar has verified opens at once, as a thread does.
+        // Asking the host again would only delay the tab, and a newer tab
+        // request meanwhile would drop it.
+        if self.tabs.identity.verified && target.checkout().directory.is_some() {
+            self.request_tab(Intent::Open(target), window, cx);
+        } else {
+            self.open_tab_target(target, window, cx);
+        }
     }
 
     pub(super) fn restore_issues_bookmark(&mut self) {
@@ -149,12 +169,14 @@ impl Plait {
         self.issues
             .view
             .target(self.host.connection.epoch, &checkout, restored);
+        self.parse_issue_text(cx);
         if cfg!(test)
             || !self.host.connection.connected
             || !matches!(self.linear.account.auth, Auth::SignedIn { .. })
         {
             return;
         }
+        self.load_write_support(cx);
         if self.issues.view.needs_binding() {
             let generation = self.issues.view.start_binding();
             self.linear_task(
@@ -173,6 +195,73 @@ impl Plait {
             && let Some((id, generation)) = self.issues.view.reload_detail()
         {
             self.load_issue_detail(id, generation, cx);
+        }
+    }
+
+    /// Parses the shown issue's Markdown once per revision, off the UI thread.
+    fn parse_issue_text(&mut self, cx: &mut Context<Self>) {
+        let Some(detail) = self.issues.view.detail.as_ref().map(|d| d.issue.clone()) else {
+            return;
+        };
+        let key = (detail.summary.id.clone(), detail.summary.updated_at.clone());
+        if self
+            .issues
+            .text
+            .as_ref()
+            .is_some_and(|t| t.matches(&detail))
+            || self.issues.parsing.as_ref() == Some(&key)
+        {
+            return;
+        }
+        // Scenes draw in one pass; the parse is small and has no I/O.
+        if cfg!(test) {
+            self.issues.text = Some(Arc::new(IssueText::parse(&detail)));
+            return;
+        }
+        self.issues.parsing = Some(key.clone());
+        let task = cx
+            .background_executor()
+            .spawn(async move { IssueText::parse(&detail) });
+        cx.spawn(async move |this, cx| {
+            let text = task.await;
+            let _ = this.update(cx, |this, cx| {
+                if this.issues.parsing.as_ref() != Some(&key) {
+                    return;
+                }
+                this.issues.parsing = None;
+                this.issues.text = Some(Arc::new(text));
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Whether this host records Linear writes durably, and the linked team's
+    /// workflow states once it does. An older host offers no status control.
+    fn load_write_support(&mut self, cx: &mut Context<Self>) {
+        if self.issues.view.writes.is_none() && !self.issues.checking_writes {
+            self.issues.checking_writes = true;
+            self.linear_task(
+                |client| linear::info(client).map_err(|error| linear::classify(&error, true)),
+                |this, result, _| {
+                    this.issues.checking_writes = false;
+                    this.issues.view.writes =
+                        Some(result.is_ok_and(|info| info.features.durable_write_outcomes));
+                    true
+                },
+                cx,
+            );
+        }
+        if self.issues.view.needs_states() {
+            let generation = self.issues.view.start_states();
+            self.linear_task(
+                |client| {
+                    linear::list_teams(client, false)
+                        .map_err(|error| linear::classify(&error, false))
+                },
+                move |this, result, _| this.issues.view.states_reply(generation, result),
+                cx,
+            );
         }
     }
 
@@ -239,6 +328,87 @@ impl Plait {
         self.issues.view.clear_selection();
         self.save_issues_bookmark(cx);
         cx.notify();
+    }
+
+    /// The team's workflow states, to move the shown issue to one of them.
+    fn open_state_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let view = &self.issues.view;
+        let (Some(states), Some(detail)) = (&view.states, &view.detail) else {
+            return;
+        };
+        let current = detail.issue.summary.state.id.clone();
+        let items = states
+            .iter()
+            .map(|state| {
+                let item = super::palette::Item::new(
+                    format!("issue-state:{}", state.id),
+                    state.name.clone(),
+                    super::commands::Command::IssueState(state.id.clone()),
+                )
+                .detail(state_kind(&state.kind))
+                .section("Workflow states");
+                if state.id == current {
+                    item.badge("Current", colors().subtle).enabled(false)
+                } else {
+                    item
+                }
+            })
+            .collect::<Vec<_>>();
+        let options = super::palette::Options {
+            name: "Change the issue's status".into(),
+            placeholder: "Search states…".into(),
+            empty: "This team has no other states.".into(),
+            initial: None,
+            mark: None,
+            aside: None,
+            note: Some("Moves the issue in Linear for everyone on the team.".into()),
+        };
+        let palette = cx.new(|cx| super::palette::Palette::new(options, items, window, cx));
+        self.present(palette, None, window, cx);
+    }
+
+    /// A person chose a state: send it once. The host records the request
+    /// before sending and never resends one whose outcome is unknown.
+    pub(super) fn change_issue_state(&mut self, state_id: &str, cx: &mut Context<Self>) {
+        let request = plait_client::host_state::request_id();
+        if let Some(change) = self.issues.view.start_state_change(state_id, request) {
+            self.send_state_change(change, cx);
+        }
+        cx.notify();
+    }
+
+    fn retry_state_change(&mut self, cx: &mut Context<Self>) {
+        if let Some(change) = self.issues.view.retry_state_change() {
+            self.send_state_change(change, cx);
+        }
+        cx.notify();
+    }
+
+    fn send_state_change(&mut self, change: linear_issues::StateChange, cx: &mut Context<Self>) {
+        if cfg!(test) {
+            return;
+        }
+        let call = change.clone();
+        self.linear_task(
+            move |client| {
+                linear::update_issue_state(client, call.issue_id, call.state_id, call.request_id)
+                    .map_err(|error| linear::write_failure(&error))
+            },
+            move |this, result, cx| {
+                let accepted = result.is_ok();
+                if this.issues.view.state_reply(&change, result)
+                    && let Some((id, generation)) = this.issues.view.reload_detail()
+                {
+                    this.load_issue_detail(id, generation, cx);
+                }
+                // The list shows each issue's state; read it again once moved.
+                if accepted {
+                    this.load_issue_list(true, cx);
+                }
+                true
+            },
+            cx,
+        );
     }
 
     fn refresh_issues(&mut self, cx: &mut Context<Self>) {
@@ -488,63 +658,35 @@ impl Plait {
 
     fn issue_detail(&self, detail: &IssueDetail, wide: bool, cx: &mut Context<Self>) -> Div {
         let issue = &detail.summary;
-        let url = issue.url.clone();
-        let mut facts = vec![
-            issue.state.name.clone(),
-            linear_issues::priority(issue.priority).to_owned(),
-        ];
-        if let Some(assignee) = &issue.assignee {
-            facts.push(assignee.name.clone());
-        }
-        facts.extend(issue.labels.iter().map(|label| label.name.clone()));
-        let description = detail
-            .description
-            .as_deref()
-            .filter(|text| !text.trim().is_empty())
-            .unwrap_or("No description.");
+        let text = self
+            .issues
+            .text
+            .as_ref()
+            .filter(|text| text.matches(detail));
         column()
-            .gap_3()
+            .w_full()
+            .max_w(px(READING_WIDTH))
+            .gap_4()
+            .child(self.issue_actions(issue, wide, cx))
             .child(
-                row()
-                    .gap_2()
-                    .when(!wide, |el| {
-                        el.child(
-                            button("issue-back", "All issues")
-                                .on_activate(cx, |this, _, cx| this.close_issue(cx)),
-                        )
-                    })
-                    .child(tag(
-                        "issue-identifier",
-                        issue.identifier.clone(),
-                        colors().subtle,
-                    ))
-                    .child(div().flex_1())
-                    .child(
-                        toned_button("issue-start-thread", "Start thread", Tone::Primary)
-                            .on_activate(cx, |this, window, cx| {
-                                this.start_thread_from_issue(window, cx)
-                            }),
-                    )
-                    .child(
-                        button("issue-add-to-thread", "Add to thread…")
-                            .on_activate(cx, |this, window, cx| {
-                                this.choose_thread_for_issue(window, cx)
-                            }),
-                    )
-                    .child(
-                        button("issue-open-linear", "Open in Linear")
-                            .on_activate(cx, move |_, _, cx| cx.open_url(&url)),
-                    ),
+                div()
+                    .w_full()
+                    .min_w_0()
+                    .text_size(px(20.))
+                    .line_height(px(28.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(rgb(colors().text))
+                    .child(issue.title.clone()),
             )
-            .child(settings::heading(issue.title.clone()))
-            .child(tag("issue-facts", facts.join(" · "), colors().muted))
-            .child(plain_text("issue-description", description))
+            .child(self.issue_facts(issue, cx))
+            .children(self.state_change_note(cx))
+            .child(issue_description(detail, text))
             .when(!detail.attachments.is_empty(), |el| {
                 el.child(
                     tag(
                         "issue-attachments",
                         format!(
-                            "Attachments, not opened by Plait: {}",
+                            "Attachments, open in Linear: {}",
                             detail
                                 .attachments
                                 .iter()
@@ -558,37 +700,138 @@ impl Plait {
                 )
             })
             .when(!detail.comments.is_empty(), |el| {
-                el.child(
-                    div()
-                        .text_size(px(13.))
-                        .font_weight(FontWeight::MEDIUM)
-                        .child("Comments"),
-                )
-                .children(detail.comments.iter().enumerate().map(|(index, comment)| {
-                    column()
-                        .gap_1()
-                        .child(tag(
-                            ("issue-comment-author", index),
-                            format!(
-                                "{} · {}",
-                                comment.author.as_deref().unwrap_or("Someone"),
-                                comment.created_at.get(..10).unwrap_or(&comment.created_at)
-                            ),
-                            colors().subtle,
-                        ))
-                        .child(plain_text(("issue-comment", index), &comment.body))
-                }))
-                .when(detail.comments_has_more, |el| {
-                    el.child(tag(
-                        "issue-comments-more",
-                        "More comments are in Linear.",
-                        colors().subtle,
-                    ))
-                })
+                el.child(issue_comments(detail, text))
             })
     }
 
-    fn issue_detail_pane(&self, wide: bool, cx: &mut Context<Self>) -> Option<Div> {
+    /// The issue's identifier and what can be done with it.
+    fn issue_actions(&self, issue: &IssueSummary, wide: bool, cx: &mut Context<Self>) -> Div {
+        let url = issue.url.clone();
+        row()
+            .gap_2()
+            .w_full()
+            .when(!wide, |el| {
+                el.child(
+                    button("issue-back", "All issues")
+                        .on_activate(cx, |this, _, cx| this.close_issue(cx)),
+                )
+            })
+            .child(tag(
+                "issue-identifier",
+                issue.identifier.clone(),
+                colors().subtle,
+            ))
+            .child(div().flex_1())
+            .child(
+                button("issue-open-linear", "Open in Linear")
+                    .on_activate(cx, move |_, _, cx| cx.open_url(&url)),
+            )
+            .child(
+                button("issue-add-to-thread", "Add to thread…")
+                    .on_activate(cx, |this, window, cx| {
+                        this.choose_thread_for_issue(window, cx)
+                    }),
+            )
+            .child(
+                toned_button("issue-start-thread", "Start thread", Tone::Primary)
+                    .on_activate(cx, |this, window, cx| {
+                        this.start_thread_from_issue(window, cx)
+                    }),
+            )
+    }
+
+    /// Status, priority, assignee and labels. Status is a menu when the host
+    /// can record the change and the team's states are known.
+    fn issue_facts(&self, issue: &IssueSummary, cx: &mut Context<Self>) -> Div {
+        let view = &self.issues.view;
+        let sending = view
+            .state_change
+            .as_ref()
+            .filter(|c| c.issue_id == issue.id && c.status == linear_issues::ChangeStatus::Sending);
+        let status = match (view.writes, &view.states, sending) {
+            (_, _, Some(change)) => super::permissions::menu_chip(
+                "issue-status",
+                Some("Status"),
+                None,
+                format!("Moving to {}…", change.state_name).into(),
+                "".into(),
+                Some("Waiting for Linear."),
+            )
+            .into_any_element(),
+            (Some(true), Some(_), None) => super::permissions::menu_chip(
+                "issue-status",
+                Some("Status"),
+                None,
+                issue.state.name.clone().into(),
+                "Move the issue to another state in Linear".into(),
+                None,
+            )
+            .on_activate(cx, |this, window, cx| this.open_state_menu(window, cx))
+            .into_any_element(),
+            _ => tag("issue-status", issue.state.name.clone(), colors().text).into_any_element(),
+        };
+        let mut facts = vec![linear_issues::priority(issue.priority).to_owned()];
+        if let Some(assignee) = &issue.assignee {
+            facts.push(assignee.name.clone());
+        }
+        row()
+            .gap_2()
+            .flex_wrap()
+            .w_full()
+            .child(status)
+            .child(tag("issue-facts", facts.join(" · "), colors().muted))
+            .children(issue.labels.iter().enumerate().map(|(index, label)| {
+                tag(("issue-label", index), label.name.clone(), colors().muted)
+                    .px_2()
+                    .rounded(px(ITEM_CORNER))
+                    .border_1()
+                    .border_color(rgb(colors().border))
+            }))
+    }
+
+    /// Why the last status change did not happen, inline beneath the status.
+    fn state_change_note(&self, cx: &mut Context<Self>) -> Option<Div> {
+        let change = self.issues.view.state_change.as_ref()?;
+        if self.issues.view.detail.as_ref()?.issue.summary.id != change.issue_id {
+            return None;
+        }
+        let (text, retry) = match &change.status {
+            linear_issues::ChangeStatus::Sending => return None,
+            linear_issues::ChangeStatus::Failed { note, retry } => (note.clone(), *retry),
+            linear_issues::ChangeStatus::Unknown => (
+                format!(
+                    "Linear may have moved it to {}. Check in Linear before choosing again.",
+                    change.state_name
+                ),
+                false,
+            ),
+        };
+        Some(
+            row()
+                .gap_2()
+                .w_full()
+                .child(
+                    tag("issue-status-note", text, colors().amber)
+                        .flex_1()
+                        .min_w_0()
+                        .line_height(px(18.)),
+                )
+                .when(retry, |el| {
+                    el.child(
+                        button("issue-status-retry", "Try again")
+                            .on_activate(cx, |this, _, cx| this.retry_state_change(cx)),
+                    )
+                })
+                .child(
+                    button("issue-status-dismiss", "Dismiss").on_activate(cx, |this, _, cx| {
+                        this.issues.view.dismiss_state_change();
+                        cx.notify();
+                    }),
+                ),
+        )
+    }
+
+    fn issue_detail_pane(&self, wide: bool, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let view = &self.issues.view;
         view.selected.as_ref()?;
         let body = match (&view.detail, view.detail_load) {
@@ -611,17 +854,20 @@ impl Plait {
                 colors().muted,
             )),
         };
+        // Its own scroll, bounded by the tab, so long text never runs past it.
         Some(
-            column()
+            div()
                 .id("issue-detail")
+                .flex()
+                .flex_col()
                 .flex_1()
                 .min_w_0()
                 .min_h_0()
+                .h_full()
                 .overflow_y_scroll()
-                .p_1()
-                .child(body)
-                .into_any_element()
-                .into_div(),
+                .px_2()
+                .pb_6()
+                .child(body),
         )
     }
 
@@ -637,13 +883,13 @@ impl Plait {
                     .unwrap_or_default()
             )
         });
+        // The sheet's header already names the tab; this row says which team.
         let header = row()
             .gap_2()
             .px_4()
             .py_2()
-            .child(settings::heading("Linear issues"))
             .when_some(team, |el, team| {
-                el.child(tag("issues-team", team, colors().subtle))
+                el.child(tag("issues-team", team, colors().muted))
             })
             .child(div().flex_1())
             .child(
@@ -657,8 +903,8 @@ impl Plait {
             let detail = self.issue_detail_pane(wide, cx);
             match (wide, detail) {
                 (true, detail) => row()
-                    .items_start()
-                    .gap_4()
+                    .items_stretch()
+                    .gap_6()
                     .flex_1()
                     .min_h_0()
                     .px_4()
@@ -667,8 +913,8 @@ impl Plait {
                         div()
                             .w(px(420.))
                             .flex_shrink_0()
-                            .h_full()
                             .flex()
+                            .min_h_0()
                             .child(self.issue_list(cx)),
                     )
                     .children(detail),
@@ -694,27 +940,83 @@ impl Plait {
     }
 }
 
-/// Linear's text as plain text: paragraphs kept, nothing interpreted or linked.
-fn plain_text(id: impl Into<ElementId>, text: &str) -> Div {
+/// The description as Markdown once parsed; as text until then.
+fn issue_description(detail: &IssueDetail, text: Option<&Arc<IssueText>>) -> AnyElement {
+    match (text, detail.description.as_deref()) {
+        (Some(text), _) if !text.description.is_empty() => {
+            issue_text::blocks(&text.description, "issue-description").into_any_element()
+        }
+        (None, Some(source)) if !source.trim().is_empty() => {
+            plain_text("issue-description", source).into_any_element()
+        }
+        _ => tag("issue-description", "No description.", colors().muted).into_any_element(),
+    }
+}
+
+fn issue_comments(detail: &IssueDetail, text: Option<&Arc<IssueText>>) -> Div {
+    column()
+        .gap_3()
+        .pt_4()
+        .border_t_1()
+        .border_color(rgb(colors().border))
+        .child(
+            div()
+                .text_size(px(13.))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(rgb(colors().muted))
+                .child("Comments"),
+        )
+        .children(detail.comments.iter().enumerate().map(|(index, comment)| {
+            let key = format!("issue-comment-{index}");
+            let body = match text.and_then(|text| text.comments.get(index)) {
+                Some(blocks) => issue_text::blocks(blocks, &key).into_any_element(),
+                None => plain_text(("issue-comment", index), &comment.body).into_any_element(),
+            };
+            column()
+                .gap_1()
+                .child(tag(
+                    ("issue-comment-author", index),
+                    format!(
+                        "{} · {}",
+                        comment.author.as_deref().unwrap_or("Someone"),
+                        comment.created_at.get(..10).unwrap_or(&comment.created_at)
+                    ),
+                    colors().subtle,
+                ))
+                .child(body)
+        }))
+        .when(detail.comments_has_more, |el| {
+            el.child(tag(
+                "issue-comments-more",
+                "More comments are in Linear.",
+                colors().subtle,
+            ))
+        })
+}
+
+/// Linear's text before it is parsed: paragraphs kept, nothing interpreted.
+fn plain_text(id: impl Into<ElementId>, text: &str) -> Stateful<Div> {
     div()
         .id(id)
-        .text_size(px(13.))
-        .line_height(px(20.))
+        .text_size(px(14.))
+        .line_height(px(22.))
         .text_color(rgb(colors().text))
         .children(
             text.lines()
-                .map(|line| div().min_h(px(20.)).child(line.to_owned()))
+                .map(|line| div().min_h(px(22.)).child(line.to_owned()))
                 .collect::<Vec<_>>(),
         )
-        .into_div()
 }
 
-trait IntoDiv {
-    fn into_div(self) -> Div;
-}
-impl<E: IntoElement> IntoDiv for E {
-    fn into_div(self) -> Div {
-        div().flex().flex_1().min_w_0().min_h_0().child(self)
+fn state_kind(kind: &str) -> &'static str {
+    match kind {
+        "triage" => "Triage",
+        "backlog" => "Backlog",
+        "unstarted" => "Not started",
+        "started" => "In progress",
+        "completed" => "Done",
+        "canceled" => "Cancelled",
+        _ => "",
     }
 }
 

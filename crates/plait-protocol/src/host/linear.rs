@@ -73,6 +73,12 @@ pub enum Request {
         #[serde(skip_serializing_if = "Option::is_none")]
         cursor: Option<String>,
     },
+    /// A person-initiated move to another workflow state of the issue's team.
+    LinearUpdateIssueState {
+        issue_id: String,
+        state_id: String,
+        request_id: String,
+    },
 }
 impl fmt::Debug for Request {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -267,4 +273,14 @@ pub struct Unlinked {
 pub struct Links {
     pub links: Vec<Link>,
     pub next_cursor: Option<String>,
+}
+/// `linear_update_issue_state`'s reply. Linear reported success; `issue` is the
+/// refreshed detail, or null when that read failed and `warning` says so.
+#[derive(Clone, Debug, Deserialize)]
+pub struct StateUpdate {
+    pub issue: Option<IssueDetail>,
+    #[serde(default)]
+    pub partial: bool,
+    pub warning: Option<String>,
+    pub outcome: String,
 }

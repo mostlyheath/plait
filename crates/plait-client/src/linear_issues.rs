@@ -9,7 +9,7 @@
 
 use crate::host::linear::{
     Binding, Cache, Filter, IssueDetail, IssueReply, IssueSummary, Issues, ProjectBinding,
-    Rejection,
+    Rejection, StateUpdate, Teams, WorkflowState, WriteFailure,
 };
 use crate::linear_settings::{Pending, message};
 use std::path::{Path, PathBuf};
@@ -65,10 +65,42 @@ pub struct IssuesView {
     pub detail: Option<IssueReply<IssueDetail>>,
     pub detail_load: Load,
     pub detail_note: Option<String>,
+    /// The linked team's workflow states, in Linear's order, for the status menu.
+    pub states: Option<Vec<WorkflowState>>,
+    pub states_load: Load,
+    /// The status change in flight or the last one that did not succeed.
+    pub state_change: Option<StateChange>,
+    /// Whether the host records Linear writes durably; older hosts offer no writes.
+    pub writes: Option<bool>,
     epoch: Option<u64>,
     binding_generation: u64,
     list_generation: u64,
     detail_generation: u64,
+    states_generation: u64,
+}
+
+/// One person-chosen move of the selected issue to another workflow state.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StateChange {
+    pub issue_id: String,
+    pub state_id: String,
+    pub state_name: String,
+    /// Reused for a retry, so the host returns a saved outcome instead of
+    /// sending the move twice.
+    pub request_id: String,
+    pub status: ChangeStatus,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ChangeStatus {
+    Sending,
+    /// Not applied. `retry` is whether trying the same request again is safe.
+    Failed {
+        note: String,
+        retry: bool,
+    },
+    /// Linear may have applied it; the host will not send it again.
+    Unknown,
 }
 
 impl Default for IssuesView {
@@ -89,10 +121,15 @@ impl Default for IssuesView {
             detail: None,
             detail_load: Load::Idle,
             detail_note: None,
+            states: None,
+            states_load: Load::Idle,
+            state_change: None,
+            writes: None,
             epoch: None,
             binding_generation: 0,
             list_generation: 0,
             detail_generation: 0,
+            states_generation: 0,
         }
     }
 }
@@ -120,6 +157,7 @@ impl IssuesView {
             self.binding_generation,
             self.list_generation,
             self.detail_generation,
+            self.states_generation,
         );
         *self = Self {
             checkout: Some(checkout.to_owned()),
@@ -130,6 +168,7 @@ impl IssuesView {
             binding_generation: generations.0.wrapping_add(1),
             list_generation: generations.1.wrapping_add(1),
             detail_generation: generations.2.wrapping_add(1),
+            states_generation: generations.3.wrapping_add(1),
             ..Self::default()
         };
         true
@@ -330,6 +369,162 @@ impl IssuesView {
             }
         }
         true
+    }
+
+    /// Whether the linked team's workflow states should be read.
+    pub fn needs_states(&self) -> bool {
+        self.writes == Some(true)
+            && self.team().is_some()
+            && self.states.is_none()
+            && self.states_load == Load::Idle
+    }
+
+    pub fn start_states(&mut self) -> u64 {
+        self.states_load = Load::Loading;
+        next(&mut self.states_generation)
+    }
+
+    /// Keeps the linked team's states, ordered as Linear orders them.
+    pub fn states_reply(&mut self, generation: u64, result: Result<Teams, Rejection>) -> bool {
+        if generation != self.states_generation || self.states_load != Load::Loading {
+            return false;
+        }
+        let team = self.team().map(|b| b.team_id.clone());
+        match result.map(|teams| {
+            teams
+                .teams
+                .into_iter()
+                .find(|t| Some(&t.id) == team.as_ref())
+        }) {
+            Ok(Some(team)) => {
+                let mut states = team.states;
+                states.sort_by(|a, b| a.position.total_cmp(&b.position));
+                self.states = Some(states);
+                self.states_load = Load::Idle;
+            }
+            // The team is gone from the list, or the read failed: no menu.
+            Ok(None) | Err(_) => self.states_load = Load::Failed,
+        }
+        true
+    }
+
+    /// Starts moving the selected issue to `state_id`, unless a change is in
+    /// flight, the state is the current one, or it is not one of the team's.
+    pub fn start_state_change(
+        &mut self,
+        state_id: &str,
+        request_id: String,
+    ) -> Option<StateChange> {
+        if self.writes != Some(true)
+            || matches!(&self.state_change, Some(c) if c.status == ChangeStatus::Sending)
+        {
+            return None;
+        }
+        let issue = &self.detail.as_ref()?.issue.summary;
+        if issue.state.id == state_id {
+            return None;
+        }
+        let state = self.states.as_ref()?.iter().find(|s| s.id == state_id)?;
+        let change = StateChange {
+            issue_id: issue.id.clone(),
+            state_id: state.id.clone(),
+            state_name: state.name.clone(),
+            request_id,
+            status: ChangeStatus::Sending,
+        };
+        self.state_change = Some(change.clone());
+        Some(change)
+    }
+
+    /// The same request again, after a refusal or a lost reply.
+    pub fn retry_state_change(&mut self) -> Option<StateChange> {
+        let change = self.state_change.as_mut()?;
+        if !matches!(change.status, ChangeStatus::Failed { retry: true, .. }) {
+            return None;
+        }
+        change.status = ChangeStatus::Sending;
+        Some(change.clone())
+    }
+
+    pub fn dismiss_state_change(&mut self) {
+        if !matches!(&self.state_change, Some(c) if c.status == ChangeStatus::Sending) {
+            self.state_change = None;
+        }
+    }
+
+    /// Applies the host's answer. Returns whether the details should be read
+    /// again, because Linear accepted the move but the refreshed issue is missing.
+    pub fn state_reply(
+        &mut self,
+        change: &StateChange,
+        result: Result<StateUpdate, WriteFailure>,
+    ) -> bool {
+        let Some(current) = self.state_change.as_mut() else {
+            return false;
+        };
+        if current.request_id != change.request_id || current.status != ChangeStatus::Sending {
+            return false;
+        }
+        match result {
+            Ok(update) => {
+                self.state_change = None;
+                let shown = self
+                    .detail
+                    .as_mut()
+                    .filter(|d| d.issue.summary.id == change.issue_id);
+                match (update.issue, shown) {
+                    (Some(issue), Some(shown)) => {
+                        shown.issue = issue;
+                        false
+                    }
+                    (None, Some(shown)) => {
+                        // Accepted: show the new state until the details are read again.
+                        shown.issue.summary.state.id = change.state_id.clone();
+                        shown.issue.summary.state.name = change.state_name.clone();
+                        true
+                    }
+                    (_, None) => false,
+                }
+            }
+            Err(WriteFailure::Unknown) => {
+                current.status = ChangeStatus::Unknown;
+                false
+            }
+            Err(WriteFailure::Lost) => {
+                current.status = ChangeStatus::Failed {
+                    note: "The host's answer was lost. Trying again will not move it twice.".into(),
+                    retry: true,
+                };
+                false
+            }
+            Err(WriteFailure::Refused(error)) => {
+                current.status = ChangeStatus::Failed {
+                    note: state_message(error),
+                    retry: !matches!(
+                        error,
+                        Rejection::SignedOut | Rejection::KeyRejected | Rejection::NeedsNewerHost
+                    ),
+                };
+                false
+            }
+        }
+    }
+}
+
+/// Fixed text for a refused status change. Host messages are never shown here.
+fn state_message(error: Rejection) -> String {
+    match error {
+        Rejection::SignedOut | Rejection::KeyRejected => {
+            "Linear did not accept the key. Sign in again in Settings → Linear.".into()
+        }
+        Rejection::NotFound => "Linear no longer has this issue or state.".into(),
+        Rejection::Conflict => {
+            "This request was already used for another change. Choose the state again.".into()
+        }
+        error => format!(
+            "The status was not changed. {}",
+            message(Pending::Loading, error)
+        ),
     }
 }
 
@@ -606,5 +801,170 @@ mod tests {
         assert_eq!(priority(1.0), "Urgent");
         assert_eq!(priority(0.0), "No priority");
         assert_eq!(age(1), "1 second");
+    }
+}
+
+#[cfg(test)]
+mod state_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn teams() -> Teams {
+        serde_json::from_value(json!({"teams": [
+            {"id": "OTHER", "key": "X", "name": "Other", "states": []},
+            {"id": "T", "key": "PLA", "name": "Plait", "states": [
+                {"id": "D", "name": "Done", "type": "completed", "position": 3},
+                {"id": "S", "name": "Todo", "type": "unstarted", "position": 1}]}],
+            "cached": false, "stale": false, "cached_at": 0, "cache_age_seconds": 0,
+            "partial": false, "warning": null}))
+        .unwrap()
+    }
+
+    fn detail() -> IssueReply<IssueDetail> {
+        serde_json::from_value(
+            json!({"issue": {"id": "I", "identifier": "PLA-1", "title": "T",
+            "url": "https://linear.app/a/issue/PLA-1", "priority": 2, "updated_at": "1",
+            "team_id": "T", "state": {"id": "S", "name": "Todo", "type": "unstarted"},
+            "assignee": null, "labels": [], "description": null, "attachments": [],
+            "comments": [], "comments_has_more": false, "comments_next_cursor": null},
+            "workspace_id": "ORG", "cached": false, "stale": false, "cached_at": 0,
+            "cache_age_seconds": 0, "partial": false, "warning": null}),
+        )
+        .unwrap()
+    }
+
+    /// A linked view showing issue "I" in state "S", with writes supported.
+    fn shown() -> IssuesView {
+        let mut view = IssuesView::default();
+        view.target(1, Path::new("/repo"), None);
+        let g = view.start_binding();
+        view.binding_reply(
+            g,
+            Ok(
+                serde_json::from_value(json!({"checkout": "/repo", "binding": {
+                "workspace_id": "ORG", "team_id": "T", "team_key": "PLA",
+                "team_name": "Plait", "updated_at": 1}}))
+                .unwrap(),
+            ),
+        );
+        view.writes = Some(true);
+        assert!(view.needs_states());
+        let g = view.start_states();
+        assert!(view.states_reply(g, Ok(teams())));
+        let g = view.select("I").unwrap();
+        view.detail_reply(g, "I", Ok(detail()));
+        view
+    }
+
+    fn accepted(issue: bool) -> StateUpdate {
+        let mut d = detail().issue;
+        d.summary.state.id = "D".into();
+        d.summary.state.name = "Done".into();
+        StateUpdate {
+            issue: issue.then_some(d),
+            partial: false,
+            warning: None,
+            outcome: "accepted".into(),
+        }
+    }
+
+    #[test]
+    fn states_keep_only_the_linked_team_in_linear_order() {
+        let view = shown();
+        let names: Vec<_> = view
+            .states
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect();
+        assert_eq!(names, ["Todo", "Done"]);
+    }
+
+    #[test]
+    fn a_status_change_needs_writes_a_new_state_and_one_at_a_time() {
+        let mut view = shown();
+        assert!(
+            view.start_state_change("S", "r0".into()).is_none(),
+            "already there"
+        );
+        assert!(
+            view.start_state_change("NOPE", "r0".into()).is_none(),
+            "not the team's"
+        );
+        let change = view.start_state_change("D", "r1".into()).unwrap();
+        assert_eq!(change.state_name, "Done");
+        assert!(
+            view.start_state_change("D", "r2".into()).is_none(),
+            "one in flight"
+        );
+        view.writes = Some(false);
+        view.state_change = None;
+        assert!(
+            view.start_state_change("D", "r3".into()).is_none(),
+            "older host"
+        );
+    }
+
+    #[test]
+    fn an_accepted_change_shows_the_new_state() {
+        let mut view = shown();
+        let change = view.start_state_change("D", "r1".into()).unwrap();
+        assert!(!view.state_reply(&change, Ok(accepted(true))));
+        assert!(view.state_change.is_none());
+        assert_eq!(
+            view.detail.as_ref().unwrap().issue.summary.state.name,
+            "Done"
+        );
+
+        // Accepted without a refreshed issue: shown at once, then read again.
+        let mut view = shown();
+        let change = view.start_state_change("D", "r1".into()).unwrap();
+        assert!(view.state_reply(&change, Ok(accepted(false))));
+        assert_eq!(view.detail.as_ref().unwrap().issue.summary.state.id, "D");
+    }
+
+    #[test]
+    fn a_lost_reply_retries_the_same_request_and_an_unknown_one_never_does() {
+        let mut view = shown();
+        let change = view.start_state_change("D", "r1".into()).unwrap();
+        view.state_reply(&change, Err(WriteFailure::Lost));
+        let retry = view.retry_state_change().unwrap();
+        assert_eq!(retry.request_id, "r1", "the host returns its saved outcome");
+        view.state_reply(&retry, Err(WriteFailure::Unknown));
+        assert_eq!(
+            view.state_change.as_ref().unwrap().status,
+            ChangeStatus::Unknown
+        );
+        assert!(
+            view.retry_state_change().is_none(),
+            "an unknown move is never resent"
+        );
+        assert_eq!(view.detail.as_ref().unwrap().issue.summary.state.id, "S");
+        view.dismiss_state_change();
+        assert!(view.state_change.is_none());
+    }
+
+    #[test]
+    fn a_refusal_explains_itself_and_a_stale_reply_is_dropped() {
+        let mut view = shown();
+        let change = view.start_state_change("D", "r1".into()).unwrap();
+        let stale = StateChange {
+            request_id: "old".into(),
+            ..change.clone()
+        };
+        assert!(!view.state_reply(&stale, Ok(accepted(true))));
+        assert_eq!(
+            view.state_change.as_ref().unwrap().status,
+            ChangeStatus::Sending
+        );
+        view.state_reply(&change, Err(WriteFailure::Refused(Rejection::KeyRejected)));
+        match &view.state_change.as_ref().unwrap().status {
+            ChangeStatus::Failed { note, retry } => {
+                assert!(note.contains("Sign in again"), "{note}");
+                assert!(!retry, "a rejected key needs Settings, not a retry");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 }
