@@ -22,11 +22,10 @@ impl Plait {
     /// Runs one Linear call on the background executor and hands its result
     /// to `apply`, which returns whether it was current. A reply that lands
     /// after a reconnect is dropped here; the models drop the rest.
-    pub(super) fn linear_task<T: Send + 'static>(
+    pub(super) fn linear_task<T: Send + 'static, E: Send + 'static>(
         &mut self,
-        call: impl FnOnce(&host::Client) -> Result<T, linear::Rejection> + Send + 'static,
-        apply: impl FnOnce(&mut Self, Result<T, linear::Rejection>, &mut Context<Self>) -> bool
-        + 'static,
+        call: impl FnOnce(&host::Client) -> Result<T, E> + Send + 'static,
+        apply: impl FnOnce(&mut Self, Result<T, E>, &mut Context<Self>) -> bool + 'static,
         cx: &mut Context<Self>,
     ) {
         let epoch = self.host.connection.epoch;

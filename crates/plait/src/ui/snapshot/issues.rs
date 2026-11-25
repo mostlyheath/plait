@@ -31,6 +31,10 @@ fn page(stale: bool) -> Issues {
     serde_json::from_value(v).unwrap()
 }
 
+/// A description written the way Linear's editor saves one: Markdown with
+/// headings, a list, code, a link and an uploaded image.
+const DESCRIPTION: &str = "Requests that get a **429** fail at once, and the thread only says *failed*.\n\n## What should happen\n\n- Retry with exponential backoff, at most three times.\n- Honour `Retry-After` when the server sends it.\n- Say in the thread that a retry is waiting.\n\n```rust\nlet delay = base * 2u32.pow(attempt);\n```\n\n> The client already reads the header; nothing uses it yet.\n\n![Failure in the thread](https://uploads.linear.app/acme/ab12/failure.png)\n\nSee the [rate-limit guide](https://linear.app/developers/rate-limiting) for the numbers.";
+
 fn detail() -> IssueReply<IssueDetail> {
     let mut d = issue(
         "i1",
@@ -39,9 +43,9 @@ fn detail() -> IssueReply<IssueDetail> {
         "In Progress",
     );
     d.as_object_mut().unwrap().extend(serde_json::json!({
-        "description": "Requests that get a 429 fail at once.\n\nRetry them with exponential backoff, at most three times, and say so in the thread.",
+        "description": DESCRIPTION,
         "attachments": [{"id": "a", "title": "Failure log", "url": "https://example.com/log"}],
-        "comments": [{"id": "c", "body": "The client already reads Retry-After.", "created_at": "2026-11-17T09:00:00.000Z", "updated_at": "2026-11-17T09:00:00.000Z", "author": "Sam"}],
+        "comments": [{"id": "c", "body": "The client already reads `Retry-After`. **Keep** the cap at three.", "created_at": "2026-11-17T09:00:00.000Z", "updated_at": "2026-11-17T09:00:00.000Z", "author": "Sam"}],
         "comments_has_more": false, "comments_next_cursor": null}).as_object().unwrap().clone());
     let mut v = serde_json::json!({"issue": d, "workspace_id": "ORG"});
     v.as_object_mut()
@@ -94,13 +98,46 @@ fn linked(h: &mut Harness, stale: bool, selected: bool) {
         if selected {
             view.selected = Some("i1".into());
             view.detail = Some(detail());
+            view.writes = Some(true);
+            view.states = Some(states());
         }
+    });
+}
+
+fn states() -> Vec<plait_client::host::linear::WorkflowState> {
+    [
+        ("s-backlog", "Backlog", "backlog", 0.),
+        ("s-todo", "Todo", "unstarted", 1.),
+        ("s", "In Progress", "started", 2.),
+        ("s-done", "Done", "completed", 3.),
+    ]
+    .into_iter()
+    .map(|(id, name, kind, position)| {
+        serde_json::from_value(
+            serde_json::json!({"id": id, "name": name, "type": kind, "position": position}),
+        )
+        .unwrap()
+    })
+    .collect()
+}
+
+/// A status change to Done that ended `status`, beneath the issue's details.
+fn changed(h: &mut Harness, status: plait_client::linear_issues::ChangeStatus) {
+    linked(h, false, true);
+    h.update(|p, _, _| {
+        p.issues.view.state_change = Some(plait_client::linear_issues::StateChange {
+            issue_id: "i1".into(),
+            state_id: "s-done".into(),
+            state_name: "Done".into(),
+            request_id: "desktop-1".into(),
+            status,
+        });
     });
 }
 
 type Scene = (&'static str, fn(&mut Harness), &'static [&'static str]);
 
-fn scenes() -> [Scene; 4] {
+fn scenes() -> [Scene; 7] {
     [
         (
             "issues-signed-out",
@@ -134,7 +171,35 @@ fn scenes() -> [Scene; 4] {
         (
             "issues-detail",
             |h| linked(h, false, true),
-            &["Open in Linear", "Start thread", "Add to thread…"],
+            &[
+                "Open in Linear",
+                "Start thread",
+                "Add to thread…",
+                "Status: In Progress",
+            ],
+        ),
+        (
+            "issues-status-sending",
+            |h| changed(h, plait_client::linear_issues::ChangeStatus::Sending),
+            &["Status: Moving to Done…"],
+        ),
+        (
+            "issues-status-failed",
+            |h| {
+                changed(
+                    h,
+                    plait_client::linear_issues::ChangeStatus::Failed {
+                        note: "The status was not changed. Linear could not be reached. Try again when online.".into(),
+                        retry: true,
+                    },
+                )
+            },
+            &["Try again", "Dismiss", "Status: In Progress"],
+        ),
+        (
+            "issues-status-unknown",
+            |h| changed(h, plait_client::linear_issues::ChangeStatus::Unknown),
+            &["Dismiss", "Status: In Progress"],
         ),
     ]
 }
@@ -162,7 +227,7 @@ pub(super) fn walk(repo: &Path, out: Option<&Path>, suffix: &str, width: f32, he
         h.connect(repo, false);
         open(&mut h);
         install(&mut h);
-        h.capture(&format!("{name}-{suffix}"));
+        capture_both(&mut h, &format!("{name}-{suffix}"));
     }
 }
 
@@ -295,5 +360,62 @@ fn a_thread_started_from_an_issue_names_it() {
             .any(|n| n.label.as_deref() == Some("Open in Linear")),
         "the source issue line is drawn"
     );
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
+/// Connected with no tab open and no thread selected, as on a fresh launch.
+fn fresh_launch(h: &mut Harness) {
+    h.update(|p, _, cx| {
+        p.park_workspace(cx);
+        p.tabs = Default::default();
+        p.host.thread.selected = None;
+        p.host.thread.snapshot = None;
+        p.refresh_tab_rows();
+    });
+    h.settle();
+}
+
+/// Opens Issues the way the sidebar, palette and shortcut do.
+fn open_from_menu(h: &mut Harness) {
+    h.update(|p, window, cx| {
+        let root = p.host.creation.checkout.clone();
+        p.open_issues(root, window, cx);
+    });
+    h.settle();
+}
+
+fn assert_issues_drawn(h: &mut Harness, case: &str) {
+    h.update(|p, _, _| assert!(p.issues_visible(), "{case}: Issues is the active tab"));
+    let frame = h.draw_a11y();
+    let labels: Vec<_> = frame.nodes.iter().filter_map(|n| n.label.clone()).collect();
+    assert!(
+        labels.iter().any(|label| label == "Search issues"),
+        "{case}: the Issues tab is drawn; drawn: {labels:?}"
+    );
+}
+
+#[cfg(debug_assertions)]
+#[core::prelude::v1::test]
+fn opening_issues_shows_them_at_once() {
+    if !isolated("issues::opening_issues_shows_them_at_once") {
+        return;
+    }
+    let scratch = std::env::temp_dir().join(format!("plait-issues-open-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    let out = std::env::var_os("PLAIT_SNAPSHOT_DIR").map(PathBuf::from);
+    let mut h = Harness::new(&repo, out.as_deref(), 1380., 860.);
+    h.connect(&repo, false);
+    fresh_launch(&mut h);
+    open_from_menu(&mut h);
+    linked(&mut h, false, false);
+    h.capture("issues-fresh-launch");
+    assert_issues_drawn(&mut h, "fresh launch");
+
+    let mut h = Harness::new(&repo, out.as_deref(), 1380., 860.);
+    h.connect(&repo, false);
+    open_from_menu(&mut h);
+    linked(&mut h, false, false);
+    h.capture("issues-from-thread");
+    assert_issues_drawn(&mut h, "thread open");
     std::fs::remove_dir_all(scratch).unwrap();
 }

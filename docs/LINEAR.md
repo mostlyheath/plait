@@ -14,14 +14,18 @@
   project binding, issue lists and details, exact resolution, and thread links,
   with the key redacted from debug output and typed rejections (offline, rate
   limited with its wait, conflict, not found, rejected key, signed out, older
-  host). The two writes and `linear_get_write` are not modelled yet.
+  host). `linear_update_issue_state` is modelled for the desktop's status
+  control; `linear_post_comment` and `linear_get_write` are not modelled yet.
 - **Desktop sign-in and project team (Settings → Linear, Project settings →
   Linear).** Save, replace, and sign out of the host's Linear key, and link a
   project to one Linear team, with the state models in
   `plait-client::linear_settings`.
 - **Issues tab.** A persistent project tab lists, filters, and searches the
   linked team's issues, resolves a pasted identifier or URL exactly, and
-  shows an issue's details as plain text, with Open in Linear. State lives in
+  shows an issue's description and comments as formatted Markdown, with Open
+  in Linear. Links stay inert and show their destination; images are not
+  loaded. A Status menu moves the issue to another of its team's workflow
+  states on a person's choice, with the outcome shown inline. State lives in
   `plait-client::linear_issues`. Start thread fills a new draft and links the
   thread once the host creates it; Add to thread appends the reference to an
   existing thread's draft; a linked thread shows its source issue. Links are

@@ -72,6 +72,8 @@ pub(super) enum Command {
     CreateBranch(String),
     /// A thread to add the offered Linear issue to.
     IssueToThread(String),
+    /// The workflow state to move the shown Linear issue to.
+    IssueState(String),
 }
 
 impl Clone for Command {
@@ -85,6 +87,7 @@ impl Clone for Command {
             Self::SwitchBranch(name) => Self::SwitchBranch(name.clone()),
             Self::CreateBranch(name) => Self::CreateBranch(name.clone()),
             Self::IssueToThread(id) => Self::IssueToThread(id.clone()),
+            Self::IssueState(id) => Self::IssueState(id.clone()),
             Self::SignIn(id) => Self::SignIn(id.clone()),
             Self::OpenProject(path) => Self::OpenProject(path.clone()),
             Self::OpenRemoteProject(path) => Self::OpenRemoteProject(path.clone()),
@@ -525,6 +528,7 @@ impl Plait {
             }
             Command::DraftProject(path) => self.choose_draft_project(path, window, cx),
             Command::IssueToThread(id) => self.add_issue_to_thread(id, window, cx),
+            Command::IssueState(id) => self.change_issue_state(&id, cx),
             Command::DraftHarness(id) => self.choose_draft_harness(id, cx),
             Command::DraftApproval(mode) => self.choose_draft_approval(mode, cx),
             Command::DraftThinking(level) => self.choose_draft_thinking(level, cx),
