@@ -2444,9 +2444,9 @@ existing desktop reply
 shapes remain unchanged, so no protocol version bump is required. An older host rejects these operation names with
 `invalid_request`. Unknown fields (including `protocol_version`) are refused.
 
-No agent, model tool, or MCP server can call these operations, and nothing runs
-in the background or polls Linear on a timer. Requests are made only when a
-authenticated client asks through the owner-only host socket.
+No harness or agent receives a Linear tool, and nothing runs in the background
+or polls Linear on a timer. Requests come only from explicit requests on the
+owner-only host socket, which any process running as you can reach.
 
 ### What crosses the socket and where the key lives
 
@@ -2652,9 +2652,10 @@ authenticated client asks through the owner-only host socket.
   display, and writing that back would lose text. Returns
   `{"issue_id":ID,"updated_at":TIME,"editable":true,"title":TEXT,"description":TEXT}`.
   When the text is longer than Plait can write back (512 characters of title,
-  32 KiB of description), holds characters the write operations refuse, or
-  contains the key, `editable` is false and both fields are null; edit that
-  issue in Linear.
+  32 KiB of description), holds characters the write operations refuse,
+  contains the key, or Linear's answer was partial (GraphQL errors, or a field
+  missing or null), `editable` is false and both fields are null; edit that
+  issue in Linear. A missing field is never read as empty text.
 - **`linear_create_issue`** creates an issue in `team_id` with `title` (1–512
   characters), an optional Markdown `description` (at most 32 KiB, tabs and
   newlines allowed) and an optional `state_id` of that team, checked against

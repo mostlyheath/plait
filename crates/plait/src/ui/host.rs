@@ -1334,6 +1334,7 @@ mod identity_error_tests {
                 retry_after_seconds: None,
                 code: code.into(),
                 message: message.into(),
+                outcome: None,
             })
         };
         assert!(is_checkout_identity_changed(&rejected(

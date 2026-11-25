@@ -457,17 +457,42 @@ pub enum WriteFailure {
     /// The host's reply was lost. Retrying with the same request ID is safe:
     /// the host returns its saved outcome instead of sending twice.
     Lost,
-    /// Refused or not sent. Retrying the same request may send it again.
+    /// Refused or not sent: nothing was written.
     Refused(Rejection),
     /// The issue changed in Linear since it was read; nothing was sent.
     Changed,
+    /// The request ID already carries other text. `earlier` is what became
+    /// of that earlier request, as the host recorded it.
+    Conflict { earlier: Earlier },
 }
+
+/// The outcome of an earlier request under the same ID.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Earlier {
+    /// Not sent or refused: nothing was written.
+    NothingWritten,
+    Accepted,
+    /// Sent with no answer, or not said: Linear may have applied it.
+    Unknown,
+}
+
 pub fn write_failure(error: &Error) -> WriteFailure {
-    match error {
-        Error::Rejected(e) if e.code == "linear_write_unknown" => WriteFailure::Unknown,
-        Error::Rejected(e) if e.code == "linear_issue_changed" => WriteFailure::Changed,
-        Error::Transport(_) | Error::Protocol(_) => WriteFailure::Lost,
-        Error::Rejected(_) => WriteFailure::Refused(classify(error, false)),
+    let Error::Rejected(e) = error else {
+        return WriteFailure::Lost;
+    };
+    match (e.code.as_str(), e.outcome.as_deref()) {
+        ("linear_write_unknown", _) | (_, Some("unknown")) if e.code != "conflict" => {
+            WriteFailure::Unknown
+        }
+        ("linear_issue_changed", _) => WriteFailure::Changed,
+        ("conflict", outcome) => WriteFailure::Conflict {
+            earlier: match outcome {
+                Some("not_sent" | "rejected") => Earlier::NothingWritten,
+                Some("accepted") => Earlier::Accepted,
+                _ => Earlier::Unknown,
+            },
+        },
+        _ => WriteFailure::Refused(classify(error, false)),
     }
 }
 
@@ -543,23 +568,6 @@ pub fn get_issue_text(c: &Client, issue_id: String) -> Result<IssueText, Error> 
         && v.description.is_some() == v.editable
         && v.title.as_ref().is_none_or(|t| t.chars().count() <= 512)
         && v.description.as_ref().is_none_or(|d| d.len() <= 32 * 1024);
-    checked(v, ok)
-}
-/// What became of a write request, from the host's local record.
-pub fn get_write(c: &Client, request_id: String) -> Result<WriteLookup, Error> {
-    let v: WriteLookup = send(
-        c,
-        &Request::LinearGetWrite {
-            request_id: request_id.clone(),
-        },
-    )?;
-    let ok = v.request_id == request_id
-        && v.write.as_ref().is_none_or(|w| {
-            matches!(
-                w.outcome.as_str(),
-                "not_sent" | "rejected" | "accepted" | "unknown"
-            ) && w.receipt.as_ref().is_none_or(|r| oid(&r.issue_id))
-        });
     checked(v, ok)
 }
 /// An image from Linear's file storage, read through the host in chunks. Only
@@ -741,7 +749,38 @@ mod write_tests {
             retry_after_seconds: None,
             code: code.into(),
             message: "ignored".into(),
+            outcome: None,
         })
+    }
+
+    /// The error envelopes the host sends, decoded the way the client decodes them.
+    fn envelope(json: serde_json::Value) -> Error {
+        Error::Rejected(serde_json::from_value(json).expect("a host error decodes"))
+    }
+
+    #[test]
+    fn typed_write_errors_decode_with_their_outcomes() {
+        let stale = envelope(serde_json::json!({"code": "linear_issue_changed",
+            "message": "changed", "outcome": "not_sent"}));
+        assert_eq!(write_failure(&stale), WriteFailure::Changed);
+        let unknown = envelope(serde_json::json!({"code": "linear_write_unknown",
+            "message": "unconfirmed", "outcome": "unknown"}));
+        assert_eq!(write_failure(&unknown), WriteFailure::Unknown);
+        let limited = envelope(serde_json::json!({"code": "linear_rate_limited",
+            "message": "wait", "retry_after_seconds": 7, "outcome": "rejected"}));
+        assert_eq!(
+            write_failure(&limited),
+            WriteFailure::Refused(Rejection::RateLimited(Some(7)))
+        );
+        for (outcome, earlier) in [
+            ("accepted", Earlier::Accepted),
+            ("rejected", Earlier::NothingWritten),
+            ("unknown", Earlier::Unknown),
+        ] {
+            let conflict = envelope(serde_json::json!({"code": "conflict",
+                "message": "used", "outcome": outcome}));
+            assert_eq!(write_failure(&conflict), WriteFailure::Conflict { earlier });
+        }
     }
 
     #[test]

@@ -55,6 +55,12 @@ pub(super) struct IssuesUi {
     checking_writes: bool,
     /// Images on Linear's storage for the shown issue, by address.
     pub images: HashMap<String, Picture>,
+    /// The connection and sign-in the images were read under.
+    images_owner: Option<(u64, String, String)>,
+    /// Bumped when the sign-in changes, so earlier reads are dropped.
+    image_generation: u64,
+    /// Image reads in flight.
+    image_reads: usize,
     /// The open form's fields, made when it opens and dropped when it closes.
     form_fields: HashMap<FormSlot, FormFields>,
     /// Every project's unsaved forms as last written, once read from disk.
@@ -93,6 +99,9 @@ impl IssuesUi {
 const IMAGE_READS: usize = 3;
 /// Longest side an issue image is decoded to; it is drawn no wider than the text.
 const IMAGE_EDGE: u32 = 1600;
+/// Images of one issue held as pixels: at most 6 × 1600² × 4 bytes, about
+/// 61 MiB. Later ones are shown in Linear.
+const IMAGES_HELD: usize = 6;
 
 /// Where a reference is waiting to be added.
 #[derive(Clone, PartialEq, Eq)]
@@ -386,30 +395,45 @@ impl Plait {
     }
 
     /// Reads the shown issue's Linear images through the host, a few at a
-    /// time, and decodes them off the UI thread. Images of an earlier issue
-    /// are let go when its text is replaced.
+    /// time, and decodes them off the UI thread. Only the first few of an
+    /// issue are held; images of an earlier issue, or read under another
+    /// sign-in, are let go and their pending reads ignored.
     fn load_issue_images(&mut self, cx: &mut Context<Self>) {
+        let owner = match &self.linear.account.auth {
+            Auth::SignedIn { workspace, viewer } => Some((
+                self.host.connection.epoch,
+                workspace.to_string(),
+                viewer.to_string(),
+            )),
+            _ => None,
+        };
+        if self.issues.images_owner != owner {
+            self.issues.images_owner = owner;
+            self.issues.images.clear();
+            self.issues.image_generation += 1;
+            self.issues.image_reads = 0;
+        }
         let Some(text) = self.issues.text.clone() else {
             return;
         };
-        let urls = text.linear_images();
+        let urls: Vec<_> = text.linear_images().into_iter().take(IMAGES_HELD).collect();
         self.issues.images.retain(|url, _| urls.contains(url));
-        if cfg!(test) || !self.issues.view.images || !self.host.connection.connected {
+        if cfg!(test)
+            || !self.issues.view.images
+            || !self.host.connection.connected
+            || self.issues.images_owner.is_none()
+        {
             return;
         }
-        let loading = self
-            .issues
-            .images
-            .values()
-            .filter(|p| matches!(p, Picture::Loading))
-            .count();
         let wanted: Vec<_> = urls
             .into_iter()
             .filter(|url| !self.issues.images.contains_key(url))
-            .take(IMAGE_READS.saturating_sub(loading))
+            .take(IMAGE_READS.saturating_sub(self.issues.image_reads))
             .collect();
         for url in wanted {
             self.issues.images.insert(url.clone(), Picture::Loading);
+            self.issues.image_reads += 1;
+            let generation = self.issues.image_generation;
             let read = url.clone();
             self.linear_task(
                 move |client| {
@@ -429,6 +453,11 @@ impl Plait {
                         .map_err(|_| "Could not be decoded".to_owned())
                 },
                 move |this, result, _| {
+                    // A read from before a sign-in change is dropped with its pixels.
+                    if this.issues.image_generation != generation {
+                        return false;
+                    }
+                    this.issues.image_reads = this.issues.image_reads.saturating_sub(1);
                     if this.issues.images.contains_key(&url) {
                         let picture = match result {
                             Ok(pixels) => Picture::Ready(pixels),
@@ -445,7 +474,13 @@ impl Plait {
 
     /// What is known of an image in the shown issue, for drawing it.
     fn picture(&self, url: &str) -> Picture {
-        if !self.issues.view.images {
+        let held = self.issues.text.as_ref().is_some_and(|text| {
+            text.linear_images()
+                .iter()
+                .take(IMAGES_HELD)
+                .any(|held| held == url)
+        });
+        if !self.issues.view.images || !held {
             return Picture::Elsewhere;
         }
         self.issues
@@ -456,7 +491,11 @@ impl Plait {
     }
 
     pub(super) fn open_new_issue(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.issues.view.start_new() {
+        if self
+            .issues
+            .view
+            .start_new(plait_client::host_state::request_id())
+        {
             if !self.issues.form_fields.contains_key(&FormSlot::New) {
                 self.make_form_fields(FormSlot::New, "", "", cx);
             }
@@ -541,7 +580,10 @@ impl Plait {
         cx: &mut Context<Self>,
     ) {
         self.issues.edit_note = None;
-        if self.issues.view.begin_edit(text)
+        if self
+            .issues
+            .view
+            .begin_edit(text, plait_client::host_state::request_id())
             && let Some(form) = self.issues.view.form().cloned()
         {
             if !self.issues.form_fields.contains_key(&form.slot())
@@ -641,7 +683,8 @@ impl Plait {
     }
 
     /// Reopens this project's saved forms, once each time the view starts
-    /// over for a project, behind whatever is shown.
+    /// over for a project, behind whatever is shown. A host that cannot write
+    /// issues reopens none, and the drafts stay on disk for one that can.
     fn restore_saved_forms(&mut self, cx: &mut Context<Self>) {
         let Some(checkout) = self.issues.view.checkout.clone() else {
             return;
@@ -649,7 +692,7 @@ impl Plait {
         let Some(drafts) = &self.issues.drafts else {
             return;
         };
-        if self.issues.restored_for.as_ref() == Some(&checkout) {
+        if self.issues.restored_for.as_ref() == Some(&checkout) || !self.issues.view.issue_writes {
             return;
         }
         let saved: Vec<_> = drafts.of(&checkout).cloned().collect();
@@ -658,22 +701,20 @@ impl Plait {
             if self
                 .issues
                 .view
-                .restore_form(form.form_kind(), form.unresolved_request())
+                .restore_form(form.form_kind(), form.request_id.clone())
             {
                 self.make_form_fields(form.slot(), &form.title, &form.description, cx);
             }
         }
     }
 
-    /// Records this project's open forms as typed, and writes them after
-    /// typing pauses. Writing runs on the background executor.
-    fn persist_forms(&mut self, cx: &mut Context<Self>) {
-        let Some(checkout) = self.issues.view.checkout.clone() else {
-            return;
-        };
+    /// This project's open forms as typed, folded into the saved drafts.
+    /// Returns the drafts to write when they changed, or `None`.
+    fn capture_forms(&mut self, cx: &mut Context<Self>) -> Option<Drafts> {
+        let checkout = self.issues.view.checkout.clone()?;
         // Until the saved forms are read, writing would forget other projects'.
         if self.issues.drafts.is_none() || self.issues.restored_for.as_ref() != Some(&checkout) {
-            return;
+            return None;
         }
         let mut forms: Vec<_> = self
             .issues
@@ -686,7 +727,7 @@ impl Plait {
                     &form.kind,
                     fields.title.read(cx).text(),
                     fields.description.read(cx).saved_draft().0,
-                    form.unresolved(),
+                    &form.request_id,
                 ))
             })
             .collect();
@@ -694,10 +735,14 @@ impl Plait {
             FormSlot::New => String::new(),
             FormSlot::Edit(id) => id,
         });
-        let Some(drafts) = self.issues.drafts.as_mut() else {
-            return;
-        };
-        if !drafts.replace(&checkout, forms) {
+        let drafts = self.issues.drafts.as_mut()?;
+        drafts.replace(&checkout, forms).then(|| drafts.clone())
+    }
+
+    /// Records this project's open forms as typed, and writes them after
+    /// typing pauses. Writing runs on the background executor.
+    fn persist_forms(&mut self, cx: &mut Context<Self>) {
+        if self.capture_forms(cx).is_none() {
             return;
         }
         self.issues.drafts_generation += 1;
@@ -735,38 +780,9 @@ impl Plait {
         cx.notify();
     }
 
-    /// Asks the host what became of an earlier save whose reply was lost,
-    /// before the form sends anything under a new request ID.
-    fn resolve_earlier_save(&mut self, slot: FormSlot, earlier: String, cx: &mut Context<Self>) {
-        if cfg!(test) {
-            return;
-        }
-        let read = earlier.clone();
-        self.linear_task(
-            move |client| {
-                linear::get_write(client, read)
-                    .map(|lookup| {
-                        lookup.write.map(|write| {
-                            let created = write.receipt.and_then(|receipt| receipt.issue_id);
-                            (write.outcome, created)
-                        })
-                    })
-                    .map_err(|error| linear::write_failure(&error))
-            },
-            move |this, result, cx| {
-                if this.issues.view.resolve_reply(&slot, &earlier, result) {
-                    // Nothing was written; send the person's text now.
-                    this.save_issue_form(cx);
-                } else {
-                    this.persist_forms(cx);
-                }
-                true
-            },
-            cx,
-        );
-    }
-
-    /// Writes the form in front. Only this explicit action sends anything.
+    /// Writes the form in front. Only this explicit action sends anything,
+    /// and only once its draft, with the request's ID, is on disk: a save
+    /// after a crash then names the same request.
     fn save_issue_form(&mut self, cx: &mut Context<Self>) {
         let Some(slot) = self.issues.view.form().map(|f| f.slot()) else {
             return;
@@ -776,18 +792,9 @@ impl Plait {
         };
         let title = fields.title.read(cx).text().to_owned();
         let description = fields.description.read(cx).saved_draft().0.to_owned();
-        let request_id = plait_client::host_state::request_id();
-        let request = match self
-            .issues
-            .view
-            .submit_form(&title, &description, request_id)
-        {
+        let fresh = plait_client::host_state::request_id();
+        let request = match self.issues.view.submit_form(&title, &description, fresh) {
             Submit::Send(request) => request,
-            Submit::Resolve(slot, earlier) => {
-                self.resolve_earlier_save(slot, earlier, cx);
-                cx.notify();
-                return;
-            }
             Submit::Closed(slot) => {
                 self.issues.form_fields.remove(&slot);
                 self.persist_forms(cx);
@@ -799,16 +806,42 @@ impl Plait {
                 return;
             }
         };
-        self.persist_forms(cx);
         cx.notify();
         if cfg!(test) {
             return;
         }
+        let drafts = self
+            .capture_forms(cx)
+            .or_else(|| self.issues.drafts.clone());
+        let journal = self.session.journal.clone();
+        let flush = cx.background_executor().spawn(async move {
+            let (Some(journal), Some(drafts)) = (journal, drafts) else {
+                return Err("The desktop's saved state is unavailable.".to_owned());
+            };
+            journal.write_record(linear_drafts::RECORD, &drafts, linear_drafts::RECORD_LIMIT)
+        });
+        cx.spawn(async move |this, cx| {
+            let flushed = flush.await;
+            let _ = this.update(cx, |this, cx| {
+                // A newer debounced write would only repeat this one.
+                this.issues.drafts_generation += 1;
+                if flushed.is_err() {
+                    this.issues.view.draft_unsaved(&request);
+                    cx.notify();
+                    return;
+                }
+                this.send_issue_form(request, cx);
+            });
+        })
+        .detach();
+    }
+
+    fn send_issue_form(&mut self, request: linear_issues::FormRequest, cx: &mut Context<Self>) {
         let call = request.clone();
         self.linear_task(
             move |client| {
                 let result = match call.kind {
-                    FormKind::New { team_id } => linear::create_issue(
+                    FormKind::New { team_id, .. } => linear::create_issue(
                         client,
                         team_id,
                         call.title.unwrap_or_default(),
@@ -871,14 +904,20 @@ impl Plait {
         let form = self.issues.view.form()?;
         let fields = self.issues.form_fields.get(&form.slot())?;
         let shown = self.issues.view.detail.as_ref().map(|d| &d.issue);
+        // A new issue names the team it was written for, which Save sends it to.
+        let elsewhere = match &form.kind {
+            FormKind::New { team_id, team_name } => self
+                .issues
+                .view
+                .team()
+                .is_none_or(|b| &b.team_id != team_id)
+                .then(|| team_name.clone().unwrap_or_else(|| "its team".into())),
+            FormKind::Edit { .. } => None,
+        };
         let heading = match &form.kind {
-            FormKind::New { .. } => format!(
+            FormKind::New { team_name, .. } => format!(
                 "New issue in {}",
-                self.issues
-                    .view
-                    .team()
-                    .and_then(|b| b.team_name.clone())
-                    .unwrap_or_else(|| "the linked team".into())
+                team_name.clone().unwrap_or_else(|| "its team".into())
             ),
             FormKind::Edit { .. } => format!(
                 "Edit {}",
@@ -887,8 +926,28 @@ impl Plait {
                     .unwrap_or_default()
             ),
         };
-        let saving = form.status == FormStatus::Saving;
+        let saving = form.frozen();
         let changed = form.status == FormStatus::Changed;
+        // While a save is in flight the text is shown, not edited.
+        let frozen_text = |id: &'static str, text: String| {
+            div()
+                .id(id)
+                .w_full()
+                .min_w_0()
+                .px_3()
+                .py_2()
+                .rounded(px(ITEM_CORNER))
+                .border_1()
+                .border_color(rgb(colors().border))
+                .text_size(px(14.))
+                .line_height(px(22.))
+                .text_color(rgb(colors().muted))
+                .children(
+                    text.lines()
+                        .map(|line| div().min_h(px(22.)).child(line.to_owned()))
+                        .collect::<Vec<_>>(),
+                )
+        };
         let note = match &form.status {
             FormStatus::Failed { note, .. } => Some(note.clone()),
             FormStatus::Unknown => {
@@ -917,6 +976,18 @@ impl Plait {
                         .text_color(rgb(colors().text))
                         .child(heading),
                 )
+                .when_some(elsewhere, |el, team| {
+                    el.child(
+                        tag(
+                            "issue-form-team",
+                            format!(
+                                "This draft is for {team}, not this project's linked team. Save sends it to {team}; Discard drops it."
+                            ),
+                            colors().amber,
+                        )
+                        .line_height(px(18.)),
+                    )
+                })
                 .when(changed, |el| el.child(self.linear_version(form, cx)))
                 .child(label(
                     "issue-form-title-label",
@@ -940,7 +1011,15 @@ impl Plait {
                                 }
                             }
                         }))
-                        .child(fields.title.clone()),
+                        .child(if saving {
+                            frozen_text(
+                                "issue-form-title-saving",
+                                fields.title.read(cx).text().to_owned(),
+                            )
+                            .into_any_element()
+                        } else {
+                            fields.title.clone().into_any_element()
+                        }),
                 )
                 .child(label(
                     "issue-form-description-label",
@@ -950,7 +1029,14 @@ impl Plait {
                         "Description"
                     },
                 ))
-                .child(
+                .child(if saving {
+                    frozen_text(
+                        "issue-form-description-saving",
+                        fields.description.read(cx).saved_draft().0.to_owned(),
+                    )
+                    .min_h(px(180.))
+                    .into_any_element()
+                } else {
                     div()
                         .w_full()
                         .min_h(px(180.))
@@ -960,8 +1046,9 @@ impl Plait {
                         .border_1()
                         .border_color(rgb(colors().border))
                         .bg(rgb(colors().panel))
-                        .child(fields.description.clone()),
-                )
+                        .child(fields.description.clone())
+                        .into_any_element()
+                })
                 .child(tag(
                     "issue-form-hint",
                     "Markdown works. Cmd-Enter saves; nothing is sent until you save.",

@@ -194,6 +194,8 @@ fn edit_refused(h: &mut Harness) {
 /// The description's image, as if the host had read it.
 fn image_read(h: &mut Harness) {
     writable(h, true);
+    // After the sign-in settles: a new sign-in clears images read before it.
+    h.settle();
     h.update(|p, _, _| {
         let pixels = super::super::images::decode(
             include_bytes!("../../../../../runtime/test/support/images/0.png"),

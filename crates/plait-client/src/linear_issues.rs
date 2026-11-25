@@ -8,8 +8,8 @@
 //! nothing here opens a link from an issue.
 
 use crate::host::linear::{
-    Binding, Cache, Filter, IssueDetail, IssueReply, IssueSummary, IssueText, IssueWrite, Issues,
-    ProjectBinding, Rejection, StateUpdate, Teams, WorkflowState, WriteFailure,
+    Binding, Cache, Earlier, Filter, IssueDetail, IssueReply, IssueSummary, IssueText, IssueWrite,
+    Issues, ProjectBinding, Rejection, StateUpdate, Teams, WorkflowState, WriteFailure,
 };
 use crate::linear_settings::{Pending, message};
 use std::{
@@ -513,6 +513,15 @@ impl IssuesView {
                 current.status = ChangeStatus::Unknown;
                 false
             }
+            Err(WriteFailure::Conflict { .. }) => {
+                current.status = ChangeStatus::Failed {
+                    note:
+                        "This request was already used for another change. Choose the state again."
+                            .into(),
+                    retry: false,
+                };
+                false
+            }
             Err(WriteFailure::Changed) => {
                 current.status = ChangeStatus::Failed {
                     note: "The issue changed in Linear. It was not moved.".into(),
@@ -560,6 +569,8 @@ pub enum FormSlot {
 pub enum FormKind {
     New {
         team_id: String,
+        /// The team's name when the form opened, so the draft says where it goes.
+        team_name: Option<String>,
     },
     Edit {
         issue_id: String,
@@ -573,8 +584,9 @@ pub enum FormKind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FormStatus {
     Editing,
+    /// Being written: the fields are read-only until the host answers.
     Saving,
-    /// Not written. `retry` is whether sending the same text again is safe.
+    /// Not written. `retry` is whether saving again is safe.
     Failed {
         note: String,
         retry: bool,
@@ -586,43 +598,38 @@ pub enum FormStatus {
     Unknown,
 }
 
+/// When the form's request ID gives way to a new one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Retire {
+    /// Every save reuses it, so the host returns the saved outcome.
+    Never,
+    /// Its request definitely wrote nothing; new text takes a new ID.
+    IfChanged(Option<String>, Option<String>),
+    /// The person was told what became of it; the next save takes a new ID.
+    Next,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IssueForm {
     pub kind: FormKind,
     pub status: FormStatus,
+    /// Given when the form opens and saved with its draft before any send, so
+    /// a save after a crash or a lost reply names the same request.
+    pub request_id: String,
+    retire: Retire,
     /// The request in flight, so a stale reply is told apart.
     sent: Option<FormRequest>,
-    /// The last request whose outcome is not known: sent, and its reply lost
-    /// or uncertain. It is resolved with the host before any new request.
-    unresolved: Option<FormRequest>,
-}
-
-/// What `submit_form` asks the view to do.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Submit {
-    /// Nothing to send now; the form says why, if anything.
-    Nothing,
-    /// An edit that changed nothing closed.
-    Closed(FormSlot),
-    /// Send this request.
-    Send(FormRequest),
-    /// Ask the host what became of this earlier request first.
-    Resolve(FormSlot, String),
 }
 
 impl IssueForm {
-    fn new(kind: FormKind) -> Self {
+    fn new(kind: FormKind, request_id: String) -> Self {
         Self {
             kind,
             status: FormStatus::Editing,
+            request_id,
+            retire: Retire::Never,
             sent: None,
-            unresolved: None,
         }
-    }
-
-    /// The request whose outcome is not known yet, if any.
-    pub fn unresolved(&self) -> Option<&FormRequest> {
-        self.unresolved.as_ref()
     }
 
     pub fn slot(&self) -> FormSlot {
@@ -630,6 +637,11 @@ impl IssueForm {
             FormKind::New { .. } => FormSlot::New,
             FormKind::Edit { issue_id, .. } => FormSlot::Edit(issue_id.clone()),
         }
+    }
+
+    /// Whether its fields are read-only now.
+    pub fn frozen(&self) -> bool {
+        self.status == FormStatus::Saving
     }
 }
 
@@ -641,6 +653,17 @@ pub struct FormRequest {
     pub title: Option<String>,
     pub description: Option<String>,
     pub request_id: String,
+}
+
+/// What `submit_form` asks the view to do.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Submit {
+    /// Nothing to send now; the form says why, if anything.
+    Nothing,
+    /// An edit that changed nothing closed.
+    Closed(FormSlot),
+    /// Save the draft with this request to disk, then send it.
+    Send(FormRequest),
 }
 
 /// What a create or edit reply means for the view.
@@ -686,16 +709,24 @@ impl IssuesView {
         }
     }
 
-    /// Shows the new issue's form, keeping any text it already has.
-    pub fn start_new(&mut self) -> bool {
-        let Some(team_id) = self.team().map(|b| b.team_id.clone()) else {
+    /// Shows the new issue's form, keeping any text it already has. A new form
+    /// takes `request_id` and the linked team.
+    pub fn start_new(&mut self, request_id: String) -> bool {
+        let Some(binding) = self.team().cloned() else {
             return false;
         };
         if !self.issue_writes {
             return false;
         }
-        self.new_form
-            .get_or_insert_with(|| IssueForm::new(FormKind::New { team_id }));
+        self.new_form.get_or_insert_with(|| {
+            IssueForm::new(
+                FormKind::New {
+                    team_id: binding.team_id,
+                    team_name: binding.team_name,
+                },
+                request_id,
+            )
+        });
         self.composing_new = true;
         true
     }
@@ -715,7 +746,7 @@ impl IssuesView {
     /// Starts editing an issue from its exact text, read for this edit, so
     /// nothing the display shortened is written back. Text Plait cannot write
     /// back unchanged is left to Linear. Returns whether an edit opened.
-    pub fn begin_edit(&mut self, text: &IssueText) -> bool {
+    pub fn begin_edit(&mut self, text: &IssueText, request_id: String) -> bool {
         if !self.issue_writes || self.selected.as_deref() != Some(text.issue_id.as_str()) {
             return false;
         }
@@ -734,22 +765,27 @@ impl IssuesView {
         self.composing_new = false;
         self.edits.insert(
             text.issue_id.clone(),
-            IssueForm::new(FormKind::Edit {
-                issue_id: text.issue_id.clone(),
-                expected_updated_at: text.updated_at.clone(),
-                title: title.clone(),
-                description: description.clone(),
-            }),
+            IssueForm::new(
+                FormKind::Edit {
+                    issue_id: text.issue_id.clone(),
+                    expected_updated_at: text.updated_at.clone(),
+                    title: title.clone(),
+                    description: description.clone(),
+                },
+                request_id,
+            ),
         );
         true
     }
 
     /// Reopens a form saved before a restart or a project switch, behind
-    /// whatever is shown, with any request still unresolved. A slot that
-    /// already has a form keeps it.
-    pub fn restore_form(&mut self, kind: FormKind, unresolved: Option<FormRequest>) -> bool {
-        let mut form = IssueForm::new(kind);
-        form.unresolved = unresolved.filter(|r| r.kind == form.kind);
+    /// whatever is shown, with its request ID. A slot that already has a form
+    /// keeps it, and a host without issue writes reopens none.
+    pub fn restore_form(&mut self, kind: FormKind, request_id: String) -> bool {
+        if !self.issue_writes {
+            return false;
+        }
+        let form = IssueForm::new(kind, request_id);
         match form.slot() {
             FormSlot::New if self.new_form.is_none() => self.new_form = Some(form),
             FormSlot::Edit(id)
@@ -770,7 +806,7 @@ impl IssuesView {
     /// Discards the form in front, unless it is being written. Returns its slot.
     pub fn cancel_form(&mut self) -> Option<FormSlot> {
         let form = self.form()?;
-        if form.status == FormStatus::Saving {
+        if form.frozen() {
             return None;
         }
         let slot = form.slot();
@@ -798,15 +834,13 @@ impl IssuesView {
         };
         form.status = FormStatus::Editing;
         form.sent = None;
-        form.unresolved = None;
         true
     }
 
-    /// What to do with what was typed in the form in front. A request whose
-    /// outcome is still unknown is never replaced by a new one: the same text
-    /// is sent again under its ID, and different text first asks the host what
-    /// became of it. `request_id` is used only when nothing is unresolved.
-    pub fn submit_form(&mut self, title: &str, description: &str, request_id: String) -> Submit {
+    /// The request for what was typed in the form in front. It carries the
+    /// form's own request ID; `fresh_id` replaces it only after its request
+    /// definitely wrote nothing and the text then changed.
+    pub fn submit_form(&mut self, title: &str, description: &str, fresh_id: String) -> Submit {
         let Some(slot) = self.form().map(IssueForm::slot) else {
             return Submit::Nothing;
         };
@@ -830,7 +864,6 @@ impl IssuesView {
             None
         };
         if let Some(note) = problem {
-            // A note on the form; an unresolved request stays unresolved.
             form.status = FormStatus::Failed {
                 note: note.into(),
                 retry: false,
@@ -851,84 +884,48 @@ impl IssuesView {
                 (description != was).then(|| description.to_owned()),
             ),
         };
-        if form.unresolved.is_none()
-            && matches!(form.kind, FormKind::Edit { .. })
+        if matches!(form.kind, FormKind::Edit { .. })
             && title.is_none()
             && description.is_none()
+            && form.retire == Retire::Never
+            && form.sent.is_none()
         {
             self.remove_form(&slot);
             return Submit::Closed(slot);
         }
-        let request = match &form.unresolved {
-            Some(earlier) if earlier.title == title && earlier.description == description => {
-                earlier.clone()
-            }
-            Some(earlier) => {
-                form.status = FormStatus::Saving;
-                return Submit::Resolve(slot, earlier.request_id.clone());
-            }
-            None => FormRequest {
-                kind: form.kind.clone(),
-                title,
-                description,
-                request_id,
-            },
+        let replace = match &form.retire {
+            Retire::Never => false,
+            Retire::IfChanged(t, d) => *t != title || *d != description,
+            Retire::Next => true,
+        };
+        if replace {
+            form.request_id = fresh_id;
+            form.retire = Retire::Never;
+        }
+        let request = FormRequest {
+            kind: form.kind.clone(),
+            title,
+            description,
+            request_id: form.request_id.clone(),
         };
         form.status = FormStatus::Saving;
         form.sent = Some(request.clone());
-        form.unresolved = Some(request.clone());
         Submit::Send(request)
     }
 
-    /// Applies the host's record of an unresolved request. Returns whether
-    /// the form may now send the person's text under a new request ID.
-    pub fn resolve_reply(
-        &mut self,
-        slot: &FormSlot,
-        request_id: &str,
-        result: Result<Option<(String, Option<String>)>, WriteFailure>,
-    ) -> bool {
-        let Some(form) = self.form_mut(slot) else {
-            return false;
-        };
-        if form.status != FormStatus::Saving
-            || form.unresolved.as_ref().map(|r| r.request_id.as_str()) != Some(request_id)
+    /// The draft could not be written before sending, so nothing was sent.
+    pub fn draft_unsaved(&mut self, request: &FormRequest) {
+        let slot = request_slot(request);
+        if let Some(form) = self.form_mut(&slot)
+            && form.sent.as_ref() == Some(request)
+            && form.status == FormStatus::Saving
         {
-            return false;
+            form.sent = None;
+            form.status = FormStatus::Failed {
+                note: "Couldn't save your draft, so nothing was sent. Try again.".into(),
+                retry: true,
+            };
         }
-        match result {
-            // Never received, not sent, or refused: nothing was written.
-            Ok(None) => {}
-            Ok(Some((outcome, _))) if outcome == "not_sent" || outcome == "rejected" => {}
-            Ok(Some((outcome, created))) if outcome == "accepted" => {
-                form.unresolved = None;
-                form.status = FormStatus::Failed {
-                    note: match (slot, created) {
-                        (FormSlot::New, Some(_)) => {
-                            "An earlier save already created this issue in Linear. Refresh to see it; saving again creates another.".into()
-                        }
-                        _ => "An earlier save already reached Linear. Check the issue in Linear before saving again.".into(),
-                    },
-                    retry: false,
-                };
-                return false;
-            }
-            Ok(Some(_)) => {
-                form.status = FormStatus::Unknown;
-                return false;
-            }
-            Err(_) => {
-                form.status = FormStatus::Failed {
-                    note: "The host could not say what became of the earlier save. Try again."
-                        .into(),
-                    retry: true,
-                };
-                return false;
-            }
-        }
-        form.unresolved = None;
-        form.status = FormStatus::Editing;
-        true
     }
 
     /// Applies the host's answer to `request`, whichever issue is shown now.
@@ -937,21 +934,19 @@ impl IssuesView {
         request: &FormRequest,
         result: Result<IssueWrite, WriteFailure>,
     ) -> FormDone {
-        let slot = match &request.kind {
-            FormKind::New { .. } => FormSlot::New,
-            FormKind::Edit { issue_id, .. } => FormSlot::Edit(issue_id.clone()),
-        };
+        let slot = request_slot(request);
         let Some(form) = self.form_mut(&slot) else {
             return FormDone::Nothing;
         };
         if form.sent.as_ref() != Some(request) || form.status != FormStatus::Saving {
             return FormDone::Nothing;
         }
+        let written_nothing = Retire::IfChanged(request.title.clone(), request.description.clone());
         let failed = |note: &str, retry: bool| FormStatus::Failed {
             note: note.into(),
             retry,
         };
-        form.status = match result {
+        let (status, retire) = match result {
             Ok(write) => {
                 self.remove_form(&slot);
                 return match (&slot, write.issue_id, write.issue) {
@@ -971,19 +966,44 @@ impl IssuesView {
                 };
             }
             Err(WriteFailure::Changed) => {
-                // Refused before sending: nothing is unresolved.
-                form.unresolved = None;
                 form.status = FormStatus::Changed;
+                form.retire = written_nothing;
                 return FormDone::Reload;
             }
-            // The request stays unresolved, so it is never replaced by another.
-            Err(WriteFailure::Unknown) => FormStatus::Unknown,
-            Err(WriteFailure::Lost) => failed(
-                "The host's answer was lost. Saving again checks what happened first, so nothing is written twice.",
-                true,
+            Err(WriteFailure::Unknown)
+            | Err(WriteFailure::Conflict {
+                earlier: Earlier::Unknown,
+            }) => (FormStatus::Unknown, Retire::Never),
+            Err(WriteFailure::Lost) => (
+                failed(
+                    "The host's answer was lost. Saving again returns what happened, so nothing is written twice.",
+                    true,
+                ),
+                Retire::Never,
             ),
-            Err(WriteFailure::Refused(error)) => {
-                form.unresolved = None;
+            Err(WriteFailure::Conflict {
+                earlier: Earlier::Accepted,
+            }) => (
+                failed(
+                    match slot {
+                        FormSlot::New => {
+                            "An earlier save already created this issue. Refresh to see it; saving again creates another."
+                        }
+                        FormSlot::Edit(_) => {
+                            "An earlier save already reached Linear. Check the issue before saving again."
+                        }
+                    },
+                    false,
+                ),
+                Retire::Next,
+            ),
+            Err(WriteFailure::Conflict {
+                earlier: Earlier::NothingWritten,
+            }) => (
+                failed("Nothing was saved. Save again to send this text.", true),
+                Retire::Next,
+            ),
+            Err(WriteFailure::Refused(error)) => (
                 failed(
                     &match error {
                         Rejection::SignedOut | Rejection::KeyRejected => {
@@ -999,10 +1019,21 @@ impl IssuesView {
                         error,
                         Rejection::SignedOut | Rejection::KeyRejected | Rejection::NotFound
                     ),
-                )
-            }
+                ),
+                written_nothing,
+            ),
         };
+        form.status = status;
+        form.retire = retire;
+        form.sent = None;
         FormDone::Nothing
+    }
+}
+
+fn request_slot(request: &FormRequest) -> FormSlot {
+    match &request.kind {
+        FormKind::New { .. } => FormSlot::New,
+        FormKind::Edit { issue_id, .. } => FormSlot::Edit(issue_id.clone()),
     }
 }
 /// Fixed text for a refused status change. Host messages are never shown here.
@@ -1466,6 +1497,7 @@ mod state_tests {
 #[cfg(test)]
 mod form_tests {
     use super::*;
+    use crate::host::linear::Earlier;
     use serde_json::json;
 
     fn detail(id: &str, updated: &str, title: &str) -> IssueReply<IssueDetail> {
@@ -1495,26 +1527,30 @@ mod form_tests {
         }
     }
 
-    fn view() -> IssuesView {
-        let mut view = IssuesView::default();
-        view.target(1, Path::new("/repo"), None);
+    fn bind(view: &mut IssuesView, team: &str) {
         let g = view.start_binding();
         view.binding_reply(
             g,
             Ok(
                 serde_json::from_value(json!({"checkout": "/repo", "binding": {
-                "workspace_id": "ORG", "team_id": "T", "team_key": "PLA",
-                "team_name": "Plait", "updated_at": 1}}))
+                "workspace_id": "ORG", "team_id": team, "team_key": "PLA",
+                "team_name": format!("Team {team}"), "updated_at": 1}}))
                 .unwrap(),
             ),
         );
+    }
+
+    fn view() -> IssuesView {
+        let mut view = IssuesView::default();
+        view.target(1, Path::new("/repo"), None);
+        bind(&mut view, "T");
         view.issue_writes = true;
         show(&mut view, "I", "1", "Old");
         view
     }
 
     fn edit(view: &mut IssuesView) {
-        assert!(view.begin_edit(&text("I", "1", "Old", "Body")));
+        assert!(view.begin_edit(&text("I", "1", "Old", "Body"), "e1".into()));
     }
 
     fn sent(submit: Submit) -> FormRequest {
@@ -1539,27 +1575,155 @@ mod form_tests {
     fn forms_need_the_capability_and_a_title() {
         let mut view = view();
         view.issue_writes = false;
-        assert!(!view.start_new());
+        assert!(!view.start_new("n1".into()));
+        assert!(!view.begin_edit(&text("I", "1", "Old", "Body"), "e1".into()));
         assert!(
-            !view.begin_edit(&text("I", "1", "Old", "Body")),
-            "an older host offers no form"
+            !view.restore_form(
+                FormKind::New {
+                    team_id: "T".into(),
+                    team_name: None
+                },
+                "n1".into()
+            ),
+            "a host without issue writes reopens no form"
         );
         view.issue_writes = true;
-        assert!(view.start_new());
-        assert_eq!(view.submit_form("   ", "", "r".into()), Submit::Nothing);
+        assert!(view.start_new("n1".into()));
+        assert_eq!(view.submit_form("   ", "", "x".into()), Submit::Nothing);
         assert!(matches!(
             view.form().unwrap().status,
             FormStatus::Failed { retry: false, .. }
         ));
-        let long = "x".repeat(TITLE_LIMIT + 1);
-        assert_eq!(view.submit_form(&long, "", "r".into()), Submit::Nothing);
+    }
+
+    #[test]
+    fn every_save_of_a_form_names_its_own_request() {
+        let mut view = view();
+        view.start_new("n1".into());
+        let first = sent(view.submit_form("New", "", "x1".into()));
+        assert_eq!(first.request_id, "n1", "the ID given when the form opened");
+        view.form_reply(&first, Err(WriteFailure::Lost));
+        // A slip, then different text: still the same request.
+        assert_eq!(view.submit_form("", "", "x2".into()), Submit::Nothing);
+        let again = sent(view.submit_form("Newer", "", "x3".into()));
+        assert_eq!(again.request_id, "n1");
+        // The host says the earlier text already went through: it is said, not resent.
+        view.form_reply(
+            &again,
+            Err(WriteFailure::Conflict {
+                earlier: Earlier::Accepted,
+            }),
+        );
+        assert!(matches!(
+            &view.form().unwrap().status,
+            FormStatus::Failed { note, retry: false } if note.contains("already created")
+        ));
+        // Only a deliberate save after that takes a new ID.
+        assert_eq!(
+            sent(view.submit_form("Newer", "", "x4".into())).request_id,
+            "x4"
+        );
+    }
+
+    #[test]
+    fn a_save_after_quitting_names_the_same_request() {
+        let mut view = view();
+        view.start_new("n1".into());
+        let first = sent(view.submit_form("New", "", "x1".into()));
+        // Quit right after sending: the draft was written with its ID first.
+        let saved = crate::linear_drafts::SavedForm::new(
+            Path::new("/repo"),
+            &first.kind,
+            "New",
+            "",
+            &view.form().unwrap().request_id,
+        );
+        let mut reopened = self::view();
+        assert!(reopened.restore_form(saved.form_kind(), saved.request_id.clone()));
+        reopened.start_new("n2".into());
+        let again = sent(reopened.submit_form("New", "", "x2".into()));
+        assert_eq!(
+            again, first,
+            "the host replays the first outcome: one issue"
+        );
+    }
+
+    #[test]
+    fn new_text_takes_a_new_request_only_after_nothing_was_written() {
+        let mut view = view();
+        edit(&mut view);
+        let first = sent(view.submit_form("Newer", "Body", "x1".into()));
+        view.form_reply(
+            &first,
+            Err(WriteFailure::Refused(Rejection::RateLimited(Some(5)))),
+        );
+        assert_eq!(
+            sent(view.submit_form("Newer", "Body", "x2".into())).request_id,
+            "e1",
+            "the same text keeps its request"
+        );
+        view.form_reply(&first.clone(), Err(WriteFailure::Lost));
+        let mut view = self::view();
+        edit(&mut view);
+        let first = sent(view.submit_form("Newer", "Body", "x1".into()));
+        view.form_reply(
+            &first,
+            Err(WriteFailure::Refused(Rejection::RateLimited(None))),
+        );
+        let changed = sent(view.submit_form("Newest", "Body", "x2".into()));
+        assert_eq!(
+            changed.request_id, "x2",
+            "refused, then changed: a new request"
+        );
+        view.form_reply(&changed, Err(WriteFailure::Unknown));
+        assert_eq!(view.form().unwrap().status, FormStatus::Unknown);
+        assert_eq!(
+            view.submit_form("Newest", "Body", "x3".into()),
+            Submit::Nothing
+        );
+    }
+
+    #[test]
+    fn a_save_freezes_the_form_and_a_failure_keeps_the_text() {
+        let mut view = view();
+        view.start_new("n1".into());
+        let request = sent(view.submit_form("New", "Body", "x".into()));
+        assert!(view.form().unwrap().frozen());
+        assert_eq!(view.cancel_form(), None, "a form being saved stays open");
+        view.draft_unsaved(&request);
+        assert!(!view.form().unwrap().frozen());
+        assert!(matches!(
+            &view.form().unwrap().status,
+            FormStatus::Failed { note, retry: true } if note.contains("Couldn't save your draft")
+        ));
+        let again = sent(view.submit_form("New", "Body", "x2".into()));
+        assert_eq!(again.request_id, "n1");
+        assert_eq!(
+            view.form_reply(&again, Ok(written(Some("NEW"), None))),
+            FormDone::Created("NEW".into())
+        );
+        assert!(view.new_form.is_none());
+    }
+
+    #[test]
+    fn a_new_issue_keeps_the_team_it_was_written_for() {
+        let mut view = view();
+        view.start_new("n1".into());
+        bind(&mut view, "OTHER");
+        view.start_new("n2".into());
+        assert!(matches!(
+            &view.form().unwrap().kind,
+            FormKind::New { team_id, team_name: Some(name) } if team_id == "T" && name == "Team T"
+        ));
+        let request = sent(view.submit_form("New", "", "x".into()));
+        assert!(matches!(&request.kind, FormKind::New { team_id, .. } if team_id == "T"));
     }
 
     #[test]
     fn an_edit_starts_from_the_exact_text_and_long_text_stays_in_linear() {
         let mut view = view();
         let title = "漢".repeat(200);
-        assert!(view.begin_edit(&text("I", "1", &title, "Body")));
+        assert!(view.begin_edit(&text("I", "1", &title, "Body"), "e1".into()));
         assert!(
             matches!(&view.form().unwrap().kind, FormKind::Edit { title: t, .. } if *t == title)
         );
@@ -1567,170 +1731,51 @@ mod form_tests {
         let blocked: IssueText = serde_json::from_value(json!({"issue_id": "I",
             "updated_at": "1", "editable": false, "title": null, "description": null}))
         .unwrap();
-        assert!(!other.begin_edit(&blocked));
+        assert!(!other.begin_edit(&blocked, "e1".into()));
         assert_eq!(other.not_editable.as_deref(), Some("I"));
-        assert!(other.form().is_none());
     }
 
     #[test]
-    fn a_new_issue_is_kept_behind_other_issues_and_selects_what_was_created() {
-        let mut view = view();
-        view.start_new();
-        show(&mut view, "J", "1", "Other");
-        assert!(view.form().is_none(), "the chosen issue is in front");
-        assert!(view.new_form.is_some(), "the new issue's form is kept");
-        assert!(view.start_new(), "and comes back");
-        let request = sent(view.submit_form(" New ", "  ", "r1".into()));
-        assert_eq!(
-            request.kind,
-            FormKind::New {
-                team_id: "T".into()
-            }
-        );
-        assert_eq!(request.title.as_deref(), Some("New"));
-        assert_eq!(request.description, None, "a blank description is not sent");
-        assert_eq!(
-            view.submit_form("New", "", "r2".into()),
-            Submit::Nothing,
-            "one at a time"
-        );
-        assert_eq!(view.cancel_form(), None, "a form being saved stays open");
-        let done = view.form_reply(&request, Ok(written(Some("NEW"), None)));
-        assert_eq!(done, FormDone::Created("NEW".into()));
-        assert!(view.new_form.is_none() && !view.composing_new);
-    }
-
-    #[test]
-    fn each_issue_keeps_its_own_unsaved_edit() {
+    fn each_issue_keeps_its_own_unsaved_edit_and_a_conflict_waits_for_a_choice() {
         let mut view = view();
         edit(&mut view);
         show(&mut view, "J", "1", "Other");
         assert!(view.form().is_none());
-        assert!(view.begin_edit(&text("J", "1", "Other", "Body")));
         show(&mut view, "I", "1", "Old");
-        assert!(view.show_edit(), "returns to the same edit");
-        assert!(
-            matches!(&view.form().unwrap().kind, FormKind::Edit { issue_id, .. } if issue_id == "I")
-        );
-        assert_eq!(view.edits.len(), 2);
-        assert_eq!(view.cancel_form(), Some(FormSlot::Edit("I".into())));
-        assert_eq!(view.edits.len(), 1);
-    }
-
-    #[test]
-    fn an_edit_sends_only_what_changed_and_carries_when_it_was_read() {
-        let mut view = view();
-        edit(&mut view);
-        assert_eq!(
-            view.submit_form("Old", "Body", "r".into()),
-            Submit::Closed(FormSlot::Edit("I".into()))
-        );
-        edit(&mut view);
-        let request = sent(view.submit_form("Old", "New body", "r1".into()));
-        assert_eq!(request.title, None);
-        assert_eq!(request.description.as_deref(), Some("New body"));
-        assert!(
-            matches!(&request.kind, FormKind::Edit { expected_updated_at, .. } if expected_updated_at == "1")
-        );
-        show(&mut view, "J", "1", "Other");
-        let mut fresh = detail("I", "2", "Old").issue;
-        fresh.description = Some("New body".into());
-        assert_eq!(
-            view.form_reply(&request, Ok(written(None, Some(fresh)))),
-            FormDone::Closed(FormSlot::Edit("I".into()))
-        );
-        assert!(view.edits.is_empty());
-    }
-
-    #[test]
-    fn a_conflict_keeps_both_versions_until_the_person_chooses() {
-        let mut view = view();
-        edit(&mut view);
-        let request = sent(view.submit_form("Mine", "Body", "r1".into()));
+        assert!(view.show_edit());
+        let request = sent(view.submit_form("Mine", "Body", "x".into()));
         assert_eq!(
             view.form_reply(&request, Err(WriteFailure::Changed)),
             FormDone::Reload
         );
-        assert_eq!(view.form().unwrap().status, FormStatus::Changed);
         assert_eq!(
-            view.submit_form("Mine", "Body", "r2".into()),
+            view.submit_form("Mine", "Body", "x".into()),
             Submit::Nothing
         );
         let g = view.reload_detail().unwrap();
         view.detail_reply(g.1, "I", Ok(detail("I", "3", "Theirs")));
         assert!(view.keep_mine());
-        let again = sent(view.submit_form("Mine", "Body", "r3".into()));
+        let again = sent(view.submit_form("Mine", "Body", "x2".into()));
         assert_eq!(
-            again.request_id, "r3",
-            "nothing was sent before, so a new request"
+            again.request_id, "e1",
+            "nothing was written, same text: same request"
         );
         assert!(
-            matches!(&again.kind, FormKind::Edit { expected_updated_at, title, .. }
-                if expected_updated_at == "3" && title == "Theirs")
+            matches!(&again.kind, FormKind::Edit { expected_updated_at, .. } if expected_updated_at == "3")
         );
     }
 
     #[test]
-    fn a_lost_create_is_never_replaced_until_the_host_says_what_happened() {
-        let mut view = view();
-        view.start_new();
-        let first = sent(view.submit_form("New", "", "r1".into()));
-        view.form_reply(&first, Err(WriteFailure::Lost));
-        // A typing slip in between does not forget the earlier request.
-        assert_eq!(view.submit_form("", "", "r2".into()), Submit::Nothing);
-        // The same text goes again under its own ID.
-        let same = sent(view.submit_form("New", "", "r3".into()));
-        assert_eq!(same.request_id, "r1");
-        view.form_reply(&same, Err(WriteFailure::Lost));
-        // Different text asks the host first, and sends nothing yet.
-        assert_eq!(
-            view.submit_form("Newer", "", "r4".into()),
-            Submit::Resolve(FormSlot::New, "r1".into())
-        );
-        assert_eq!(view.form().unwrap().status, FormStatus::Saving);
-        // It reached Linear: say so, and only a deliberate save creates another.
-        assert!(!view.resolve_reply(
-            &FormSlot::New,
-            "r1",
-            Ok(Some(("accepted".into(), Some("NEW".into()))))
-        ));
-        assert!(matches!(
-            &view.form().unwrap().status,
-            FormStatus::Failed { note, retry: false } if note.contains("already created")
-        ));
-        assert_eq!(
-            sent(view.submit_form("Newer", "", "r5".into())).request_id,
-            "r5"
-        );
-    }
-
-    #[test]
-    fn an_unresolved_request_the_host_never_sent_makes_way_for_new_text() {
+    fn an_edit_sends_only_what_changed_and_a_stale_reply_is_dropped() {
         let mut view = view();
         edit(&mut view);
-        let first = sent(view.submit_form("Newer", "Body", "r1".into()));
-        view.form_reply(&first, Err(WriteFailure::Lost));
         assert_eq!(
-            view.submit_form("Newest", "Body", "r2".into()),
-            Submit::Resolve(FormSlot::Edit("I".into()), "r1".into())
+            view.submit_form("Old", "Body", "x".into()),
+            Submit::Closed(FormSlot::Edit("I".into()))
         );
-        assert!(view.resolve_reply(&FormSlot::Edit("I".into()), "r1", Ok(None)));
-        let next = sent(view.submit_form("Newest", "Body", "r3".into()));
-        assert_eq!(next.request_id, "r3");
-        view.form_reply(&next, Err(WriteFailure::Unknown));
-        assert_eq!(view.form().unwrap().status, FormStatus::Unknown);
-        assert_eq!(
-            view.submit_form("Newest", "Body", "r4".into()),
-            Submit::Nothing,
-            "an unknown write is never sent again"
-        );
-    }
-
-    #[test]
-    fn a_stale_reply_writes_nothing() {
-        let mut view = view();
         edit(&mut view);
-        let request = sent(view.submit_form("Newer", "Body", "r1".into()));
+        let request = sent(view.submit_form("Old", "New body", "x".into()));
+        assert_eq!(request.title, None);
         let stale = FormRequest {
             request_id: "old".into(),
             ..request.clone()
@@ -1739,27 +1784,6 @@ mod form_tests {
             view.form_reply(&stale, Ok(written(None, None))),
             FormDone::Nothing
         );
-        assert_eq!(view.form().unwrap().status, FormStatus::Saving);
-        assert_eq!(view.detail.as_ref().unwrap().issue.summary.title, "Old");
-    }
-
-    #[test]
-    fn a_restored_form_keeps_its_unresolved_request() {
-        let mut view = view();
-        let kind = FormKind::New {
-            team_id: "T".into(),
-        };
-        let earlier = FormRequest {
-            kind: kind.clone(),
-            title: Some("New".into()),
-            description: None,
-            request_id: "r1".into(),
-        };
-        assert!(view.restore_form(kind, Some(earlier)));
-        view.start_new();
-        assert_eq!(
-            view.submit_form("Changed", "", "r2".into()),
-            Submit::Resolve(FormSlot::New, "r1".into())
-        );
+        assert!(view.form().unwrap().frozen());
     }
 }

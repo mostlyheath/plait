@@ -1223,6 +1223,7 @@ mod tests {
             retry_after_seconds: None,
             code: "turn_limit".into(),
             message: "raw".into(),
+            outcome: None,
         });
         assert!(
             run_state(&s, 0)

@@ -160,12 +160,14 @@ mod tests {
             retry_after_seconds: None,
             code: "invalid_request".into(),
             message: "Unknown operation or field.".into(),
+            outcome: None,
         });
         assert!(needs_host_update(&old));
         let missing = Error::Rejected(HostError {
             retry_after_seconds: None,
             code: "not_found".into(),
             message: "checkout is not inside a Git working tree.".into(),
+            outcome: None,
         });
         assert!(!needs_host_update(&missing));
     }

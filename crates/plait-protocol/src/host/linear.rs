@@ -109,10 +109,6 @@ pub enum Request {
     LinearGetIssueText {
         issue_id: String,
     },
-    /// The host's saved outcome for a write request, read locally.
-    LinearGetWrite {
-        request_id: String,
-    },
 }
 impl fmt::Debug for Request {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -357,23 +353,4 @@ pub struct IssueText {
     pub editable: bool,
     pub title: Option<String>,
     pub description: Option<String>,
-}
-/// The host's record of one write request, or none if it never saw it.
-#[derive(Clone, Debug, Deserialize)]
-pub struct WriteLookup {
-    pub request_id: String,
-    pub write: Option<WriteRecord>,
-}
-#[derive(Clone, Debug, Deserialize)]
-pub struct WriteRecord {
-    /// `not_sent`, `rejected`, `accepted` or `unknown`.
-    pub outcome: String,
-    #[serde(default)]
-    pub receipt: Option<WriteRecordReceipt>,
-}
-/// The part of an accepted receipt the desktop uses.
-#[derive(Clone, Debug, Deserialize)]
-pub struct WriteRecordReceipt {
-    #[serde(default)]
-    pub issue_id: Option<String>,
 }

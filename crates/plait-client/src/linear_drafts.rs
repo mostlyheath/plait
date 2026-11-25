@@ -1,13 +1,14 @@
 //! Unsaved Linear issue text, kept across quitting and switching projects.
 //!
 //! One bounded record in the desktop journal holds every open form: a new
-//! issue per project and edits per issue. The desktop writes it on the
-//! background executor after typing pauses. Nothing here talks to Linear;
-//! a restored form is sent only when the person saves it.
+//! issue per project and edits per issue, each with its request ID. The
+//! desktop writes it after typing pauses, and before any save is sent, so a
+//! save after a crash names the same request and the host returns its saved
+//! outcome. Nothing here talks to Linear.
 //!
 //! The journal belongs to one host store. Moving this into the per-machine
 //! session state (#132) is a later change.
-use crate::linear_issues::{FormKind, FormRequest, FormSlot};
+use crate::linear_issues::{FormKind, FormSlot};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -23,6 +24,8 @@ pub const FORM_LIMIT: usize = 64;
 pub enum SavedKind {
     New {
         team_id: String,
+        #[serde(default)]
+        team_name: Option<String>,
     },
     Edit {
         issue_id: String,
@@ -32,24 +35,15 @@ pub enum SavedKind {
     },
 }
 
-/// One form as typed: where it belongs, what it writes, and its text.
+/// One form as typed: where it belongs, what it writes, its text, and the
+/// request ID every save of it uses.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SavedForm {
     pub checkout: PathBuf,
     pub kind: SavedKind,
     pub title: String,
     pub description: String,
-    /// A save whose outcome was not known when Plait last wrote this, so a
-    /// reopened form asks the host about it before writing anything new.
-    #[serde(default)]
-    pub unresolved: Option<SavedRequest>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SavedRequest {
     pub request_id: String,
-    pub title: Option<String>,
-    pub description: Option<String>,
 }
 
 impl SavedForm {
@@ -58,11 +52,12 @@ impl SavedForm {
         kind: &FormKind,
         title: &str,
         description: &str,
-        unresolved: Option<&FormRequest>,
+        request_id: &str,
     ) -> Self {
         let kind = match kind {
-            FormKind::New { team_id } => SavedKind::New {
+            FormKind::New { team_id, team_name } => SavedKind::New {
                 team_id: team_id.clone(),
+                team_name: team_name.clone(),
             },
             FormKind::Edit {
                 issue_id,
@@ -81,23 +76,8 @@ impl SavedForm {
             kind,
             title: title.to_owned(),
             description: description.to_owned(),
-            unresolved: unresolved.map(|r| SavedRequest {
-                request_id: r.request_id.clone(),
-                title: r.title.clone(),
-                description: r.description.clone(),
-            }),
+            request_id: request_id.to_owned(),
         }
-    }
-
-    /// The unresolved request, as the form it belongs to sent it.
-    pub fn unresolved_request(&self) -> Option<FormRequest> {
-        let saved = self.unresolved.as_ref()?;
-        Some(FormRequest {
-            kind: self.form_kind(),
-            title: saved.title.clone(),
-            description: saved.description.clone(),
-            request_id: saved.request_id.clone(),
-        })
     }
 
     pub fn slot(&self) -> FormSlot {
@@ -110,8 +90,9 @@ impl SavedForm {
     /// The form to reopen, as it was when it started.
     pub fn form_kind(&self) -> FormKind {
         match &self.kind {
-            SavedKind::New { team_id } => FormKind::New {
+            SavedKind::New { team_id, team_name } => FormKind::New {
                 team_id: team_id.clone(),
+                team_name: team_name.clone(),
             },
             SavedKind::Edit {
                 issue_id,
@@ -163,10 +144,11 @@ mod tests {
             Path::new(root),
             &FormKind::New {
                 team_id: "T".into(),
+                team_name: Some("Plait".into()),
             },
             title,
             "",
-            None,
+            "r1",
         )
     }
 
@@ -185,29 +167,26 @@ mod tests {
     }
 
     #[test]
-    fn an_edit_reopens_from_the_version_it_started_from() {
+    fn a_form_reopens_with_its_team_version_and_request() {
         let kind = FormKind::Edit {
             issue_id: "I".into(),
             expected_updated_at: "1".into(),
             title: "Old".into(),
             description: "Body".into(),
         };
-        let request = FormRequest {
-            kind: kind.clone(),
-            title: Some("Mine".into()),
-            description: None,
-            request_id: "r1".into(),
-        };
-        let saved = SavedForm::new(Path::new("/a"), &kind, "Mine", "My body", Some(&request));
-        assert_eq!(saved.unresolved_request(), Some(request));
+        let saved = SavedForm::new(Path::new("/a"), &kind, "Mine", "My body", "r9");
         assert_eq!(saved.form_kind(), kind);
         assert_eq!(saved.slot(), FormSlot::Edit("I".into()));
         let json = serde_json::to_string(&Drafts {
-            forms: vec![saved.clone()],
+            forms: vec![saved.clone(), new_form("/a", "New")],
         })
         .unwrap();
         let back: Drafts = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.forms, [saved]);
+        assert_eq!(back.forms[0], saved);
+        assert_eq!(back.forms[0].request_id, "r9");
+        assert!(
+            matches!(back.forms[1].form_kind(), FormKind::New { team_name: Some(n), .. } if n == "Plait")
+        );
     }
 
     #[test]

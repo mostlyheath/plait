@@ -456,6 +456,7 @@ mod tests {
             retry_after_seconds: None,
             code: code.into(),
             message: message.into(),
+            outcome: None,
         })
     }
 

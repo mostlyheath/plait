@@ -61,6 +61,8 @@ export class FakeLinearServer {
   dropNextMutationReply = false;
   /** Authorization sent with each image read, in order; a redirect's second read must carry none. */
   imageAuthorizations: (string | undefined)[] = [];
+  /** How the exact-text read misbehaves: with GraphQL errors, or a field left out. */
+  issueTextFault: 'errors' | 'no_description' | null = null;
   /** Where /org-1/redirect-away sends the reader: another origin, which must get nothing. */
   awayOrigin = '';
   /** Bytes served at /org-1/<name>, as Linear's storage serves an organization's files. */
@@ -340,10 +342,13 @@ export class FakeLinearServer {
 
     if (parsed.query.includes('PlaitIssueText')) {
       const issue = this.issues.find(item => item.id === parsed.variables.id || item.identifier === parsed.variables.id);
-      res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ data: { issue: issue
+      const node: Record<string, unknown> | null = issue
         ? { id: issue.id, title: issue.title, description: issue.description, updatedAt: issue.updatedAt }
-        : null } }));
+        : null;
+      if (node && this.issueTextFault === 'no_description') delete node.description;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ data: { issue: node },
+        ...(this.issueTextFault === 'errors' ? { errors: [{ message: 'description could not be resolved', path: ['issue', 'description'] }] } : {}) }));
       return;
     }
 

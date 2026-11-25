@@ -283,3 +283,18 @@ test('image limits: streamed and decompressed size, pixels, rate limits, and the
   await h.call({ op: 'linear_read_image', url: 'https://uploads.linear.app/org-1/many-0', offset: 0 });
   assert.equal(h.fake.imageAuthorizations.length, 66, 'the oldest was evicted');
 });
+
+test('an incomplete exact read is never taken as empty text', async t => {
+  const h = await setup(t);
+  for (const fault of ['errors', 'no_description'] as const) {
+    h.fake.issueTextFault = fault;
+    const reply = await h.call({ op: 'linear_get_issue_text', issue_id: 'issue-142' });
+    assert.equal(reply.ok, true, JSON.stringify(reply));
+    assert.equal(reply.result.editable, false, fault);
+    assert.equal(reply.result.description, null, fault);
+  }
+  h.fake.issueTextFault = null;
+  h.fake.issues.find(issue => issue.id === 'issue-142')!.description = null;
+  const empty = await h.call({ op: 'linear_get_issue_text', issue_id: 'issue-142' });
+  assert.equal(empty.result.editable, false, 'a null description is not read as empty');
+});

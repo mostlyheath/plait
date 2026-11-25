@@ -591,7 +591,8 @@ mod inventory_tests {
             compatibility(Error::Rejected(HostError {
                 retry_after_seconds: None,
                 code: "invalid_request".into(),
-                message: "Unknown operation".into()
+                message: "Unknown operation".into(),
+                outcome: None,
             }))
             .to_string(),
             Error::Protocol(OLDER_HOST.into()).to_string()

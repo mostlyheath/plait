@@ -448,6 +448,7 @@ fn tool_states(snapshot: &mut Snapshot) {
         retry_after_seconds: None,
         code: "sample_error".into(),
         message: "Sample host error. This is a rendering fixture, not an agent run.".into(),
+        outcome: None,
     });
     snapshot.truncated = true;
 }
@@ -1828,6 +1829,7 @@ fn a_creation_reply_lands_only_on_the_draft_that_sent_it() {
             retry_after_seconds: None,
             code: "invalid".into(),
             message: "Sample refusal.".into(),
+            outcome: None,
         }));
         many_drafts::finish(plait, "refused", refused, window, cx);
         assert!(plait.draft.pending.is_none() && plait.draft.sending.is_none());
@@ -5182,6 +5184,7 @@ fn history_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
                 retry_after_seconds: None,
                 code: "runtime_error".into(),
                 message: "The provider did not complete the request. Try another message.".into(),
+                outcome: None,
             }),
         ),
         (
@@ -5191,6 +5194,7 @@ fn history_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
                 retry_after_seconds: None,
                 code: "turn_limit".into(),
                 message: "Limit".into(),
+                outcome: None,
             }),
         ),
     ] {
