@@ -299,7 +299,15 @@ impl Plait {
     }
 
     pub(super) fn saved_thread(&self, summary: &ThreadSummary) -> Option<&Thread> {
-        self.session.data.as_ref()?.saved_thread(summary)
+        self.session
+            .data
+            .as_ref()?
+            .saved_thread(summary, self.known_machine())
+    }
+
+    /// The connected machine, once this connection's identity has been read.
+    pub(super) fn known_machine(&self) -> Option<&plait_client::tabs::HostKey> {
+        (self.tabs.identity.verified && self.tab_identity_current()).then_some(&self.tabs.host)
     }
 
     pub(super) fn session_accepts_thread(&self, id: &str) -> bool {
@@ -312,7 +320,7 @@ impl Plait {
                 self.session
                     .data
                     .as_ref()
-                    .is_none_or(|data| data.accepts(summary))
+                    .is_none_or(|data| data.accepts(summary, self.known_machine()))
             })
     }
 
@@ -339,6 +347,39 @@ impl Plait {
         }
     }
 
+    /// The machine a saved draft is for. Its open tab names it; otherwise the
+    /// saved record keeps the machine it had, so a draft set aside during a
+    /// machine switch is never stamped with the machine switched to. Before
+    /// this connection's identity is read the machine is not known yet.
+    fn draft_machine(&self, id: &str) -> Option<plait_client::tabs::HostKey> {
+        let saved = self
+            .session
+            .data
+            .as_ref()
+            .and_then(|data| data.draft_tabs.get(id))
+            .and_then(|tab| tab.host.clone());
+        if !self.tabs.identity.verified {
+            return saved;
+        }
+        let open = self
+            .tabs
+            .model
+            .tabs()
+            .iter()
+            .find_map(|tab| match tab.session().target() {
+                plait_client::tabs::TabTarget::Draft { id: open, checkout } if open == id => {
+                    Some(checkout.host.clone())
+                }
+                _ => None,
+            });
+        open.or(saved).or_else(|| self.known_machine().cloned())
+    }
+
+    /// Whether a saved draft is recovered on the machine this window shows.
+    pub(super) fn draft_is_here(&self, tab: &plait_client::session::DraftTab) -> bool {
+        tab.belongs_to(&self.tabs.host, self.host_is_local())
+    }
+
     pub(super) fn capture_session(&mut self, cx: &mut Context<Self>) {
         self.refresh_draft_title(cx);
         self.queue_tab_save(cx);
@@ -358,6 +399,7 @@ impl Plait {
                     creation: self.draft.saved_creation(),
                     checkout: self.host.creation.checkout.clone(),
                     settings: self.draft.settings(),
+                    host: self.draft_machine(id),
                     draft: Draft {
                         text: text.into(),
                         revision,
@@ -379,6 +421,7 @@ impl Plait {
                 checkout: self.host.creation.checkout.clone(),
                 settings: self.draft.settings(),
                 draft: self.draft.saved.clone(),
+                host: self.draft_machine(id),
             });
         }
         if self.host_is_local()
@@ -443,6 +486,7 @@ impl Plait {
                         .collect(),
                     queued_submissions: self.host.submissions.accepted(&summary.id).to_vec(),
                     approval: self.thread_approval(&summary.id),
+                    host: self.known_machine().cloned(),
                 },
             ) {
                 self.session.note = Some(error);

@@ -564,6 +564,7 @@ impl Plait {
         let Some(sending) = draft.sending.take() else {
             return;
         };
+        let known = self.known_machine().cloned();
         if let Some(data) = &mut self.session.data {
             let mut saved = data
                 .draft_tab(&draft_id, &source_root)
@@ -588,6 +589,7 @@ impl Plait {
                     pending_submissions: Vec::new(),
                     queued_submissions: Vec::new(),
                     approval: sending.choice,
+                    host: known,
                 },
             );
             data.clear_draft_tab(&draft_id);

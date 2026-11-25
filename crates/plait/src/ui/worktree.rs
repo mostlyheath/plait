@@ -358,6 +358,7 @@ impl Plait {
         }
         self.worktree_busy = true;
         let request = attempt.request.clone();
+        let machine = self.machines.active.clone();
         let client = self.host_client();
         let task = cx
             .background_executor()
@@ -366,16 +367,20 @@ impl Plait {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
                 this.worktree_busy = false;
-                this.settle_worktree_removal(&attempt, result, cx);
+                this.settle_worktree_removal(&attempt, &machine, result, cx);
             });
         })
         .detach();
     }
     /// Removal here must leave the sidebar and composer where the sidebar's own
     /// Remove leaves them: the folder is gone, not merely re-listed.
+    /// `machine` is the one the removal was sent to. After a switch, the reply
+    /// still settles the removal record, but the lists on screen are another
+    /// machine's and the same path there is a different folder (#132).
     pub(super) fn settle_worktree_removal(
         &mut self,
         attempt: &plait_client::worktree_removal::Attempt,
+        machine: &plait_client::machines::MachineId,
         result: Result<worktree::Operation, host::Error>,
         cx: &mut Context<Self>,
     ) {
@@ -393,8 +398,11 @@ impl Plait {
         {
             return;
         }
+        let here = attempt.host == self.tabs.host && *machine == self.machines.active;
+        if !here {
+            return cx.notify();
+        }
         if !self.worktrees_visible()
-            && attempt.host == self.tabs.host
             && self.worktrees.removal_project.as_deref()
                 == Some(self.project_of(self.visible_project_checkout()))
         {

@@ -65,6 +65,20 @@ pub struct Thread {
     /// preferences. Omitted when unset, so journals stay readable by older builds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval: Option<crate::host::ApprovalMode>,
+    /// The machine whose host owns this thread. Omitted by older builds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<crate::tabs::HostKey>,
+}
+
+/// Saved thread work names its machine, because two hosts could list the same
+/// thread ID. An unknown side (an older save, or a connection whose identity is
+/// not read yet) still matches: thread IDs are random, and refusing would hide
+/// saved drafts and unacknowledged sends.
+fn same_machine(saved: Option<&crate::tabs::HostKey>, host: Option<&crate::tabs::HostKey>) -> bool {
+    match (saved, host) {
+        (Some(saved), Some(host)) => saved == host,
+        _ => true,
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -85,23 +99,36 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn saved_thread(&self, summary: &crate::host::ThreadSummary) -> Option<&Thread> {
-        self.threads
-            .get(&summary.id)
-            .filter(|saved| saved.checkout == summary.checkout)
+    /// `host` is the connected machine, or `None` while its identity is unread.
+    pub fn saved_thread(
+        &self,
+        summary: &crate::host::ThreadSummary,
+        host: Option<&crate::tabs::HostKey>,
+    ) -> Option<&Thread> {
+        self.threads.get(&summary.id).filter(|saved| {
+            saved.checkout == summary.checkout && same_machine(saved.host.as_ref(), host)
+        })
     }
 
-    pub fn accepts(&self, summary: &crate::host::ThreadSummary) -> bool {
-        !self.threads.contains_key(&summary.id) || self.saved_thread(summary).is_some()
+    pub fn accepts(
+        &self,
+        summary: &crate::host::ThreadSummary,
+        host: Option<&crate::tabs::HostKey>,
+    ) -> bool {
+        !self.threads.contains_key(&summary.id) || self.saved_thread(summary, host).is_some()
     }
 
-    pub fn update_thread(&mut self, id: String, thread: Thread) -> Result<(), String> {
-        if self
-            .threads
-            .get(&id)
-            .is_some_and(|saved| saved.checkout != thread.checkout)
-        {
-            return Err("Thread identity conflicts with saved work. Its draft and submission were not changed. Start a new thread or check the host store.".into());
+    /// A thread whose machine is not known keeps the machine already saved.
+    pub fn update_thread(&mut self, id: String, mut thread: Thread) -> Result<(), String> {
+        if let Some(saved) = self.threads.get(&id) {
+            if saved.checkout != thread.checkout
+                || !same_machine(saved.host.as_ref(), thread.host.as_ref())
+            {
+                return Err("Thread identity conflicts with saved work. Its draft and submission were not changed. Start a new thread or check the host store.".into());
+            }
+            if thread.host.is_none() {
+                thread.host = saved.host.clone();
+            }
         }
         self.threads.insert(id, thread);
         Ok(())
@@ -501,6 +528,7 @@ mod tests {
             pending_submissions: Vec::new(),
             queued_submissions: Vec::new(),
             approval: None,
+            host: None,
         }
     }
 
@@ -652,8 +680,8 @@ mod tests {
             model: changed.model.clone(),
             ..Default::default()
         };
-        assert!(!saved.accepts(&summary));
-        assert!(saved.saved_thread(&summary).is_none());
+        assert!(!saved.accepts(&summary, None));
+        assert!(saved.saved_thread(&summary, None).is_none());
         assert!(saved.update_thread("thread".into(), changed).is_err());
         assert_eq!(saved.threads["thread"], original);
         let mut edited = original;
@@ -662,6 +690,74 @@ mod tests {
             .update_thread("thread".into(), edited.clone())
             .unwrap();
         assert_eq!(saved.threads["thread"], edited);
+    }
+
+    fn machine(id: &str) -> crate::tabs::HostKey {
+        crate::tabs::HostKey {
+            id: id.into(),
+            store: "/store".into(),
+        }
+    }
+
+    /// The same thread ID and path on two machines is two threads (#132).
+    #[test]
+    fn saved_thread_work_stays_with_its_machine() {
+        let (zaphod, arthur) = (machine("zaphod"), machine("arthur"));
+        let mut saved = Session::empty("/host".into());
+        let mut original = thread();
+        original.host = Some(zaphod.clone());
+        saved
+            .update_thread("thread".into(), original.clone())
+            .unwrap();
+        let summary = crate::host::ThreadSummary {
+            id: "thread".into(),
+            checkout: original.checkout.clone(),
+            model: original.model.clone(),
+            ..Default::default()
+        };
+        assert!(saved.saved_thread(&summary, Some(&zaphod)).is_some());
+        assert!(saved.saved_thread(&summary, Some(&arthur)).is_none());
+        assert!(!saved.accepts(&summary, Some(&arthur)));
+        // Another machine's capture cannot replace this machine's work.
+        let mut other = original.clone();
+        other.host = Some(arthur);
+        other.draft.text = "Arthur's draft".into();
+        assert!(saved.update_thread("thread".into(), other).is_err());
+        assert_eq!(saved.threads["thread"], original);
+        // A capture before the machine is known keeps the machine saved.
+        let mut unknown = original.clone();
+        unknown.host = None;
+        unknown.draft.text = "Later".into();
+        saved.update_thread("thread".into(), unknown).unwrap();
+        assert_eq!(saved.threads["thread"].host, Some(zaphod.clone()));
+        assert!(saved.saved_thread(&summary, None).is_some());
+    }
+
+    /// Work saved before threads named their machine still loads everywhere,
+    /// and the field is omitted when unknown so older builds read the file.
+    #[test]
+    fn saved_thread_without_a_machine_loads_and_writes_as_before() {
+        let plain = serde_json::to_value(thread()).unwrap();
+        assert!(plain.get("host").is_none());
+        let loaded: Thread = serde_json::from_value(plain).unwrap();
+        assert_eq!(loaded.host, None);
+        let mut saved = Session::empty("/host".into());
+        saved.update_thread("thread".into(), loaded).unwrap();
+        let summary = crate::host::ThreadSummary {
+            id: "thread".into(),
+            checkout: "/repo".into(),
+            ..Default::default()
+        };
+        assert!(
+            saved
+                .saved_thread(&summary, Some(&machine("arthur")))
+                .is_some()
+        );
+        let mut named = thread();
+        named.host = Some(machine("zaphod"));
+        let written = serde_json::to_value(&named).unwrap();
+        assert_eq!(written["host"]["id"], "zaphod");
+        assert_eq!(serde_json::from_value::<Thread>(written).unwrap(), named);
     }
 
     #[test]
@@ -856,7 +952,7 @@ mod tests {
             model: saved.model.clone(),
             ..Default::default()
         };
-        assert!(state.saved_thread(&summary).is_some());
+        assert!(state.saved_thread(&summary, None).is_some());
         state.update_thread("thread".into(), saved).unwrap();
         let mut old = serde_json::to_value(&state).unwrap();
         let pending = old["threads"]["thread"]["pending"].as_object_mut().unwrap();

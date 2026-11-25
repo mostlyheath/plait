@@ -319,12 +319,14 @@ impl Plait {
         .detach();
     }
 
-    fn recoverable_tab_drafts(&self) -> Vec<TabTarget> {
+    pub(super) fn recoverable_tab_drafts(&self) -> Vec<TabTarget> {
         let Some(data) = &self.session.data else {
             return Vec::new();
         };
+        // Another machine's drafts stay saved for it; only this machine's return here.
         data.draft_tabs
             .iter()
+            .filter(|(_, tab)| self.draft_is_here(tab))
             .map(|(id, tab)| TabTarget::Draft {
                 id: id.clone(),
                 checkout: self.tab_checkout(tab.checkout.clone()),
@@ -493,6 +495,16 @@ impl Plait {
             .collect();
         kept.extend(self.draft.id.clone());
         kept.extend(self.tabs.lifecycle.drafts.keys().cloned());
+        // Restore here says nothing about another machine's open tabs.
+        let elsewhere: Vec<String> = self
+            .session
+            .data
+            .iter()
+            .flat_map(|data| &data.draft_tabs)
+            .filter(|(_, tab)| !self.draft_is_here(tab))
+            .map(|(id, _)| id.clone())
+            .collect();
+        kept.extend(elsewhere);
         let Some(data) = &mut self.session.data else {
             return;
         };

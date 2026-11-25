@@ -536,7 +536,8 @@ fn removal_here_marks_the_folder_missing_for_the_sidebar() {
             worktree: None,
             error: None,
         };
-        p.settle_worktree_removal(&attempt, Ok(removed), cx);
+        let machine = p.machines.active.clone();
+        p.settle_worktree_removal(&attempt, &machine, Ok(removed), cx);
         assert_eq!(p.navigation.available.get(&row.path), Some(&false));
         assert!(p.worktrees.removal.pending.is_none());
         // A refusal changes nothing about the folder.
@@ -566,8 +567,34 @@ fn removal_here_marks_the_folder_missing_for_the_sidebar() {
                 message: "New work appeared.".into(),
             }),
         };
-        p.settle_worktree_removal(&attempt, Ok(refused), cx);
+        p.settle_worktree_removal(&attempt, &machine, Ok(refused), cx);
         assert_eq!(p.navigation.available.get(&other), Some(&true));
+        // A reply that lands after a machine switch settles the removal but
+        // leaves this machine's lists alone: the same path here is another
+        // folder (#132).
+        let row = p.worktrees.rows[1].clone();
+        p.navigation.available.insert(row.path.clone(), true);
+        assert!(
+            p.worktrees
+                .removal
+                .ask(&row, p.tabs.host.clone(), "switched".into())
+        );
+        let attempt = p
+            .worktrees
+            .removal
+            .answer(Some(plait_client::worktree_removal::Choice::RemoveIfPushed))
+            .unwrap();
+        let elsewhere = plait_client::machines::MachineId::new("workstation").unwrap();
+        let removed = plait_client::host::worktree::Operation {
+            request_id: "creation-1".into(),
+            thread_id: "12345678-1234-4abc-8abc-123456789abc".into(),
+            state: plait_client::host::worktree::Stage::Removed,
+            worktree: None,
+            error: None,
+        };
+        p.settle_worktree_removal(&attempt, &elsewhere, Ok(removed), cx);
+        assert!(p.worktrees.removal.pending.is_none());
+        assert_eq!(p.navigation.available.get(&row.path), Some(&true));
     });
     drop(h);
     let _ = std::fs::remove_dir_all(scratch);

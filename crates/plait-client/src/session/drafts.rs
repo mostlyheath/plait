@@ -1,6 +1,7 @@
 //! Additive schema-1 draft identities. Legacy fields remain complete snapshots.
 use super::{Draft, Session, identifier};
 use crate::host::{ApprovalMode, ModelChoice, ThinkingLevel, harness::HarnessId};
+use crate::tabs::HostKey;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -92,6 +93,24 @@ pub struct DraftTab {
     pub draft: Draft,
     #[serde(default)]
     pub settings: DraftSettings,
+    /// The machine whose host this draft is for. Omitted by older builds, so
+    /// absent means a draft saved before drafts named their machine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<HostKey>,
+}
+
+impl DraftTab {
+    /// Whether this draft is recovered on `host`. The same path on two machines
+    /// is two projects, so a draft only returns where it was written. A draft
+    /// from before drafts named their machine returns only on this computer's
+    /// host: that is where every draft lived until remote machines, and showing
+    /// it nowhere would lose it.
+    pub fn belongs_to(&self, host: &HostKey, local: bool) -> bool {
+        match &self.host {
+            Some(saved) => saved == host,
+            None => local,
+        }
+    }
 }
 
 impl Session {
@@ -231,6 +250,7 @@ impl Session {
                     checkout,
                     draft,
                     settings: DraftSettings::default(),
+                    host: None,
                 },
             );
         }
@@ -287,6 +307,7 @@ impl Session {
                     checkout,
                     draft,
                     settings: DraftSettings::default(),
+                    host: None,
                 },
             );
         }
@@ -397,6 +418,7 @@ mod tests {
                 ..Default::default()
             },
             settings: DraftSettings::default(),
+            host: None,
         }
     }
     #[test]
@@ -722,6 +744,32 @@ mod tests {
         let bytes = large.encode().unwrap();
         assert!(bytes.len() <= super::super::FILE_LIMIT);
         assert_eq!(bytes, serde_json::to_vec(&large).unwrap());
+    }
+    /// A draft returns only on the machine it was written for. One saved by an
+    /// older build, without a machine, returns only on this computer (#132).
+    #[test]
+    fn a_draft_returns_only_on_its_own_machine() {
+        let machine = |id: &str| HostKey {
+            id: id.into(),
+            store: "/store".into(),
+        };
+        let (zaphod, arthur) = (machine("zaphod"), machine("arthur"));
+        let mut named = tab("for zaphod");
+        named.host = Some(zaphod.clone());
+        assert!(named.belongs_to(&zaphod, false));
+        assert!(!named.belongs_to(&arthur, false));
+        assert!(!named.belongs_to(&arthur, true));
+        let legacy = tab("older build");
+        assert!(legacy.belongs_to(&zaphod, true));
+        assert!(!legacy.belongs_to(&arthur, false));
+        // The field round-trips, and is left out when unknown so older builds,
+        // which ignore unknown fields, read the same file.
+        let written = serde_json::to_value(&named).unwrap();
+        assert_eq!(written["host"]["id"], "zaphod");
+        assert_eq!(serde_json::from_value::<DraftTab>(written).unwrap(), named);
+        let old = serde_json::to_value(&legacy).unwrap();
+        assert!(old.get("host").is_none());
+        assert_eq!(serde_json::from_value::<DraftTab>(old).unwrap().host, None);
     }
     #[test]
     fn released_build_keeps_an_unanswered_first_send_and_its_request() {

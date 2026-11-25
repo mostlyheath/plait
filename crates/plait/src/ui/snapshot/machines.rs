@@ -612,3 +612,76 @@ fn switching_machines_puts_the_previous_tabs_away() {
     drop(h);
     std::fs::remove_dir_all(scratch).unwrap();
 }
+
+/// The same path on two machines is two projects. A draft and a folded project
+/// stay with the machine they belong to; a draft from an older build returns
+/// only on this computer (#132).
+#[core::prelude::v1::test]
+fn same_path_state_stays_with_its_machine() {
+    if !isolated("machines::same_path_state_stays_with_its_machine") {
+        return;
+    }
+    use plait_client::session::{DraftTab, Session};
+    let scratch = std::env::temp_dir().join(format!("plait-same-path-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    let mut h = Harness::new(&repo, None, 900., 600.);
+    h.connect(&repo, false);
+    h.update(|p, _, _| {
+        let machine = |id: &str| plait_client::tabs::HostKey {
+            id: id.into(),
+            store: "/store".into(),
+        };
+        let (zaphod, arthur) = (machine("zaphod"), machine("arthur"));
+        let draft = |host: Option<plait_client::tabs::HostKey>| DraftTab {
+            legacy: false,
+            creation: None,
+            checkout: repo.clone(),
+            draft: plait_client::session::Draft {
+                text: "unsent".into(),
+                ..Default::default()
+            },
+            settings: Default::default(),
+            host,
+        };
+        let mut data = Session::empty("/host".into());
+        data.set_draft_tab("zaphod-draft".into(), draft(Some(zaphod.clone())));
+        data.set_draft_tab("arthur-draft".into(), draft(Some(arthur.clone())));
+        data.set_draft_tab("older-draft".into(), draft(None));
+        p.session.data = Some(data);
+        let recovered = |p: &Plait| {
+            let mut ids: Vec<String> = p
+                .recoverable_tab_drafts()
+                .into_iter()
+                .filter_map(|target| match target {
+                    plait_client::tabs::TabTarget::Draft { id, checkout } => {
+                        assert_eq!(checkout.root, repo);
+                        Some(id)
+                    }
+                    _ => None,
+                })
+                .collect();
+            ids.sort();
+            ids
+        };
+        p.tabs.host = zaphod;
+        assert_eq!(recovered(p), ["older-draft", "zaphod-draft"]);
+        p.tabs.host = arthur;
+        p.host_local = false;
+        assert_eq!(recovered(p), ["arthur-draft"]);
+        p.host_local = true;
+        p.session.data = None;
+
+        // Folding a project on this computer leaves the same path open elsewhere.
+        let local = p.machines.active.clone();
+        let remote = plait_client::machines::MachineId::new("workstation").unwrap();
+        p.set_project_collapsed(repo.clone(), true);
+        assert!(p.project_collapsed(&repo));
+        p.machines.active = remote;
+        assert!(!p.project_collapsed(&repo));
+        p.machines.active = local;
+        assert!(p.project_collapsed(&repo));
+        p.set_project_collapsed(repo.clone(), false);
+    });
+    drop(h);
+    std::fs::remove_dir_all(scratch).unwrap();
+}

@@ -52,7 +52,7 @@ The client negotiates host protocol versions **1 through 7** per request and deg
 
 ## Machines
 
-**Settings → Machines** selects which machine's host this window works with: **This Mac**, or another Mac or Linux machine over **SSH** or **Tailscale**. Each window works with one machine at a time; showing projects from several machines in one sidebar is planned ([Host-first Plait](HOST-FIRST.md)). The open folder belongs to the machine it was chosen on: after a switch, the window opens one of the new machine's projects and never lists or saves the other machine's folder as its own.
+**Settings → Machines** selects which machine's host this window works with: **This Mac**, or another Mac or Linux machine over **SSH** or **Tailscale**. Each window works with one machine at a time; showing projects from several machines in one sidebar is planned ([Host-first Plait](HOST-FIRST.md)). The open folder belongs to the machine it was chosen on: after a switch, the window opens one of the new machine's projects and never lists or saves the other machine's folder as its own. The same path on two machines is two projects: an unsent draft returns only on the machine it was written for, folding a project folds it only on that machine, and a worktree removal that finishes after a switch updates only the machine it ran on. A draft saved by an earlier Plait version, before drafts named their machine, returns on this Mac.
 
 To add a remote machine, choose **Add machine…**:
 

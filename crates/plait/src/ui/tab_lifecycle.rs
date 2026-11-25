@@ -364,7 +364,7 @@ impl Plait {
             .and_then(|opened| {
                 if opened.is_none() && matches!(action, TabNavigation::Reopen) {
                     let fallback = self.session.data.as_ref().and_then(|data| data.draft_tabs.iter().find(|(id, tab)| {
-                        (tab.creation.is_some() || !tab.draft.text.is_empty() || !tab.draft.images.is_empty()) && !self.tabs.model.tabs().iter().any(|open| matches!(open.session().target(), TabTarget::Draft { id: open_id, .. } if open_id == *id))
+                        self.draft_is_here(tab) && (tab.creation.is_some() || !tab.draft.text.is_empty() || !tab.draft.images.is_empty()) && !self.tabs.model.tabs().iter().any(|open| matches!(open.session().target(), TabTarget::Draft { id: open_id, .. } if open_id == *id))
                     }).map(|(id, tab)| TabTarget::Draft { id: id.clone(), checkout: self.tab_checkout(tab.checkout.clone()) }));
                     if let Some(target) = fallback { self.tabs.model.open(target, connection)?; }
                 }

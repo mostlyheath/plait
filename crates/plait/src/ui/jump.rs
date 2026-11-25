@@ -87,9 +87,8 @@ impl Plait {
         ) else {
             return;
         };
-        self.navigation
-            .collapsed
-            .remove(&self.state.projects[jump.project].checkout);
+        let checkout = self.state.projects[jump.project].checkout.clone();
+        self.set_project_collapsed(checkout, false);
         self.state.collapsed_projects.remove(&jump.project);
         self.state
             .collapsed_machines

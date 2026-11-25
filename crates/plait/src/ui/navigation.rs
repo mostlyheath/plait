@@ -21,7 +21,8 @@ pub(super) struct Navigation {
     row_cache: RefCell<RowCache>,
     layout: RefCell<TreeLayout>,
     pub scroll: ListState,
-    pub collapsed: HashSet<PathBuf>,
+    /// Folded projects. The same path on another machine is another project.
+    pub collapsed: HashSet<(plait_client::machines::MachineId, PathBuf)>,
     pub available: HashMap<PathBuf, bool>,
     pub archived: bool,
     pub rename: Option<(String, Entity<TextField>)>,
@@ -217,6 +218,21 @@ pub(super) fn now_ms() -> u64 {
 }
 
 impl Plait {
+    pub(super) fn project_collapsed(&self, checkout: &std::path::Path) -> bool {
+        self.navigation
+            .collapsed
+            .contains(&(self.machines.active.clone(), checkout.to_path_buf()))
+    }
+
+    pub(super) fn set_project_collapsed(&mut self, checkout: PathBuf, collapsed: bool) {
+        let key = (self.machines.active.clone(), checkout);
+        if collapsed {
+            self.navigation.collapsed.insert(key);
+        } else {
+            self.navigation.collapsed.remove(&key);
+        }
+    }
+
     pub(super) fn active_project(&self) -> &plait_client::model::Project {
         let mut cache = self.navigation.row_cache.borrow_mut();
         let projects = cache.projects.get_or_insert_with(|| {
@@ -301,7 +317,7 @@ impl Plait {
         for (pi, project) in self.state.projects.iter().enumerate() {
             let matching = grouped.get(project.checkout.as_path());
             let draft = drafted == Some(project.checkout.as_path());
-            let open = !self.navigation.collapsed.contains(&project.checkout);
+            let open = !self.project_collapsed(&project.checkout);
             rows.push(Row::Project {
                 index: pi,
                 after: !rows.is_empty(),
@@ -347,7 +363,7 @@ impl Plait {
         let hide = checkout.clone();
         let start = checkout.clone();
         let group = SharedString::from(format!("project-row-{pi}"));
-        let expanded = !self.navigation.collapsed.contains(&checkout);
+        let expanded = !self.project_collapsed(&checkout);
         let unavailable = self.navigation.available.get(&checkout) == Some(&false);
         column()
             .w_full()
@@ -398,9 +414,8 @@ impl Plait {
                             )
                         })
                         .on_activate(cx, move |this, _, cx| {
-                            if !this.navigation.collapsed.remove(&checkout) {
-                                this.navigation.collapsed.insert(checkout.clone());
-                            }
+                            let collapsed = this.project_collapsed(&checkout);
+                            this.set_project_collapsed(checkout.clone(), !collapsed);
                             this.navigation.invalidate_rows();
                             cx.notify();
                         }),
@@ -1026,16 +1041,21 @@ impl Plait {
         if !self.sidebar {
             self.toggle_sidebar(window, cx);
         }
-        if let Some(thread) = self
+        if let Some((project, archived)) = self
             .host
             .connection
             .threads()
             .iter()
             .find(|thread| thread.id == id)
+            .map(|thread| {
+                (
+                    self.project_of(&thread.checkout).to_path_buf(),
+                    thread.archived == Some(true),
+                )
+            })
         {
-            let project = self.project_of(&thread.checkout).to_path_buf();
-            self.navigation.collapsed.remove(&project);
-            if thread.archived == Some(true) {
+            self.set_project_collapsed(project, false);
+            if archived {
                 self.navigation.archived = true;
             }
         }
