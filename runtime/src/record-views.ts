@@ -16,9 +16,7 @@ function requests(store: Store, row: Row): string[] {
   const end = store.db.prepare(`SELECT MIN(entry) AS entry FROM (
       SELECT q.entry FROM records r JOIN requests q ON q.scope=r.thread AND q.id=r.run_request
       WHERE r.thread=? AND r.kind='before' AND q.entry>? AND NOT EXISTS (SELECT 1 FROM records a WHERE a.before=r.id AND a.kind='undo')
-      UNION ALL SELECT n.entry FROM requests n WHERE n.scope=? AND n.state IS NULL AND n.consumed='started' AND n.entry>?
-        AND NOT EXISTS (SELECT 1 FROM records b JOIN records u ON u.before=b.id AND u.kind='undo'
-          WHERE b.thread=n.scope AND b.run_request=n.id AND b.kind='before'))`)
+      UNION ALL SELECT entry FROM requests WHERE scope=? AND state IS NULL AND consumed='started' AND entry>?)`)
     .get(String(row.thread), first.entry as number, String(row.thread), first.entry as number);
   return store.db.prepare(`SELECT id FROM requests WHERE scope=? AND state IS NULL AND entry>=? AND (? IS NULL OR entry<?) ORDER BY entry,rowid`)
     .all(String(row.thread), first.entry as number, end?.entry ?? null, end?.entry ?? null).map(item => String(item.id));

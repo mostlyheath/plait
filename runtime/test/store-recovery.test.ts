@@ -223,7 +223,9 @@ async function consumedFixture(t: { after(fn: () => unknown): void }) {
   let lastHost: Runtime | undefined;
   /** The request IDs of each retained turn record, newest first, after `recover`. */
   const turns = () => lastHost!.records.page('thread', undefined, 10, 7).records.map(record => record.request_ids);
-  return { snapshot, open, identity, startA, queue, olderStart, recover, turns };
+  /** A run's outcome, after `recover`. */
+  const outcome = (run: string) => lastHost!.store.db.prepare('SELECT outcome FROM runs WHERE run_id=?').get(run)?.outcome;
+  return { snapshot, open, identity, startA, queue, olderStart, recover, turns, outcome };
 }
 
 test('a follow-up an older build starts as its own run ends the earlier turn', async t => {
@@ -249,6 +251,67 @@ test('a steer placed before its snapshot was saved still resolves to the run the
   await host.close();
   assert.equal((await f.recover()).outcome, 'interrupted');
   assert.deepEqual(f.turns(), [['original', 'next']]);
+});
+
+test('a second steer placed before the snapshot showed it resolves through the first steer', async t => {
+  const f = await consumedFixture(t);
+  const host = f.open();
+  f.startA(host, 1);
+  f.queue(host, 'b', 'steer'); // Saved: the snapshot names b.
+  host.store.place('thread', 'b', 2);
+  f.queue(host, 'c', 'steer', false); // Placed, but the host stops before the snapshot shows it.
+  host.store.place('thread', 'c', 3);
+  await host.close();
+  assert.equal((await f.recover()).outcome, 'interrupted');
+});
+
+test('a run started after an unsaved steer is anchored above it across two restarts', async t => {
+  const f = await consumedFixture(t);
+  const first = f.open();
+  f.startA(first, 1);
+  first.store.save(f.snapshot, 1); // The snapshot and its head flush with entry 1.
+  f.queue(first, 'b', 'steer', false);
+  first.store.place('thread', 'b', 2); // Stored, but the head still says 1.
+  await first.close();
+  const second = f.open();
+  await second.recover();
+  assert.equal(second.store.db.prepare("SELECT outcome FROM runs WHERE run_id='run'").get()?.outcome, 'interrupted');
+  const snapshot = second.store.get('thread');
+  snapshot.status = 'running';
+  second.store.admit('thread', 'd', 'next task', { accepted: true }, snapshot);
+  second.store.createRun('run-d', 'thread', 'd', 'pi');
+  await second.close(); // Stopped again before d was placed.
+  await f.recover();
+  assert.equal(f.outcome('run-d'), 'interrupted');
+});
+
+test('a submission that reuses an undo request ID still ends the earlier turn', async t => {
+  const f = await consumedFixture(t);
+  const host = f.open();
+  f.startA(host, 1);
+  // An undo request 'b' records its own before and undo pair under that ID.
+  host.store.db.exec(`INSERT INTO records(id,thread,run_request,kind,before,checkout,state,created_at) VALUES
+    ('undo-before','thread','b','before',NULL,'/checkout','ready',1), ('undo','thread','b','undo','undo-before','/checkout','undone',2)`);
+  f.snapshot.status = 'running';
+  host.store.admit('thread', 'b', 'later', { accepted: true }, f.snapshot); // A run of its own, without a before record.
+  host.store.place('thread', 'b', 2);
+  await host.close();
+  await f.recover();
+  assert(f.turns().some(ids => JSON.stringify(ids) === '["original"]'), JSON.stringify(f.turns()));
+});
+
+test('reopening replaces an earlier receipt trigger definition', async t => {
+  const f = await consumedFixture(t);
+  let host = f.open();
+  // The broader insert trigger an intermediate revision of this change created.
+  host.store.db.exec(`DROP TRIGGER requests_consumed_insert; CREATE TRIGGER requests_consumed_insert AFTER INSERT ON requests
+    WHEN NEW.consumed IS NULL AND NEW.state IS NULL AND NEW.input IS NOT NULL
+    BEGIN UPDATE requests SET consumed='started' WHERE rowid=NEW.rowid; END;`);
+  await host.close();
+  host = f.open();
+  t.after(() => host.close());
+  host.store.admit('create', 'create-request', [f.snapshot.checkout, 'faux', 'model'], { thread: f.snapshot }, f.snapshot, f.identity, [], 'git');
+  assert.equal(host.store.db.prepare("SELECT consumed FROM requests WHERE scope='create'").get()?.consumed, null);
 });
 
 test('a steer whose snapshot names another request is left unresolved', async t => {

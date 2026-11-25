@@ -112,11 +112,13 @@ export class Store {
       }
       // Only a text input admitted to a thread starts a run. Receipts such as 'create' and
       // 'worktree_create' use another scope; every build saves the thread before the row.
-      this.db.exec(`CREATE TRIGGER IF NOT EXISTS requests_consumed_insert AFTER INSERT ON requests
+      // Recreated on every open so an earlier definition never survives.
+      this.db.exec(`DROP TRIGGER IF EXISTS requests_consumed_insert; DROP TRIGGER IF EXISTS requests_consumed_update;
+        CREATE TRIGGER requests_consumed_insert AFTER INSERT ON requests
           WHEN NEW.consumed IS NULL AND NEW.state IS NULL AND substr(NEW.input,1,1)='"'
             AND EXISTS (SELECT 1 FROM threads WHERE id=NEW.scope)
           BEGIN UPDATE requests SET consumed='started' WHERE rowid=NEW.rowid; END;
-        CREATE TRIGGER IF NOT EXISTS requests_consumed_update AFTER UPDATE OF state ON requests
+        CREATE TRIGGER requests_consumed_update AFTER UPDATE OF state ON requests
           WHEN NEW.consumed IS NULL AND OLD.state IS NOT NULL AND NEW.state IS NULL
           BEGIN UPDATE requests SET consumed=CASE WHEN NEW.entry IS NULL THEN 'started' ELSE 'steered' END WHERE rowid=NEW.rowid; END;`);
     });
@@ -149,8 +151,11 @@ export class Store {
     const owner = latest && latest.entry !== null && latest.consumed !== 'started'
       ? this.turnStart(snapshot.id, Number(latest.entry), latest.consumed === 'steered') : undefined;
     // Codex and Claude Code commit a steering placement before the snapshot shows it. The
-    // snapshot can then still name the run's own input, which the durable placement names too.
-    const shownOwner = latest?.consumed === 'steered' && owner !== undefined && user?.id === `request-${owner}`;
+    // snapshot can then still name an earlier input of the same run: the run's own input or an
+    // earlier steer. Accept it only when both resolve to one run.
+    const visible = user?.id.startsWith('request-') ? user.id.slice('request-'.length) : undefined;
+    const shownOwner = latest?.consumed === 'steered' && owner !== undefined && visible !== undefined
+      && this.ownerOf(snapshot.id, visible) === owner;
     const matches = latest && (user ? user.id === `request-${latest.id}` || shownOwner : !tied);
     const current = matches && this.db.prepare(`SELECT run_id FROM runs WHERE thread_id=?
       AND request_id=? AND finished_at IS NULL`).get(snapshot.id, owner ?? latest.id);
@@ -160,6 +165,12 @@ export class Store {
     const closed = this.db.prepare("UPDATE runs SET state='dead',finished_at=? WHERE thread_id=? AND finished_at IS NULL")
       .run(Date.now(), snapshot.id);
     if (closed.changes) this.db.prepare('UPDATE threads SET records_revision=records_revision+1 WHERE id=?').run(snapshot.id);
+  }
+  /** The request whose run a placed, marked input belongs to: itself if it started one. */
+  private ownerOf(thread: string, id: string): string | undefined {
+    const row = this.db.prepare('SELECT entry,consumed FROM requests WHERE scope=? AND id=? AND state IS NULL AND input IS NOT NULL').get(thread, id);
+    if (row?.consumed === 'started') return id;
+    return row?.consumed === 'steered' && row.entry !== null ? this.turnStart(thread, Number(row.entry), true) : undefined;
   }
   /**
    * The request whose run a placed steering input joined, or undefined when unknown.
@@ -291,6 +302,15 @@ export class Store {
     return this.input(id,row);
   }
   private head(id: string) { return Number(this.db.prepare('SELECT head FROM threads WHERE id=?').get(id)?.head ?? 0); }
+  /**
+   * Where a starting input sits in the conversation. Codex and Claude Code store a placement
+   * before the snapshot's head catches up, so the saved head can trail a durable entry; an
+   * input anchored below it would rank behind that entry in recovery.
+   */
+  private anchor(id: string) {
+    const placed = Number(this.db.prepare('SELECT MAX(entry) AS entry FROM requests WHERE scope=? AND state IS NULL').get(id)?.entry ?? 0);
+    return Math.max(this.head(id), placed);
+  }
   transaction<T>(work: () => T): T {
     if (this.txDepth > 0) {
       const sp = `sp_${this.txDepth}`;
@@ -342,7 +362,7 @@ export class Store {
   /** Moves a queued input into the conversation at the current position, as its run starts. */
   dequeue(input: InputRecord, snapshot: Snapshot) {
     return this.transaction(() => {
-      const head = this.head(snapshot.id);
+      const head = this.anchor(snapshot.id);
       const changed = this.db.prepare("UPDATE requests SET state=NULL,queue=NULL,anchor=?,consumed='started' WHERE scope=? AND id=? AND state IN ('queued','checkout_queued')").run(head, snapshot.id, input.request_id);
       if (!changed.changes) fail('not_found', 'Queued message already started or was cancelled.');
       this.waiters.set(snapshot.id,input.request_id,'started');
@@ -448,7 +468,7 @@ export class Store {
   admit(scope: string, id: string, input: unknown, result: unknown, snapshot: Snapshot, root?: FileIdentity, images: string[] = [], vcs?: 'git' | 'folder') {
     // Acceptance and dedup commit before the harness can execute any effect.
     return this.transaction(() => {
-      const head = this.head(snapshot.id);
+      const head = this.anchor(snapshot.id);
       if (scope === snapshot.id && typeof input === 'string') {
         pushMessage(snapshot, inputMessage({ request_id: id, text: input, images: this.images.refs(snapshot.id, images), entry: null, anchor: head }));
         if (input.length > 4096) snapshot.truncated = true;

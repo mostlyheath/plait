@@ -2168,9 +2168,13 @@ was used: `started` its own run, or `steered` into one.
 - A steering input belongs to the nearest earlier input marked `started`, with
   or without checkout records, so plain folders resolve too.
 - Codex and Claude Code store a steering placement before the thread's snapshot
-  shows it. If the host stops in between, the snapshot still names the run's own
-  input. Recovery accepts that when the stored placement resolves to the same
-  run; if they name different requests, no run gets the outcome.
+  shows it. If the host stops in between, the snapshot still names an earlier
+  input of that run: its own input or an earlier steer. Recovery accepts that
+  when both resolve to the same run; if they resolve to different runs, no run
+  gets the outcome.
+- For the same reason the saved head can trail a stored placement. A message
+  that starts a run is placed after the later of the two, so it ranks above
+  that placement if the host stops again before its own placement.
 - An input consumed before this column existed is unknown. For those rows the
   host infers as before: a direct admission, or a follow-up with a before
   record, started a turn, and other placed follow-ups count as steering.
@@ -2184,7 +2188,8 @@ an older build after a rollback. Every build writes the three cases the same way
 - Placing a steering input clears its state and sets its entry.
 
 Each trigger only fills an empty value on the row being written, so an older
-build's writes still succeed.
+build's writes still succeed. The host recreates both triggers each time it
+opens the store, so an earlier definition does not persist.
 A request still queued when the column was added is marked when it is consumed.
 The host itself marks a steering input placed after it was cancelled, which
 happens when a run took the message just before the cancellation.
