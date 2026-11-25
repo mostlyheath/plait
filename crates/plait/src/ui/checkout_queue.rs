@@ -246,16 +246,23 @@ impl Plait {
         }
     }
     fn inspect_checkout_waits(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(checkout) = self
+        let Some(summary) = self
             .host
             .connection
             .threads()
             .iter()
             .find(|thread| thread.id == id)
-            .map(|thread| thread.checkout.clone())
+            .cloned()
         else {
             return;
         };
+        // Receipts settle saved Waits only from this machine's verified host,
+        // for this folder's sends (#132).
+        if !self.may_reconcile(&summary) {
+            return;
+        }
+        let checkout = summary.checkout.clone();
+        let asked_host = self.verified_host().cloned();
         self.admission.inspecting.insert(id.clone());
         let request = Request::CheckoutQueue {
             thread_id: id.clone(),
@@ -269,6 +276,10 @@ impl Plait {
                 // An unread or unverified reply keeps the messages; the next summary asks again.
                 let Ok(reply) = result else { return };
                 if !reply.verified(&id, &checkout) {
+                    return;
+                }
+                // The reply settles nothing if the machine or its host changed meanwhile.
+                if this.verified_host().cloned() != asked_host || !this.may_reconcile(&summary) {
                     return;
                 }
                 let waits = this

@@ -467,27 +467,22 @@ impl Plait {
 
     fn capture_draft_operations(&mut self, cx: &mut Context<Self>) {
         self.bind_draft();
-        if let Some(data) = &mut self.session.data {
-            let mut note = None;
-            for draft in std::iter::once(&self.draft).chain(self.tabs.lifecycle.drafts.values()) {
-                if let (Some(id), Some(binding)) = (&draft.id, &draft.binding)
-                    && let Some(saved) = data.draft_in(&binding.namespace, id)
-                {
-                    let mut tab = saved.tab.clone();
+        // Each draft's creation state, in its own machine's work.
+        let mut works = std::collections::BTreeMap::new();
+        for draft in std::iter::once(&self.draft).chain(self.tabs.lifecycle.drafts.values()) {
+            if let (Some(id), Some(binding)) = (&draft.id, &draft.binding) {
+                let work = super::saved_work::touch(
+                    &mut works,
+                    &self.saved_work.machines,
+                    &binding.machine,
+                );
+                if let Some(tab) = work.drafts.get_mut(id) {
                     tab.creation = draft.saved_creation();
                     tab.draft.creation = draft.legacy_creation();
-                    if let Err(error) = data.put_draft(&binding.namespace, id, tab, None) {
-                        note = Some(error);
-                    }
                 }
             }
-            if note.is_some() {
-                self.session.note = note;
-            }
-            if let Some(journal) = &self.session.journal {
-                journal.queue(data.clone());
-            }
         }
+        self.store_machine_work(works);
         self.capture_session(cx);
         self.schedule_session_save(false, cx);
     }
@@ -550,11 +545,12 @@ impl Plait {
             checkout: source,
         };
         let binding = draft.binding.clone();
-        let result = if self.session.data.as_ref().is_some_and(|data| {
-            binding.as_ref().is_some_and(|binding| {
-                data.thread_in(&binding.namespace, &id, &reply.thread.checkout)
-                    .is_some()
-            })
+        let result = if binding.as_ref().is_some_and(|binding| {
+            self.saved_work
+                .machines
+                .get(&binding.machine)
+                .and_then(|work| work.thread(&id, &reply.thread.checkout))
+                .is_some()
         }) {
             Err(plait_client::tabs::TabError::AlreadyOpen)
         } else {
@@ -574,13 +570,15 @@ impl Plait {
         let Some(sending) = draft.sending.take() else {
             return;
         };
-        if let Some(data) = &mut self.session.data
-            && let Some(binding) = &binding
-        {
-            let mut saved = data
-                .draft_in(&binding.namespace, &draft_id)
-                .filter(|saved| saved.tab.checkout == source_root)
-                .map(|saved| saved.tab.draft.clone())
+        if let Some(binding) = &binding {
+            let mut works = std::collections::BTreeMap::new();
+            let work =
+                super::saved_work::touch(&mut works, &self.saved_work.machines, &binding.machine);
+            let mut saved = work
+                .drafts
+                .get(&draft_id)
+                .filter(|tab| tab.checkout == source_root)
+                .map(|tab| tab.draft.clone())
                 .unwrap_or_else(|| plait_client::session::Draft {
                     text: sending.text.clone(),
                     images: sending.images.clone(),
@@ -600,13 +598,9 @@ impl Plait {
                 queued_submissions: Vec::new(),
                 approval: sending.choice,
             };
-            if let Err(error) =
-                data.put_thread(&binding.namespace, &id, thread, binding.origin.clone())
-            {
-                self.session.note = Some(error);
-            } else {
-                data.discard_draft(&binding.namespace, &draft_id);
-            }
+            work.put_thread(&id, thread, self.verified_host().cloned());
+            work.drafts.remove(&draft_id);
+            self.store_machine_work(works);
         }
         // The draft's composer becomes the thread's, still saving where it did.
         if let Some(binding) = binding {

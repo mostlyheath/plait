@@ -1016,6 +1016,7 @@ impl Plait {
         if !self.host.connection.connected
             || !self.session.ready()
             || !self.session_accepts_thread(id)
+            || self.verified_host().is_none()
         {
             return;
         }
@@ -1275,6 +1276,9 @@ impl Plait {
         };
         let send_blocked = if self.thread_configuration_pending() {
             Some("Saving model settings…".into())
+        } else if self.verified_host().is_none() {
+            // Typing is saved for this machine; sending waits for its host.
+            Some("Checking which machine this is…".into())
         } else if self
             .host
             .thread

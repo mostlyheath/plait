@@ -475,6 +475,7 @@ fn drafts_restart_in_order_with_images_settings_and_evicted_history() {
         p.host.connection.connected = false;
         p.reset_tabs_for_test();
         p.park_workspace(cx);
+        p.saved_work.machines = journal.take_machines();
         p.session.journal = Some(journal.clone());
         p.session.data = Some(data);
         p.install_tab_identity(host, vec![checkout], cx);
@@ -625,8 +626,13 @@ fn restore_with_open_empty_draft(worktrees_front: bool) {
         p.reset_tabs_for_test();
         p.park_workspace(cx);
         p.install_tab_identity(host, vec![checkout.clone()], cx);
+        // As the journal's load does: the older records copied to this computer.
+        let mut local = plait_client::session::MachineWork::default();
+        local.import_legacy(&data.draft_tabs, &data.threads);
+        p.saved_work
+            .machines
+            .insert(p.machines.active.clone(), local);
         p.session.data = Some(data);
-        // As restore_desktop does once saved work loads.
         p.capture_session(cx);
         let draft_tab = p
             .tabs
@@ -895,7 +901,12 @@ fn discard_closes_only_its_draft_without_journal_or_history_recovery() {
     assert!(saved.draft_tabs.is_empty());
     assert!(saved.new_drafts.is_empty());
     assert!(saved.new_draft.is_none());
-    assert!(saved.spaces.iter().all(|space| space.drafts.is_empty()));
+    assert!(
+        plait_client::session::read_machines(&directory)
+            .unwrap()
+            .values()
+            .all(|work| work.drafts.is_empty())
+    );
     std::fs::remove_dir_all(scratch).unwrap();
 }
 

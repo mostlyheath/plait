@@ -588,15 +588,16 @@ pub(super) fn journal_limit() {
         assert_eq!(p.host.thread.selected.as_deref(), Some(THREAD));
         assert_eq!(p.workspace.composers.len(), 1);
         assert!(p.notice.as_deref().unwrap().contains("could not be saved"));
-        // The 19 filled threads; the open thread had nothing to keep, so no record.
-        assert_eq!(p.test_saved_threads().len(), 19);
+        // Kept in memory although the file could not take it: the 19 listed
+        // threads and the fillers; the open thread had nothing to keep.
+        assert_eq!(p.test_saved_threads().len(), 39);
         assert_eq!(
             p.test_saved_threads()["tab-thread-19"].draft.text.len(),
             256 * 1024
         );
         assert!(p.workspace.composers[THREAD].read(cx).text().is_empty());
     });
-    assert!(journal.flush().unwrap_err().contains("exceeds 4 MiB"));
+    assert!(journal.flush().unwrap_err().contains("exceeds"));
     assert_eq!(
         std::fs::read(directory.join("desktop.json")).unwrap(),
         last_good
@@ -768,7 +769,7 @@ pub(super) fn journal_limit_saves_tabs() {
         fill_journal(p);
         journal.queue(p.session.data.clone().unwrap());
     });
-    assert!(journal.flush().unwrap_err().contains("exceeds 4 MiB"));
+    assert!(journal.flush().unwrap_err().contains("exceeds"));
     h.window
         .update(&mut h.cx, |p, w, cx| {
             p.flush_tab_preferences(Some(w), cx).unwrap()
@@ -920,27 +921,33 @@ pub(super) fn restore_beneath_settings() {
 
 /// Fill the current machine's saved thread work past the journal's size limit.
 fn fill_journal(p: &mut Plait) {
-    let namespace = p.write_namespace();
     let summaries = p.host.connection.threads().to_vec();
-    let data = p.session.data.as_mut().unwrap();
-    let mut thread = data
-        .thread_in(&namespace, THREAD, &summaries[0].checkout)
-        .map(|saved| saved.thread.clone())
-        .unwrap_or_else(|| plait_client::session::Thread {
-            checkout: summaries[0].checkout.clone(),
-            model: summaries[0].model.clone(),
-            title: String::new(),
-            draft: Default::default(),
-            pending: None,
-            pending_submissions: Vec::new(),
-            queued_submissions: Vec::new(),
-            approval: None,
-        });
-    thread.draft.text = "x".repeat(256 * 1024);
+    let thread = |checkout: &std::path::Path| plait_client::session::Thread {
+        checkout: checkout.to_owned(),
+        model: summaries[0].model.clone(),
+        title: String::new(),
+        draft: plait_client::session::Draft {
+            text: "x".repeat(256 * 1024),
+            ..Default::default()
+        },
+        pending: None,
+        pending_submissions: Vec::new(),
+        queued_submissions: Vec::new(),
+        approval: None,
+    };
+    let machine = p.machines.active.clone();
+    let mut work = p
+        .saved_work
+        .machines
+        .get(&machine)
+        .cloned()
+        .unwrap_or_default();
     for summary in summaries.iter().skip(1) {
-        let mut copy = thread.clone();
-        copy.checkout = summary.checkout.clone();
-        data.put_thread(&namespace, &summary.id, copy, None)
-            .unwrap();
+        work.put_thread(&summary.id, thread(&summary.checkout), None);
     }
+    // Unlisted threads, to pass the machine file's size limit.
+    for n in 0..20 {
+        work.put_thread(&format!("filler-{n}"), thread(&summaries[0].checkout), None);
+    }
+    p.store_machine_work([(machine, work)].into_iter().collect());
 }

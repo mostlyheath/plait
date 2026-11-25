@@ -1,40 +1,37 @@
-//! Per-machine saved work (#132). Which namespace each draft, thread composer
-//! and send ledger saves to, what the window reads, and how work saved before a
-//! host was verified is copied to it. The design:
-//! <https://github.com/mostlyheath/plait/issues/132#issuecomment-7153471382>.
+//! Saved work per machine entry (#132). What a person types while a machine
+//! is selected belongs to that machine from the start: each draft, thread
+//! composer and send ledger is bound to the machine selected when it is made
+//! or mounted, and saves only to that machine's file.
 use super::Plait;
-use gpui::*;
 use plait_client::{
     host::ThreadSummary,
-    session::{Copied, DraftTab, Namespace, Origin, Session, Thread},
+    machines::MachineId,
+    session::{DraftTab, MachineWork, Thread},
     tabs::HostKey,
 };
-use std::{collections::HashSet, path::Path};
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::{Path, PathBuf},
+};
 
-/// Where a draft, thread composer or send ledger saves. Set when it is created
-/// or mounted and never changed afterwards, so a machine switch, a reconnect or
-/// a change of locality cannot redirect its saves.
+/// Where a draft, thread composer or send ledger saves: set when it is made
+/// or mounted, and never changed, so a switch or reconnect cannot redirect it.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Binding {
-    pub namespace: Namespace,
-    /// The record its text was loaded from, when that is another namespace's.
-    pub origin: Option<Origin>,
+    pub machine: MachineId,
 }
 
-/// Saved-work state that is not itself saved.
 #[derive(Default)]
 pub(super) struct SavedWork {
-    /// Where saved sends in memory are written; set when the first is loaded
-    /// or made after a machine change.
-    pub ledger: Option<Namespace>,
+    /// Each machine's saved work, in memory first; the journal writes changed
+    /// machines' files in the background.
+    pub machines: BTreeMap<MachineId, MachineWork>,
+    /// The machine whose sends are in memory.
+    pub ledger: Option<MachineId>,
     /// Listed threads whose sends are in memory, with the folder they are for.
-    /// Memory keys sends by thread ID alone, so a listed thread now at another
+    /// Memory keys sends by thread ID alone, so the same ID now at another
     /// folder conflicts: nothing of it is sent or saved.
-    pub adopted: std::collections::HashMap<String, std::path::PathBuf>,
-    pub origins: std::collections::HashMap<String, Origin>,
-    /// Copies to provisional work's host namespace, awaiting a durable save
-    /// before their sources are removed: (source, records copied).
-    pub migrations: Vec<(Namespace, Vec<Copied>)>,
+    pub adopted: HashMap<String, PathBuf>,
 }
 
 impl Plait {
@@ -47,120 +44,48 @@ impl Plait {
         .then_some(&self.tabs.host)
     }
 
-    /// Where new work is saved now: the verified host's namespace, or the
-    /// selected machine's provisional one.
-    pub(super) fn write_namespace(&self) -> Namespace {
-        match self.verified_host() {
-            Some(host) => Namespace::Host { host: host.clone() },
-            None => Namespace::Provisional {
-                machine: self.machines.active.clone(),
-            },
-        }
+    /// The selected machine's saved work.
+    pub(super) fn current_work(&self) -> Option<&MachineWork> {
+        self.saved_work.machines.get(&self.machines.active)
     }
 
-    /// The current machine's namespaces, most current first. Before a check,
-    /// the host last verified for this machine is read too, read-only.
-    pub(super) fn read_namespaces(&self) -> Vec<Namespace> {
-        let provisional = Namespace::Provisional {
-            machine: self.machines.active.clone(),
-        };
-        if let Some(host) = self.verified_host() {
-            return vec![Namespace::Host { host: host.clone() }, provisional];
-        }
-        let mut read = vec![provisional];
-        if let Some(host) = self
-            .session
-            .data
-            .as_ref()
-            .and_then(|data| data.last_verified.get(&self.machines.active))
-        {
-            read.push(Namespace::Host { host: host.clone() });
-        }
-        read
+    /// Draft `id`, saved on the selected machine.
+    pub(super) fn saved_draft_record(&self, id: &str) -> Option<&DraftTab> {
+        self.current_work()?.drafts.get(id)
     }
 
-    /// Whether `namespace` is one the current machine saves to.
-    pub(super) fn writes_here(&self, namespace: &Namespace) -> bool {
-        match namespace {
-            Namespace::Provisional { machine } => *machine == self.machines.active,
-            Namespace::Host { host } => self.verified_host() == Some(host),
-        }
-    }
-
-    fn binding_from(&self, found: Option<(Namespace, u64)>) -> Binding {
-        let namespace = self.write_namespace();
-        let origin = found
-            .filter(|(found, _)| *found != namespace)
-            .map(|(namespace, revision)| Origin {
-                namespace,
-                revision,
-            });
-        Binding { namespace, origin }
-    }
-
-    /// Draft `id`'s saved record among the current machine's namespaces.
-    pub(super) fn saved_draft_record(&self, id: &str) -> Option<(Namespace, u64, &DraftTab)> {
-        let data = self.session.data.as_ref()?;
-        self.read_namespaces().into_iter().find_map(|namespace| {
-            let saved = data.draft_in(&namespace, id)?;
-            Some((namespace, saved.revision, &saved.tab))
-        })
-    }
-
-    /// Draft `id`'s saved text for `checkout`, from the current machine.
+    /// Draft `id`'s saved text for `checkout`, from the selected machine.
     pub(super) fn saved_draft(&self, id: &str, checkout: &Path) -> Option<&DraftTab> {
         self.saved_draft_record(id)
-            .map(|(_, _, tab)| tab)
             .filter(|tab| tab.checkout == checkout)
     }
 
-    /// The current machine's saved drafts, each once, most current first.
+    /// The selected machine's saved drafts.
     pub(super) fn saved_drafts(&self) -> Vec<(String, &DraftTab)> {
-        let Some(data) = &self.session.data else {
-            return Vec::new();
-        };
-        let mut seen = HashSet::new();
-        self.read_namespaces()
-            .iter()
-            .filter_map(|namespace| data.space(namespace))
-            .flat_map(|space| space.drafts.iter())
-            .filter(|draft| seen.insert(draft.id.clone()))
-            .map(|draft| (draft.id.clone(), &draft.tab))
+        self.current_work()
+            .into_iter()
+            .flat_map(|work| work.drafts.iter())
+            .map(|(id, tab)| (id.clone(), tab))
             .collect()
     }
 
-    pub(super) fn saved_thread_record(
-        &self,
-        summary: &ThreadSummary,
-    ) -> Option<(Namespace, u64, &Thread)> {
-        let data = self.session.data.as_ref()?;
-        self.read_namespaces().into_iter().find_map(|namespace| {
-            let saved = data.thread_in(&namespace, &summary.id, &summary.checkout)?;
-            Some((namespace, saved.revision, &saved.thread))
-        })
-    }
-
-    /// A listed thread's saved work, from the current machine only.
+    /// A listed thread's saved work, from the selected machine only.
     pub(super) fn saved_thread(&self, summary: &ThreadSummary) -> Option<&Thread> {
-        self.saved_thread_record(summary)
-            .map(|(_, _, thread)| thread)
+        self.current_work()?
+            .thread(&summary.id, &summary.checkout)
+            .map(|saved| &saved.thread)
     }
 
-    /// Bind the open draft, if it is not bound yet, to where it saves now.
+    /// Bind the open draft, if it is not bound yet, to the selected machine.
     pub(super) fn bind_draft(&mut self) {
-        if self.draft.binding.is_some() {
-            return;
+        if self.draft.binding.is_none() && self.draft.id.is_some() {
+            self.draft.binding = Some(Binding {
+                machine: self.machines.active.clone(),
+            });
         }
-        let Some(id) = self.draft.id.clone() else {
-            return;
-        };
-        let found = self
-            .saved_draft_record(&id)
-            .map(|(namespace, revision, _)| (namespace, revision));
-        self.draft.binding = Some(self.binding_from(found));
     }
 
-    /// Bind thread `id`'s composer as it mounts, and return its saved text.
+    /// Bind thread `id`'s composer as it mounts, and return its saved work.
     pub(super) fn bind_thread_composer(&mut self, id: &str) -> Option<Thread> {
         let summary = self
             .host
@@ -169,48 +94,41 @@ impl Plait {
             .iter()
             .find(|thread| thread.id == id)
             .cloned()?;
-        let found = self
-            .saved_thread_record(&summary)
-            .map(|(namespace, revision, thread)| (namespace, revision, thread.clone()));
-        let binding = self.binding_from(
-            found
-                .as_ref()
-                .map(|(namespace, revision, _)| (namespace.clone(), *revision)),
-        );
+        let machine = self.machines.active.clone();
         self.workspace
             .bindings
             .entry(id.to_owned())
-            .or_insert(binding);
-        found.map(|(_, _, thread)| thread)
+            .or_insert(Binding { machine });
+        self.saved_thread(&summary).cloned()
     }
 
-    /// The namespace saved sends are written to, bound on first use.
-    pub(super) fn ledger_namespace(&mut self) -> Namespace {
-        if self.saved_work.ledger.is_none() {
-            self.saved_work.ledger = Some(self.write_namespace());
-        }
-        self.saved_work.ledger.clone().unwrap()
+    /// The machine whose sends are in memory, bound on first use.
+    pub(super) fn ledger_machine(&mut self) -> MachineId {
+        self.saved_work
+            .ledger
+            .get_or_insert_with(|| self.machines.active.clone())
+            .clone()
     }
 
-    /// Load saved sends for listed threads, from the current machine's record
-    /// at the listed path. Another machine's or another path's sends are never
-    /// loaded, so nothing reconciles or rewrites them.
+    /// Load saved sends for listed threads, from the selected machine's record
+    /// at the listed folder. Another machine's or another folder's sends are
+    /// never loaded, so nothing reconciles or rewrites them.
     pub(super) fn adopt_saved_sends(&mut self) {
-        let ledger = self.ledger_namespace();
-        let found: Vec<(String, Namespace, u64, Thread)> = self
+        if self.ledger_machine() != self.machines.active {
+            return;
+        }
+        let found: Vec<(String, Thread)> = self
             .host
             .connection
             .threads()
             .iter()
             .filter(|summary| !self.saved_work.adopted.contains_key(&summary.id))
             .filter_map(|summary| {
-                self.saved_thread_record(summary)
-                    .map(|(namespace, revision, thread)| {
-                        (summary.id.clone(), namespace, revision, thread.clone())
-                    })
+                self.saved_thread(summary)
+                    .map(|thread| (summary.id.clone(), thread.clone()))
             })
             .collect();
-        for (id, namespace, revision, thread) in found {
+        for (id, thread) in found {
             for pending in thread.pending.iter().chain(&thread.pending_submissions) {
                 self.host.submissions.restore(id.clone(), pending.clone());
             }
@@ -218,15 +136,6 @@ impl Plait {
                 self.host
                     .submissions
                     .restore_accepted(id.clone(), pending.clone());
-            }
-            if namespace != ledger {
-                self.saved_work.origins.insert(
-                    id.clone(),
-                    Origin {
-                        namespace,
-                        revision,
-                    },
-                );
             }
             self.saved_work.adopted.insert(id, thread.checkout.clone());
         }
@@ -241,72 +150,84 @@ impl Plait {
             .is_some_and(|checkout| *checkout != summary.checkout)
     }
 
-    /// Leaving a machine: its saved sends stay saved in its namespace, and the
-    /// next machine starts a ledger of its own.
+    /// Whether host receipts may settle thread `summary`'s saved Waits: the
+    /// selected machine's host is verified, the sends in memory are this
+    /// machine's and this folder's, and they were accepted by that host.
+    pub(super) fn may_reconcile(&self, summary: &ThreadSummary) -> bool {
+        let Some(host) = self.verified_host() else {
+            return false;
+        };
+        self.saved_work.ledger.as_ref() == Some(&self.machines.active)
+            && !self.ledger_conflict(summary)
+            && self
+                .current_work()
+                .and_then(|work| work.thread(&summary.id, &summary.checkout))
+                .is_none_or(|saved| saved.host.as_ref().is_none_or(|accepted| accepted == host))
+    }
+
+    /// Leaving a machine: its saved sends stay in its file, and the next
+    /// machine starts a ledger of its own.
     pub(super) fn forget_saved_work(&mut self) {
         self.host.submissions = Default::default();
         self.saved_work.ledger = None;
         self.saved_work.adopted.clear();
-        self.saved_work.origins.clear();
-    }
-
-    /// Once the selected machine's host is verified: record it as the
-    /// machine's last verified host, copy older records in if this is this
-    /// computer, and copy its provisional work across. Sources stay until the
-    /// copy is durable.
-    pub(super) fn migrate_saved_work(&mut self, next: &mut Session) -> Result<(), String> {
-        let Some(host) = self.verified_host().cloned() else {
-            return Ok(());
-        };
-        let machine = self.machines.active.clone();
-        if next.last_verified.get(&machine) != Some(&host) {
-            next.last_verified.insert(machine.clone(), host.clone());
-        }
-        let target = Namespace::Host { host };
-        if machine == plait_client::machines::MachineId::default() {
-            next.import_legacy(&target)?;
-        }
-        let source = Namespace::Provisional { machine };
-        let copied = next.migrate(&source, &target)?;
-        if !copied.is_empty() {
-            self.saved_work.migrations.push((source, copied));
-        }
-        Ok(())
-    }
-
-    /// The first `count` copies are durable: remove what they copied from.
-    pub(super) fn complete_migrations(&mut self, count: usize, cx: &mut Context<Self>) {
-        let count = count.min(self.saved_work.migrations.len());
-        if count == 0 {
-            return;
-        }
-        let done: Vec<_> = self.saved_work.migrations.drain(..count).collect();
-        let Some(data) = &mut self.session.data else {
-            return;
-        };
-        for (source, copied) in &done {
-            data.remove_copied(source, copied);
-        }
-        if let Some(journal) = &self.session.journal {
-            journal.queue(data.clone());
-        }
-        self.schedule_session_save(false, cx);
+        // Approval choices are keyed by thread ID too; they are saved in the
+        // machine's file and must not follow the same ID to another machine.
+        self.workspace.thread_controls.approvals.clear();
     }
 
     /// Why the open draft cannot be sent here, on any send path: the selected
-    /// machine's host is not verified yet, or the draft saves to another
-    /// machine. A draft not bound yet would bind to this machine.
+    /// machine's host is not verified yet, or the draft is another machine's.
     pub(super) fn draft_send_refusal(&self) -> Option<String> {
         if self.verified_host().is_none() {
             return Some("Checking which machine this is…".into());
         }
         match &self.draft.binding {
-            Some(binding) if !self.writes_here(&binding.namespace) => Some(
+            Some(binding) if binding.machine != self.machines.active => Some(
                 "This draft was written for another machine. Switch back to it to send.".into(),
             ),
             _ => None,
         }
     }
+
+    /// Store `works`, each the full new work of one machine: in memory now,
+    /// and queued for a debounced background write of only those files.
+    /// Returns whether any changed, and whether an image reference went away.
+    pub(super) fn store_machine_work(
+        &mut self,
+        works: BTreeMap<MachineId, MachineWork>,
+    ) -> (bool, bool) {
+        let mut changed = false;
+        let mut removed_image = false;
+        for (machine, work) in works {
+            let old = self.saved_work.machines.get(&machine);
+            if old == Some(&work) {
+                continue;
+            }
+            if let Some(old) = old {
+                removed_image |= old
+                    .image_ids()
+                    .any(|id| !work.image_ids().any(|next| next == id));
+            }
+            if let Some(journal) = &self.session.journal {
+                journal.queue_machine(&machine, work.clone());
+            }
+            self.saved_work.machines.insert(machine, work);
+            changed = true;
+        }
+        (changed, removed_image)
+    }
+}
+
+/// `machine`'s work to change in this capture, copied once from `saved`.
+pub(super) fn touch<'a>(
+    works: &'a mut BTreeMap<MachineId, MachineWork>,
+    saved: &BTreeMap<MachineId, MachineWork>,
+    machine: &MachineId,
+) -> &'a mut MachineWork {
+    works
+        .entry(machine.clone())
+        .or_insert_with(|| saved.get(machine).cloned().unwrap_or_default())
 }
 
 #[cfg(test)]
@@ -319,27 +240,19 @@ impl Plait {
         self.draft.binding = None;
     }
 
-    /// The current machine's saved thread work, by thread ID, for scenes.
-    pub(super) fn test_saved_threads(&self) -> std::collections::BTreeMap<String, Thread> {
-        let Some(data) = &self.session.data else {
-            return Default::default();
-        };
-        let mut threads = std::collections::BTreeMap::new();
-        for namespace in self.read_namespaces() {
-            for saved in data.space(&namespace).into_iter().flat_map(|s| &s.threads) {
-                threads
-                    .entry(saved.id.clone())
-                    .or_insert_with(|| saved.thread.clone());
-            }
-        }
-        threads
+    /// The selected machine's saved thread work, by thread ID, for scenes.
+    pub(super) fn test_saved_threads(&self) -> BTreeMap<String, Thread> {
+        self.current_work()
+            .into_iter()
+            .flat_map(|work| &work.threads)
+            .map(|saved| (saved.id.clone(), saved.thread.clone()))
+            .collect()
     }
 
-    /// The current machine's saved drafts, by draft ID, for scenes.
-    pub(super) fn test_saved_drafts(&self) -> std::collections::BTreeMap<String, DraftTab> {
-        self.saved_drafts()
-            .into_iter()
-            .map(|(id, tab)| (id, tab.clone()))
-            .collect()
+    /// The selected machine's saved drafts, by draft ID, for scenes.
+    pub(super) fn test_saved_drafts(&self) -> BTreeMap<String, DraftTab> {
+        self.current_work()
+            .map(|work| work.drafts.clone())
+            .unwrap_or_default()
     }
 }

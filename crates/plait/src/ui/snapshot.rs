@@ -705,16 +705,17 @@ struct Harness {
 
 /// The newest saved draft for `checkout` in any namespace of `saved`.
 pub(super) fn saved_draft_for(
-    saved: &plait_client::session::Session,
+    machines: &std::collections::BTreeMap<
+        plait_client::machines::MachineId,
+        plait_client::session::MachineWork,
+    >,
     checkout: &Path,
 ) -> Option<plait_client::session::Draft> {
-    saved
-        .spaces
-        .iter()
-        .flat_map(|space| &space.drafts)
-        .filter(|d| d.tab.checkout == checkout)
-        .max_by_key(|d| d.revision)
-        .map(|d| d.tab.draft.clone())
+    machines
+        .values()
+        .flat_map(|work| work.drafts.values())
+        .find(|tab| tab.checkout == checkout)
+        .map(|tab| tab.draft.clone())
 }
 
 /// The verified host identity scenes connect as.
@@ -5840,19 +5841,24 @@ fn image_drafts_survive_reopen_and_refusal_keeps_the_draft() {
     let (directory, host) = plait_client::session::locations().unwrap();
     let (journal, mut saved) =
         plait_client::session::Journal::open(&directory, host.clone()).unwrap();
+    let mut machines = Default::default();
     harness.update(|plait, _, cx| {
         plait.capture_session(cx);
         saved = plait.session.data.as_ref().unwrap().clone();
         saved.host_store = host.clone();
+        machines = plait.saved_work.machines.clone();
     });
     journal.queue(saved);
+    for (machine, work) in machines {
+        journal.queue_machine(&machine, work);
+    }
     journal.flush().unwrap();
     drop(journal);
-    let (_, reopened) = plait_client::session::Journal::open(&directory, host).unwrap();
+    let (journal, _) = plait_client::session::Journal::open(&directory, host).unwrap();
+    let reopened = journal.take_machines();
     let draft = &reopened
-        .spaces
-        .iter()
-        .flat_map(|space| &space.threads)
+        .values()
+        .flat_map(|work| &work.threads)
         .find(|saved| saved.id == THREAD)
         .unwrap()
         .thread
@@ -6460,8 +6466,7 @@ fn image_drafts_stay_with_their_checkout() {
         plait.capture_session(cx);
     });
     journal.flush().unwrap();
-    let saved: plait_client::session::Session =
-        serde_json::from_slice(&std::fs::read(directory.join("desktop.json")).unwrap()).unwrap();
+    let saved = plait_client::session::read_machines(&directory).unwrap();
     assert_eq!(saved_draft_for(&saved, &a).unwrap().text, "Draft for A");
     assert_eq!(saved_draft_for(&saved, &b).unwrap().text, "Draft for B");
     assert_eq!(
@@ -6479,8 +6484,7 @@ fn image_drafts_stay_with_their_checkout() {
         harness.settle();
         std::thread::sleep(Duration::from_millis(5));
     }
-    let saved: plait_client::session::Session =
-        serde_json::from_slice(&std::fs::read(directory.join("desktop.json")).unwrap()).unwrap();
+    let saved = plait_client::session::read_machines(&directory).unwrap();
     assert!(saved_draft_for(&saved, &a).is_none());
     assert!(saved_draft_for(&saved, &b).is_some());
     assert!(directory.join("images").join(&fixture[1].0.id).exists());

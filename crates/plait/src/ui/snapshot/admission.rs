@@ -559,6 +559,7 @@ fn reopened_creation() {
     let stop = Arc::new(AtomicBool::new(false));
     let server = scripted_busy_host(root.clone(), listener, requests.clone(), stop.clone(), true);
     let mut saved = None;
+    let mut machines = std::collections::BTreeMap::new();
     {
         let mut harness = Harness::new(&repository, None, 900., 600.);
         harness.connect(&repository, false);
@@ -578,27 +579,28 @@ fn reopened_creation() {
         harness.update(|p, _, cx| {
             p.capture_session(cx);
             saved = p.session.data.clone();
+            machines = p.saved_work.machines.clone();
         });
     }
     let saved = saved.unwrap();
-    let draft = super::saved_draft_for(&saved, &root).unwrap();
+    let draft = super::saved_draft_for(&machines, &root).unwrap();
     assert_eq!(draft.text, "Only once");
     assert!(draft.creation.is_some());
     let mut harness = Harness::new(&repository, None, 900., 600.);
     harness.connect(&repository, false);
     harness.update(|p, w, cx| {
         p.host.connection.status.as_mut().unwrap().protocol_version = 6;
-        let draft = saved
-            .spaces
-            .iter()
-            .flat_map(|space| &space.drafts)
+        let (id, tab) = machines
+            .values()
+            .flat_map(|work| &work.drafts)
             .next()
             .unwrap();
         let target = plait_client::tabs::TabTarget::Draft {
-            id: draft.id.clone(),
-            checkout: p.tab_checkout(draft.tab.checkout.clone()),
+            id: id.clone(),
+            checkout: p.tab_checkout(tab.checkout.clone()),
         };
         p.session.data = Some(saved);
+        p.saved_work.machines = machines.clone();
         p.open_tab_target(target, w, cx);
         assert!(p.draft_pending());
         p.retry_draft(w, cx);

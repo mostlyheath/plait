@@ -494,11 +494,13 @@ impl Plait {
         }
         self.bind_draft();
         let draft = std::mem::take(&mut self.draft);
-        // Moving to another folder: the record is rewritten in the same namespace.
-        if let (Some(id), Some(binding)) = (&draft.id, &draft.binding)
-            && let Some(data) = &mut self.session.data
-        {
-            data.discard_draft(&binding.namespace, id);
+        // Moving to another folder: the record is rewritten for the same machine.
+        if let (Some(id), Some(binding)) = (&draft.id, &draft.binding) {
+            let mut works = std::collections::BTreeMap::new();
+            super::saved_work::touch(&mut works, &self.saved_work.machines, &binding.machine)
+                .drafts
+                .remove(id);
+            self.store_machine_work(works);
         }
         self.tabs.lifecycle.presenting = true;
         self.change_checkout(checkout, window, cx);

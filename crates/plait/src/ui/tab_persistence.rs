@@ -54,6 +54,9 @@ pub(super) struct Persistence {
     save: Option<Task<()>>,
     error: Option<String>,
     gate: Arc<WriteGate>,
+    /// The machine `gate` writes for, and the other machines' writers.
+    gate_machine: plait_client::machines::MachineId,
+    gates: std::collections::HashMap<plait_client::machines::MachineId, Arc<WriteGate>>,
 }
 #[derive(Default)]
 pub(super) struct WriteGate {
@@ -274,10 +277,13 @@ impl Plait {
     pub(super) fn switch_machine_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.tabs.model = tabs::WindowTabs::new(super::tabs::fresh_window_id());
         let state = &mut self.tabs.persistence;
-        // The next machine's tab document gets a writer and revision of its
-        // own: its saves cannot make the previous machine's pending write
-        // stand down without writing (#132).
-        state.gate = Arc::new(WriteGate::default());
+        // Each machine's tab document has one writer and revision, reused when
+        // the window returns to it: another machine's saves cannot make its
+        // pending write stand down, and it never has two writers (#132).
+        let previous = std::mem::take(&mut state.gate);
+        state.gates.insert(state.gate_machine.clone(), previous);
+        state.gate_machine = self.machines.active.clone();
+        state.gate = state.gates.remove(&state.gate_machine).unwrap_or_default();
         state.host_generation += 1;
         state.host_loaded = false;
         state.host_loading = false;
@@ -505,34 +511,30 @@ impl Plait {
             .collect();
         kept.extend(self.draft.id.clone());
         kept.extend(self.tabs.lifecycle.drafts.keys().cloned());
-        // Empty-record cleanup, only in the namespace this machine saves to,
-        // and only where the stored record itself is empty.
-        let namespace = self.write_namespace();
-        let Some(data) = &mut self.session.data else {
-            return;
-        };
-        let unopened: Vec<String> = data
-            .space(&namespace)
-            .map(|space| {
-                space
-                    .drafts
+        // Empty-record cleanup, only in this machine's work, and only where the
+        // stored record itself is empty.
+        let machine = self.machines.active.clone();
+        let unopened: Vec<String> = self
+            .current_work()
+            .map(|work| {
+                work.drafts
                     .iter()
-                    .filter(|d| {
-                        !kept.contains(&d.id) && plait_client::session::draft_is_empty(&d.tab)
+                    .filter(|(id, tab)| {
+                        !kept.contains(*id) && plait_client::session::draft_is_empty(tab)
                     })
-                    .map(|d| d.id.clone())
+                    .map(|(id, _)| id.clone())
                     .collect()
             })
             .unwrap_or_default();
         if unopened.is_empty() {
             return;
         }
+        let mut works = std::collections::BTreeMap::new();
+        let work = super::saved_work::touch(&mut works, &self.saved_work.machines, &machine);
         for id in &unopened {
-            data.discard_empty_draft(&namespace, id);
+            work.discard_empty_draft(id);
         }
-        if let Some(journal) = &self.session.journal {
-            journal.queue(data.clone());
-        }
+        self.store_machine_work(works);
         self.schedule_session_save(false, cx);
     }
 

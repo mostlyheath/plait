@@ -336,11 +336,12 @@ impl Plait {
                 let draft = self.tabs.model.get(id).and_then(|tab| match tab.session().target() { TabTarget::Draft { id, .. } => Some(id.clone()), _ => None });
                 let result = self.tabs.model.close(id, nonempty);
                 if result.is_ok() && !nonempty && let Some(draft) = draft {
-                    // Empty-draft cleanup: only a stored record that is empty, in its own namespace.
-                    let namespace = self.tabs.lifecycle.drafts.get(&draft).and_then(|d| d.binding.clone()).map(|b| b.namespace)
-                        .or_else(|| self.saved_draft_record(&draft).map(|(namespace, _, _)| namespace))
-                        .filter(|namespace| self.writes_here(namespace));
-                    if let (Some(data), Some(namespace)) = (&mut self.session.data, namespace) { data.discard_empty_draft(&namespace, &draft); }
+                    // Empty-draft cleanup: only a stored record that is empty, for its own machine.
+                    let machine = self.tabs.lifecycle.drafts.get(&draft).and_then(|d| d.binding.clone()).map(|b| b.machine)
+                        .unwrap_or_else(|| self.machines.active.clone());
+                    let mut works = std::collections::BTreeMap::new();
+                    super::saved_work::touch(&mut works, &self.saved_work.machines, &machine).discard_empty_draft(&draft);
+                    self.store_machine_work(works);
                     self.tabs.lifecycle.drafts.remove(&draft);
                 }
                 result

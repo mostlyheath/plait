@@ -102,32 +102,29 @@ Another model reviews it independently before merge.
 
 **Per-machine saved work (agreed).** The owner agreed this change to the
 desktop's saved workspace on 2026-11-25, for
-[#132](https://github.com/mostlyheath/plait/issues/132), following
-[the design](https://github.com/mostlyheath/plait/issues/132#issuecomment-7153471382).
-Unsent drafts and saved thread work, including waiting messages, are kept
-in a separate namespace per machine. A namespace is a verified host identity,
-or provisional for the selected machine until its host is verified. Thread
-work is keyed by thread ID and folder. A draft, composer or send ledger is
-bound to a namespace when it is created or mounted, and its saves always go
-there. The window reads only the current machine's namespaces. Before a
-check it also reads the machine's last verified host, read-only: an edit
-copies the record into the provisional namespace first. Provisional work is
-copied to the host's namespace, and the source is removed only after that
-copy is saved durably. If both copies changed, both are kept. Records from
-before this change are copied, never moved, into the first verified local
-host's namespace. Each machine's tab document has its own writer and revision.
+[#132](https://github.com/mostlyheath/plait/issues/132). The same day the owner
+amended it: saved work is keyed by the machine entry the person selected in
+Plait, not by the verified host identity, and kept in one file per machine
+([design](https://github.com/mostlyheath/plait/issues/132#issuecomment-7153471382),
+amended below it). What a person types while a machine is selected belongs to
+that machine from the start.
 
-The design's open questions were decided as follows:
-- **Revision lineage.** Every record carries a revision that only advances
-  within its namespace, and the record it came from.
-- **Caps.** A namespace holds at most 256 drafts and 256 threads, and a
-  workspace at most 64 namespaces. The whole file stays within 4 MiB on every
-  save. A full namespace refuses a new record with a notice and evicts
-  nothing. Older builds' fields are left as they were, so their 512-record
-  bound still holds.
+Each machine's unsent drafts and thread work are kept in their own file under
+`desktop-machines/`, beside `desktop.json`. Thread work is keyed by thread ID
+and folder, and includes waiting messages and the thread's approval choice.
+Older builds never read or write these files. The window shows only the
+selected machine's work. Writes go to memory first, then a debounced
+background write of only the changed machine's file, one writer per file.
 
-The new field is optional and older builds ignore it. Another model reviews
-the change independently before merge.
+Sending, and settling saved waiting messages from host receipts, require the
+selected machine's host identity to be verified. Receipts settle a message
+only if the host that accepted it is the one verified now. On the first
+launch, `desktop.json`'s older drafts are copied once, in the background load,
+into this computer's file. They stay in place for older builds, and each
+copied record is noted so it is not copied twice. A machine's file may hold up
+to 8 MiB. Past that, its work is kept in memory with a notice, and a close
+that cannot save stays open. Another model reviews the change independently
+before merge.
 
 Client and host releases must be independently selectable and publishable.
 Compatibility is negotiated through protocol versions and capabilities, not

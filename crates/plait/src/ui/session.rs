@@ -4,9 +4,10 @@ use super::{Plait, composer::Composer};
 use gpui::*;
 use plait_client::{
     host::{MessageRole, ThreadSummary},
-    session::{self, Draft, Journal, Namespace, Session, Thread},
+    machines::MachineId,
+    session::{self, Draft, Journal, MachineWork, Session, Thread},
 };
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
 
 /// What a thread is called before it has a first message or a chosen name.
 pub(super) const UNTITLED: &str = "New thread";
@@ -38,7 +39,7 @@ impl Plait {
         cx: &mut Context<Self>,
     ) {
         // Only the record this thread's composer, or else its send ledger,
-        // saves to; another machine's work for the same ID is not touched.
+        // saves to: the machine it is bound to, at the listed folder.
         let Some(checkout) = self
             .host
             .connection
@@ -49,27 +50,19 @@ impl Plait {
         else {
             return;
         };
-        let ledger = self.ledger_namespace();
-        let namespace = self
+        let ledger = self.ledger_machine();
+        let machine = self
             .workspace
             .bindings
             .get(id)
-            .map(|binding| binding.namespace.clone())
+            .map(|binding| binding.machine.clone())
             .unwrap_or_else(|| ledger.clone());
-        let pending = self.host.submissions.pending(id).cloned();
-        let pending_submissions: Vec<_> = self
-            .host
-            .submissions
-            .all(id)
-            .iter()
-            .skip(1)
-            .cloned()
-            .collect();
-        let queued = self.host.submissions.accepted(id).to_vec();
-        let Some(data) = self.session.data.as_mut() else {
-            return;
-        };
-        let Some(saved) = data.thread_in(&namespace, id, &checkout) else {
+        let Some(saved) = self
+            .saved_work
+            .machines
+            .get(&machine)
+            .and_then(|work| work.thread(id, &checkout))
+        else {
             return;
         };
         let mut thread = saved.thread.clone();
@@ -87,18 +80,26 @@ impl Plait {
             draft.submitted = None;
             draft.revision += 1;
         }
-        if namespace == ledger {
-            thread.pending = pending;
-            thread.pending_submissions = pending_submissions;
-            thread.queued_submissions = queued;
+        if machine == ledger {
+            thread.pending = self.host.submissions.pending(id).cloned();
+            thread.pending_submissions = self
+                .host
+                .submissions
+                .all(id)
+                .iter()
+                .skip(1)
+                .cloned()
+                .collect();
+            thread.queued_submissions = self.host.submissions.accepted(id).to_vec();
         }
-        if let Err(error) = data.put_thread(&namespace, id, thread, None) {
-            self.session.note = Some(error);
+        let host = self.verified_host().cloned();
+        let mut works = BTreeMap::new();
+        super::saved_work::touch(&mut works, &self.saved_work.machines, &machine)
+            .put_thread(id, thread, host);
+        let (changed, _) = self.store_machine_work(works);
+        if changed {
+            self.schedule_session_save(false, cx);
         }
-        if let Some(journal) = &self.session.journal {
-            journal.queue(data.clone());
-        }
-        self.schedule_session_save(false, cx);
     }
 
     pub fn restore_desktop(
@@ -162,6 +163,7 @@ impl Plait {
                             })
                         }).detach();
                         let selected = data.selected.clone();
+                        this.saved_work.machines = journal.take_machines();
                         this.session.journal = Some(journal);
                         this.session.data = Some(data);
                         this.session.note = None;
@@ -359,8 +361,7 @@ impl Plait {
         if self.session.data.is_none() {
             return;
         }
-        // Every save goes to the namespace its draft, composer or ledger is
-        // bound to, and always succeeds unless that namespace is full.
+        // Everything typed saves to the machine it is bound to, in memory now.
         self.bind_draft();
         // A composer mounted without a restore is restored, bound and filled
         // from its saved text, before it can save over that text.
@@ -375,13 +376,15 @@ impl Plait {
             self.restore_composer(&id, &composer, cx);
         }
         self.adopt_saved_sends();
-        let mut notes = Vec::new();
+        let mut works = BTreeMap::new();
+        self.capture_open_draft(&mut works, cx);
+        self.capture_parked_drafts(&mut works);
+        self.capture_threads(&mut works, cx);
+        let (mut changed, mut removed_image) = self.store_machine_work(works);
+        // desktop.json keeps only the window's folder and selection; its older
+        // records stay as they are for older builds.
         let data = self.session.data.as_ref().unwrap();
         let mut next = data.clone();
-        if let Some(error) = self.capture_open_draft(&mut next, cx) {
-            notes.push(error);
-        }
-        notes.extend(self.capture_parked_drafts(&mut next));
         if self.host_is_local()
             && !self.host_workspace.checkout_carried
             && self.host.creation.checkout.is_absolute()
@@ -394,31 +397,26 @@ impl Plait {
             .selected
             .clone()
             .or_else(|| self.session.restore_thread.clone());
-        notes.extend(self.capture_threads(&mut next, cx));
-        if let Err(error) = self.migrate_saved_work(&mut next) {
-            notes.push(error);
+        if *data != next {
+            removed_image |= data
+                .image_ids()
+                .any(|id| !next.image_ids().any(|next| next == id));
+            if let Some(journal) = &self.session.journal {
+                journal.queue(next.clone());
+            }
+            self.session.data = Some(next);
+            changed = true;
         }
-        if let Some(note) = notes.pop() {
-            self.session.note = Some(note);
+        if changed {
+            self.schedule_session_save(removed_image, cx);
         }
-        let data = self.session.data.as_ref().unwrap();
-        if *data == next {
-            return;
-        }
-        let removed_image = data
-            .image_ids()
-            .any(|id| !next.image_ids().any(|next| next == id));
-        if let Some(journal) = &self.session.journal {
-            journal.queue(next.clone());
-        }
-        self.session.data = Some(next);
-        self.schedule_session_save(removed_image, cx);
     }
 
-    /// The open draft, into its bound namespace.
-    fn capture_open_draft(&self, next: &mut Session, cx: &App) -> Option<String> {
-        let id = self.draft.id.as_ref()?;
-        let binding = self.draft.binding.as_ref()?;
+    /// The open draft, into its machine's work.
+    fn capture_open_draft(&self, works: &mut BTreeMap<MachineId, MachineWork>, cx: &App) {
+        let (Some(id), Some(binding)) = (&self.draft.id, &self.draft.binding) else {
+            return;
+        };
         let draft = if let Some(composer) = &self.draft.composer {
             let composer = composer.read(cx);
             let (text, revision, submitted) = composer.saved_draft();
@@ -433,7 +431,7 @@ impl Plait {
             // An open empty tab still survives restart before its composer is mounted.
             self.draft.saved.clone()
         } else {
-            return None;
+            return;
         };
         let tab = plait_client::session::DraftTab {
             legacy: false,
@@ -442,21 +440,24 @@ impl Plait {
             settings: self.draft.settings(),
             draft,
         };
-        next.put_draft(&binding.namespace, id, tab, binding.origin.clone())
-            .err()
+        super::saved_work::touch(works, &self.saved_work.machines, &binding.machine)
+            .drafts
+            .insert(id.clone(), tab);
     }
 
-    /// Drafts parked behind other tabs, into their bound namespaces, so a
-    /// parked draft dropped from memory later is still saved.
-    fn capture_parked_drafts(&self, next: &mut Session) -> Vec<String> {
-        let mut notes = Vec::new();
+    /// Drafts parked behind other tabs, into their machines' work, so a parked
+    /// draft dropped from memory later is still saved.
+    fn capture_parked_drafts(&self, works: &mut BTreeMap<MachineId, MachineWork>) {
         for (id, draft) in &self.tabs.lifecycle.drafts {
             let Some(binding) = &draft.binding else {
                 continue;
             };
-            let checkout = next
-                .draft_in(&binding.namespace, id)
-                .map(|saved| saved.tab.checkout.clone())
+            let saved =
+                super::saved_work::touch(works, &self.saved_work.machines, &binding.machine);
+            let checkout = saved
+                .drafts
+                .get(id)
+                .map(|tab| tab.checkout.clone())
                 .or_else(|| {
                     self.tabs
                         .model
@@ -474,28 +475,27 @@ impl Plait {
             let Some(checkout) = checkout else {
                 continue;
             };
-            let mut saved = draft.saved.clone();
-            saved.creation = draft.legacy_creation();
-            let tab = plait_client::session::DraftTab {
-                legacy: false,
-                creation: draft.saved_creation(),
-                checkout,
-                settings: draft.settings(),
-                draft: saved,
-            };
-            if let Err(error) = next.put_draft(&binding.namespace, id, tab, binding.origin.clone())
-            {
-                notes.push(error);
-            }
+            let mut text = draft.saved.clone();
+            text.creation = draft.legacy_creation();
+            saved.drafts.insert(
+                id.clone(),
+                plait_client::session::DraftTab {
+                    legacy: false,
+                    creation: draft.saved_creation(),
+                    checkout,
+                    settings: draft.settings(),
+                    draft: text,
+                },
+            );
         }
-        notes
     }
 
-    /// Listed threads' composer text and saved sends, each into its bound
-    /// namespace: a composer's text where it mounted, sends where the ledger is.
-    fn capture_threads(&mut self, next: &mut Session, cx: &App) -> Vec<String> {
-        let ledger = self.ledger_namespace();
-        let mut notes = Vec::new();
+    /// Listed threads' composer text, approval choice and saved sends, each into
+    /// its bound machine's work: a composer's text where it mounted, sends where
+    /// the ledger is.
+    fn capture_threads(&mut self, works: &mut BTreeMap<MachineId, MachineWork>, cx: &App) {
+        let ledger = self.ledger_machine();
+        let host = self.verified_host().cloned();
         let summaries = self.host.connection.threads().to_vec();
         let mut written = Vec::new();
         for summary in &summaries {
@@ -506,11 +506,9 @@ impl Plait {
             }
             let in_memory = self.host.submissions.pending(id).is_some()
                 || !self.host.submissions.accepted(id).is_empty();
-            let source = self
-                .saved_thread_record(summary)
-                .map(|(_, _, thread)| thread.clone());
-            let title = source
-                .as_ref()
+            let approval = self.thread_approval(id);
+            let title = self
+                .saved_thread(summary)
                 .map(|thread| thread.title.clone())
                 .filter(|title| !title.is_empty())
                 .or_else(|| {
@@ -528,21 +526,6 @@ impl Plait {
                         .map(|message| session::title(&message.text))
                 })
                 .unwrap_or_default();
-            let record = |next: &Session, namespace: &Namespace| {
-                next.thread_in(namespace, id, &summary.checkout)
-                    .map(|saved| saved.thread.clone())
-                    .or_else(|| source.clone())
-                    .unwrap_or_else(|| Thread {
-                        checkout: summary.checkout.clone(),
-                        model: summary.model.clone(),
-                        title: String::new(),
-                        draft: Draft::default(),
-                        pending: None,
-                        pending_submissions: Vec::new(),
-                        queued_submissions: Vec::new(),
-                        approval: None,
-                    })
-            };
             let with_sends = |mut thread: Thread| {
                 thread.pending = self.host.submissions.pending(id).cloned();
                 thread.pending_submissions = self
@@ -556,16 +539,30 @@ impl Plait {
                 thread.queued_submissions = self.host.submissions.accepted(id).to_vec();
                 thread
             };
+            let record = |work: &MachineWork| {
+                work.thread(id, &summary.checkout)
+                    .map(|saved| saved.thread.clone())
+                    .unwrap_or_else(|| Thread {
+                        checkout: summary.checkout.clone(),
+                        model: summary.model.clone(),
+                        title: title.clone(),
+                        draft: Draft::default(),
+                        pending: None,
+                        pending_submissions: Vec::new(),
+                        queued_submissions: Vec::new(),
+                        approval: None,
+                    })
+            };
             let mut ledger_written = false;
             if let Some(composer) = self.workspace.composers.get(id)
                 && let Some(binding) = self.workspace.bindings.get(id)
             {
                 let composer = composer.read(cx);
                 let (text, revision, submitted) = composer.saved_draft();
-                let mut thread = record(next, &binding.namespace);
-                let fresh = next
-                    .thread_in(&binding.namespace, id, &summary.checkout)
-                    .is_none();
+                let work =
+                    super::saved_work::touch(works, &self.saved_work.machines, &binding.machine);
+                let fresh = work.thread(id, &summary.checkout).is_none();
+                let mut thread = record(work);
                 thread.draft = Draft {
                     images: composer.saved_images().to_vec(),
                     text: text.to_owned(),
@@ -575,63 +572,51 @@ impl Plait {
                 };
                 thread.title = title.clone();
                 thread.model = summary.model.clone();
-                thread.approval = self.thread_approval(id);
-                if binding.namespace == ledger {
+                thread.approval = approval;
+                let sends = binding.machine == ledger;
+                if sends {
                     thread = with_sends(thread);
                     ledger_written = true;
                 }
-                // A record is made only for something worth keeping.
+                // A record is made only for something worth keeping, which
+                // includes the thread's own approval choice.
                 let worth = !fresh
-                    || source.is_some()
                     || !thread.draft.text.is_empty()
                     || !thread.draft.images.is_empty()
-                    || in_memory;
-                if worth
-                    && let Err(error) =
-                        next.put_thread(&binding.namespace, id, thread, binding.origin.clone())
-                {
-                    notes.push(error);
+                    || thread.approval.is_some()
+                    || (sends && in_memory);
+                if worth {
+                    work.put_thread(id, thread, if sends { host.clone() } else { None });
                 }
             }
             if ledger_written {
                 written.push((id.clone(), summary.checkout.clone()));
-            } else if in_memory || self.saved_work.adopted.contains_key(id) {
-                let fresh = next.thread_in(&ledger, id, &summary.checkout).is_none();
-                if fresh && !in_memory && source.is_none() {
-                    continue;
-                }
-                let mut thread = with_sends(record(next, &ledger));
-                if fresh {
-                    thread.title = title;
-                }
-                let origin = self.saved_work.origins.get(id).cloned();
-                if let Err(error) = next.put_thread(&ledger, id, thread, origin) {
-                    notes.push(error);
-                } else {
-                    written.push((id.clone(), summary.checkout.clone()));
-                }
+            } else if in_memory || approval.is_some() || self.saved_work.adopted.contains_key(id) {
+                let work = super::saved_work::touch(works, &self.saved_work.machines, &ledger);
+                let mut thread = with_sends(record(work));
+                thread.approval = approval;
+                work.put_thread(id, thread, host.clone());
+                written.push((id.clone(), summary.checkout.clone()));
             }
         }
         // Sends saved for a folder are that folder's from now on.
         for (id, checkout) in written {
             self.saved_work.adopted.entry(id).or_insert(checkout);
         }
-        notes
     }
 
-    /// An explicit discard, or a sent draft: removed from its own namespace only.
+    /// An explicit discard, or a sent draft: removed from its own machine only.
     pub(super) fn clear_new_draft(&mut self, cx: &mut Context<Self>) {
         self.bind_draft();
-        let binding = self.draft.binding.clone();
-        if let Some(data) = &mut self.session.data {
-            if let (Some(id), Some(binding)) = (&self.draft.id, &binding) {
-                data.discard_draft(&binding.namespace, id);
-            }
-            if let Some(journal) = &self.session.journal {
-                journal.queue(data.clone());
-            }
-            self.schedule_session_save(true, cx);
-        }
+        let (Some(id), Some(binding)) = (self.draft.id.clone(), self.draft.binding.clone()) else {
+            return;
+        };
+        let mut works = BTreeMap::new();
+        super::saved_work::touch(&mut works, &self.saved_work.machines, &binding.machine)
+            .drafts
+            .remove(&id);
+        self.store_machine_work(works);
+        self.schedule_session_save(true, cx);
     }
 
     pub(super) fn schedule_session_save(&mut self, immediately: bool, cx: &mut Context<Self>) {
@@ -643,8 +628,6 @@ impl Plait {
         } else {
             Duration::from_millis(250)
         });
-        // Copies queued before this save are durable once it succeeds.
-        let copies = self.saved_work.migrations.len();
         self.session.save = Some(cx.spawn(async move |this, cx| {
             timer.await;
             let result = cx
@@ -652,13 +635,11 @@ impl Plait {
                 .spawn(async move { journal.flush() })
                 .await;
             let _ = this.update(cx, |this, cx| {
-                let saved = result.is_ok();
+                // A failed write keeps the work in memory and queued for the next
+                // save; the notice says so.
                 this.session.note = result
                     .err()
                     .map(|error| format!("Workspace not saved: {error}"));
-                if saved {
-                    this.complete_migrations(copies, cx);
-                }
                 cx.notify();
             });
         }));
