@@ -5,8 +5,7 @@ import { SignIns } from './sign-in.ts';
 import type { SignInLimits } from './sign-in.ts';
 import { addEndpoint, checkEndpoint, readEndpoints, removeEndpoint, renderEndpoints, updateEndpoint, writeEndpoints } from './endpoints.ts';
 import type { EndpointFile } from './endpoints.ts';
-import { providerOrigin, shellValuesUsed } from './provider-environment.ts';
-import type { ProviderBinding } from './provider-environment.ts';
+import { shellValuesUsed } from './provider-environment.ts';
 
 /** One complete, immutable view of Pi's providers. A reload builds a new one and swaps it in. */
 export type Registry = {
@@ -68,6 +67,7 @@ type Request = Record<string, unknown> & { op: string };
 
 /** Every Pi call made for a request ends well inside the host's 20 second sidecar deadline. */
 const PI_DEADLINE_MS = 5000;
+const DETACHED_SHELL_KEY = 'This provider\'s key comes from your shell; detached runs can\'t use it yet. Turn off detached runs or set the key on the host.';
 const SECRET_LIMIT = 8192;
 const CONTROL = /[\u0000-\u001f\u007f]/;
 
@@ -250,13 +250,15 @@ export class Providers {
   }
 
   /**
-   * What a detached run of `providerId` needs to resolve the same credential as this registry:
-   * the login-shell values its resolution used, bound to the provider and its server's origin.
+   * Why a detached run of `providerId` cannot start, or undefined. Detached runners resolve keys
+   * from the host environment only, so a credential that uses a login-shell value here, or one
+   * whose lookup failed, would become a different credential there.
    */
-  async bindingFor(providerId: string): Promise<ProviderBinding> {
+  async detachedRunProblem(providerId: string): Promise<string | undefined> {
     const models = this.registry.models;
-    const values = await shellValuesUsed(() => models.getAuth(providerId, { signal: AbortSignal.timeout(PI_DEADLINE_MS) }).catch(() => undefined));
-    return { provider: providerId, origin: providerOrigin(models.getProvider(providerId)?.baseUrl), values };
+    let failed = false;
+    const values = await shellValuesUsed(() => models.getAuth(providerId, { signal: AbortSignal.timeout(PI_DEADLINE_MS) }).catch(() => { failed = true; }));
+    return failed || Object.keys(values).length > 0 ? DETACHED_SHELL_KEY : undefined;
   }
 
   /** The provider list, for `list_providers` and for any reply that later wants to include it. */
@@ -403,11 +405,12 @@ export class Providers {
       await this.commit(file, () => this.lists(id, models));
       return key === undefined ? this.one(id) : this.setKey(id, key);
     }
-    // A stored credential is bound to its server. It is replaced or removed before the new
-    // address is published, so a failure leaves the old address, never the old key at the new one.
-    if (key === undefined) await this.forget(id); else await this.setKey(id, key);
+    // A stored credential is bound to its server. The old one goes before the new address is
+    // written, and a replacement is stored only after it, so no failure leaves a key at the
+    // wrong server: at worst the endpoint has no key, and the person enters it again.
+    await this.forget(id);
     await this.commit(file, () => this.lists(id, models));
-    return this.one(id);
+    return key === undefined ? this.one(id) : this.setKey(id, key);
   }
 
   private async removeEndpoint(value: string): Promise<string> {

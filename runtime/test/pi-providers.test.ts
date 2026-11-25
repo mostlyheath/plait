@@ -372,64 +372,27 @@ test('models.json key templates resolve from the login shell, and no child proce
   f.noSecrets();
 });
 
-test('a detached run resolves keys exactly as the host does', async t => {
-  const seen: (string | string[] | undefined)[] = [];
-  const endpoint = await server(t, (request, response) => { seen.push(request.headers['x-team']); response.statusCode = 500; response.end(); });
+test('a detached run is refused when the host\'s credential needs the login shell', async t => {
   const agent = await mkdtemp(join(sandbox, 'agent-'));
-  // A literal key that also needs a header only the shell sets.
   await writeFile(join(agent, 'models.json'), JSON.stringify({ providers: {
-    lab: { baseUrl: endpoint.url, api: 'openai-completions', apiKey: 'literal-key', headers: { 'x-team': '$RUN_TEAM' }, models: [{ id: 'a' }] },
+    shell: { baseUrl: 'http://127.0.0.1:9/v1', api: 'openai-completions', apiKey: '$RUN_KEY', models: [{ id: 'a' }] },
+    header: { baseUrl: 'http://127.0.0.1:9/v1', api: 'openai-completions', apiKey: 'literal', headers: { 'x-team': '$RUN_TEAM' }, models: [{ id: 'a' }] },
+    missing: { baseUrl: 'http://127.0.0.1:9/v1', api: 'openai-completions', apiKey: '$NOWHERE_SET', models: [{ id: 'a' }] },
+    plain: { baseUrl: 'http://127.0.0.1:9/v1', api: 'openai-completions', apiKey: 'literal', models: [{ id: 'a' }] },
   } }));
   // The service has an Anthropic key; the shell adds a token, which Pi prefers.
   process.env.ANTHROPIC_API_KEY = 'service-key';
   t.after(() => { delete process.env.ANTHROPIC_API_KEY; });
-  const login = { RUN_TEAM: 'blue', ANTHROPIC_AUTH_TOKEN: 'shell-token', UNUSED_SECRET: 'unused' };
-  const { loadRunModels } = await import('../src/pi-providers.ts');
-  // The runner never reads the shell itself.
-  let runnerReads = 0;
-  const runner = piProviders(agent, async () => { runnerReads += 1; return { ...login }; });
-  const auth = async (models: Awaited<ReturnType<typeof loadRunModels>>['models'], id: string) => {
-    const resolved = await models.getAuth(id);
-    return { apiKey: resolved?.auth.apiKey, headers: resolved?.auth.headers, source: resolved?.source };
-  };
-  const host = async (read: () => Promise<Record<string, string> | undefined>) => {
-    const source = piProviders(agent, read);
-    const registry = await source.load();
-    const holder = { models: registry.models, authenticated: registry.authenticated };
-    const providers = new Providers(holder, source, registry);
-    t.after(() => providers.close());
-    await providers.adoptEnvironment();
-    return { providers, get models() { return holder.models; } };
-  };
+  const source = piProviders(agent, async () => ({ RUN_KEY: KEY, RUN_TEAM: 'blue', ANTHROPIC_AUTH_TOKEN: 'shell-token' }));
+  const registry = await source.load();
+  const providers = new Providers({ models: registry.models, authenticated: registry.authenticated }, source, registry);
+  t.after(() => providers.close());
+  await providers.adoptEnvironment();
 
-  // The host prefers the shell's token; the run gets only the values that resolution used.
-  const shell = await host(async () => ({ ...login }));
-  const binding = await shell.providers.bindingFor('anthropic');
-  assert.deepEqual(binding.values, { ANTHROPIC_AUTH_TOKEN: 'shell-token' });
-  const run = await loadRunModels(runner, binding, AbortSignal.timeout(5000));
-  assert.deepEqual(await auth(run.models, 'anthropic'), await auth(shell.models, 'anthropic'));
-  assert.equal((await auth(run.models, 'anthropic')).source, 'ANTHROPIC_AUTH_TOKEN');
-
-  // A host whose shell read failed uses the service key, and so does its run.
-  const failed = await host(async () => undefined);
-  const plain = await failed.providers.bindingFor('anthropic');
-  assert.deepEqual(plain.values, {});
-  const plainRun = await loadRunModels(runner, plain, AbortSignal.timeout(5000));
-  assert.deepEqual(await auth(plainRun.models, 'anthropic'), await auth(failed.models, 'anthropic'));
-  assert.equal((await auth(plainRun.models, 'anthropic')).apiKey, 'service-key');
-
-  // A literal-key endpoint's shell-only header reaches the run's model request.
-  const lab = await shell.providers.bindingFor('lab');
-  assert.deepEqual([lab.values, lab.origin], [{ RUN_TEAM: 'blue' }, new URL(endpoint.url).origin]);
-  const labRun = await loadRunModels(runner, lab, AbortSignal.timeout(5000));
-  const model = labRun.models.getProvider('lab')!.getModels()[0]!;
-  await labRun.models.complete(model, { messages: [{ role: 'user', content: 'hi', timestamp: Date.now() }] }).catch(() => undefined);
-  assert.equal(seen.at(-1), 'blue');
-
-  // Values bound to another server are refused, and none of this touched the environment.
-  await assert.rejects(loadRunModels(runner, { ...lab, origin: 'https://elsewhere.example' }, AbortSignal.timeout(5000)), /server changed/);
-  assert.equal(runnerReads, 0);
-  assert.deepEqual([process.env.RUN_TEAM, process.env.ANTHROPIC_AUTH_TOKEN], [undefined, undefined]);
+  const refusal = /comes from your shell; detached runs can't use it yet/;
+  for (const id of ['shell', 'header', 'anthropic', 'missing']) assert.match((await providers.detachedRunProblem(id)) ?? '', refusal, id);
+  // One that needs nothing from the shell starts as before.
+  assert.equal(await providers.detachedRunProblem('plain'), undefined);
 });
 
 test('built-in provider keys come from the login shell, and the host\'s own value wins', async t => {
@@ -532,12 +495,12 @@ test('an endpoint whose key or headers read the environment keeps its origin ove
   assert.equal((await json(stored.auth)).templated, undefined);
   assert.equal((await stored.holder.models.getAuth('templated'))?.auth.apiKey, 'none');
 
-  // A key sent with the move replaces the stored one before the new address is published.
+  // A key sent with the move is stored for the new address once that address is written.
   assert.equal((await stored.call({ op: 'set_provider_key', provider: 'literal', key: KEY })).ok, true);
   assert.equal((await stored.call({ op: 'update_endpoint', id: 'literal', base_url: 'http://127.0.0.1:7/v1', key: NEXT_KEY })).ok, true);
   assert.deepEqual([(await json(stored.models)).providers.literal.baseUrl, (await stored.holder.models.getAuth('literal'))?.auth.apiKey], ['http://127.0.0.1:7/v1', NEXT_KEY]);
 
-  // If the replacement cannot be stored, the original address stays, with the key it had.
+  // If the old key cannot be removed, nothing else happens: the original address keeps its key.
   await chmod(stored.auth, 0o400); await chmod(stored.agent, 0o500);
   try {
     assert.notEqual((await stored.call({ op: 'update_endpoint', id: 'literal', base_url: 'http://127.0.0.1:6/v1', key: KEY })).ok, true);
@@ -550,5 +513,24 @@ test('an endpoint whose key or headers read the environment keeps its origin ove
   assert.equal((await json(stored.auth)).orphan, undefined);
   assert.equal((await stored.holder.models.getAuth('orphan'))?.auth.apiKey, 'none');
   stored.noSecrets();
+
+  // If the new address cannot be written, the old key is already gone and the new one is not
+  // stored: the endpoint is left without a key at its old address, never a key at the wrong server.
+  const pinned = await host(t, async agent => {
+    await mkdir(join(agent, 'held'), { mode: 0o700 });
+    await writeFile(join(agent, 'held', 'models.json'), JSON.stringify({ providers: {
+      lab: { baseUrl: 'http://127.0.0.1:9/v1', api: 'openai-completions', apiKey: 'none', models: [{ id: 'a' }] },
+    } }));
+    await symlink(join(agent, 'held', 'models.json'), join(agent, 'models.json'));
+    await writeFile(join(agent, 'auth.json'), JSON.stringify({ lab: { type: 'api_key', key: KEY } }), { mode: 0o600 });
+  });
+  await chmod(join(pinned.agent, 'held'), 0o500);
+  try {
+    assert.notEqual((await pinned.call({ op: 'update_endpoint', id: 'lab', base_url: 'http://127.0.0.1:8/v1', key: NEXT_KEY })).ok, true);
+  } finally { await chmod(join(pinned.agent, 'held'), 0o700); }
+  assert.equal((await json(pinned.models)).providers.lab.baseUrl, 'http://127.0.0.1:9/v1');
+  assert.equal((await json(pinned.auth)).lab, undefined);
+  assert.equal((await pinned.holder.models.getAuth('lab'))?.auth.apiKey, 'none');
+  pinned.noSecrets();
 });
 

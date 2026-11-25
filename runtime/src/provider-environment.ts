@@ -42,27 +42,6 @@ export function providerAuthContext(login: Record<string, string> | undefined): 
   };
 }
 
-/**
- * The login-shell values the host's registry used to resolve one provider, sent to a detached
- * run of it in its `start` frame and kept in the runner's memory only. They are bound to the
- * provider and its server's origin, so they cannot authenticate anything else.
- */
-export type ProviderBinding = { provider: string; origin: string | null; values: Record<string, string> };
-
-export function providerOrigin(baseUrl: string | undefined): string | null {
-  return baseUrl && URL.canParse(baseUrl) ? new URL(baseUrl).origin : null;
-}
-
-/** Whether a start payload's binding has the expected shape for `provider`. */
-export function validBinding(value: unknown, provider: string): value is ProviderBinding {
-  if (typeof value !== 'object' || value === null) return false;
-  const binding = value as Record<string, unknown>;
-  const values = binding.values;
-  return binding.provider === provider && (binding.origin === null || typeof binding.origin === 'string')
-    && typeof values === 'object' && values !== null && !Array.isArray(values)
-    && Object.values(values).every(item => typeof item === 'string');
-}
-
 /** Runs one auth resolution and returns the login-shell values it used. */
 export async function shellValuesUsed(resolve: () => Promise<unknown>): Promise<Record<string, string>> {
   const values = new Map<string, string>();
