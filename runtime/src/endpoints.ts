@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdir, open, readFile, realpath, rename, stat, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fail } from './protocol.ts';
+import { resolvesExternally } from './provider-environment.ts';
 
 // Pi's models.json: {"providers": {ID: {name, baseUrl, api, apiKey, models: [{id, ...}], ...}}}.
 // Plait edits one provider entry and writes every other key back as it was read.
@@ -92,6 +93,11 @@ export function addEndpoint(file: EndpointFile, id: string, change: Required<End
 
 export function updateEndpoint(file: EndpointFile, id: string, change: EndpointChange): void {
   const entry = existing(file, id);
+  // A key or header that reads the environment or runs a command was written for one server.
+  // Moving it to another over the socket would send that value there, so it is changed by hand.
+  if (change.baseUrl !== undefined && origin(change.baseUrl) !== origin(entry.baseUrl) && externalValues(entry)) {
+    fail('conflict', 'This endpoint\'s key or headers read an environment variable or run a command. Change its address in models.json.');
+  }
   if (change.name !== undefined) entry.name = change.name;
   if (change.baseUrl !== undefined) entry.baseUrl = change.baseUrl;
   if (change.modelIds !== undefined) {
@@ -104,6 +110,20 @@ export function updateEndpoint(file: EndpointFile, id: string, change: EndpointC
 export function removeEndpoint(file: EndpointFile, id: string): void {
   existing(file, id);
   delete file.data.providers[id];
+}
+
+function origin(value: unknown): string | undefined {
+  return typeof value === 'string' && URL.canParse(value) ? new URL(value).origin : undefined;
+}
+
+const values = (headers: unknown): unknown[] => object(headers) ? Object.values(headers) : [];
+
+/** The key, provider headers, model headers, and model-override headers Pi resolves for this endpoint. */
+function externalValues(entry: Json): boolean {
+  const models = Array.isArray(entry.models) ? entry.models.filter(object) : [];
+  const overrides = object(entry.modelOverrides) ? Object.values(entry.modelOverrides).filter(object) : [];
+  return [entry.apiKey, ...values(entry.headers), ...[...models, ...overrides].flatMap(model => values(model.headers))]
+    .some(resolvesExternally);
 }
 
 function existing(file: EndpointFile, id: string): Json {

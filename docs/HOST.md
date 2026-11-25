@@ -868,33 +868,52 @@ replies; the next `status` already shows the change.
 
 ### Keys from the login shell
 
-Pi reads a key written as `$NAME` or `${NAME}` in `models.json`, and the key
-variables of built-in providers such as `OPENAI_API_KEY`, from its own process
-environment. The host runs as a per-user service without the variables a
-terminal's startup files export, so it reads them from the account's login
-shell, the same way it builds a trusted command's environment (see
+Pi resolves a provider key written as `$NAME` or `${NAME}`, and the key
+variables of built-in providers such as `OPENAI_API_KEY`, through an
+environment lookup. The host runs as a per-user service without the variables a
+terminal's startup files export, so that lookup also consults the account's
+login shell, read the same way as a trusted command's environment (see
 [Command policy](#command-policy)):
 
-- Host startup does not wait for the shell. Once the sidecar is ready, it reads
-  the login environment in the background and reloads providers if a variable
-  changed. Until then, a provider that depends on one is listed as not
-  authenticated. `reload_providers` reads the shell again before it loads.
-- Only variables that provider authentication reads are copied into the
-  sidecar's environment: names in `models.json` `apiKey` and `headers` values
-  (provider and model level), the key variables Pi lists for its built-in
-  providers, and the Amazon Bedrock, Azure OpenAI, and Google Vertex credential
-  variables Pi reads. Nothing else from the shell is copied.
-- A variable the host process already had keeps its value. A copied variable
-  follows the shell on the next read, and is removed when the shell no longer
-  sets it. `PLAIT_`-prefixed names are never copied.
-- If the shell cannot be read within 10 seconds, or the read falls back to the
-  fixed environment, nothing changes and no error is reported.
-- Keys sent with `set_provider_key` stay literal text (see below), so a request
-  still cannot make the host read a variable.
+- **Scope.** The shell's values are kept in the provider registry and answer
+  only Pi's provider key and header resolution. They are never written to the
+  sidecar's process environment, so no child process (Git and its hooks, the
+  worktree helper, commands, MCP servers, harnesses) receives them; each keeps
+  the environment it had before.
+- **Precedence.** A variable the host process has wins over the shell's.
+  `PLAIT_`-prefixed names are never answered from the shell. Neither are the
+  variables the Amazon Bedrock, Google Vertex, and Azure OpenAI SDKs read for
+  themselves (`AWS_*`, `GOOGLE_APPLICATION_CREDENTIALS`, `GOOGLE_CLOUD_PROJECT`,
+  `GCLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, and Azure's endpoint variables):
+  their requests could not see a shell-only value, so those providers would be
+  listed as usable and then fail.
+- **What resolves.** A `models.json` provider's `apiKey` and provider-level
+  `headers`, and built-in providers' keys, including the Cloudflare account and
+  gateway IDs. Per-model and `modelOverrides` headers resolve from the host
+  process only, as Pi resolves them outside the lookup.
+- **When.** Host startup does not wait for the shell. Once the sidecar is ready,
+  it reads the shell in the background and reloads providers if the result
+  differs. Until then, a provider that depends on it is listed as not
+  authenticated. `reload_providers` reads the shell again first. Reads are
+  numbered; one that finishes after a newer read succeeded is dropped, so it
+  cannot restore a rotated or removed key.
+- **Together or not at all.** The environment a reload read is published with
+  the registry it built. If the load fails or exceeds its 5 seconds, both the
+  previous registry and its environment stay in use.
+- **Failure.** If the shell cannot be read within 10 seconds, or the read falls
+  back to the fixed environment, nothing changes and no error is reported.
 
-Pi's `!command` keys run in the sidecar's environment as before. A `$NAME`
-template stored in `auth.json` (for example by the Pi CLI) is resolved only when
-its variable is one of the names above.
+**Authority of `models.json`.** The host treats `models.json` as the account's
+own configuration, as the Pi CLI does: an entry's key and headers may name any
+variable of the login shell (except those above) or run a `!command`, and the
+resolved values are sent to that entry's `baseUrl`. Keys sent with
+`set_provider_key` stay literal text (see below), so a request cannot make the
+host read a variable or run a command. A request also cannot move such an entry
+to another server; see [Custom endpoints](#custom-endpoints).
+
+Pi's `!command` keys run with the sidecar's own environment, as before. A
+`$NAME` template stored in `auth.json` (for example by the Pi CLI) resolves from
+the host process only: Pi's credential store resolves it outside the lookup.
 
 ### Provider list
 
@@ -1007,6 +1026,12 @@ Pi's `models.json`:
   host reloads and checks that Pi reports the endpoint. Pi ignores the whole
   file when any entry breaks its schema; in that case the host restores the
   previous file and returns `conflict`.
+- `update_endpoint` refuses with `conflict`, and writes nothing, when
+  `base_url` would change the entry's origin (scheme, host, or port) and the
+  entry's `apiKey`, `headers`, or any model's or `modelOverrides` entry's
+  `headers` read a variable or run a `!command`. Those values were written for
+  one server; change the address in `models.json` itself. A new path on the
+  same origin, or an entry with only literal values, can still be updated.
 - Built-in providers cannot be edited or removed here. `remove_endpoint` deletes
   the stored key first, then the entry.
 - With `key`, `add_endpoint` and `update_endpoint` save the entry first. If

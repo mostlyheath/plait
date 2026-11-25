@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
@@ -325,15 +326,31 @@ test('check connection lists models from a local server and reports failures wit
 });
 
 // The host runs as a service without the login shell's variables; a terminal's Pi has them.
-test('models.json key templates resolve against the login shell environment', async t => {
-  const login: Record<string, string> = { LAB_KEY: KEY, LAB_TEAM: 'blue', PLAIT_HOST_EXE: '/not/the/host' };
-  let readable = true;
-  const endpoint = await server(t, (_, response) => { response.setHeader('content-type', 'application/json'); response.end('{"data":[{"id":"a"}]}'); });
-  const f = await host(t, agent => writeFile(join(agent, 'models.json'), JSON.stringify({ providers: {
+type Read = Record<string, string> | undefined;
+function reader() {
+  const pending: ((value: Read) => void)[] = [];
+  return {
+    read: () => new Promise<Read>(resolve => pending.push(resolve)),
+    // Resolves the read that started `index`-th among those still waiting.
+    answer: (index: number, value: Read) => pending.splice(index, 1)[0]!(value),
+    waiting: () => pending.length,
+  };
+}
+const settled = async (shell: ReturnType<typeof reader>, count: number) => { while (shell.waiting() < count) await new Promise(resolve => setImmediate(resolve)); };
+
+test('models.json key templates resolve from the login shell, and no child process sees them', async t => {
+  const login = { LAB_KEY: KEY, LAB_TEAM: 'blue', PLAIT_HOST_EXE: '/not/the/host' };
+  const seen: (string | string[] | undefined)[] = [];
+  const endpoint = await server(t, (request, response) => {
+    seen.push(request.headers['x-team']);
+    response.setHeader('content-type', 'application/json'); response.end('{"data":[{"id":"a"}]}');
+  });
+  // Pi's own parser reads the file, comments included.
+  const file = `{\n  // servers\n  "providers": ${JSON.stringify({
     lab: { baseUrl: endpoint.url, api: 'openai-completions', apiKey: '$LAB_KEY', headers: { 'x-team': '${LAB_TEAM}' }, models: [{ id: 'a' }] },
     leak: { baseUrl: endpoint.url, api: 'openai-completions', apiKey: '${PLAIT_HOST_EXE}', models: [{ id: 'b' }] },
-  } })), async () => readable ? { ...login } : undefined);
-  t.after(() => { for (const name of ['LAB_KEY', 'LAB_TEAM']) delete process.env[name]; });
+  })}\n}\n`;
+  const f = await host(t, agent => writeFile(join(agent, 'models.json'), file), async () => ({ ...login }));
 
   // Before the login shell is read, the key's variable is missing, as it is for the service.
   assert.deepEqual([(await f.provider('lab'))?.authenticated, (await f.provider('lab'))?.credential], [false, 'none']);
@@ -341,34 +358,95 @@ test('models.json key templates resolve against the login shell environment', as
   assert.deepEqual([(await f.provider('lab'))?.authenticated, (await f.provider('lab'))?.credential], [true, 'external']);
   assert.equal(f.holder.authenticated.has('lab'), true);
   assert.equal((await f.call({ op: 'check_endpoint', id: 'lab' })).result.reachable, true);
-  assert.equal(endpoint.seen.at(-1), `Bearer ${KEY}`);
-
+  assert.deepEqual([endpoint.seen.at(-1), seen.at(-1)], [`Bearer ${KEY}`, 'blue']);
   // Host plumbing never comes from a shell, even when a template names it.
-  assert.equal(process.env.PLAIT_HOST_EXE, undefined);
   assert.equal((await f.provider('leak'))?.authenticated, false);
 
-  // A reload reads the shell again: a removed variable is removed, and a failed read changes nothing.
-  delete login.LAB_KEY;
-  assert.equal((await f.call({ op: 'reload_providers' })).ok, true);
-  assert.equal((await f.provider('lab'))?.authenticated, false);
-  login.LAB_KEY = NEXT_KEY;
-  assert.equal((await f.call({ op: 'reload_providers' })).ok, true);
-  assert.equal((await f.provider('lab'))?.authenticated, true);
-  readable = false;
-  assert.equal((await f.call({ op: 'reload_providers' })).ok, true);
-  assert.equal((await f.holder.models.getAuth('lab'))?.auth.apiKey, NEXT_KEY);
+  // The process environment is unchanged, so a Git hook started by a host helper cannot read the key.
+  assert.deepEqual([process.env.LAB_KEY, process.env.LAB_TEAM, process.env.PLAIT_HOST_EXE], [undefined, undefined, undefined]);
+  const repo = await mkdtemp(join(sandbox, 'repo-'));
+  const git = (...args: string[]) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: repo, stdio: 'pipe' });
+  git('init', '-q'); git('commit', '-q', '--allow-empty', '-m', 'start');
+  const dump = join(sandbox, `hook-${process.pid}.env`);
+  await writeFile(join(repo, '.git', 'hooks', 'post-checkout'), `#!/bin/sh\nenv > '${dump}'\n`, { mode: 0o755 });
+  git('worktree', 'add', '-q', join(sandbox, `tree-${process.pid}`));
+  const hookEnv = await readFile(dump, 'utf8');
+  assert.match(hookEnv, /^PATH=/m);
+  assert(!hookEnv.includes(KEY) && !hookEnv.includes('LAB_TEAM'));
   f.noSecrets();
 });
 
-test('built-in provider keys come from the login shell, and the host process value wins', async t => {
+test('built-in provider keys come from the login shell, and the host\'s own value wins', async t => {
   process.env.MISTRAL_API_KEY = 'host-value';
-  t.after(() => { delete process.env.MISTRAL_API_KEY; delete process.env.GROQ_API_KEY; });
-  const f = await host(t, undefined, async () => ({ GROQ_API_KEY: KEY, MISTRAL_API_KEY: NEXT_KEY, UNRELATED_SETTING: 'x' }));
+  t.after(() => { delete process.env.MISTRAL_API_KEY; });
+  const f = await host(t, undefined, async () => ({
+    GROQ_API_KEY: KEY, MISTRAL_API_KEY: NEXT_KEY, CLOUDFLARE_API_KEY: KEY, CLOUDFLARE_ACCOUNT_ID: 'account',
+  }));
   assert.equal((await f.provider('groq'))?.authenticated, false);
   await f.providers.adoptEnvironment();
   assert.deepEqual([(await f.provider('groq'))?.authenticated, (await f.provider('groq'))?.credential], [true, 'external']);
-  assert.equal(process.env.MISTRAL_API_KEY, 'host-value');
-  // Only variables provider authentication reads are copied.
-  assert.equal(process.env.UNRELATED_SETTING, undefined);
+  // Cloudflare needs its account ID as well as its key; both come from the shell.
+  assert.equal((await f.provider('cloudflare-workers-ai'))?.authenticated, true);
+  assert.equal((await f.holder.models.getAuth('mistral'))?.auth.apiKey, 'host-value');
+  assert.deepEqual([process.env.GROQ_API_KEY, process.env.CLOUDFLARE_ACCOUNT_ID], [undefined, undefined]);
   f.noSecrets();
 });
+
+test('an older login-shell read never replaces a newer one, in either completion order', async t => {
+  for (const newerFirst of [true, false]) {
+    const shell = reader();
+    const f = await host(t, agent => writeFile(join(agent, 'models.json'), JSON.stringify({ providers: {
+      lab: { baseUrl: 'http://127.0.0.1:9/v1', api: 'openai-completions', apiKey: '$LAB_KEY', models: [{ id: 'a' }] },
+    } })), shell.read);
+    const startup = f.providers.adoptEnvironment();
+    await settled(shell, 1);
+    const reload = f.call({ op: 'reload_providers' });
+    await settled(shell, 2);
+    if (newerFirst) {
+      shell.answer(1, { LAB_KEY: NEXT_KEY });
+      assert.equal((await reload).ok, true);
+      shell.answer(0, { LAB_KEY: KEY });
+      await startup;
+    } else {
+      shell.answer(0, { LAB_KEY: KEY });
+      await startup;
+      shell.answer(0, { LAB_KEY: NEXT_KEY });
+      assert.equal((await reload).ok, true);
+    }
+    assert.equal((await f.holder.models.getAuth('lab'))?.auth.apiKey, NEXT_KEY, `newer first: ${newerFirst}`);
+
+    // A later read removes a variable the shell no longer sets; a failed read changes nothing.
+    const removed = f.call({ op: 'reload_providers' });
+    await settled(shell, 1); shell.answer(0, {});
+    assert.equal((await removed).ok, true);
+    assert.equal((await f.provider('lab'))?.authenticated, false);
+    const restored = f.call({ op: 'reload_providers' });
+    await settled(shell, 1); shell.answer(0, { LAB_KEY: KEY });
+    await restored;
+    const failed = f.call({ op: 'reload_providers' });
+    await settled(shell, 1); shell.answer(0, undefined);
+    assert.equal((await failed).ok, true);
+    assert.equal((await f.holder.models.getAuth('lab'))?.auth.apiKey, KEY);
+    f.noSecrets();
+  }
+});
+
+test('an endpoint whose key or headers read the environment keeps its origin over the socket', async t => {
+  const f = await host(t, agent => writeFile(join(agent, 'models.json'), JSON.stringify({ providers: {
+    keyed: { baseUrl: 'http://127.0.0.1:9/v1', api: 'openai-completions', apiKey: '$LAB_KEY', models: [{ id: 'a' }] },
+    header: { baseUrl: 'http://127.0.0.1:9/v1', api: 'openai-completions', apiKey: 'none', models: [{ id: 'a' }], modelOverrides: { a: { headers: { 'x-team': '!pass show team' } } } },
+    plain: { baseUrl: 'http://127.0.0.1:9/v1', api: 'openai-completions', apiKey: 'none', models: [{ id: 'a' }] },
+  } })));
+  const before = await readFile(f.models, 'utf8');
+  for (const id of ['keyed', 'header']) {
+    const moved = await f.call({ op: 'update_endpoint', id, base_url: 'https://elsewhere.example/v1' });
+    assert.equal(moved.error?.code, 'conflict', id);
+  }
+  assert.equal(await readFile(f.models, 'utf8'), before);
+  // The same server at another path, and an endpoint with a literal key, can still move.
+  assert.equal((await f.call({ op: 'update_endpoint', id: 'keyed', base_url: 'http://127.0.0.1:9/api/v1' })).ok, true);
+  assert.equal((await f.call({ op: 'update_endpoint', id: 'plain', base_url: 'http://127.0.0.1:8/v1' })).ok, true);
+  assert.equal((await json(f.models)).providers.keyed.baseUrl, 'http://127.0.0.1:9/api/v1');
+  f.noSecrets();
+});
+

@@ -17,8 +17,11 @@ export type Registry = {
   settle(): Promise<void>;
 };
 export type ProviderSource = {
-  /** Reads Pi's files again. A reload passes a deadline; host startup does not. */
-  load(signal?: AbortSignal): Promise<Registry>;
+  /**
+   * Reads Pi's files again. A reload passes a deadline; host startup does not. `login` is the
+   * login shell's environment the new registry resolves provider keys with, and only it.
+   */
+  load(signal?: AbortSignal, login?: Record<string, string>): Promise<Registry>;
   /** Provider IDs that ship with Pi. Any other provider is a custom endpoint from models.json. */
   builtin: ReadonlySet<string>;
   /** Pi's models.json. Absent when this host cannot edit custom endpoints. */
@@ -26,15 +29,11 @@ export type ProviderSource = {
   /** Pi's credential file, kept owner-only after every write. */
   authPath?: string;
   loginOptions?: LoginOptions;
-  /**
-   * The login shell's provider variables. `read` runs the shell and may take seconds;
-   * `apply` makes the ones Pi reads visible to the next load and says whether any changed.
-   */
-  environment?: {
-    read(): Promise<Record<string, string> | undefined>;
-    apply(login: Record<string, string>): Promise<boolean>;
-  };
+  /** Runs the account's login shell, which may take seconds; undefined when it cannot be read. */
+  readEnvironment?(): Promise<Record<string, string> | undefined>;
 };
+/** A login-shell read, numbered when it started so a slower, older read cannot win. */
+type Reading = { ticket: number; env: Record<string, string> };
 /** What a reload replaces. `Runtime` has this shape. */
 export type RegistryHolder = { models: Models; authenticated: Set<string> };
 
@@ -100,6 +99,12 @@ function modelIds(request: Request): string[] {
   return value as string[];
 }
 
+function same(next: Record<string, string>, current: Record<string, string> | undefined): boolean {
+  if (!current) return false;
+  const keys = Object.keys(next);
+  return keys.length === Object.keys(current).length && keys.every(key => current[key] === next[key]);
+}
+
 /** The base URL as shown to a client: no user name, password, query, or fragment. */
 function displayUrl(value: string | undefined): string | null {
   if (!value || !URL.canParse(value)) return null;
@@ -140,6 +145,10 @@ export class Providers {
   readonly signIns: SignIns;
   private reloading: Promise<void> = Promise.resolve();
   private closed = false;
+  // The login environment the current registry resolves keys with; it is replaced only with the registry.
+  private environment?: Record<string, string>;
+  private started = 0;
+  private newest = 0;
   // Runs that started before a reload keep their registry; its credential writes still settle at shutdown.
   private readonly retired: Registry[] = [];
 
@@ -156,7 +165,7 @@ export class Providers {
   async handle(input: unknown): Promise<unknown> {
     const request = validate(input);
     switch (request.op) {
-      case 'reload_providers': await this.reload(await this.source.environment?.read().catch(() => undefined)); return { providers: await this.list() };
+      case 'reload_providers': await this.reload(await this.readEnvironment()); return { providers: await this.list() };
       case 'list_providers': return { providers: await this.list() };
       case 'start_sign_in': return { sign_in: await this.startSignIn(text(request, 'provider', 128), optional(request, 'method', 64)) };
       case 'sign_in_status': return { sign_in: this.signIns.status(identifier(request, 'sign_in_id')) };
@@ -175,36 +184,45 @@ export class Providers {
    * Builds a complete registry, then replaces the models and the authenticated set in one
    * synchronous step. Reloads run one after another so the last one requested is the one kept.
    */
-  reload(login?: Record<string, string>): Promise<void> {
-    const next = this.reloading.then(async () => {
-      // A failure keeps the variables of the last read; the reload itself goes ahead.
-      if (login) await this.source.environment?.apply(login).catch(() => false);
-      await this.swap();
-    });
+  reload(reading?: Reading): Promise<void> {
+    const next = this.reloading.then(() => this.swap(reading));
     this.reloading = next.catch(() => {});
     return next;
   }
 
   /**
    * After startup: the host service lacks the login shell's variables, so read them once in
-   * the background and reload only if a provider variable changed. Failure keeps the
-   * registry the host started with.
+   * the background and reload only if they changed. Failure keeps the registry the host
+   * started with.
    */
   async adoptEnvironment(): Promise<void> {
-    const login = await this.source.environment?.read().catch(() => undefined);
-    if (!login || this.closed) return;
-    const next = this.reloading.then(async () => {
-      if (!this.closed && await this.source.environment!.apply(login)) await this.swap();
-    });
+    const reading = await this.readEnvironment();
+    if (!reading || this.closed) return;
+    const next = this.reloading.then(() => this.closed || same(reading.env, this.environment) ? undefined : this.swap(reading));
     this.reloading = next.catch(() => {});
     await this.reloading;
   }
 
-  private async swap(): Promise<void> {
-    const registry = await this.source.load(AbortSignal.timeout(PI_DEADLINE_MS)).catch(() => fail('internal', 'Providers could not be reloaded. The previous list is still in use.'));
+  /**
+   * Reads the login shell. Reads can overlap and finish out of order; one that finishes after
+   * a newer read succeeded is dropped, so it cannot restore a rotated or removed key.
+   */
+  private async readEnvironment(): Promise<Reading | undefined> {
+    if (!this.source.readEnvironment) return undefined;
+    const ticket = ++this.started;
+    const env = await this.source.readEnvironment().catch(() => undefined);
+    if (!env || ticket < this.newest) return undefined;
+    this.newest = ticket;
+    return { ticket, env };
+  }
+
+  /** The login environment goes into the new registry, so both are published together or not at all. */
+  private async swap(reading?: Reading): Promise<void> {
+    const environment = reading?.env ?? this.environment;
+    const registry = await this.source.load(AbortSignal.timeout(PI_DEADLINE_MS), environment).catch(() => fail('internal', 'Providers could not be reloaded. The previous list is still in use.'));
     this.retired.push(this.registry);
     if (this.retired.length > 8) this.retired.shift();
-    this.registry = registry;
+    this.registry = registry; this.environment = environment;
     this.holder.models = registry.models; this.holder.authenticated = registry.authenticated;
   }
 
