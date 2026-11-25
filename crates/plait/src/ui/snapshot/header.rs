@@ -4,6 +4,23 @@ use plait_client::{model::Snapshot as GitSnapshot, preferences::ThreadTabs};
 
 const PROJECT: &str = "/projects/forecast";
 
+fn checkout_snapshot(branch: &str) -> GitSnapshot {
+    GitSnapshot {
+        root: Path::new(PROJECT).into(),
+        branch: branch.into(),
+        changes: vec![plait_client::model::Change {
+            path: "src/review.rs".into(),
+            original: None,
+            index: b' ',
+            worktree: b'M',
+        }],
+        named: true,
+        tracking: None,
+        plain: false,
+        elapsed: Duration::ZERO,
+    }
+}
+
 pub(super) fn fixture(output: Option<&Path>, width: f32, height: f32) -> Harness {
     let root = Path::new(PROJECT);
     let mut h = Harness::with_host(root, output, width, height, None);
@@ -27,20 +44,8 @@ pub(super) fn fixture(output: Option<&Path>, width: f32, height: f32) -> Harness
         );
         p.state.projects[0].machines[0].name = "studio".into();
         p.host.connection.error = None;
-        p.state.repository.data.snapshot = Load::Ready(Arc::new(GitSnapshot {
-            root: root.into(),
-            branch: "retry-forecast".into(),
-            changes: vec![plait_client::model::Change {
-                path: "src/review.rs".into(),
-                original: None,
-                index: b' ',
-                worktree: b'M',
-            }],
-            named: true,
-            tracking: None,
-            plain: false,
-            elapsed: Duration::ZERO,
-        }));
+        p.state.repository.data.snapshot =
+            Load::Ready(Arc::new(checkout_snapshot("retry-forecast")));
         p.workspace.thread_files.inject(
             THREAD,
             root.into(),
@@ -58,6 +63,7 @@ pub(super) fn fixture(output: Option<&Path>, width: f32, height: f32) -> Harness
 }
 
 pub(super) fn walk(output: Option<&Path>) {
+    narrow_chip_scenes(output);
     for (suffix, width, height) in [("wide", 1380., 860.), ("narrow", 900., 600.)] {
         let mut h = fixture(output, width, height);
         capture_both(&mut h, &format!("header-title-{suffix}"));
@@ -129,6 +135,93 @@ pub(super) fn walk(output: Option<&Path>) {
             .iter()
             .any(|n| n.path.contains("checkout-branch"))
     );
+}
+
+fn narrow_chip_scenes(output: Option<&Path>) {
+    for (width, scene, chip_count) in [
+        (900., "header-chips-narrow", 2),
+        (828., "header-chips-title-minimum", 1),
+        (780., "header-chips-project-only", 0),
+    ] {
+        let mut h = fixture(output, width, 600.);
+        h.update(|p, _, _| {
+            p.host.connection.threads_mut()[0].title = Some(
+                "Queue the status refresh instead of reading it inline when the checkout changes"
+                    .into(),
+            );
+            p.tabs
+                .model
+                .panel_mut()
+                .unwrap()
+                .open_on(plait_client::panel::PanelKind::Changes);
+            p.workspace.panel_change_total = Some("+128 −30".into());
+            if chip_count == 0 {
+                p.preferences.value.sidebar_width = Some(296);
+                p.host.connection.threads_mut()[0].status = ThreadStatus::AwaitingApproval;
+            }
+        });
+        if chip_count == 2 {
+            capture_both(&mut h, "header-chips-short-names");
+            #[cfg(debug_assertions)]
+            assert!(assert_chip_labels(&mut h, 2) >= 159.);
+        }
+        h.update(|p, _, _| {
+            p.state.projects[0].name = "forecast-observation-processing-service".into();
+            p.state.repository.data.snapshot = Load::Ready(Arc::new(checkout_snapshot(
+                "feature/retry-rate-limited-upstream-requests",
+            )));
+        });
+        capture_both(&mut h, scene);
+        #[cfg(debug_assertions)]
+        {
+            let title = assert_chip_labels(&mut h, chip_count);
+            if chip_count > 0 {
+                assert!(title >= 159., "title width {title}");
+            }
+            if chip_count == 1 {
+                assert!((159.0..=161.0).contains(&title), "title width {title}");
+                h.update(|p, _, _| p.host.connection.threads_mut()[0].title = Some("Queue".into()));
+                assert!(assert_chip_labels(&mut h, 2) < 160., "short title");
+            }
+        }
+    }
+}
+
+#[cfg(debug_assertions)]
+fn assert_chip_labels(h: &mut Harness, chip_count: usize) -> f32 {
+    let frame = h.draw_a11y();
+    let label_width = |id: &str| {
+        frame
+            .nodes
+            .iter()
+            .find(|node| node.path.contains("sheet-header") && node.path.ends_with(id))
+            .map(|node| f32::from(node.bounds.size.width))
+    };
+    let project = label_width("project-name");
+    let branch = label_width("branch-name");
+    assert_eq!(
+        project.is_some(),
+        chip_count >= 1,
+        "project label {project:?}"
+    );
+    assert_eq!(branch.is_some(), chip_count == 2, "branch label {branch:?}");
+    assert!(
+        project.is_none_or(|w| w >= 39.),
+        "project label width {project:?}"
+    );
+    assert!(
+        branch.is_none_or(|w| w >= 52.),
+        "branch label width {branch:?}"
+    );
+    label_width("header-title.title").expect("thread title")
+}
+
+#[core::prelude::v1::test]
+fn narrow_header_chips() {
+    if isolated("header::narrow_header_chips") {
+        let output = std::env::var_os("PLAIT_SNAPSHOT_DIR").map(PathBuf::from);
+        narrow_chip_scenes(output.as_deref());
+    }
 }
 
 #[cfg(debug_assertions)]

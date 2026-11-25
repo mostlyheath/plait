@@ -91,7 +91,7 @@ Use **Show or Hide Archived Threads** in the menu or palette. Rename or archive 
 
 ### Tabs
 
-The sheet opens with the thread title. Hover over a shortened title to read it in full or over the project chip for the checkout path. The branch chip opens **Switch Branch**. At window widths below 760 points, the title has the space normally used by the chips. The sidebar toggle sits beside the window buttons when the sidebar is hidden. Drag empty space in the header or the sidebar’s top strip to move the window.
+The sheet opens with the thread title. Hover over a shortened title to read it in full or over the project chip for the checkout path. The branch chip opens **Switch Branch**. As space tightens, the header reserves up to 160 points for the title. The project and branch names shorten in the middle, then the branch disappears, followed by the project. Below a window width of 760 points, both chips are hidden. The sidebar toggle sits beside the window buttons when the sidebar is hidden. Drag empty space in the header or the sidebar’s top strip to move the window.
 
 Choose **Settings → Appearance → Thread tabs → Show** to see the open tabs and the **+** control while viewing a thread. The project and branch then sit below that thread’s message box. Drafts, Worktrees and Linear issues show their own title. With either setting, the header names a working thread, a pending approval, a failure or an interruption. **Toggle Panel** opens or closes the thread’s review panel.
 

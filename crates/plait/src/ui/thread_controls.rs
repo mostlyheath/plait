@@ -453,7 +453,7 @@ impl Plait {
                 .mx_auto()
                 .gap_1()
                 .child(message_box)
-                .child(self.environment(cx))
+                .child(self.checkout_context(None, cx))
         } else {
             message_box
         }
