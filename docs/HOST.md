@@ -852,11 +852,25 @@ custom endpoints. The host store holds none of them.
 
 ### Reload
 
-`reload_providers` result: `{"providers":[PROVIDER]}`. The host reads `auth.json`,
+`reload_providers` result: `{"providers":[PROVIDER]}`. The host first reads the
+login shell's provider variables again (see below), then reads `auth.json`,
 `models.json`, and Pi's cached catalogs again, with no network request. It builds
 a complete registry first, then replaces the model catalog and the authenticated
-set of `status` in one step. If loading fails or exceeds 5 seconds, the reply is
-`internal` and the previous registry stays in use.
+set of `status` in one step. Each registry it publishes, including one the
+background login-shell read loads, moves the workspace's `providers_revision`
+and wakes workspace subscribers, so a client refreshes its catalog without
+polling. If loading fails or exceeds 5 seconds, the reply is
+`internal` and the previous registry stays in use. If Pi loads with an error,
+such as a `models.json` it cannot parse or a provider that fails to load, the
+reply is `conflict` and the previous registry stays in use; Pi would otherwise
+drop every custom endpoint. The same applies to the reload after a credential or
+endpoint change, so such a change can be saved while its reply is `conflict`.
+
+If the login shell cannot be read, the reload still runs with the previous
+login environment and the result also has
+`"warning":"login_environment_unavailable"`: a key changed in the shell since
+the last successful read is not yet in use. The field is absent otherwise, and
+older clients ignore it.
 
 A run in progress keeps the registry it started with, including a provider or
 endpoint that the reload removed. Credentials are read from Pi's store for each
@@ -864,6 +878,69 @@ model request, so signing out of a provider fails a run that needs it at its
 next model request.
 Every operation below that changes a credential or an endpoint reloads before it
 replies; the next `status` already shows the change.
+
+### Keys from the login shell
+
+Pi resolves a provider key written as `$NAME` or `${NAME}`, and the key
+variables of built-in providers such as `OPENAI_API_KEY`, through an
+environment lookup. The host runs as a per-user service without the variables a
+terminal's startup files export, so that lookup also consults the account's
+login shell, read the same way as a trusted command's environment (see
+[Command policy](#command-policy)):
+
+- **Scope.** The shell's values are kept in the provider registry and answer
+  only Pi's provider key and header resolution. They are never written to the
+  sidecar's process environment, so a child that inherits it (Git and its hooks,
+  the worktree helper) does not receive them because of this lookup. Trusted
+  commands, trusted MCP servers, Codex, and Claude Code read the login shell
+  themselves, as described in their sections.
+- **Detached runs.** Detached Pi runners (opt-in, off by default) resolve
+  credentials from the host environment only, without the login shell. Before
+  accepting a detached run, the host resolves the run's provider with its own
+  registry. If that credential uses a login-shell value, or the lookup fails,
+  the host refuses the run before accepting it with `model_unavailable`: "This
+  provider's key comes from your shell; detached runs can't use it yet. Turn
+  off detached runs or set the key on the host." A detached run never uses a
+  different credential from the host's.
+- **Precedence.** A variable the host process has wins over the shell's, even
+  when it is set to an empty or blank value, which Pi treats as unset.
+  `PLAIT_`-prefixed names are never answered from the shell. Neither are the
+  variables the Amazon Bedrock, Google Vertex, and Azure OpenAI SDKs read for
+  themselves (`AWS_*`, `GOOGLE_APPLICATION_CREDENTIALS`, `GOOGLE_CLOUD_PROJECT`,
+  `GCLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, and Azure's endpoint variables):
+  their requests could not see a shell-only value, so those providers would be
+  listed as usable and then fail.
+- **What resolves.** A `models.json` provider's `apiKey` and provider-level
+  `headers`, and built-in providers' keys, including the Cloudflare account and
+  gateway IDs. Per-model and `modelOverrides` headers resolve from the host
+  process only, as Pi resolves them outside the lookup. So do provider-level
+  `headers` of a provider signed in with OAuth: Pi's OAuth path resolves them
+  from the stored credential and the host process, not the lookup.
+- **When.** Host startup does not wait for the shell. Once the sidecar is ready,
+  it reads the shell in the background and reloads providers if the result
+  differs. Until then, a provider that depends on it is listed as not
+  authenticated. `reload_providers` reads the shell again first. Reads are
+  numbered; one that finishes after a newer read succeeded is dropped, so it
+  cannot restore a rotated or removed key.
+- **Together or not at all.** The environment a reload read is published with
+  the registry it built. If the load fails or exceeds its 5 seconds, both the
+  previous registry and its environment stay in use.
+- **Failure.** If the shell cannot be read within 10 seconds, or the read falls
+  back to the fixed environment, the previous login environment stays in use.
+  The background read reports nothing; `reload_providers` adds a `warning`
+  (see [Reload](#reload)).
+
+**Authority of `models.json`.** The host treats `models.json` as the account's
+own configuration, as the Pi CLI does: an entry's key and headers may name any
+variable of the login shell (except those above) or run a `!command`, and the
+resolved values are sent to that entry's `baseUrl`. Keys sent with
+`set_provider_key` stay literal text (see below), so a request cannot make the
+host read a variable or run a command. A request also cannot move such an entry
+to another server; see [Custom endpoints](#custom-endpoints).
+
+Pi's `!command` keys run with the sidecar's own environment, as before. A
+`$NAME` template stored in `auth.json` (for example by the Pi CLI) resolves from
+the host process only: Pi's credential store resolves it outside the lookup.
 
 ### Provider list
 
@@ -976,6 +1053,24 @@ Pi's `models.json`:
   host reloads and checks that Pi reports the endpoint. Pi ignores the whole
   file when any entry breaks its schema; in that case the host restores the
   previous file and returns `conflict`.
+- `update_endpoint` refuses with `conflict`, and writes nothing, when
+  `base_url` would change the entry's origin (scheme, host, or port) unless the
+  entry's credentials are only literal text: a literal `apiKey`, no `oauth`
+  field, and no `headers` (provider, model, or `modelOverrides`) that read a
+  variable or run a `!command`. Without a literal key, or with `oauth` such as
+  `"radius"`, Pi resolves a credential through a provider resolver that reads
+  the environment, so those entries cannot move either. Such credentials were
+  set up for one server; change the address in `models.json` itself. A new path
+  on the same origin can still be set.
+- **A saved key is bound to its server.** Pi uses a credential stored for an
+  entry in `auth.json` before the entry's own `apiKey`. When `update_endpoint`
+  moves an entry to another origin, the host removes that credential first,
+  then writes the new address, and only then stores the request's `key`, if
+  any. If removing fails, nothing changes. If a later step fails, the reply is
+  an error and the entry is left without a saved key (at its old address if the
+  address write failed), so a saved key is never sent to a server it was not
+  entered for. `add_endpoint` likewise
+  removes a credential left under the new entry's ID before writing the entry.
 - Built-in providers cannot be edited or removed here. `remove_endpoint` deletes
   the stored key first, then the entry.
 - With `key`, `add_endpoint` and `update_endpoint` save the entry first. If
@@ -2286,7 +2381,7 @@ this Mac's saved lists for this Mac, and only what the window opened for
 another machine.
 
 - `{"op":"workspace_view"}` returns `{schema:1, host, revision, projects,
-  worktrees, seen, status}`.
+  worktrees, seen, status, providers_revision}`.
   - `host` is `{id, name, platform}`. The ID is stable for the store and
     is the same one turn review reports. The name defaults to the machine's
     hostname, and `{"op":"host_set_name","name":N}` changes it.
@@ -2309,9 +2404,14 @@ another machine.
     that Git status may have changed and reset when the host restarts.
   - `seen` lists `{thread_id, updated_at, state, unread}`, newest first,
     with at most 1000 entries.
+  - `providers_revision` counts the provider registries the host has published
+    since it started (see [Reload](#reload)); it starts at zero. A change means
+    the model catalog in `status` changed, for example after the host read the
+    login shell. A client whose catalog was loaded at another value requests
+    `status` again. Hosts before it omit the field.
 - `{"op":"workspace_subscribe"}` replies with the same view, then sends
-  `{"event":"workspace","seq":N,"workspace":VIEW}` each time the revision or status
-  changes, numbered from 1. A thread change alone is not a workspace change. A
+  `{"event":"workspace","seq":N,"workspace":VIEW}` each time the revision, status,
+  or providers revision changes, numbered from 1. A thread change alone is not a workspace change. A
   subscriber that cannot keep up is disconnected and subscribes again for a
   fresh view.
 - Workspace writes accept an optional `op_id`: retries with the same ID and input return the first outcome for up to 24 hours.

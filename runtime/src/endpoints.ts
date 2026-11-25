@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdir, open, readFile, realpath, rename, stat, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fail } from './protocol.ts';
+import { resolvesExternally } from './provider-environment.ts';
 
 // Pi's models.json: {"providers": {ID: {name, baseUrl, api, apiKey, models: [{id, ...}], ...}}}.
 // Plait edits one provider entry and writes every other key back as it was read.
@@ -90,8 +91,18 @@ export function addEndpoint(file: EndpointFile, id: string, change: Required<End
   };
 }
 
-export function updateEndpoint(file: EndpointFile, id: string, change: EndpointChange): void {
+/**
+ * Applies the change to the file in memory and says whether the entry moves to another origin,
+ * where its stored credential must not follow it.
+ */
+export function updateEndpoint(file: EndpointFile, id: string, change: EndpointChange): boolean {
   const entry = existing(file, id);
+  const moved = change.baseUrl !== undefined && origin(change.baseUrl) !== origin(entry.baseUrl);
+  // A key or header that reads the environment or runs a command, or a sign-in, was set up for
+  // one server and lives in models.json, so only an entry with literal values moves here.
+  if (moved && !literalOnly(entry)) {
+    fail('conflict', 'This endpoint\'s credentials come from your environment, a command, or a sign-in. Change its address in models.json.');
+  }
   if (change.name !== undefined) entry.name = change.name;
   if (change.baseUrl !== undefined) entry.baseUrl = change.baseUrl;
   if (change.modelIds !== undefined) {
@@ -99,11 +110,30 @@ export function updateEndpoint(file: EndpointFile, id: string, change: EndpointC
     // A model that stays keeps the fields written for it by hand, such as its context window.
     entry.models = change.modelIds.map(model => models.find(item => item.id === model) ?? { id: model });
   }
+  return moved;
 }
 
 export function removeEndpoint(file: EndpointFile, id: string): void {
   existing(file, id);
   delete file.data.providers[id];
+}
+
+function origin(value: unknown): string | undefined {
+  return typeof value === 'string' && URL.canParse(value) ? new URL(value).origin : undefined;
+}
+
+const values = (headers: unknown): unknown[] => object(headers) ? Object.values(headers) : [];
+
+/**
+ * Whether Pi resolves nothing for this entry beyond its literal text. Without a literal key, or
+ * with `oauth` (such as `"radius"`), Pi falls back to a provider resolver that reads the
+ * environment, so the entry is not literal even when no value is a template.
+ */
+function literalOnly(entry: Json): boolean {
+  if (entry.oauth !== undefined || typeof entry.apiKey !== 'string' || resolvesExternally(entry.apiKey)) return false;
+  const models = Array.isArray(entry.models) ? entry.models.filter(object) : [];
+  const overrides = object(entry.modelOverrides) ? Object.values(entry.modelOverrides).filter(object) : [];
+  return ![...values(entry.headers), ...[...models, ...overrides].flatMap(model => values(model.headers))].some(resolvesExternally);
 }
 
 function existing(file: EndpointFile, id: string): Json {

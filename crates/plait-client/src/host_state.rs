@@ -23,6 +23,12 @@ pub struct HostConnection {
     pub error: Option<String>,
     pub status: Option<Status>,
     pub catalog_revision: u64,
+    /// The providers revision the host's workspace last reported. It changes when the host
+    /// publishes new providers, such as keys read from the login shell after it started.
+    pub providers_revision: u64,
+    /// The providers revision the model catalog was loaded at, and a reload in flight.
+    catalog_providers_revision: u64,
+    catalog_refresh: Option<u64>,
     threads: Vec<ThreadSummary>,
     threads_revision: u64,
     busy_checkouts: std::sync::OnceLock<HashSet<PathBuf>>,
@@ -32,6 +38,28 @@ pub struct HostConnection {
 }
 
 impl HostConnection {
+    /// Starts a catalog reload when the catalog predates the host's providers, unless one is in
+    /// flight. Returns the providers revision the reload will be current for.
+    pub fn begin_catalog_refresh(&mut self) -> Option<u64> {
+        let stale = self.providers_revision != self.catalog_providers_revision;
+        if !self.connected || !stale || self.catalog_refresh.is_some() {
+            return None;
+        }
+        self.catalog_refresh = Some(self.providers_revision);
+        self.catalog_refresh
+    }
+
+    /// Ends the reload `begin_catalog_refresh` started; a loaded catalog is current for `at`.
+    pub fn finish_catalog_refresh(&mut self, at: u64, loaded: bool) {
+        if self.catalog_refresh != Some(at) {
+            return;
+        }
+        self.catalog_refresh = None;
+        if loaded {
+            self.catalog_providers_revision = at;
+        }
+    }
+
     pub fn threads(&self) -> &[ThreadSummary] {
         &self.threads
     }
@@ -239,6 +267,10 @@ impl HostState {
                 Some("Save not confirmed. Reconnect will reload the saved default.".into());
         }
         self.connection.saving = false;
+        // A catalog reload in flight answers the old connection and is dropped, so it must not
+        // block the next one; the new connection's catalog is current for no known revision.
+        self.connection.catalog_refresh = None;
+        self.connection.catalog_providers_revision = 0;
         self.thread.disconnected();
         self.submissions.disconnected();
         self.creation.disconnected();
@@ -677,6 +709,68 @@ mod tests {
         other.authenticated = false;
         assert!(state.apply_status(0, status(None, vec![model, other])));
         assert_ne!(state.connection.catalog_revision, reordered);
+    }
+
+    #[test]
+    fn a_provider_authenticated_after_startup_reaches_the_catalog_without_a_restart() {
+        let mut state = HostState::new(PathBuf::from("/repo"));
+        let mut model = crate::host::Model {
+            provider: "lab".into(),
+            model_id: "a".into(),
+            name: "A".into(),
+            authenticated: false,
+            ..Default::default()
+        };
+        let choice = model.choice();
+        // The desktop's first status came before the host read the login shell.
+        assert!(state.apply_status(0, status(None, vec![model.clone()])));
+        assert!(
+            !state
+                .connection
+                .model_available(Some(&choice), state.connection.status.as_ref().unwrap())
+        );
+        assert_eq!(
+            state.connection.begin_catalog_refresh(),
+            None,
+            "nothing newer yet"
+        );
+
+        // The workspace reports a newer provider registry: one reload starts, not two.
+        state.connection.providers_revision = 1;
+        assert_eq!(state.connection.begin_catalog_refresh(), Some(1));
+        assert_eq!(state.connection.begin_catalog_refresh(), None);
+        model.authenticated = true;
+        assert!(state.apply_status(0, status(None, vec![model.clone()])));
+        state.connection.finish_catalog_refresh(1, true);
+        assert!(
+            state
+                .connection
+                .model_available(Some(&choice), state.connection.status.as_ref().unwrap())
+        );
+        // Opening the picker now finds the catalog current.
+        assert_eq!(state.connection.begin_catalog_refresh(), None);
+
+        // A failed reload is tried again; a restarted host counts from zero again.
+        state.connection.providers_revision = 2;
+        assert_eq!(state.connection.begin_catalog_refresh(), Some(2));
+        state.connection.finish_catalog_refresh(2, false);
+        assert_eq!(state.connection.begin_catalog_refresh(), Some(2));
+        state.connection.finish_catalog_refresh(2, true);
+        state.connection.providers_revision = 0;
+        assert_eq!(state.connection.begin_catalog_refresh(), Some(0));
+    }
+
+    #[test]
+    fn a_reconnect_during_a_catalog_reload_does_not_stop_later_reloads() {
+        let mut state = HostState::new(PathBuf::from("/repo"));
+        assert!(state.apply_status(0, status(None, vec![])));
+        state.connection.providers_revision = 1;
+        assert_eq!(state.connection.begin_catalog_refresh(), Some(1));
+        // The reply to that reload never arrives: its connection is gone.
+        let epoch = state.reconnect();
+        assert!(state.apply_status(epoch, status(None, vec![])));
+        state.connection.providers_revision = 2;
+        assert_eq!(state.connection.begin_catalog_refresh(), Some(2));
     }
 
     fn status(default: Option<ModelChoice>, models: Vec<crate::host::Model>) -> Status {

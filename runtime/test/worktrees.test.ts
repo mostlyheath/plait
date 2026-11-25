@@ -167,6 +167,34 @@ test('worktree supervisor reclaims a background checkout hook before acknowledgi
   await assert.rejects(readFile(later), { code: 'ENOENT' });
 });
 
+test('provider keys from the login shell never reach a worktree hook', async t => {
+  const { piProviders } = await import('../src/pi-providers.ts');
+  const { Providers } = await import('../src/providers.ts');
+  const sentinel = 'sk-SHELL_ONLY_SENTINEL_DO_NOT_LEAK';
+  const h = await codex(t); await chmod(h.store, 0o700); await commit(h.root);
+  // Pi's providers live in this process beside the runtime, as in the sidecar.
+  const agent = join(h.store, 'pi-agent'); await mkdir(agent, { mode: 0o700 });
+  await writeFile(join(agent, 'models.json'), JSON.stringify({ providers: {
+    lab: { baseUrl: 'http://127.0.0.1:9/v1', api: 'openai-completions', apiKey: '$SHELL_ONLY_KEY', models: [{ id: 'a' }] },
+  } }));
+  const source = piProviders(agent, async () => ({ SHELL_ONLY_KEY: sentinel }));
+  const registry = await source.load();
+  const holder = { models: registry.models, authenticated: registry.authenticated };
+  const providers = new Providers(holder, source, registry); t.after(() => providers.close());
+  await providers.adoptEnvironment();
+  assert.equal(holder.authenticated.has('lab'), true, 'the shell key is in use');
+
+  const dump = join(h.store, 'hook-environment');
+  const hook = join(h.root, '.git', 'hooks', 'post-checkout');
+  await writeFile(hook, `#!/bin/sh\nenv > '${dump}'\n`); await chmod(hook, 0o755);
+  const info: any = await h.runtime.reply({ op: 'worktree_info', checkout: h.root });
+  await h.runtime.reply({ op: 'create_worktree_thread', request_id: 'keys', parent: info.result.parent, harness: 'codex', provider: 'codex', model_id: 'gpt-fake', approval: 'ask' });
+  const ready = await done(h.runtime, 'keys'); assert.equal(ready.state, 'ready', JSON.stringify(ready));
+  const seen = await readFile(dump, 'utf8');
+  assert.match(seen, /^PATH=/m, 'the hook ran');
+  assert(!seen.includes(sentinel) && !seen.includes('SHELL_ONLY_KEY'));
+});
+
 test('killed worktree worker leaves checkout and common leases with Git descendants', { timeout: 30_000 }, async t => {
   const { spawn } = await import('node:child_process');
   const { binary, childPids, until } = await import('./support/host.ts');

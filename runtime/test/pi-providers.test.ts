@@ -40,10 +40,10 @@ const FILE_KEY = 'sk-FILE_KEY_DO_NOT_LEAK';
 type Provider = { provider: ProviderView };
 type List = { providers: ProviderView[] };
 
-async function host(t: TestContext, seed?: (agent: string) => Promise<void>) {
+async function host(t: TestContext, seed?: (agent: string) => Promise<void>, login?: () => Promise<Record<string, string> | undefined>) {
   const agent = await mkdtemp(join(sandbox, 'agent-'));
   await seed?.(agent);
-  const source = piProviders(agent);
+  const source = piProviders(agent, login);
   const registry = await source.load();
   const holder = { models: registry.models, authenticated: registry.authenticated };
   const providers = new Providers(holder, source, registry);
@@ -61,7 +61,7 @@ async function host(t: TestContext, seed?: (agent: string) => Promise<void>) {
     for (const secret of [KEY, NEXT_KEY, FILE_KEY]) assert(!joined.includes(secret), `a reply contains ${secret}`);
     assert.deepEqual(outbound, []);
   };
-  return { agent, auth: join(agent, 'auth.json'), models: join(agent, 'models.json'), holder, call, provider, noSecrets };
+  return { agent, auth: join(agent, 'auth.json'), models: join(agent, 'models.json'), holder, providers, call, provider, noSecrets };
 }
 const mode = async (path: string) => (await stat(path)).mode & 0o777;
 const json = async (path: string) => JSON.parse(await readFile(path, 'utf8'));
@@ -323,3 +323,214 @@ test('check connection lists models from a local server and reports failures wit
   assert.equal((await f.call({ op: 'check_endpoint', base_url: 'http://127.0.0.1:9/v1' })).result.reason, 'unreachable');
   f.noSecrets();
 });
+
+// The host runs as a service without the login shell's variables; a terminal's Pi has them.
+type Read = Record<string, string> | undefined;
+function reader() {
+  const pending: ((value: Read) => void)[] = [];
+  return {
+    read: () => new Promise<Read>(resolve => pending.push(resolve)),
+    // Resolves the read that started `index`-th among those still waiting.
+    answer: (index: number, value: Read) => pending.splice(index, 1)[0]!(value),
+    waiting: () => pending.length,
+  };
+}
+const settled = async (shell: ReturnType<typeof reader>, count: number) => { while (shell.waiting() < count) await new Promise(resolve => setImmediate(resolve)); };
+
+test('models.json key templates resolve from the login shell, and no child process sees them', async t => {
+  const login = { LAB_KEY: KEY, LAB_TEAM: 'blue', PLAIT_HOST_EXE: '/not/the/host' };
+  const seen: (string | string[] | undefined)[] = [];
+  const endpoint = await server(t, (request, response) => {
+    seen.push(request.headers['x-team']);
+    response.setHeader('content-type', 'application/json'); response.end('{"data":[{"id":"a"}]}');
+  });
+  // Pi's own parser reads the file, comments included.
+  const file = `{\n  // servers\n  "providers": ${JSON.stringify({
+    lab: { baseUrl: endpoint.url, api: 'openai-completions', apiKey: '$LAB_KEY', headers: { 'x-team': '${LAB_TEAM}' }, models: [{ id: 'a' }] },
+    leak: { baseUrl: endpoint.url, api: 'openai-completions', apiKey: '${PLAIT_HOST_EXE}', models: [{ id: 'b' }] },
+  })}\n}\n`;
+  const f = await host(t, agent => writeFile(join(agent, 'models.json'), file), async () => ({ ...login }));
+
+  // Before the login shell is read, the key's variable is missing, as it is for the service.
+  assert.deepEqual([(await f.provider('lab'))?.authenticated, (await f.provider('lab'))?.credential], [false, 'none']);
+  await f.providers.adoptEnvironment();
+  assert.deepEqual([(await f.provider('lab'))?.authenticated, (await f.provider('lab'))?.credential], [true, 'external']);
+  assert.equal(f.holder.authenticated.has('lab'), true);
+  assert.equal((await f.call({ op: 'check_endpoint', id: 'lab' })).result.reachable, true);
+  assert.deepEqual([endpoint.seen.at(-1), seen.at(-1)], [`Bearer ${KEY}`, 'blue']);
+  // Host plumbing never comes from a shell, even when a template names it.
+  assert.equal((await f.provider('leak'))?.authenticated, false);
+
+  // The process environment is unchanged; worktrees.test.ts checks a real worktree hook.
+  assert.deepEqual([process.env.LAB_KEY, process.env.LAB_TEAM, process.env.PLAIT_HOST_EXE], [undefined, undefined, undefined]);
+
+  // A models.json that Pi cannot parse is not published: the working registry stays in use.
+  await writeFile(f.models, '{ "providers": ');
+  assert.equal((await f.call({ op: 'reload_providers' })).error?.code, 'conflict');
+  assert.equal((await f.provider('lab'))?.authenticated, true);
+  assert.equal((await f.holder.models.getAuth('lab'))?.auth.apiKey, KEY);
+  f.noSecrets();
+});
+
+test('a detached run is refused when the host\'s credential needs the login shell', async t => {
+  const agent = await mkdtemp(join(sandbox, 'agent-'));
+  await writeFile(join(agent, 'models.json'), JSON.stringify({ providers: {
+    shell: { baseUrl: 'http://127.0.0.1:9/v1', api: 'openai-completions', apiKey: '$RUN_KEY', models: [{ id: 'a' }] },
+    header: { baseUrl: 'http://127.0.0.1:9/v1', api: 'openai-completions', apiKey: 'literal', headers: { 'x-team': '$RUN_TEAM' }, models: [{ id: 'a' }] },
+    missing: { baseUrl: 'http://127.0.0.1:9/v1', api: 'openai-completions', apiKey: '$NOWHERE_SET', models: [{ id: 'a' }] },
+    plain: { baseUrl: 'http://127.0.0.1:9/v1', api: 'openai-completions', apiKey: 'literal', models: [{ id: 'a' }] },
+  } }));
+  // The service has an Anthropic key; the shell adds a token, which Pi prefers.
+  process.env.ANTHROPIC_API_KEY = 'service-key';
+  t.after(() => { delete process.env.ANTHROPIC_API_KEY; });
+  const source = piProviders(agent, async () => ({ RUN_KEY: KEY, RUN_TEAM: 'blue', ANTHROPIC_AUTH_TOKEN: 'shell-token' }));
+  const registry = await source.load();
+  const providers = new Providers({ models: registry.models, authenticated: registry.authenticated }, source, registry);
+  t.after(() => providers.close());
+  await providers.adoptEnvironment();
+
+  const refusal = /comes from your shell; detached runs can't use it yet/;
+  for (const id of ['shell', 'header', 'anthropic', 'missing']) assert.match((await providers.detachedRunProblem(id)) ?? '', refusal, id);
+  // One that needs nothing from the shell starts as before.
+  assert.equal(await providers.detachedRunProblem('plain'), undefined);
+});
+
+test('built-in provider keys come from the login shell, and the host\'s own value wins', async t => {
+  process.env.MISTRAL_API_KEY = 'host-value';
+  t.after(() => { delete process.env.MISTRAL_API_KEY; });
+  const f = await host(t, undefined, async () => ({
+    GROQ_API_KEY: KEY, MISTRAL_API_KEY: NEXT_KEY, CLOUDFLARE_API_KEY: KEY, CLOUDFLARE_ACCOUNT_ID: 'account',
+  }));
+  assert.equal((await f.provider('groq'))?.authenticated, false);
+  await f.providers.adoptEnvironment();
+  assert.deepEqual([(await f.provider('groq'))?.authenticated, (await f.provider('groq'))?.credential], [true, 'external']);
+  // Cloudflare needs its account ID as well as its key; both come from the shell.
+  assert.equal((await f.provider('cloudflare-workers-ai'))?.authenticated, true);
+  assert.equal((await f.holder.models.getAuth('mistral'))?.auth.apiKey, 'host-value');
+  assert.deepEqual([process.env.GROQ_API_KEY, process.env.CLOUDFLARE_ACCOUNT_ID], [undefined, undefined]);
+  f.noSecrets();
+});
+
+test('an older login-shell read never replaces a newer one, in either completion order', async t => {
+  for (const newerFirst of [true, false]) {
+    const shell = reader();
+    const f = await host(t, agent => writeFile(join(agent, 'models.json'), JSON.stringify({ providers: {
+      lab: { baseUrl: 'http://127.0.0.1:9/v1', api: 'openai-completions', apiKey: '$LAB_KEY', models: [{ id: 'a' }] },
+    } })), shell.read);
+    const startup = f.providers.adoptEnvironment();
+    await settled(shell, 1);
+    const reload = f.call({ op: 'reload_providers' });
+    await settled(shell, 2);
+    if (newerFirst) {
+      shell.answer(1, { LAB_KEY: NEXT_KEY });
+      assert.equal((await reload).ok, true);
+      shell.answer(0, { LAB_KEY: KEY });
+      await startup;
+    } else {
+      shell.answer(0, { LAB_KEY: KEY });
+      await startup;
+      shell.answer(0, { LAB_KEY: NEXT_KEY });
+      assert.equal((await reload).ok, true);
+    }
+    assert.equal((await f.holder.models.getAuth('lab'))?.auth.apiKey, NEXT_KEY, `newer first: ${newerFirst}`);
+
+    // A later read removes a variable the shell no longer sets; a failed read changes nothing.
+    const removed = f.call({ op: 'reload_providers' });
+    await settled(shell, 1); shell.answer(0, {});
+    assert.equal((await removed).ok, true);
+    assert.equal((await f.provider('lab'))?.authenticated, false);
+    const restored = f.call({ op: 'reload_providers' });
+    await settled(shell, 1); shell.answer(0, { LAB_KEY: KEY });
+    await restored;
+    const failed = f.call<{ warning?: string }>({ op: 'reload_providers' });
+    await settled(shell, 1); shell.answer(0, undefined);
+    assert.deepEqual([(await failed).ok, (await failed).result.warning], [true, 'login_environment_unavailable']);
+    assert.equal((await f.holder.models.getAuth('lab'))?.auth.apiKey, KEY);
+    f.noSecrets();
+  }
+});
+
+test('an endpoint whose key or headers read the environment keeps its origin over the socket', async t => {
+  const f = await host(t, agent => writeFile(join(agent, 'models.json'), JSON.stringify({ providers: {
+    keyed: { baseUrl: 'http://127.0.0.1:9/v1', api: 'openai-completions', apiKey: '$LAB_KEY', models: [{ id: 'a' }] },
+    header: { baseUrl: 'http://127.0.0.1:9/v1', api: 'openai-completions', apiKey: 'none', models: [{ id: 'a' }], modelOverrides: { a: { headers: { 'x-team': '!pass show team' } } } },
+    plain: { baseUrl: 'http://127.0.0.1:9/v1', api: 'openai-completions', apiKey: 'none', models: [{ id: 'a' }] },
+  } })));
+  const before = await readFile(f.models, 'utf8');
+  for (const id of ['keyed', 'header']) {
+    const moved = await f.call({ op: 'update_endpoint', id, base_url: 'https://elsewhere.example/v1' });
+    assert.equal(moved.error?.code, 'conflict', id);
+  }
+  assert.equal(await readFile(f.models, 'utf8'), before);
+  // The same server at another path, and an endpoint with a literal key, can still move.
+  assert.equal((await f.call({ op: 'update_endpoint', id: 'keyed', base_url: 'http://127.0.0.1:9/api/v1' })).ok, true);
+  assert.equal((await f.call({ op: 'update_endpoint', id: 'plain', base_url: 'http://127.0.0.1:8/v1' })).ok, true);
+  assert.equal((await json(f.models)).providers.keyed.baseUrl, 'http://127.0.0.1:9/api/v1');
+  f.noSecrets();
+
+  // With no template at all, a sign-in entry or one without a literal key still resolves a
+  // credential through Pi (Radius reads RADIUS_API_KEY), so it cannot move either.
+  const radius = await host(t, agent => writeFile(join(agent, 'models.json'), JSON.stringify({ providers: {
+    lab: { baseUrl: 'http://127.0.0.1:9/v1', oauth: 'radius' },
+    bare: { baseUrl: 'http://127.0.0.1:9/v1', api: 'openai-completions', models: [{ id: 'a' }] },
+  } })), async () => ({ RADIUS_API_KEY: KEY }));
+  const file = await readFile(radius.models, 'utf8');
+  for (const id of ['lab', 'bare']) {
+    assert.equal((await radius.call({ op: 'update_endpoint', id, base_url: 'https://elsewhere.example/v1' })).error?.code, 'conflict', id);
+  }
+  assert.equal(await readFile(radius.models, 'utf8'), file);
+  radius.noSecrets();
+
+  // A stored credential is bound to its server: moving the endpoint forgets it.
+  const stored = await host(t, async agent => {
+    await writeFile(join(agent, 'models.json'), JSON.stringify({ providers: {
+      templated: { baseUrl: 'http://127.0.0.1:9/v1', api: 'openai-completions', apiKey: 'none', models: [{ id: 'a' }] },
+      literal: { baseUrl: 'http://127.0.0.1:9/v1', api: 'openai-completions', apiKey: 'none', models: [{ id: 'a' }] },
+    } }));
+    // Pi would use these before the entries' own keys; one names a variable only the shell has.
+    await writeFile(join(agent, 'auth.json'), JSON.stringify({ templated: { type: 'api_key', key: '$SHELL_ONLY_KEY' }, orphan: { type: 'api_key', key: KEY } }), { mode: 0o600 });
+  }, async () => ({ SHELL_ONLY_KEY: KEY }));
+  const moved = await stored.call({ op: 'update_endpoint', id: 'templated', base_url: 'http://127.0.0.1:8/v1' });
+  assert.equal(moved.ok, true, JSON.stringify(moved.error));
+  assert.equal((await json(stored.auth)).templated, undefined);
+  assert.equal((await stored.holder.models.getAuth('templated'))?.auth.apiKey, 'none');
+
+  // A key sent with the move is stored for the new address once that address is written.
+  assert.equal((await stored.call({ op: 'set_provider_key', provider: 'literal', key: KEY })).ok, true);
+  assert.equal((await stored.call({ op: 'update_endpoint', id: 'literal', base_url: 'http://127.0.0.1:7/v1', key: NEXT_KEY })).ok, true);
+  assert.deepEqual([(await json(stored.models)).providers.literal.baseUrl, (await stored.holder.models.getAuth('literal'))?.auth.apiKey], ['http://127.0.0.1:7/v1', NEXT_KEY]);
+
+  // If the old key cannot be removed, nothing else happens: the original address keeps its key.
+  await chmod(stored.auth, 0o400); await chmod(stored.agent, 0o500);
+  try {
+    assert.notEqual((await stored.call({ op: 'update_endpoint', id: 'literal', base_url: 'http://127.0.0.1:6/v1', key: KEY })).ok, true);
+  } finally { await chmod(stored.agent, 0o700); await chmod(stored.auth, 0o600); }
+  assert.equal((await json(stored.models)).providers.literal.baseUrl, 'http://127.0.0.1:7/v1');
+  assert.equal((await stored.holder.models.getAuth('literal'))?.auth.apiKey, NEXT_KEY);
+
+  // A new endpoint does not inherit a credential left under its ID.
+  assert.equal((await stored.call({ op: 'add_endpoint', id: 'orphan', name: 'Orphan', base_url: 'http://127.0.0.1:5/v1', model_ids: ['a'] })).ok, true);
+  assert.equal((await json(stored.auth)).orphan, undefined);
+  assert.equal((await stored.holder.models.getAuth('orphan'))?.auth.apiKey, 'none');
+  stored.noSecrets();
+
+  // If the new address cannot be written, the old key is already gone and the new one is not
+  // stored: the endpoint is left without a key at its old address, never a key at the wrong server.
+  const pinned = await host(t, async agent => {
+    await mkdir(join(agent, 'held'), { mode: 0o700 });
+    await writeFile(join(agent, 'held', 'models.json'), JSON.stringify({ providers: {
+      lab: { baseUrl: 'http://127.0.0.1:9/v1', api: 'openai-completions', apiKey: 'none', models: [{ id: 'a' }] },
+    } }));
+    await symlink(join(agent, 'held', 'models.json'), join(agent, 'models.json'));
+    await writeFile(join(agent, 'auth.json'), JSON.stringify({ lab: { type: 'api_key', key: KEY } }), { mode: 0o600 });
+  });
+  await chmod(join(pinned.agent, 'held'), 0o500);
+  try {
+    assert.notEqual((await pinned.call({ op: 'update_endpoint', id: 'lab', base_url: 'http://127.0.0.1:8/v1', key: NEXT_KEY })).ok, true);
+  } finally { await chmod(join(pinned.agent, 'held'), 0o700); }
+  assert.equal((await json(pinned.models)).providers.lab.baseUrl, 'http://127.0.0.1:9/v1');
+  assert.equal((await json(pinned.auth)).lab, undefined);
+  assert.equal((await pinned.holder.models.getAuth('lab'))?.auth.apiKey, 'none');
+  pinned.noSecrets();
+});
+

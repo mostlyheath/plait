@@ -396,6 +396,9 @@ impl Plait {
         workspace.status = view.status.clone();
         workspace.source = Source::Host(view.host);
         workspace.failed = false;
+        // New providers on the host, such as keys read from the login shell, change the catalog.
+        self.host.connection.providers_revision = view.providers_revision;
+        self.refresh_stale_catalog(cx);
         self.update_window_title(window);
         if !self.tabs.persistence.host_loaded && !self.tabs.persistence.host_loading {
             self.tabs.persistence.host_loading = true;
@@ -548,6 +551,7 @@ mod tests {
                 unread: true,
             }],
             status: Default::default(),
+            providers_revision: 0,
         }
     }
 

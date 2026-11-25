@@ -114,6 +114,8 @@ export class Runtime {
   authenticated: Set<string>;
   // Provider sign-in operations; a reload replaces `models` and `authenticated` together.
   providers?: Providers;
+  /** A published provider registry can change the catalog; workspace watchers learn its revision. */
+  providersPublished() { this.changed(WORKSPACE_TOPIC); }
   /** Bounded backoff for transient provider failures of a model request. Tool calls are never retried. */
   retry: ConversationRetryPolicy = { enabled: true, maxRetries: 3, baseDelayMs: 2000 };
   maxTurns = MAX_TURNS;
@@ -163,7 +165,7 @@ export class Runtime {
     this.gitReads = new GitReads(undefined, undefined, directory, this.store);
     // Each device writes only its own state and nothing subscribes to it, so it announces nothing.
     this.devices = new Devices(this.store, () => {});
-    this.workspace = new Workspace(this.store, () => this.changed(WORKSPACE_TOPIC), (path, roots) => this.gitReads.checkoutSummary(path, roots));
+    this.workspace = new Workspace(this.store, () => this.changed(WORKSPACE_TOPIC), (path, roots) => this.gitReads.checkoutSummary(path, roots), () => this.providers?.revision ?? 0);
     this.checkoutWatcher = new CheckoutWatcher((folder, refsChanged) => { if (folder && refsChanged) this.workspace.refreshSummary(folder); this.changed(WORKSPACE_TOPIC); });
     this.workspace.setWatcher(this.checkoutWatcher);
     this.linear = new LinearService(this.store, directory);
@@ -980,6 +982,10 @@ export class Runtime {
     const testPayload = this.detachedTestPayload(snapshot, text);
     if (testPayload) return this.startDetached(snapshot, requestId, mode, accept, testPayload);
     if (process.env.PLAIT_DETACHED_RUNNERS === '1' && selected.kind === 'pi') {
+      // Detached runners resolve keys from the host environment only. Refuse, before the run is
+      // accepted, one whose credential here depends on the login shell, so it never runs with another.
+      const problem = await this.providers?.detachedRunProblem(snapshot.model.provider);
+      if (problem) fail('model_unavailable', problem);
       return this.startDetached(snapshot, requestId, mode, accept, root => {
         const policy = commandPolicy(this.store, snapshot.checkout, root);
         return {
