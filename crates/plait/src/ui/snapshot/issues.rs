@@ -142,7 +142,11 @@ fn writable(h: &mut Harness, selected: bool) {
         p.issues.view.writes = Some(true);
         p.issues.view.issue_writes = true;
         p.issues.view.images = true;
+        // No saved drafts: recovery finishes on the next sync.
+        p.issues
+            .drafts_for_scene(plait_client::linear_drafts::Drafts::default());
     });
+    h.settle();
 }
 
 fn new_issue(h: &mut Harness) {
@@ -728,16 +732,122 @@ fn saving_a_description_keeps_the_exact_title() {
     h.update(|p, window, cx| {
         let text = serde_json::from_value(serde_json::json!({"issue_id": "i1",
             "updated_at": "2026-11-18T12:00:00.000Z", "editable": true,
-            "title": "Retry\u{2028}rate-limited requests", "description": "Old"}))
+            "title": " Retry\u{2028}rate-limited requests ", "description": "Old"}))
         .unwrap();
         p.open_edit(&text, window, cx);
         let (title, description) = p.issues.form_fields_for_scene().unwrap();
-        assert_eq!(title.read(cx).text(), "Retry rate-limited requests");
+        assert_eq!(title.read(cx).text(), " Retry rate-limited requests ");
         description.update(cx, |editor, cx| editor.type_text(" and new", window, cx));
         p.save_issue_form_for_scene(cx);
         let sent = p.issues.view.form().unwrap().sending().cloned().unwrap();
         assert_eq!(sent.title, None, "the title is left as Linear has it");
         assert_eq!(sent.description.as_deref(), Some("Old and new"));
+    });
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
+fn saved_new(
+    checkout: &Path,
+    title: &str,
+    request: &str,
+) -> plait_client::linear_drafts::SavedForm {
+    plait_client::linear_drafts::SavedForm::new(
+        checkout,
+        &plait_client::linear_issues::FormKind::New {
+            team_id: "t-plait".into(),
+            team_name: Some("Plait".into()),
+        },
+        title,
+        "",
+        request,
+    )
+}
+
+/// New waits for saved drafts to be read, so a fresh form never takes the
+/// place of a saved one; the saved text and request come back.
+#[core::prelude::v1::test]
+fn new_waits_for_saved_drafts_and_keeps_them() {
+    if !isolated("issues::new_waits_for_saved_drafts_and_keeps_them") {
+        return;
+    }
+    let scratch = std::env::temp_dir().join(format!("plait-issues-recover-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    let mut h = Harness::new(&repo, None, 1380., 860.);
+    h.connect(&repo, false);
+    open(&mut h);
+    linked(&mut h, false, false);
+    h.update(|p, _, _| {
+        p.issues.view.writes = Some(true);
+        p.issues.view.issue_writes = true;
+    });
+    h.settle();
+    // The journal read is still pending: New does nothing.
+    h.update(|p, window, cx| {
+        assert!(!p.forms_ready());
+        p.open_new_issue(window, cx);
+        assert!(p.issues.view.new_form.is_none());
+    });
+    // The read finishes with a saved draft for this project.
+    h.update(|p, _, _| {
+        let checkout = p.issues.view.checkout.clone().unwrap();
+        p.issues
+            .drafts_for_scene(plait_client::linear_drafts::Drafts {
+                forms: vec![saved_new(&checkout, "Saved before quitting", "r-saved")],
+            });
+    });
+    h.settle();
+    h.update(|p, window, cx| {
+        assert!(p.forms_ready());
+        p.open_new_issue(window, cx);
+        let form = p.issues.view.form().unwrap();
+        assert_eq!(form.request_id, "r-saved");
+        let (title, _) = p.issues.form_fields_for_scene().unwrap();
+        assert_eq!(title.read(cx).text(), "Saved before quitting");
+    });
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
+/// With 63 saved drafts, a New takes the 64th place and an Edit whose text
+/// arrives afterwards is refused; no saved draft is dropped.
+#[core::prelude::v1::test]
+fn the_draft_limit_holds_when_edit_and_new_race() {
+    if !isolated("issues::the_draft_limit_holds_when_edit_and_new_race") {
+        return;
+    }
+    let scratch = std::env::temp_dir().join(format!("plait-issues-limit-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    let mut h = Harness::new(&repo, None, 1380., 860.);
+    h.connect(&repo, false);
+    open(&mut h);
+    linked(&mut h, false, true);
+    h.update(|p, _, _| {
+        p.issues.view.writes = Some(true);
+        p.issues.view.issue_writes = true;
+        let forms = (0..63)
+            .map(|i| {
+                saved_new(
+                    Path::new(&format!("/other/{i}")),
+                    &format!("Draft {i}"),
+                    "r",
+                )
+            })
+            .collect();
+        p.issues
+            .drafts_for_scene(plait_client::linear_drafts::Drafts { forms });
+    });
+    h.settle();
+    h.update(|p, window, cx| {
+        p.open_new_issue(window, cx);
+        assert!(p.issues.view.new_form.is_some(), "the 64th draft opens");
+        let text = serde_json::from_value(serde_json::json!({"issue_id": "i1",
+            "updated_at": "2026-11-18T12:00:00.000Z", "editable": true,
+            "title": "Retry rate-limited requests with backoff", "description": "Old"}))
+        .unwrap();
+        p.open_edit(&text, window, cx);
+        assert!(p.issues.view.edits.is_empty(), "a 65th is refused");
+        let saved = p.issues.saved_drafts_for_scene().unwrap();
+        assert_eq!(saved.forms.len(), 64);
+        assert!((0..63).all(|i| saved.forms.iter().any(|f| f.title == format!("Draft {i}"))));
     });
     std::fs::remove_dir_all(scratch).unwrap();
 }

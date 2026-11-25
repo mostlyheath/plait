@@ -94,6 +94,19 @@ struct FormFields {
 const DRAFT_PAUSE: Duration = Duration::from_millis(500);
 
 impl IssuesUi {
+    /// Scenes have no journal: the saved drafts are `drafts`, and recovery
+    /// runs as soon as the view targets a project.
+    #[cfg(test)]
+    pub(super) fn drafts_for_scene(&mut self, drafts: Drafts) {
+        self.drafts = Some(drafts);
+        self.restored_for = None;
+    }
+
+    #[cfg(test)]
+    pub(super) fn saved_drafts_for_scene(&self) -> Option<&Drafts> {
+        self.drafts.as_ref()
+    }
+
     /// The open form's title and description, for scenes to type into.
     #[cfg(test)]
     pub(super) fn form_fields_for_scene(&self) -> Option<(Entity<TextField>, Entity<Composer>)> {
@@ -572,7 +585,18 @@ impl Plait {
         }
     }
 
+    /// Whether this project's saved drafts have been reopened. Until then a
+    /// new form could take the place of a saved one, so none opens.
+    pub(super) fn forms_ready(&self) -> bool {
+        self.issues.drafts.is_some()
+            && self.issues.view.checkout.is_some()
+            && self.issues.restored_for == self.issues.view.checkout
+    }
+
     pub(super) fn open_new_issue(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.forms_ready() {
+            return;
+        }
         if self.issues.view.new_form.is_none() && self.drafts_full() {
             cx.notify();
             return;
@@ -595,6 +619,9 @@ impl Plait {
     /// Linear first: the details are shortened for display and must not be
     /// written back.
     pub(super) fn edit_issue(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.forms_ready() {
+            return;
+        }
         if self.issues.view.show_edit() {
             if let Some(slot) = self.issues.view.form().map(IssueForm::slot) {
                 self.focus_form_title(&slot, window, cx);
@@ -667,7 +694,9 @@ impl Plait {
         cx: &mut Context<Self>,
     ) {
         self.issues.edit_note = None;
-        if !self.issues.view.edits.contains_key(&text.issue_id) && self.drafts_full() {
+        if !self.forms_ready()
+            || (!self.issues.view.edits.contains_key(&text.issue_id) && self.drafts_full())
+        {
             cx.notify();
             return;
         }
@@ -1714,7 +1743,7 @@ impl Plait {
                                 "Edit"
                             },
                         )
-                        .disabled(self.issues.reading_text.is_some())
+                        .disabled(self.issues.reading_text.is_some() || !self.forms_ready())
                         .on_activate(cx, |this, window, cx| this.edit_issue(window, cx)),
                     )
                 },
@@ -1910,6 +1939,7 @@ impl Plait {
                 |el| {
                     el.child(
                         button("issues-new", "New issue")
+                            .disabled(!self.forms_ready())
                             .on_activate(cx, |this, window, cx| this.open_new_issue(window, cx)),
                     )
                 },

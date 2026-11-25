@@ -858,6 +858,7 @@ impl IssuesView {
         ) {
             return Submit::Nothing;
         }
+        let raw_title = title;
         let title = title.trim();
         let problem = if title.is_empty() {
             Some("Give the issue a title.")
@@ -881,12 +882,13 @@ impl IssuesView {
                 Some(title.to_owned()),
                 (!description.trim().is_empty()).then(|| description.to_owned()),
             ),
+            // Compared as typed: " Retry " left alone is never sent as "Retry".
             FormKind::Edit {
                 title: before,
                 description: was,
                 ..
             } => (
-                (title != before).then(|| title.to_owned()),
+                (raw_title != before).then(|| title.to_owned()),
                 (description != was).then(|| description.to_owned()),
             ),
         };
