@@ -2654,8 +2654,9 @@ owner-only host socket, which any process running as you can reach.
   When the text is longer than Plait can write back (512 characters of title,
   32 KiB of description), holds characters the write operations refuse,
   contains the key, or Linear's answer was partial (GraphQL errors, or a field
-  missing or null), `editable` is false and both fields are null; edit that
-  issue in Linear. A missing field is never read as empty text.
+  absent from it), `editable` is false and both fields are null; edit that
+  issue in Linear. An absent field is never read as empty text; a present null
+  description is Linear's empty description and starts blank.
 - **`linear_create_issue`** creates an issue in `team_id` with `title` (1–512
   characters), an optional Markdown `description` (at most 32 KiB, tabs and
   newlines allowed) and an optional `state_id` of that team, checked against

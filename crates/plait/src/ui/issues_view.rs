@@ -61,6 +61,9 @@ pub(super) struct IssuesUi {
     image_generation: u64,
     /// Image reads in flight.
     image_reads: usize,
+    /// Decoded bytes held per image, and the images in the order last shown.
+    image_bytes: HashMap<String, usize>,
+    image_order: Vec<String>,
     /// The open form's fields, made when it opens and dropped when it closes.
     form_fields: HashMap<FormSlot, FormFields>,
     /// Every project's unsaved forms as last written, once read from disk.
@@ -99,9 +102,8 @@ impl IssuesUi {
 const IMAGE_READS: usize = 3;
 /// Longest side an issue image is decoded to; it is drawn no wider than the text.
 const IMAGE_EDGE: u32 = 1600;
-/// Images of one issue held as pixels: at most 6 × 1600² × 4 bytes, about
-/// 61 MiB. Later ones are shown in Linear.
-const IMAGES_HELD: usize = 6;
+/// Decoded issue images held at once, across every issue.
+const IMAGE_MEMORY: usize = 48 * 1024 * 1024;
 
 /// Where a reference is waiting to be added.
 #[derive(Clone, PartialEq, Eq)]
@@ -395,9 +397,11 @@ impl Plait {
     }
 
     /// Reads the shown issue's Linear images through the host, a few at a
-    /// time, and decodes them off the UI thread. Only the first few of an
-    /// issue are held; images of an earlier issue, or read under another
-    /// sign-in, are let go and their pending reads ignored.
+    /// time, and decodes them off the UI thread. Decoded images of every issue
+    /// share one memory bound: the least recently shown go first, and the
+    /// shown issue's are kept over others. An image let go is read again from
+    /// the host's disk cache when it is shown. Images read under another
+    /// sign-in are let go and their pending reads ignored.
     fn load_issue_images(&mut self, cx: &mut Context<Self>) {
         let owner = match &self.linear.account.auth {
             Auth::SignedIn { workspace, viewer } => Some((
@@ -410,14 +414,27 @@ impl Plait {
         if self.issues.images_owner != owner {
             self.issues.images_owner = owner;
             self.issues.images.clear();
+            self.issues.image_bytes.clear();
             self.issues.image_generation += 1;
             self.issues.image_reads = 0;
         }
         let Some(text) = self.issues.text.clone() else {
             return;
         };
-        let urls: Vec<_> = text.linear_images().into_iter().take(IMAGES_HELD).collect();
-        self.issues.images.retain(|url, _| urls.contains(url));
+        let visible = text.linear_images();
+        // Reads that never finished for another issue are let go; pixels stay.
+        self.issues
+            .images
+            .retain(|url, picture| matches!(picture, Picture::Ready(_)) || visible.contains(url));
+        // Shown now: the most recently used.
+        self.issues.image_order.retain(|url| !visible.contains(url));
+        self.issues.image_order.extend(
+            visible
+                .iter()
+                .filter(|url| self.issues.image_bytes.contains_key(*url))
+                .cloned(),
+        );
+        self.evict_images(&visible);
         if cfg!(test)
             || !self.issues.view.images
             || !self.host.connection.connected
@@ -425,12 +442,16 @@ impl Plait {
         {
             return;
         }
-        let wanted: Vec<_> = urls
+        let wanted: Vec<_> = visible
             .into_iter()
             .filter(|url| !self.issues.images.contains_key(url))
             .take(IMAGE_READS.saturating_sub(self.issues.image_reads))
             .collect();
         for url in wanted {
+            // The shown issue alone fills the bound: later images stay in Linear.
+            if self.decoded_bytes() >= IMAGE_MEMORY {
+                break;
+            }
             self.issues.images.insert(url.clone(), Picture::Loading);
             self.issues.image_reads += 1;
             let generation = self.issues.image_generation;
@@ -449,7 +470,7 @@ impl Plait {
                                 _ => "Could not be read".to_owned(),
                             },
                         )?;
-                    super::images::decode(&bytes, IMAGE_EDGE)
+                    super::images::decode_counted(&bytes, IMAGE_EDGE)
                         .map_err(|_| "Could not be decoded".to_owned())
                 },
                 move |this, result, _| {
@@ -458,13 +479,26 @@ impl Plait {
                         return false;
                     }
                     this.issues.image_reads = this.issues.image_reads.saturating_sub(1);
-                    if this.issues.images.contains_key(&url) {
-                        let picture = match result {
-                            Ok(pixels) => Picture::Ready(pixels),
-                            Err(reason) => Picture::Failed(reason),
-                        };
-                        this.issues.images.insert(url, picture);
+                    if !this.issues.images.contains_key(&url) {
+                        return true;
                     }
+                    let picture = match result {
+                        Ok((pixels, bytes)) => {
+                            this.issues.image_bytes.insert(url.clone(), bytes);
+                            this.issues.image_order.retain(|held| held != &url);
+                            this.issues.image_order.push(url.clone());
+                            Picture::Ready(pixels)
+                        }
+                        Err(reason) => Picture::Failed(reason),
+                    };
+                    this.issues.images.insert(url, picture);
+                    let visible = this
+                        .issues
+                        .text
+                        .as_ref()
+                        .map(|text| text.linear_images())
+                        .unwrap_or_default();
+                    this.evict_images(&visible);
                     true
                 },
                 cx,
@@ -472,22 +506,39 @@ impl Plait {
         }
     }
 
+    fn decoded_bytes(&self) -> usize {
+        self.issues.image_bytes.values().sum()
+    }
+
+    /// Lets go of the least recently shown pixels beyond the bound, never the
+    /// shown issue's while any other remain.
+    fn evict_images(&mut self, visible: &[String]) {
+        while self.decoded_bytes() > IMAGE_MEMORY {
+            let Some(at) = self
+                .issues
+                .image_order
+                .iter()
+                .position(|url| !visible.contains(url))
+            else {
+                break;
+            };
+            let url = self.issues.image_order.remove(at);
+            self.issues.image_bytes.remove(&url);
+            self.issues.images.remove(&url);
+        }
+    }
+
     /// What is known of an image in the shown issue, for drawing it.
     fn picture(&self, url: &str) -> Picture {
-        let held = self.issues.text.as_ref().is_some_and(|text| {
-            text.linear_images()
-                .iter()
-                .take(IMAGES_HELD)
-                .any(|held| held == url)
-        });
-        if !self.issues.view.images || !held {
+        if !self.issues.view.images {
             return Picture::Elsewhere;
         }
-        self.issues
-            .images
-            .get(url)
-            .cloned()
-            .unwrap_or(Picture::Loading)
+        match self.issues.images.get(url) {
+            Some(picture) => picture.clone(),
+            // Not started because the shown issue's images fill the bound.
+            None if self.decoded_bytes() >= IMAGE_MEMORY => Picture::Elsewhere,
+            None => Picture::Loading,
+        }
     }
 
     pub(super) fn open_new_issue(&mut self, window: &mut Window, cx: &mut Context<Self>) {

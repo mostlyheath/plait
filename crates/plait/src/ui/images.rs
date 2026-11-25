@@ -10,16 +10,24 @@ use std::{
 pub(super) fn decode(bytes: &[u8], edge: u32) -> Result<Arc<RenderImage>, String> {
     Ok(decode_image(bytes, edge)?.pixels)
 }
+/// Decoded pixels and the bytes they hold, for a caller that bounds memory.
+pub(super) fn decode_counted(bytes: &[u8], edge: u32) -> Result<(Arc<RenderImage>, usize), String> {
+    let decoded = decode_image(bytes, edge)?;
+    Ok((decoded.pixels, decoded.bytes))
+}
 #[derive(Clone)]
 pub(super) struct Decoded {
     pub pixels: Arc<RenderImage>,
     dimensions: Option<(u32, u32)>,
+    /// RGBA bytes held, or 0 when not counted.
+    bytes: usize,
 }
 impl From<Arc<RenderImage>> for Decoded {
     fn from(pixels: Arc<RenderImage>) -> Self {
         Self {
             pixels,
             dimensions: None,
+            bytes: 0,
         }
     }
 }
@@ -60,9 +68,11 @@ fn decode_image(bytes: &[u8], edge: u32) -> Result<Decoded, String> {
     for pixel in pixels.as_chunks_mut::<4>().0 {
         pixel.swap(0, 2);
     }
+    let bytes = pixels.len();
     Ok(Decoded {
         pixels: Arc::new(RenderImage::new(vec![image::Frame::new(pixels)])),
         dimensions,
+        bytes,
     })
 }
 

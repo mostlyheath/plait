@@ -632,11 +632,14 @@ export class LinearClient {
     const id = sanitize.text(issue.id, FIELD_LIMITS.id);
     const updatedAt = sanitize.text(issue.updatedAt, FIELD_LIMITS.timestamp);
     if (!id || !updatedAt) throw new LinearError('offline', 'Linear returned an unreadable issue.');
-    // A partial answer, or a field missing or null, is never read as empty text:
-    // that issue is edited in Linear.
+    // A partial answer, or a field absent from it, is never read as empty text:
+    // that issue is edited in Linear. Linear stores an empty description as a
+    // present null, which is empty; the title is always a string.
     const complete = response.errors.length === 0;
     const title = complete && typeof issue.title === 'string' ? issue.title : null;
-    const description = complete && typeof issue.description === 'string' ? issue.description : null;
+    const description = !complete || !('description' in issue) ? null
+      : issue.description === null ? ''
+        : typeof issue.description === 'string' ? issue.description : null;
     const editable = title !== null && description !== null
       && title.trim().length > 0 && title.length <= FIELD_LIMITS.title
       && !EDIT_TITLE_CONTROL.test(title)
