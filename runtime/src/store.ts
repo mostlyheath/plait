@@ -48,6 +48,8 @@ export class Store {
   linear: LinearCache;
   waiters: CheckoutQueue;
   private txDepth = 0;
+  /** Request rows above this rowid were written after `requests.consumed` existed. */
+  private readonly consumedAfter: number;
   constructor(directory: string) {
     this.db = new DatabaseSync(join(directory, 'host.sqlite'));
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
@@ -73,6 +75,7 @@ export class Store {
     for (const [table, column, type] of columns) {
       if (!this.db.prepare(`PRAGMA table_info(${table})`).all().some(row => row.name === column)) this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
     }
+    this.consumedAfter = this.migrateConsumed();
     this.db.exec(`CREATE TABLE IF NOT EXISTS review_checkouts(id TEXT PRIMARY KEY, canonical_root TEXT NOT NULL, root_dev TEXT NOT NULL, root_ino TEXT NOT NULL, catalog_revision INTEGER NOT NULL DEFAULT 0, UNIQUE(canonical_root,root_dev,root_ino));`);
     for (const operation of ['INSERT', 'UPDATE', 'DELETE']) {
       const row = operation === 'DELETE' ? 'OLD' : 'NEW';
@@ -96,6 +99,24 @@ export class Store {
     this.waiters = new CheckoutQueue(this);
   }
 
+  /**
+   * `requests.consumed` says how a placed input was used: 'started' its own run, or 'steered' into one.
+   * Older builds neither read nor write it, so the migration records the last rowid that existed
+   * before it. A placed input above that mark with no value was placed by an older build after a rollback.
+   */
+  private migrateConsumed(): number {
+    return this.transaction(() => {
+      const has = this.db.prepare('PRAGMA table_info(requests)').all().some(row => row.name === 'consumed');
+      if (!has) {
+        this.db.exec('ALTER TABLE requests ADD COLUMN consumed TEXT');
+        const last = Number(this.db.prepare('SELECT COALESCE(MAX(rowid),0) AS last FROM requests').get()?.last ?? 0);
+        this.db.prepare("INSERT OR REPLACE INTO settings(key,value) VALUES ('requests_consumed_after',?)").run(String(last));
+      }
+      const mark = this.db.prepare("SELECT value FROM settings WHERE key='requests_consumed_after'").get()?.value;
+      // Without the mark, treat every unmarked row as legacy: recovery then behaves as before.
+      return mark === undefined ? Number.MAX_SAFE_INTEGER : Number(mark);
+    });
+  }
   /** Threads saved before version 3 gain summary columns, timestamps, and a derived title once. */
   private backfill() {
     for (const row of this.db.prepare('SELECT snapshot FROM threads WHERE checkout IS NULL').all()) {
@@ -123,16 +144,21 @@ export class Store {
     const tied = prior && latest.position === prior.position && latest.pending === prior.pending;
     const matches = latest && (user ? user.id === `request-${latest.id}` : !tied);
     // A placed input belongs to the most recent turn start at or before its entry.
-    // A direct admission starts a turn even if its before record is missing.
+    // A later input that started its own run ends that turn. `consumed` says so when
+    // this host placed it. An unmarked input written since the column existed was
+    // placed by an older build after a rollback; such a build had no runs rows, so it
+    // never steered into one of ours. Older unmarked rows fall back to inference: a
+    // direct admission, or a follow-up with its own before record, started a turn.
     const owner = matches && latest.entry !== null && this.db.prepare(`SELECT r.run_request FROM records r
       JOIN requests q ON q.scope=r.thread AND q.id=r.run_request
       WHERE r.thread=? AND r.kind='before' AND q.entry<=?
         AND NOT EXISTS (SELECT 1 FROM records a WHERE a.before=r.id AND a.kind='undo')
         AND NOT EXISTS (SELECT 1 FROM requests n
           WHERE n.scope=q.scope AND n.state IS NULL AND n.input IS NOT NULL AND n.entry>q.entry AND n.entry<=?
-            AND (NOT EXISTS (SELECT 1 FROM checkout_waiters w WHERE w.thread=n.scope AND w.request=n.id AND w.kind='follow_up')
-              OR EXISTS (SELECT 1 FROM records b WHERE b.thread=n.scope AND b.run_request=n.id AND b.kind='before')))
-      ORDER BY q.entry DESC LIMIT 1`).get(snapshot.id, latest.entry, latest.entry);
+            AND (n.consumed='started' OR (n.consumed IS NULL AND (n.rowid>?
+              OR NOT EXISTS (SELECT 1 FROM checkout_waiters w WHERE w.thread=n.scope AND w.request=n.id AND w.kind='follow_up')
+              OR EXISTS (SELECT 1 FROM records b WHERE b.thread=n.scope AND b.run_request=n.id AND b.kind='before')))))
+      ORDER BY q.entry DESC LIMIT 1`).get(snapshot.id, latest.entry, latest.entry, this.consumedAfter);
     const current = matches && this.db.prepare(`SELECT run_id FROM runs WHERE thread_id=?
       AND request_id=? AND finished_at IS NULL`).get(snapshot.id, owner ? owner.run_request : latest.id);
     if (current) this.saveRunEvent(String(current.run_id), 0, snapshot, { state: 'dead', finished: true });
@@ -231,6 +257,8 @@ export class Store {
   place(id: string, requestId: string, entry: number) {
     // A steering input the run took leaves the queue in the same write.
     this.transaction(() => {
+      // Only a still-queued input is steering. A run's own input was marked when its run started.
+      this.db.prepare("UPDATE requests SET consumed='steered' WHERE scope=? AND id=? AND state IN ('queued','checkout_queued')").run(id, requestId);
       this.db.prepare('UPDATE requests SET entry=?,state=NULL,queue=NULL WHERE scope=? AND id=?').run(entry, id, requestId);
       this.waiters.set(id, requestId, 'started');
     });
@@ -297,7 +325,7 @@ export class Store {
   dequeue(input: InputRecord, snapshot: Snapshot) {
     return this.transaction(() => {
       const head = this.head(snapshot.id);
-      const changed = this.db.prepare("UPDATE requests SET state=NULL,queue=NULL,anchor=? WHERE scope=? AND id=? AND state IN ('queued','checkout_queued')").run(head, snapshot.id, input.request_id);
+      const changed = this.db.prepare("UPDATE requests SET state=NULL,queue=NULL,anchor=?,consumed='started' WHERE scope=? AND id=? AND state IN ('queued','checkout_queued')").run(head, snapshot.id, input.request_id);
       if (!changed.changes) fail('not_found', 'Queued message already started or was cancelled.');
       this.waiters.set(snapshot.id,input.request_id,'started');
       pushMessage(snapshot, inputMessage(input));
@@ -412,7 +440,9 @@ export class Store {
       const changed = this.save(snapshot);
       if (root) this.db.prepare('INSERT INTO roots VALUES (?,?)').run(snapshot.id, JSON.stringify(root));
       if (vcs) this.db.prepare('INSERT INTO thread_vcs VALUES (?,?)').run(snapshot.id, vcs);
-      this.db.prepare('INSERT INTO requests (scope,id,hash,result,input,anchor) VALUES (?,?,?,?,?,?)').run(scope, id, digest(images.length ? { text: input, images } : input), JSON.stringify(result), JSON.stringify(input), head);
+      // A thread input admitted directly is the input of the run it starts. Other requests stay unmarked.
+      const consumed = scope === snapshot.id && typeof input === 'string' ? 'started' : null;
+      this.db.prepare('INSERT INTO requests (scope,id,hash,result,input,anchor,consumed) VALUES (?,?,?,?,?,?,?)').run(scope, id, digest(images.length ? { text: input, images } : input), JSON.stringify(result), JSON.stringify(input), head, consumed);
       this.images.attach(snapshot.id, id, images);
       return changed;
     });

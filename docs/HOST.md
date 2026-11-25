@@ -2155,6 +2155,26 @@ undo records, and runs whose outcome is unknown, including runs completed
 before this change. Only Git projects have checkout records, and the host
 prunes them after 30 days. A turn without a retained record has no reported outcome.
 
+**Which run a restart interrupts.** After a restart, the host closes the
+unfinished run that owns the latest placed input as `interrupted`, and closes
+any other unfinished run with no outcome. Each request row stores how its input
+was used: `started` its own run, or `steered` into one. An input that started
+a run ends the turn before it, so an earlier run is never given its outcome.
+Rows written before this column existed are unknown. For them the host infers
+as before: a direct admission, or a follow-up with a before record, started a
+turn, and other placed follow-ups count as steering. The host records the last
+request row that existed when it added the column. A later unmarked row was
+placed by an older build after a rollback. Such builds have no runs rows and
+never steer into one, so that input counts as starting its own run. Older
+builds ignore the column and the settings key.
+
+Verification: tests write the store as an older build would, by clearing the
+column and by dropping it before the migration runs again. Once, by hand, the
+store code of the previous release (revision `efefb79`) queued, started and
+placed a follow-up in a store this change had migrated, and this build then
+recovered the earlier run without an outcome. That check drove the store
+directly, not a running previous host, and builds without runs rows were not run.
+
 ## Recorded turn review
 
 These additive, read-only operations omit `protocol_version`. Versions 1–6

@@ -168,3 +168,92 @@ test('migration leaves completed runs without a reported outcome', async () => {
     assert.equal('outcome' in runtime.records.page('thread', undefined, 1, 7).records[0], false);
   } finally { await runtime.close(); await rm(directory, { recursive: true, force: true }); }
 });
+
+/** The issue #131 history: run A, then an older build starts a queued follow-up with no before record. */
+async function rolledBackFollowUp(t: { after(fn: () => unknown): void }, legacy: boolean) {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), 'plait-consumed-')));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const open = () => new Runtime(directory, createModels(), new Set());
+  const first = open();
+  const { store } = first;
+  const snapshot: Snapshot = { id: 'thread', checkout: directory, model: { provider: 'faux', model_id: 'model' },
+    status: 'running', messages: [], tools: [], live_text: '', pending_approval: null, error: null, truncated: false };
+  store.admit('thread', 'original', 'first', { accepted: true }, snapshot, await rootIdentity(directory));
+  store.createRun('run', 'thread', 'original', 'pi');
+  store.db.prepare(`INSERT INTO records(id,thread,run_request,kind,checkout,state,created_at)
+    VALUES ('original','thread','original','before',?,'failed',0)`).run(directory);
+  store.place('thread', 'original', 1);
+  store.enqueue('next', 'next', { accepted: true }, { mode: 'follow_up', approval: 'ask' }, snapshot);
+  // The older build starts the follow-up as its own run. It writes no runs row and no before
+  // record here, and does not know `consumed`.
+  store.dequeue(store.waitingInput('thread', 'next'), snapshot);
+  store.place('thread', 'next', 2);
+  store.db.prepare("UPDATE requests SET consumed=NULL WHERE id='next'").run();
+  if (legacy) {
+    // The same rows written before the column existed: the migration runs again on the next open.
+    store.db.exec("ALTER TABLE requests DROP COLUMN consumed; DELETE FROM settings WHERE key='requests_consumed_after'");
+  }
+  await first.close();
+  const current = open();
+  t.after(() => current.close());
+  await current.recover();
+  assert.equal(current.store.get('thread').status, 'interrupted');
+  return current.store.db.prepare("SELECT outcome,state FROM runs WHERE run_id='run'").get()!;
+}
+
+test('a follow-up an older build started after the column existed is not taken for steering', async t => {
+  const row = await rolledBackFollowUp(t, false);
+  assert.equal(row.outcome, null);
+  assert.equal(row.state, 'dead');
+});
+
+test('rows written before the column existed keep the earlier inference', async t => {
+  // Without before records, a placed follow-up waiter was inferred to be steering, as before this change.
+  const row = await rolledBackFollowUp(t, true);
+  assert.equal(row.outcome, 'interrupted');
+});
+
+test('consumption is recorded as inputs start runs or steer them', async t => {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), 'plait-consumed-')));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const runtime = new Runtime(directory, createModels(), new Set());
+  t.after(() => runtime.close());
+  const { store } = runtime;
+  const snapshot: Snapshot = { id: 'thread', checkout: directory, model: { provider: 'faux', model_id: 'model' },
+    status: 'running', messages: [], tools: [], live_text: '', pending_approval: null, error: null, truncated: false };
+  store.admit('thread', 'direct', 'first', { accepted: true }, snapshot, await rootIdentity(directory));
+  store.place('thread', 'direct', 1);
+  store.enqueue('steer', 'steer', { accepted: true }, { mode: 'steer', approval: 'ask' }, snapshot);
+  store.place('thread', 'steer', 2);
+  store.enqueue('later', 'later', { accepted: true }, { mode: 'follow_up', approval: 'ask' }, snapshot);
+  store.dequeue(store.waitingInput('thread', 'later'), snapshot);
+  store.place('thread', 'later', 3);
+  store.enqueue('waiting', 'waiting', { accepted: true }, { mode: 'follow_up', approval: 'ask' }, snapshot);
+  const consumed = Object.fromEntries(store.db.prepare("SELECT id,consumed FROM requests WHERE scope='thread'").all()
+    .map(row => [String(row.id), row.consumed]));
+  assert.deepEqual(consumed, { direct: 'started', steer: 'steered', later: 'started', waiting: null });
+});
+
+test('migration marks existing requests as unknown and older writers still work', async () => {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), 'plait-consumed-')));
+  try {
+    const old = new DatabaseSync(join(directory, 'host.sqlite'));
+    // requests DDL and inserts as a build before this column wrote them.
+    old.exec(`CREATE TABLE requests(scope TEXT NOT NULL, id TEXT NOT NULL, hash TEXT NOT NULL, result TEXT NOT NULL, input TEXT, entry INTEGER, anchor INTEGER,
+      state TEXT, queue TEXT, PRIMARY KEY(scope,id));
+      INSERT INTO requests (scope,id,hash,result,input,anchor) VALUES ('thread','a','h','{}','"a"',0),('thread','b','h','{}','"b"',0)`);
+    old.close();
+    let runtime = new Runtime(directory, createModels(), new Set());
+    const mark = () => runtime.store.db.prepare("SELECT value FROM settings WHERE key='requests_consumed_after'").get()?.value;
+    assert.equal(mark(), '2');
+    assert.deepEqual(runtime.store.db.prepare('SELECT consumed FROM requests ORDER BY rowid').all().map(row => row.consumed), [null, null]);
+    // An older build's explicit-column writes ignore the new column.
+    runtime.store.db.prepare(`INSERT INTO requests (scope,id,hash,result,input,anchor,state,queue) VALUES ('thread','c','h','{}','"c"',0,'queued','{}')`).run();
+    runtime.store.db.prepare("UPDATE requests SET state=NULL,queue=NULL,anchor=0 WHERE scope='thread' AND id='c'").run();
+    await runtime.close();
+    runtime = new Runtime(directory, createModels(), new Set());
+    assert.equal(mark(), '2', 'reopening keeps the mark');
+    assert.equal(runtime.store.db.prepare("SELECT consumed FROM requests WHERE id='c'").get()?.consumed, null);
+    await runtime.close();
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
