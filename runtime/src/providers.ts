@@ -26,6 +26,14 @@ export type ProviderSource = {
   /** Pi's credential file, kept owner-only after every write. */
   authPath?: string;
   loginOptions?: LoginOptions;
+  /**
+   * The login shell's provider variables. `read` runs the shell and may take seconds;
+   * `apply` makes the ones Pi reads visible to the next load and says whether any changed.
+   */
+  environment?: {
+    read(): Promise<Record<string, string> | undefined>;
+    apply(login: Record<string, string>): Promise<boolean>;
+  };
 };
 /** What a reload replaces. `Runtime` has this shape. */
 export type RegistryHolder = { models: Models; authenticated: Set<string> };
@@ -131,6 +139,7 @@ export class Providers {
   private readonly source: ProviderSource;
   readonly signIns: SignIns;
   private reloading: Promise<void> = Promise.resolve();
+  private closed = false;
   // Runs that started before a reload keep their registry; its credential writes still settle at shutdown.
   private readonly retired: Registry[] = [];
 
@@ -147,7 +156,7 @@ export class Providers {
   async handle(input: unknown): Promise<unknown> {
     const request = validate(input);
     switch (request.op) {
-      case 'reload_providers': await this.reload(); return { providers: await this.list() };
+      case 'reload_providers': await this.reload(await this.source.environment?.read().catch(() => undefined)); return { providers: await this.list() };
       case 'list_providers': return { providers: await this.list() };
       case 'start_sign_in': return { sign_in: await this.startSignIn(text(request, 'provider', 128), optional(request, 'method', 64)) };
       case 'sign_in_status': return { sign_in: this.signIns.status(identifier(request, 'sign_in_id')) };
@@ -166,10 +175,29 @@ export class Providers {
    * Builds a complete registry, then replaces the models and the authenticated set in one
    * synchronous step. Reloads run one after another so the last one requested is the one kept.
    */
-  reload(): Promise<void> {
-    const next = this.reloading.then(() => this.swap());
+  reload(login?: Record<string, string>): Promise<void> {
+    const next = this.reloading.then(async () => {
+      // A failure keeps the variables of the last read; the reload itself goes ahead.
+      if (login) await this.source.environment?.apply(login).catch(() => false);
+      await this.swap();
+    });
     this.reloading = next.catch(() => {});
     return next;
+  }
+
+  /**
+   * After startup: the host service lacks the login shell's variables, so read them once in
+   * the background and reload only if a provider variable changed. Failure keeps the
+   * registry the host started with.
+   */
+  async adoptEnvironment(): Promise<void> {
+    const login = await this.source.environment?.read().catch(() => undefined);
+    if (!login || this.closed) return;
+    const next = this.reloading.then(async () => {
+      if (!this.closed && await this.source.environment!.apply(login)) await this.swap();
+    });
+    this.reloading = next.catch(() => {});
+    await this.reloading;
   }
 
   private async swap(): Promise<void> {
@@ -187,6 +215,7 @@ export class Providers {
   }
 
   async close(): Promise<void> {
+    this.closed = true;
     await this.signIns.close();
     await this.reloading;
     await Promise.allSettled([this.registry, ...this.retired].map(registry => registry.settle()));

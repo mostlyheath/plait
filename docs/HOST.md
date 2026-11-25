@@ -852,7 +852,8 @@ custom endpoints. The host store holds none of them.
 
 ### Reload
 
-`reload_providers` result: `{"providers":[PROVIDER]}`. The host reads `auth.json`,
+`reload_providers` result: `{"providers":[PROVIDER]}`. The host first reads the
+login shell's provider variables again (see below), then reads `auth.json`,
 `models.json`, and Pi's cached catalogs again, with no network request. It builds
 a complete registry first, then replaces the model catalog and the authenticated
 set of `status` in one step. If loading fails or exceeds 5 seconds, the reply is
@@ -864,6 +865,36 @@ model request, so signing out of a provider fails a run that needs it at its
 next model request.
 Every operation below that changes a credential or an endpoint reloads before it
 replies; the next `status` already shows the change.
+
+### Keys from the login shell
+
+Pi reads a key written as `$NAME` or `${NAME}` in `models.json`, and the key
+variables of built-in providers such as `OPENAI_API_KEY`, from its own process
+environment. The host runs as a per-user service without the variables a
+terminal's startup files export, so it reads them from the account's login
+shell, the same way it builds a trusted command's environment (see
+[Command policy](#command-policy)):
+
+- Host startup does not wait for the shell. Once the sidecar is ready, it reads
+  the login environment in the background and reloads providers if a variable
+  changed. Until then, a provider that depends on one is listed as not
+  authenticated. `reload_providers` reads the shell again before it loads.
+- Only variables that provider authentication reads are copied into the
+  sidecar's environment: names in `models.json` `apiKey` and `headers` values
+  (provider and model level), the key variables Pi lists for its built-in
+  providers, and the Amazon Bedrock, Azure OpenAI, and Google Vertex credential
+  variables Pi reads. Nothing else from the shell is copied.
+- A variable the host process already had keeps its value. A copied variable
+  follows the shell on the next read, and is removed when the shell no longer
+  sets it. `PLAIT_`-prefixed names are never copied.
+- If the shell cannot be read within 10 seconds, or the read falls back to the
+  fixed environment, nothing changes and no error is reported.
+- Keys sent with `set_provider_key` stay literal text (see below), so a request
+  still cannot make the host read a variable.
+
+Pi's `!command` keys run in the sidecar's environment as before. A `$NAME`
+template stored in `auth.json` (for example by the Pi CLI) is resolved only when
+its variable is one of the names above.
 
 ### Provider list
 

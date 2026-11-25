@@ -40,10 +40,10 @@ const FILE_KEY = 'sk-FILE_KEY_DO_NOT_LEAK';
 type Provider = { provider: ProviderView };
 type List = { providers: ProviderView[] };
 
-async function host(t: TestContext, seed?: (agent: string) => Promise<void>) {
+async function host(t: TestContext, seed?: (agent: string) => Promise<void>, login?: () => Promise<Record<string, string> | undefined>) {
   const agent = await mkdtemp(join(sandbox, 'agent-'));
   await seed?.(agent);
-  const source = piProviders(agent);
+  const source = piProviders(agent, login);
   const registry = await source.load();
   const holder = { models: registry.models, authenticated: registry.authenticated };
   const providers = new Providers(holder, source, registry);
@@ -61,7 +61,7 @@ async function host(t: TestContext, seed?: (agent: string) => Promise<void>) {
     for (const secret of [KEY, NEXT_KEY, FILE_KEY]) assert(!joined.includes(secret), `a reply contains ${secret}`);
     assert.deepEqual(outbound, []);
   };
-  return { agent, auth: join(agent, 'auth.json'), models: join(agent, 'models.json'), holder, call, provider, noSecrets };
+  return { agent, auth: join(agent, 'auth.json'), models: join(agent, 'models.json'), holder, providers, call, provider, noSecrets };
 }
 const mode = async (path: string) => (await stat(path)).mode & 0o777;
 const json = async (path: string) => JSON.parse(await readFile(path, 'utf8'));
@@ -321,5 +321,54 @@ test('check connection lists models from a local server and reports failures wit
   assert.deepEqual(await checkEndpoint(silent.url, {}, 150), { reachable: false, reason: 'timeout', status: null, model_ids: [], truncated: false });
   // Port 9 (discard) is closed on a development machine; the reply names no address.
   assert.equal((await f.call({ op: 'check_endpoint', base_url: 'http://127.0.0.1:9/v1' })).result.reason, 'unreachable');
+  f.noSecrets();
+});
+
+// The host runs as a service without the login shell's variables; a terminal's Pi has them.
+test('models.json key templates resolve against the login shell environment', async t => {
+  const login: Record<string, string> = { LAB_KEY: KEY, LAB_TEAM: 'blue', PLAIT_HOST_EXE: '/not/the/host' };
+  let readable = true;
+  const endpoint = await server(t, (_, response) => { response.setHeader('content-type', 'application/json'); response.end('{"data":[{"id":"a"}]}'); });
+  const f = await host(t, agent => writeFile(join(agent, 'models.json'), JSON.stringify({ providers: {
+    lab: { baseUrl: endpoint.url, api: 'openai-completions', apiKey: '$LAB_KEY', headers: { 'x-team': '${LAB_TEAM}' }, models: [{ id: 'a' }] },
+    leak: { baseUrl: endpoint.url, api: 'openai-completions', apiKey: '${PLAIT_HOST_EXE}', models: [{ id: 'b' }] },
+  } })), async () => readable ? { ...login } : undefined);
+  t.after(() => { for (const name of ['LAB_KEY', 'LAB_TEAM']) delete process.env[name]; });
+
+  // Before the login shell is read, the key's variable is missing, as it is for the service.
+  assert.deepEqual([(await f.provider('lab'))?.authenticated, (await f.provider('lab'))?.credential], [false, 'none']);
+  await f.providers.adoptEnvironment();
+  assert.deepEqual([(await f.provider('lab'))?.authenticated, (await f.provider('lab'))?.credential], [true, 'external']);
+  assert.equal(f.holder.authenticated.has('lab'), true);
+  assert.equal((await f.call({ op: 'check_endpoint', id: 'lab' })).result.reachable, true);
+  assert.equal(endpoint.seen.at(-1), `Bearer ${KEY}`);
+
+  // Host plumbing never comes from a shell, even when a template names it.
+  assert.equal(process.env.PLAIT_HOST_EXE, undefined);
+  assert.equal((await f.provider('leak'))?.authenticated, false);
+
+  // A reload reads the shell again: a removed variable is removed, and a failed read changes nothing.
+  delete login.LAB_KEY;
+  assert.equal((await f.call({ op: 'reload_providers' })).ok, true);
+  assert.equal((await f.provider('lab'))?.authenticated, false);
+  login.LAB_KEY = NEXT_KEY;
+  assert.equal((await f.call({ op: 'reload_providers' })).ok, true);
+  assert.equal((await f.provider('lab'))?.authenticated, true);
+  readable = false;
+  assert.equal((await f.call({ op: 'reload_providers' })).ok, true);
+  assert.equal((await f.holder.models.getAuth('lab'))?.auth.apiKey, NEXT_KEY);
+  f.noSecrets();
+});
+
+test('built-in provider keys come from the login shell, and the host process value wins', async t => {
+  process.env.MISTRAL_API_KEY = 'host-value';
+  t.after(() => { delete process.env.MISTRAL_API_KEY; delete process.env.GROQ_API_KEY; });
+  const f = await host(t, undefined, async () => ({ GROQ_API_KEY: KEY, MISTRAL_API_KEY: NEXT_KEY, UNRELATED_SETTING: 'x' }));
+  assert.equal((await f.provider('groq'))?.authenticated, false);
+  await f.providers.adoptEnvironment();
+  assert.deepEqual([(await f.provider('groq'))?.authenticated, (await f.provider('groq'))?.credential], [true, 'external']);
+  assert.equal(process.env.MISTRAL_API_KEY, 'host-value');
+  // Only variables provider authentication reads are copied.
+  assert.equal(process.env.UNRELATED_SETTING, undefined);
   f.noSecrets();
 });
