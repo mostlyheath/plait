@@ -19,14 +19,13 @@ function useAuthContext(runtime: ModelRuntime, context: AuthContext): void {
 
 /**
  * The registry for one run in a detached runner, which starts with the service environment as
- * the host does. When the run's provider is not authenticated, the login shell is read and the
- * registry loaded again with it, so a run sees the same keys as the host's availability check.
+ * the host does. It always resolves keys with the login shell, as the host does: deciding from
+ * whether a provider already looks usable would let the runner pick a different credential.
  */
-export async function loadRunModels(source: ProviderSource, provider: string, signal: AbortSignal): Promise<Registry> {
-  const loaded = await source.load(signal);
-  if (loaded.authenticated.has(provider) || signal.aborted || !source.readEnvironment) return loaded;
-  const login = await source.readEnvironment().catch(() => undefined);
-  return login && !signal.aborted ? source.load(signal, login) : loaded;
+export async function loadRunModels(source: ProviderSource, signal: AbortSignal): Promise<Registry> {
+  const login = await source.readEnvironment?.().catch(() => undefined);
+  signal.throwIfAborted();
+  return source.load(signal, login);
 }
 
 /**

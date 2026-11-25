@@ -442,9 +442,12 @@ fn watch_workspace(
     Ok(())
 }
 
-/// A workspace event when the revision or status changed.
+/// A workspace event when the revision, status, or providers revision changed.
+/// The providers revision tells a client its model catalog is out of date.
 fn workspace_event(previous: &Value, current: &Value, seq: u64) -> Option<Value> {
-    (current["revision"] != previous["revision"] || current["status"] != previous["status"])
+    (current["revision"] != previous["revision"]
+        || current["status"] != previous["status"]
+        || current["providers_revision"] != previous["providers_revision"])
         .then(|| json!({"event": "workspace", "seq": seq, "workspace": current}))
 }
 
@@ -537,6 +540,17 @@ mod tests {
     fn workspace_event_reports_status_only_changes() {
         let before = json!({"revision": 3, "status": {"/repo": 0}});
         let after = json!({"revision": 3, "status": {"/repo": 1}});
+        assert_eq!(
+            workspace_event(&before, &after, 2),
+            Some(json!({"event": "workspace", "seq": 2, "workspace": after}))
+        );
+    }
+
+    #[test]
+    fn workspace_event_reports_a_new_provider_registry() {
+        let before = json!({"revision": 3, "status": {}, "providers_revision": 1});
+        let after = json!({"revision": 3, "status": {}, "providers_revision": 2});
+        assert_eq!(workspace_event(&before, &before, 2), None);
         assert_eq!(
             workspace_event(&before, &after, 2),
             Some(json!({"event": "workspace", "seq": 2, "workspace": after}))

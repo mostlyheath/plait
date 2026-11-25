@@ -70,8 +70,12 @@ test('a login environment is published only with the registry that loaded it', a
   };
   const holder = { models: {} as Models, authenticated: new Set<string>() };
   const providers = new Providers(holder, source, registry());
+  let published = 0;
+  providers.published = () => { published += 1; };
   await providers.adoptEnvironment();
   assert.deepEqual([...holder.authenticated], ['lab']);
+  // Clients learn of the new registry: the runtime wakes workspace watchers with its revision.
+  assert.deepEqual([providers.revision, published], [1, 1]);
 
   // The key is removed but loading fails: the previous registry and its environment stay together.
   reading = { FAIL: '1' };
@@ -85,5 +89,7 @@ test('a login environment is published only with the registry that loaded it', a
   const count = loads.length;
   await providers.adoptEnvironment();
   assert.equal(loads.length, count);
+  // The failed load published nothing; the two successful ones did.
+  assert.deepEqual([providers.revision, published], [2, 2]);
   await providers.close();
 });

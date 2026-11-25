@@ -372,28 +372,37 @@ test('models.json key templates resolve from the login shell, and no child proce
   f.noSecrets();
 });
 
-test('a detached run reads the login shell for a key the service environment lacks', async t => {
-  const endpoint = await server(t, (_, response) => { response.statusCode = 500; response.end(); });
+test('a detached run resolves keys exactly as the host does', async t => {
+  const seen: (string | string[] | undefined)[] = [];
+  const endpoint = await server(t, (request, response) => { seen.push(request.headers['x-team']); response.statusCode = 500; response.end(); });
   const agent = await mkdtemp(join(sandbox, 'agent-'));
+  // A literal key that also needs a header only the shell sets.
   await writeFile(join(agent, 'models.json'), JSON.stringify({ providers: {
-    lab: { baseUrl: endpoint.url, api: 'openai-completions', apiKey: '$RUN_KEY', models: [{ id: 'a' }] },
-    plain: { baseUrl: endpoint.url, api: 'openai-completions', apiKey: 'none', models: [{ id: 'b' }] },
+    lab: { baseUrl: endpoint.url, api: 'openai-completions', apiKey: 'literal-key', headers: { 'x-team': '$RUN_TEAM' }, models: [{ id: 'a' }] },
   } }));
-  let reads = 0;
-  const source = piProviders(agent, async () => { reads += 1; return { RUN_KEY: KEY }; });
+  // The service has an Anthropic key; the shell adds a token, which Pi prefers.
+  process.env.ANTHROPIC_API_KEY = 'service-key';
+  t.after(() => { delete process.env.ANTHROPIC_API_KEY; });
+  const login = { RUN_TEAM: 'blue', ANTHROPIC_AUTH_TOKEN: 'shell-token' };
+  const source = piProviders(agent, async () => ({ ...login }));
   const { loadRunModels } = await import('../src/pi-providers.ts');
-  const loaded = await loadRunModels(source, 'lab', AbortSignal.timeout(5000));
-  assert.equal(loaded.authenticated.has('lab'), true);
-  // The run's model request carries the shell's key; the reply itself does not matter here.
-  const model = loaded.models.getProvider('lab')!.getModels()[0]!;
-  await loaded.models.complete(model, { messages: [{ role: 'user', content: 'hi', timestamp: Date.now() }] }).catch(() => undefined);
-  assert.equal(endpoint.seen.at(-1), `Bearer ${KEY}`);
-  assert.equal(process.env.RUN_KEY, undefined);
-  assert.equal(reads, 1);
-  // A provider usable without the shell, or a stopped run, does not start one.
-  assert.equal((await loadRunModels(source, 'plain', AbortSignal.timeout(5000))).authenticated.has('plain'), true);
-  await loadRunModels(source, 'lab', AbortSignal.abort()).catch(() => undefined);
-  assert.equal(reads, 1);
+
+  const hostRegistry = await source.load(AbortSignal.timeout(5000), login);
+  const run = await loadRunModels(source, AbortSignal.timeout(5000));
+  const auth = async (models: typeof run.models) => {
+    const resolved = await models.getAuth('anthropic');
+    return { apiKey: resolved?.auth.apiKey, headers: resolved?.auth.headers, source: resolved?.source };
+  };
+  assert.deepEqual(await auth(run.models), await auth(hostRegistry.models));
+  assert.equal((await auth(run.models)).source, 'ANTHROPIC_AUTH_TOKEN');
+
+  // The run's model request carries the shell's header; the reply itself does not matter here.
+  const model = run.models.getProvider('lab')!.getModels()[0]!;
+  await run.models.complete(model, { messages: [{ role: 'user', content: 'hi', timestamp: Date.now() }] }).catch(() => undefined);
+  assert.equal(seen.at(-1), 'blue');
+  assert.deepEqual([process.env.RUN_TEAM, process.env.ANTHROPIC_AUTH_TOKEN], [undefined, undefined]);
+  // A stopped run does not load.
+  await assert.rejects(loadRunModels(source, AbortSignal.abort()));
 });
 
 test('built-in provider keys come from the login shell, and the host\'s own value wins', async t => {
@@ -481,5 +490,22 @@ test('an endpoint whose key or headers read the environment keeps its origin ove
   }
   assert.equal(await readFile(radius.models, 'utf8'), file);
   radius.noSecrets();
+
+  // Pi uses a credential stored in auth.json before the entry's own literal key.
+  const stored = await host(t, async agent => {
+    await writeFile(join(agent, 'models.json'), JSON.stringify({ providers: {
+      templated: { baseUrl: 'http://127.0.0.1:9/v1', api: 'openai-completions', apiKey: 'none', models: [{ id: 'a' }] },
+      literal: { baseUrl: 'http://127.0.0.1:9/v1', api: 'openai-completions', apiKey: 'none', models: [{ id: 'a' }] },
+    } }));
+    await writeFile(join(agent, 'auth.json'), JSON.stringify({ templated: { type: 'api_key', key: '$SHELL_ONLY_KEY' } }), { mode: 0o600 });
+  }, async () => ({ SHELL_ONLY_KEY: KEY }));
+  const before2 = await readFile(stored.models, 'utf8');
+  assert.equal((await stored.call({ op: 'update_endpoint', id: 'templated', base_url: 'https://elsewhere.example/v1' })).error?.code, 'conflict');
+  assert.equal(await readFile(stored.models, 'utf8'), before2);
+  // A key set here is stored as literal text and moves with the entry, as does a key sent with the move.
+  assert.equal((await stored.call({ op: 'set_provider_key', provider: 'literal', key: '$NOT_A_VARIABLE' })).ok, true);
+  assert.equal((await stored.call({ op: 'update_endpoint', id: 'literal', base_url: 'http://127.0.0.1:8/v1' })).ok, true);
+  assert.equal((await stored.call({ op: 'update_endpoint', id: 'templated', base_url: 'http://127.0.0.1:8/v1', key: NEXT_KEY })).ok, true);
+  stored.noSecrets();
 });
 

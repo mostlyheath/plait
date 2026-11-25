@@ -321,12 +321,44 @@ impl Plait {
         }
     }
 
+    /// Reload the model catalog when the host published providers after it was loaded, such as
+    /// keys from the login shell that the host read after it started. An open picker follows
+    /// the new catalog through `sync_picker`.
+    pub(super) fn refresh_stale_catalog(&mut self, cx: &mut Context<Self>) {
+        let Some(at) = self.host.connection.begin_catalog_refresh() else {
+            return;
+        };
+        let epoch = self.host.connection.epoch;
+        self.settings_request::<_, plait_client::host::Status>(
+            plait_client::host::Request::Status {
+                protocol_version: Some(self.host.protocol()),
+            },
+            cx,
+            move |this, result, cx| {
+                let loaded = match result {
+                    Ok(status) => this.host.apply_status(epoch, status),
+                    Err(_) => false,
+                };
+                if loaded {
+                    this.sync_composer(cx);
+                }
+                this.host.connection.finish_catalog_refresh(at, loaded);
+                // A newer registry may have been published meanwhile. After a failure, the
+                // next workspace change or picker opening tries again; nothing polls.
+                if loaded {
+                    this.refresh_stale_catalog(cx);
+                }
+            },
+        );
+    }
+
     pub(super) fn open_model_picker(
         &mut self,
         purpose: ModelPurpose,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.refresh_stale_catalog(cx);
         let (name, placeholder) = match purpose {
             ModelPurpose::NewThread => ("Model for the new thread", "Search models…"),
             ModelPurpose::DefaultModel => {

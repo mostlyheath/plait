@@ -262,13 +262,13 @@ export class RunnerTurnSink implements TurnSink {
   }
 }
 
-async function loadPiModels(store: string, agentDir: string | undefined, provider: string, signal: AbortSignal): Promise<TestProviderOverride> {
+async function loadPiModels(store: string, agentDir: string | undefined, signal: AbortSignal): Promise<TestProviderOverride> {
   // Test-only provider injection requires both PLAIT_TEST_SCENARIO and PLAIT_RUNNER_TEST_TURNS=1.
   if (process.env.PLAIT_RUNNER_TEST_TURNS === '1' && process.env.PLAIT_TEST_SCENARIO) {
     const mod = await importTestSupport<typeof import('../../test/support/runner-test-provider.ts')>('runner-test-provider.ts');
     return mod.loadTestProvider(store, process.env.PLAIT_TEST_SCENARIO);
   }
-  const loaded = await loadRunModels(piProviders(agentDir), provider, signal);
+  const loaded = await loadRunModels(piProviders(agentDir), signal);
   return { models: loaded.models };
 }
 
@@ -412,7 +412,7 @@ export function createPiTurn(): RunnerTurn {
 
         if (authorization.signal.aborted) return { status: 'stopped' };
 
-        const provider = await loadPiModels(store, payload.agent_dir, payload.model.provider, authorization.signal);
+        const provider = await loadPiModels(store, payload.agent_dir, authorization.signal);
         if (authorization.signal.aborted) return { status: 'stopped' };
 
         const header = await runHeader(payload.checkout, payload.vcs);

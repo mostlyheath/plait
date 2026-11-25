@@ -401,6 +401,21 @@ mod tests {
         let reply: ProvidersReply =
             serde_json::from_str(r#"{"next_page":null,"providers":[]}"#).unwrap();
         assert!(reply.providers.is_empty());
+        assert_eq!(reply.warning_text(), None);
+    }
+
+    #[test]
+    fn a_reload_warning_is_explained_and_an_unknown_one_is_not_shown() {
+        let stale: ProvidersReply =
+            serde_json::from_str(r#"{"providers":[],"warning":"login_environment_unavailable"}"#)
+                .unwrap();
+        assert_eq!(
+            stale.warning_text(),
+            Some("Couldn't read your shell's environment; keys from it may be out of date.")
+        );
+        let newer: ProvidersReply =
+            serde_json::from_str(r#"{"providers":[],"warning":"something_new"}"#).unwrap();
+        assert_eq!(newer.warning_text(), None);
     }
 
     #[test]

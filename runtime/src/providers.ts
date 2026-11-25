@@ -1,4 +1,4 @@
-import { chmod, stat } from 'node:fs/promises';
+import { chmod, readFile, stat } from 'node:fs/promises';
 import type { AuthPrompt, LoginOptions, Models, Provider } from '@earendil-works/pi-ai';
 import { HostError, PROTOCOL_VERSIONS, fail } from './protocol.ts';
 import { SignIns } from './sign-in.ts';
@@ -151,6 +151,10 @@ export class Providers {
   private environment?: Record<string, string>;
   private started = 0;
   private newest = 0;
+  /** Counts published registries, so a client can tell its catalog is older than the host's. */
+  revision = 0;
+  /** Called after a registry is published; the runtime wakes workspace watchers with it. */
+  published?: () => void;
   // Runs that started before a reload keep their registry; its credential writes still settle at shutdown.
   private readonly retired: Registry[] = [];
 
@@ -239,6 +243,8 @@ export class Providers {
     if (this.retired.length > 8) this.retired.shift();
     this.registry = registry; this.environment = environment;
     this.holder.models = registry.models; this.holder.authenticated = registry.authenticated;
+    this.revision += 1;
+    this.published?.();
   }
 
   /** The provider list, for `list_providers` and for any reply that later wants to include it. */
@@ -377,10 +383,29 @@ export class Providers {
     const key = request.key === undefined ? undefined : text(request, 'key', SECRET_LIMIT);
     if (name !== undefined || baseUrl !== undefined || models !== undefined) {
       const file = await readEndpoints(this.modelsPath());
-      updateEndpoint(file, id, { name, baseUrl, modelIds: models });
+      // A key sent with this request replaces the stored credential, so only an existing one counts.
+      const stored = baseUrl !== undefined && key === undefined ? await this.storedCredential(id) : undefined;
+      updateEndpoint(file, id, { name, baseUrl, modelIds: models }, stored);
       await this.commit(file, () => this.lists(id, models));
     }
     return key === undefined ? this.one(id) : this.setKey(id, key);
+  }
+
+  /**
+   * The raw credential Pi stored for `id` in auth.json, read only to tell a literal key from one
+   * that names a variable or runs a command. A file that cannot be read counts as not literal.
+   */
+  private async storedCredential(id: string): Promise<unknown> {
+    const path = this.source.authPath;
+    if (!path) return undefined;
+    let text: string;
+    try { text = await readFile(path, 'utf8'); } catch (error) {
+      return (error as NodeJS.ErrnoException).code === 'ENOENT' ? undefined : 'unreadable';
+    }
+    try {
+      const data: unknown = JSON.parse(text.replace(/^\uFEFF/, ''));
+      return typeof data === 'object' && data !== null && Object.hasOwn(data, id) ? (data as Record<string, unknown>)[id] : undefined;
+    } catch { return 'unreadable'; }
   }
 
   private async removeEndpoint(value: string): Promise<string> {

@@ -186,6 +186,18 @@ impl Plait {
                 this.providers.busy = false;
                 match result {
                     Ok(reply) => {
+                        // A reload that kept an out-of-date login environment says so beside the list.
+                        match reply.warning_text() {
+                            Some(warning) => this.providers.note = Some(warning.into()),
+                            // A later clean reload clears that warning, and only that one.
+                            None if reload
+                                && this.providers.note.as_deref()
+                                    == Some(providers::STALE_ENVIRONMENT) =>
+                            {
+                                this.providers.note = None;
+                            }
+                            None => {}
+                        }
                         this.providers.rows = reply.providers;
                         this.providers.loaded = true;
                         this.providers.unsupported = false;

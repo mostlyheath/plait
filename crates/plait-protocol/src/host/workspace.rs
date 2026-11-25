@@ -50,6 +50,10 @@ pub struct View {
     pub projects: Vec<Project>,
     pub worktrees: Vec<Worktree>,
     pub seen: Vec<Seen>,
+    /// Counts provider registries the host has published; a change means the model catalog
+    /// changed. Hosts before it send none.
+    #[serde(default)]
+    pub providers_revision: u64,
 }
 
 #[cfg(test)]
@@ -84,5 +88,15 @@ mod tests {
         value["status"] = serde_json::json!({"/srv/a": 7});
         let view: View = serde_json::from_value(value).unwrap();
         assert_eq!(view.status.get(Path::new("/srv/a")), Some(&7));
+    }
+
+    #[test]
+    fn providers_revision_is_optional() {
+        let old: View = serde_json::from_str(VIEW).unwrap();
+        assert_eq!(old.providers_revision, 0);
+        let mut value: serde_json::Value = serde_json::from_str(VIEW).unwrap();
+        value["providers_revision"] = serde_json::json!(3);
+        let view: View = serde_json::from_value(value).unwrap();
+        assert_eq!(view.providers_revision, 3);
     }
 }

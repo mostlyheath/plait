@@ -269,6 +269,23 @@ impl Provider {
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 pub struct ProvidersReply {
     pub providers: Vec<Provider>,
+    /// A reload that succeeded with a caveat, such as a login shell the host could not read.
+    #[serde(default)]
+    pub warning: Option<String>,
+}
+
+/// Shown in Settings → Providers when a reload could not read the login shell.
+pub const STALE_ENVIRONMENT: &str =
+    "Couldn't read your shell's environment; keys from it may be out of date.";
+
+impl ProvidersReply {
+    /// The reload's caveat in plain words. A warning this desktop does not know is not shown.
+    pub fn warning_text(&self) -> Option<&'static str> {
+        match self.warning.as_deref()? {
+            "login_environment_unavailable" => Some(STALE_ENVIRONMENT),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]

@@ -87,6 +87,7 @@ export class Workspace {
   private pending = new Map<string, boolean>();
   private running = new Set<string>();
   private readSummary?: (path: string, roots: boolean) => Promise<CheckoutSummary>;
+  private readonly providersRevision: () => number;
   private active = 0;
   setWatcher(watcher: CheckoutWatcher) { this.watcher = watcher; this.syncWatcher(); }
   private syncWatcher() {
@@ -95,8 +96,8 @@ export class Workspace {
     const worktrees = this.store.db.prepare('SELECT folder FROM workspace_worktrees ORDER BY folder').all();
     this.watcher.sync([...projects.map(row => String(row.path)), ...worktrees.map(row => String(row.folder))]);
   }
-  constructor(store: Store, changed: () => void, readSummary?: (path: string, roots: boolean) => Promise<CheckoutSummary>) {
-    this.store = store; this.changed = changed; this.readSummary = readSummary;
+  constructor(store: Store, changed: () => void, readSummary?: (path: string, roots: boolean) => Promise<CheckoutSummary>, providersRevision: () => number = () => 0) {
+    this.store = store; this.changed = changed; this.readSummary = readSummary; this.providersRevision = providersRevision;
     store.db.exec(`
       CREATE TABLE IF NOT EXISTS workspace_projects(path TEXT PRIMARY KEY, hidden INTEGER NOT NULL DEFAULT 0, added_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS workspace_worktrees(folder TEXT PRIMARY KEY, main TEXT NOT NULL, branch TEXT NOT NULL, creation_id TEXT, identity TEXT);
@@ -143,7 +144,7 @@ export class Workspace {
     const seen = db.prepare('SELECT * FROM workspace_seen ORDER BY updated_at DESC, thread_id').all().map(row => ({
       thread_id: String(row.thread_id), updated_at: Number(row.updated_at), state: String(row.state), unread: Number(row.unread) === 1,
     }));
-    return { schema: 1, host: this.identity(), revision: Number(this.store.setting('workspace_revision') ?? 0), projects, worktrees, seen, status: this.watcher?.status() ?? {} };
+    return { schema: 1, host: this.identity(), revision: Number(this.store.setting('workspace_revision') ?? 0), projects, worktrees, seen, status: this.watcher?.status() ?? {}, providers_revision: this.providersRevision() };
   }
 
   async handle(input: unknown) {

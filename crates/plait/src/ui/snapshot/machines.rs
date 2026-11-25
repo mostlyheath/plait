@@ -230,6 +230,7 @@ fn machines_snapshots() {
                     .collect(),
                 worktrees: Vec::new(),
                 seen: Vec::new(),
+                providers_revision: 0,
                 status: Default::default(),
             };
             p.apply_workspace(generation, view, window, cx);
@@ -434,6 +435,7 @@ fn a_remote_window_shows_only_its_hosts_workspace() {
             }],
             worktrees: Vec::new(),
             seen: Vec::new(),
+            providers_revision: 0,
             status: Default::default(),
         };
         assert!(p.apply_workspace(generation, view, window, cx));
@@ -470,6 +472,7 @@ fn a_remote_window_shows_only_its_hosts_workspace() {
             projects: Vec::new(),
             worktrees: Vec::new(),
             seen: Vec::new(),
+            providers_revision: 0,
             status: Default::default(),
         };
         assert!(!p.apply_workspace(generation, late, window, cx));
@@ -489,6 +492,7 @@ fn a_remote_window_shows_only_its_hosts_workspace() {
             }],
             worktrees: Vec::new(),
             seen: Vec::new(),
+            providers_revision: 0,
             status: Default::default(),
         };
         assert!(p.apply_workspace(generation, view, window, cx));
@@ -533,6 +537,7 @@ fn a_watched_change_rereads_the_open_checkout() {
             }],
             worktrees: Vec::new(),
             seen: Vec::new(),
+            providers_revision: 0,
             status: [(open.clone(), count)].into_iter().collect(),
         };
         let generation = p.host_workspace_generation();
@@ -596,6 +601,7 @@ fn switching_machines_puts_the_previous_tabs_away() {
             projects: Vec::new(),
             worktrees: Vec::new(),
             seen: Vec::new(),
+            providers_revision: 0,
             status: Default::default(),
         };
         assert!(p.apply_workspace(generation, view, window, cx));

@@ -856,7 +856,10 @@ custom endpoints. The host store holds none of them.
 login shell's provider variables again (see below), then reads `auth.json`,
 `models.json`, and Pi's cached catalogs again, with no network request. It builds
 a complete registry first, then replaces the model catalog and the authenticated
-set of `status` in one step. If loading fails or exceeds 5 seconds, the reply is
+set of `status` in one step. Each registry it publishes, including one the
+background login-shell read loads, moves the workspace's `providers_revision`
+and wakes workspace subscribers, so a client refreshes its catalog without
+polling. If loading fails or exceeds 5 seconds, the reply is
 `internal` and the previous registry stays in use. If Pi loads with an error,
 such as a `models.json` it cannot parse or a provider that fails to load, the
 reply is `conflict` and the previous registry stays in use; Pi would otherwise
@@ -892,9 +895,10 @@ login shell, read the same way as a trusted command's environment (see
   commands, trusted MCP servers, Codex, and Claude Code read the login shell
   themselves, as described in their sections.
 - **Detached runs.** A detached Pi runner starts with the service environment
-  too. When its run's provider is not authenticated without the shell, the
-  runner reads the login shell once and loads its registry with the same
-  lookup, again without writing to its process environment.
+  too. Each run reads the login shell once and loads its registry with the
+  same lookup as the host, so it resolves the same credential the host's
+  availability check found, again without writing to its process environment.
+  This adds one login-shell read to the start of each detached run.
 - **Precedence.** A variable the host process has wins over the shell's, even
   when it is set to an empty or blank value, which Pi treats as unset.
   `PLAIT_`-prefixed names are never answered from the shell. Neither are the
@@ -1054,8 +1058,10 @@ Pi's `models.json`:
   `"radius"`, Pi resolves a credential through a provider resolver that reads
   the environment, so those entries cannot move either. Such credentials were
   set up for one server; change the address in `models.json` itself. A new path
-  on the same origin can still be set. A key stored with `set_provider_key` is
-  literal and moves with the entry, as before.
+  on the same origin can still be set. Pi uses a credential stored for the entry
+  in `auth.json` before its own `apiKey`, so that credential counts too: it must
+  be a literal API key with no extra environment values, as `set_provider_key`
+  stores one, or absent. A `key` sent in the same request replaces it.
 - Built-in providers cannot be edited or removed here. `remove_endpoint` deletes
   the stored key first, then the entry.
 - With `key`, `add_endpoint` and `update_endpoint` save the entry first. If
@@ -2366,7 +2372,7 @@ this Mac's saved lists for this Mac, and only what the window opened for
 another machine.
 
 - `{"op":"workspace_view"}` returns `{schema:1, host, revision, projects,
-  worktrees, seen, status}`.
+  worktrees, seen, status, providers_revision}`.
   - `host` is `{id, name, platform}`. The ID is stable for the store and
     is the same one turn review reports. The name defaults to the machine's
     hostname, and `{"op":"host_set_name","name":N}` changes it.
@@ -2389,9 +2395,14 @@ another machine.
     that Git status may have changed and reset when the host restarts.
   - `seen` lists `{thread_id, updated_at, state, unread}`, newest first,
     with at most 1000 entries.
+  - `providers_revision` counts the provider registries the host has published
+    since it started (see [Reload](#reload)); it starts at zero. A change means
+    the model catalog in `status` changed, for example after the host read the
+    login shell. A client whose catalog was loaded at another value requests
+    `status` again. Hosts before it omit the field.
 - `{"op":"workspace_subscribe"}` replies with the same view, then sends
-  `{"event":"workspace","seq":N,"workspace":VIEW}` each time the revision or status
-  changes, numbered from 1. A thread change alone is not a workspace change. A
+  `{"event":"workspace","seq":N,"workspace":VIEW}` each time the revision, status,
+  or providers revision changes, numbered from 1. A thread change alone is not a workspace change. A
   subscriber that cannot keep up is disconnected and subscribes again for a
   fresh view.
 - Workspace writes accept an optional `op_id`: retries with the same ID and input return the first outcome for up to 24 hours.
