@@ -27,5 +27,7 @@
 - [Linear](LINEAR.md): the issue integration's contract.
 - [Agent Client Protocol harnesses](ACP.md): the agreed contract for the next
   harness.
+- [Automations](AUTOMATIONS.md): the proposed design for threads that run on
+  a schedule.
 - [Linux sandbox](LINUX-SANDBOX.md): the open command-containment decision.
 - [ADEMark plan](ADEMARK.md): what a published measurement would require.

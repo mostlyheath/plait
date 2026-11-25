@@ -251,7 +251,10 @@ an older host shows no such controls.
 - Run person-selected checks after a turn and show their results.
 - Trace lines to turns, expand turn records, shelve results, or bisect turns.
 - Provide an interactive proof of sandbox and undo behavior.
-- Offer hosted machines or unattended automations.
+- Offer hosted machines.
+- Run scheduled automations: threads that run on a schedule in a project or
+  directory. Product decisions are made; the host contract needs agreement.
+  See [Automations](AUTOMATIONS.md).
 - Add a browser, rendered documents, or a file editor.
 - Extend editor and terminal handoffs.
 - Show local usage totals with agreed accounting and storage.
