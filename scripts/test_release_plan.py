@@ -67,6 +67,8 @@ class Ships(unittest.TestCase):
             "runtime/test/checkout-queue.test.ts", "scripts/acceptance/run.py",
             "scripts/test_release_plan.py", "scripts/release_plan.py", "scripts/check.sh",
             "scripts/release_reuse.py", "scripts/test_release_reuse.py",
+            "scripts/check-installed-changes.sh", "scripts/installed-layout-check.mjs",
+            "scripts/installed-fixture.mjs",
         ]))
 
     def test_code_and_what_packaging_reads_do(self):

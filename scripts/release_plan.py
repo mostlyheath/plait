@@ -30,6 +30,8 @@ UNSHIPPED = PROSE + (
     "scripts/bench-*.sh",
     "scripts/changelog.py",
     "scripts/check.sh",
+    "scripts/check-installed-changes.sh",
+    "scripts/installed-*.mjs",
     "scripts/probe-*.mjs",
     "scripts/readme-screenshots.sh",
     "scripts/release_plan.py",
