@@ -317,6 +317,7 @@ impl Plait {
         self.navigation.managing = None;
         self.navigation.rename = None;
         self.navigation.menu = None;
+        self.navigation.confirm_archive = None;
         self.settings_open = false;
         self.new_thread_open = false;
         if drafting {

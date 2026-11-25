@@ -426,6 +426,7 @@ impl Plait {
             self.change_checkout(checkout, window, cx);
         }
         self.navigation.menu = None;
+        self.navigation.confirm_archive = None;
         self.navigation.rename = None;
         self.automations.set_confirm_delete(None);
         if let Some(automation_id) = self
