@@ -24,7 +24,9 @@ An automation has:
   weekly on chosen days. The time zone is shown and defaults to this Mac's.
   Before you save, the form shows the next three run times.
 - **Harness, model and mode:** chosen like a new thread's.
-- **Catch-up window:** how late a missed run may still start (default 1 hour).
+- **Catch-up window:** how late a missed run may still start. The default
+  follows the schedule: 30 minutes for hourly, 12 hours for daily, weekday
+  and weekly schedules, and 12 hours for a one-time run.
 
 Its controls are **Run now**, **Pause** and **Resume**, **Edit**, and
 **Delete**. A new automation starts paused until you press **Create**.
@@ -85,6 +87,16 @@ start while the host is down or the Mac is asleep. When the host comes back:
 - Every other missed run is recorded as missed. Missed runs never pile up into
   a burst.
 
+After a wake, the host waits a short settling time (about a minute, for the
+network and disks to return) before it starts a run. That wait counts against
+the catch-up window.
+
+### When its project or directory is gone
+
+If the project or directory an automation works in has been moved or deleted,
+or its worktree is missing, the automation pauses. Its card says why, and the
+next run is not attempted until you fix the location and press **Resume**.
+
 ## Permissions
 
 Saving an automation is your consent to its scheduled runs exactly as shown:
@@ -100,6 +112,8 @@ before it runs.
   not cover them.
 - Scheduled runs never commit, push, create other worktrees, change
   credentials or settings, or weaken a sandbox.
+- A scheduled run cannot create or change automations. Only a turn you send
+  can draft one, and only **Create** schedules it.
 - The consent covers scheduled runs and **Run now** only. Turns you type in the
   thread use the thread's normal approval mode.
 - **Pause** and **Delete** stop an active run through the existing Stop and
@@ -156,7 +170,9 @@ execution keep their existing gates.
 - Sharing: a busy directory, concurrent typed turns, a waiting approval
   skipping the next run, Stop and cleanup.
 - Edits racing runs: pause, edit, delete during a run; an unavailable model;
-  a moved or deleted project.
+  a moved or deleted project pauses with its reason.
+- A scheduled run that tries to draft an automation is refused.
+- Settling after wake, and its wait counted against the catch-up window.
 - Consent: a run never uses an older revision, and typed turns do not
   inherit the scheduled-run consent.
 - With the desktop closed, a Pi edit-and-command run completes under a
