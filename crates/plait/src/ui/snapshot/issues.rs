@@ -825,6 +825,98 @@ fn new_waits_for_saved_drafts_and_keeps_them() {
     std::fs::remove_dir_all(scratch).unwrap();
 }
 
+fn open_journal_issues(h: &mut Harness, repo: &Path) {
+    h.update(|p, window, cx| p.restore_desktop(Some(repo.to_owned()), window, cx));
+    h.update(|p, _, _| assert!(p.session.journal.is_some(), "{:?}", p.session.note));
+    h.connect(repo, false);
+    open(h);
+    linked(h, false, false);
+    h.update(|p, _, _| {
+        p.issues.view.writes = Some(true);
+        p.issues.view.issue_writes = true;
+    });
+}
+
+#[core::prelude::v1::test]
+fn unreadable_draft_recovers_on_reopen() {
+    use plait_client::{
+        linear_drafts::{Drafts, RECORD, RECORD_LIMIT},
+        session::{Journal, locations},
+    };
+    use std::os::unix::fs::PermissionsExt;
+
+    if !isolated("issues::unreadable_draft_recovers_on_reopen") {
+        return;
+    }
+    let (directory, host) = locations().unwrap();
+    let repo = fixture_repository(&directory.with_file_name("project"));
+    let saved = Drafts {
+        forms: vec![saved_new(&repo, "Kept text", "r-kept")],
+    };
+    {
+        let (journal, _) = Journal::open(&directory, host).unwrap();
+        journal.write_record(RECORD, &saved, RECORD_LIMIT).unwrap();
+    }
+    let file = directory.join("tabs").join(RECORD);
+    let bytes = std::fs::read(&file).unwrap();
+    // Journal reads reject non-private files, even when running as root.
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let mut h = Harness::with_host(&repo, None, 1380., 860., None);
+    open_journal_issues(&mut h, &repo);
+    h.update(|p, window, cx| {
+        assert!(!p.forms_ready());
+        p.open_new_issue(window, cx);
+        assert!(p.issues.view.new_form.is_none());
+        assert!(p.draft_flush(cx).is_none());
+        p.close_tab(p.tabs.model.active().unwrap(), window, cx);
+    });
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
+    open(&mut h);
+    h.update(|p, window, cx| {
+        p.open_new_issue(window, cx);
+        assert_eq!(p.issues.view.form().unwrap().request_id, "r-kept");
+        assert_eq!(
+            p.issues.form_fields_for_scene().unwrap().0.read(cx).text(),
+            "Kept text"
+        );
+    });
+    assert_eq!(std::fs::read(file).unwrap(), bytes);
+}
+
+#[core::prelude::v1::test]
+fn platform_quit_flushes_issue_text() {
+    use plait_client::{
+        linear_drafts::{Drafts, RECORD},
+        session::locations,
+    };
+
+    if !isolated("issues::platform_quit_flushes_issue_text") {
+        return;
+    }
+    let (directory, _) = locations().unwrap();
+    let repo = fixture_repository(&directory.with_file_name("project"));
+    let mut h = Harness::with_host(&repo, None, 1380., 860., None);
+    open_journal_issues(&mut h, &repo);
+    h.update(|p, window, cx| p.open_new_issue(window, cx));
+    let request = h
+        .window
+        .update(&mut h.cx, |p, window, cx| {
+            let (_, description) = p.issues.form_fields_for_scene().unwrap();
+            description.update(cx, |editor, cx| editor.type_text("Latest text", window, cx));
+            p.issues.view.form().unwrap().request_id.clone()
+        })
+        .unwrap();
+    // Headless GPUI runs platform quit observers on shutdown. Its debounce
+    // clock has not advanced since typing.
+    let record = directory.join("tabs").join(RECORD);
+    assert!(!record.try_exists().unwrap());
+    drop(h);
+    let drafts: Drafts = serde_json::from_reader(std::fs::File::open(record).unwrap()).unwrap();
+    let draft = drafts.of(&repo).next().unwrap();
+    assert_eq!(draft.description, "Latest text");
+    assert_eq!(draft.request_id, request);
+}
+
 /// With 63 saved drafts, a New takes the 64th place and an Edit whose text
 /// arrives afterwards is refused; no saved draft is dropped.
 #[core::prelude::v1::test]
