@@ -7,33 +7,56 @@ mod update;
 use gpui::{prelude::*, *};
 use std::{path::PathBuf, time::Instant};
 
+/// Creates an empty, uniquely named directory in the system temp dir.
+///
+/// `create_dir` (not `create_dir_all`) fails if the name exists, so a reused
+/// PID or a clock tie can never land in an old scratch directory; we retry
+/// with a new suffix instead. The directory is not removed on exit.
+///
+/// Returns the new directory's path, or the first unexpected I/O error.
+fn scratch_directory() -> std::io::Result<PathBuf> {
+    for _ in 0..8 {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.subsec_nanos());
+        let path = std::env::temp_dir().join(format!(
+            "plait-scratch-{}-{nanos:09}",
+            std::process::id()
+        ));
+        match std::fs::create_dir(&path) {
+            Ok(()) => return Ok(path),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(std::io::ErrorKind::AlreadyExists.into())
+}
+
 fn main() {
     let startup = Instant::now();
-    let requested = std::env::args_os().nth(1).map(PathBuf::from);
-    let args: Vec<_> = std::env::args_os().collect();
-    let scratch = args.iter().any(|a| *a == "--scratch" || *a == "-s");
+    // Parse once: `--scratch` is a flag, not a project path.
+    let mut scratch = false;
+    let mut requested = None;
+    for arg in std::env::args_os().skip(1) {
+        if arg == "--scratch" {
+            scratch = true;
+        } else if requested.is_none() {
+            requested = Some(PathBuf::from(arg));
+        }
+    }
     let path = if scratch {
-        // Create an isolated temporary directory so the user can work without
-        // touching any of their real repositories.
-        let tmp_dir = std::env::temp_dir().join(format!("plait-scratch-{}", std::process::id()));
-        // Ensure the directory exists.
-        let _ = std::fs::create_dir_all(&tmp_dir);
-        // Initialise a fresh Git repository so that Plait’s Git features (status,
-        // diff, branches, etc.) work, but all changes stay within this isolated repo.
-        let _ = std::process::Command::new("git")
-            .args(["init"])
-            .current_dir(&tmp_dir)
-            .output();
-        // Set the initial branch to "main" so the repo has a sensible default.
-        let _ = std::process::Command::new("git")
-            .args(["branch", "-M", "main"])
-            .current_dir(&tmp_dir)
-            .output();
-        tmp_dir
+        match scratch_directory() {
+            Ok(path) => path,
+            Err(error) => {
+                eprintln!("Cannot create scratch directory: {error}");
+                std::process::exit(1);
+            }
+        }
     } else {
-        // Existing behaviour: use the first argument or fall back to the current directory.
         requested.clone().unwrap_or_else(|| PathBuf::from("."))
     };
+    // Scratch mode must not restore a saved checkout over its own directory.
+    let requested = if scratch { Some(path.clone()) } else { requested };
     gpui_platform::application()
         .with_assets(ui::theme::Assets)
         .run(move |cx| {

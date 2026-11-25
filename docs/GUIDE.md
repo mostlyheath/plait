@@ -50,6 +50,10 @@ First launch does nothing for source builds or when `PLAIT_HOST_STORE` points to
 
 The client negotiates host protocol versions **1 through 7** per request and degrades gracefully when connected to an older host, disabling only controls that host does not support.
 
+### Scratch directory
+
+`plait --scratch` opens Plait in a new, empty directory under the system temp folder (`plait-scratch-<pid>-<nanos>`) instead of a project, so nothing touches your real checkouts. The directory is not a Git repository and is not deleted when Plait quits; remove it yourself when done. If the directory cannot be created, Plait prints the error and exits.
+
 ## Machines
 
 **Settings → Machines** selects which machine's host this window works with: **This Mac**, or another Mac or Linux machine over **SSH** or **Tailscale**. Each window works with one machine at a time; showing projects from several machines in one sidebar is planned ([Host-first Plait](HOST-FIRST.md)). The open folder belongs to the machine it was chosen on: after a switch, the window opens one of the new machine's projects and never lists or saves the other machine's folder as its own. Folding a project folds it only on that machine. A worktree removal that finishes after a switch or a reconnect changes the lists, and shows its result, only on the machine it ran on, once that machine's host is checked. Unsent drafts and saved thread work are not yet kept per machine ([#132](https://github.com/mostlyheath/plait/issues/132)).
