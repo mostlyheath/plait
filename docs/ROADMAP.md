@@ -91,8 +91,16 @@ Protocol version 7 is an agreed change to the protocol and to stored state:
 the host stores how each run ended and reports it on retained turn records,
 so the desktop does not fold an earlier turn that failed or was stopped.
 Older clients and hosts keep the previous reply shape. It is built; its
-limits are in [Host](HOST.md), and one open recovery case is
-[#131](https://github.com/mostlyheath/plait/issues/131).
+limits are in [Host](HOST.md#protocol-version-7).
+
+**Input consumption (agreed).** The owner agreed this change to stored state on
+2026-11-25, for [#131](https://github.com/mostlyheath/plait/issues/131). Each
+accepted request row records how its input was used: it started its own run,
+or it steered into a run. Rows consumed before the change read as unknown, and
+recovery keeps its earlier inference for them. The change adds a column and two
+triggers that fill it. The triggers are stored in the schema, so writes made by
+an older build after a rollback are marked too, and those writes still succeed.
+Another model reviews it independently before merge.
 
 Client and host releases must be independently selectable and publishable.
 Compatibility is negotiated through protocol versions and capabilities, not

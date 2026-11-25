@@ -11,8 +11,13 @@ function requests(store: Store, row: Row): string[] {
   if (row.kind === 'undo') return [String(row.run_request)];
   const first = store.db.prepare('SELECT entry FROM requests WHERE scope=? AND id=?').get(String(row.thread), String(row.run_request));
   if (first?.entry == null) return [String(row.run_request)];
-  const end = store.db.prepare(`SELECT MIN(q.entry) AS entry FROM records r JOIN requests q ON q.scope=r.thread AND q.id=r.run_request
-    WHERE r.thread=? AND r.kind='before' AND q.entry>? AND NOT EXISTS (SELECT 1 FROM records a WHERE a.before=r.id AND a.kind='undo')`).get(String(row.thread), first.entry as number);
+  // The turn ends at the next turn's before record, or at the next input marked as starting its
+  // own run: a run an older build started after a rollback may have no before record.
+  const end = store.db.prepare(`SELECT MIN(entry) AS entry FROM (
+      SELECT q.entry FROM records r JOIN requests q ON q.scope=r.thread AND q.id=r.run_request
+      WHERE r.thread=? AND r.kind='before' AND q.entry>? AND NOT EXISTS (SELECT 1 FROM records a WHERE a.before=r.id AND a.kind='undo')
+      UNION ALL SELECT entry FROM requests WHERE scope=? AND state IS NULL AND consumed='started' AND entry>?)`)
+    .get(String(row.thread), first.entry as number, String(row.thread), first.entry as number);
   return store.db.prepare(`SELECT id FROM requests WHERE scope=? AND state IS NULL AND entry>=? AND (? IS NULL OR entry<?) ORDER BY entry,rowid`)
     .all(String(row.thread), first.entry as number, end?.entry ?? null, end?.entry ?? null).map(item => String(item.id));
 }

@@ -73,6 +73,7 @@ export class Store {
     for (const [table, column, type] of columns) {
       if (!this.db.prepare(`PRAGMA table_info(${table})`).all().some(row => row.name === column)) this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
     }
+    this.migrateConsumed();
     this.db.exec(`CREATE TABLE IF NOT EXISTS review_checkouts(id TEXT PRIMARY KEY, canonical_root TEXT NOT NULL, root_dev TEXT NOT NULL, root_ino TEXT NOT NULL, catalog_revision INTEGER NOT NULL DEFAULT 0, UNIQUE(canonical_root,root_dev,root_ino));`);
     for (const operation of ['INSERT', 'UPDATE', 'DELETE']) {
       const row = operation === 'DELETE' ? 'OLD' : 'NEW';
@@ -96,6 +97,32 @@ export class Store {
     this.waiters = new CheckoutQueue(this);
   }
 
+  /**
+   * `requests.consumed` says how an input was used: 'started' its own run, or 'steered' into one.
+   * Older builds do not know the column, so triggers stored in the schema mark rows for every
+   * writer, including an older build after a rollback. Every build inserts a direct admission
+   * with no state, dequeues by clearing state without an entry, and places a steering input by
+   * clearing state with an entry. The triggers only fill an empty `consumed` on the same row,
+   * so they cannot fail an older build's write. Rows consumed before the migration stay empty.
+   */
+  private migrateConsumed() {
+    this.transaction(() => {
+      if (!this.db.prepare('PRAGMA table_info(requests)').all().some(row => row.name === 'consumed')) {
+        this.db.exec('ALTER TABLE requests ADD COLUMN consumed TEXT');
+      }
+      // Only a text input admitted to a thread starts a run. Receipts such as 'create' and
+      // 'worktree_create' use another scope; every build saves the thread before the row.
+      // Recreated on every open so an earlier definition never survives.
+      this.db.exec(`DROP TRIGGER IF EXISTS requests_consumed_insert; DROP TRIGGER IF EXISTS requests_consumed_update;
+        CREATE TRIGGER requests_consumed_insert AFTER INSERT ON requests
+          WHEN NEW.consumed IS NULL AND NEW.state IS NULL AND substr(NEW.input,1,1)='"'
+            AND EXISTS (SELECT 1 FROM threads WHERE id=NEW.scope)
+          BEGIN UPDATE requests SET consumed='started' WHERE rowid=NEW.rowid; END;
+        CREATE TRIGGER requests_consumed_update AFTER UPDATE OF state ON requests
+          WHEN NEW.consumed IS NULL AND OLD.state IS NOT NULL AND NEW.state IS NULL
+          BEGIN UPDATE requests SET consumed=CASE WHEN NEW.entry IS NULL THEN 'started' ELSE 'steered' END WHERE rowid=NEW.rowid; END;`);
+    });
+  }
   /** Threads saved before version 3 gain summary columns, timestamps, and a derived title once. */
   private backfill() {
     for (const row of this.db.prepare('SELECT snapshot FROM threads WHERE checkout IS NULL').all()) {
@@ -116,31 +143,58 @@ export class Store {
     const user = snapshot.messages.findLast(message => message.role === 'user');
     // The transcript can be clipped. Use the durable input position and use the
     // visible request to break ties between admissions at the same position.
-    const inputs = this.db.prepare(`SELECT id,entry,COALESCE(entry,anchor,0) AS position,entry IS NULL AS pending
+    const inputs = this.db.prepare(`SELECT id,entry,consumed,COALESCE(entry,anchor,0) AS position,entry IS NULL AS pending
       FROM requests WHERE scope=? AND state IS NULL AND input IS NOT NULL
       ORDER BY position DESC,pending DESC,('request-' || id=?) DESC LIMIT 2`).all(snapshot.id, user?.id ?? '');
     const [latest, prior] = inputs;
     const tied = prior && latest.position === prior.position && latest.pending === prior.pending;
-    const matches = latest && (user ? user.id === `request-${latest.id}` : !tied);
-    // A placed input belongs to the most recent turn start at or before its entry.
-    // A direct admission starts a turn even if its before record is missing.
-    const owner = matches && latest.entry !== null && this.db.prepare(`SELECT r.run_request FROM records r
-      JOIN requests q ON q.scope=r.thread AND q.id=r.run_request
-      WHERE r.thread=? AND r.kind='before' AND q.entry<=?
-        AND NOT EXISTS (SELECT 1 FROM records a WHERE a.before=r.id AND a.kind='undo')
-        AND NOT EXISTS (SELECT 1 FROM requests n
-          WHERE n.scope=q.scope AND n.state IS NULL AND n.input IS NOT NULL AND n.entry>q.entry AND n.entry<=?
-            AND (NOT EXISTS (SELECT 1 FROM checkout_waiters w WHERE w.thread=n.scope AND w.request=n.id AND w.kind='follow_up')
-              OR EXISTS (SELECT 1 FROM records b WHERE b.thread=n.scope AND b.run_request=n.id AND b.kind='before')))
-      ORDER BY q.entry DESC LIMIT 1`).get(snapshot.id, latest.entry, latest.entry);
+    const owner = latest && latest.entry !== null && latest.consumed !== 'started'
+      ? this.turnStart(snapshot.id, Number(latest.entry), latest.consumed === 'steered') : undefined;
+    // Codex and Claude Code commit a steering placement before the snapshot shows it. The
+    // snapshot can then still name an earlier input of the same run: the run's own input or an
+    // earlier steer. Accept it only when both resolve to one run.
+    const visible = user?.id.startsWith('request-') ? user.id.slice('request-'.length) : undefined;
+    const shownOwner = latest?.consumed === 'steered' && owner !== undefined && visible !== undefined
+      && this.ownerOf(snapshot.id, visible) === owner;
+    const matches = latest && (user ? user.id === `request-${latest.id}` || shownOwner : !tied);
     const current = matches && this.db.prepare(`SELECT run_id FROM runs WHERE thread_id=?
-      AND request_id=? AND finished_at IS NULL`).get(snapshot.id, owner ? owner.run_request : latest.id);
+      AND request_id=? AND finished_at IS NULL`).get(snapshot.id, owner ?? latest.id);
     if (current) this.saveRunEvent(String(current.run_id), 0, snapshot, { state: 'dead', finished: true });
     else this.save(snapshot);
     // A rollback may have left other admissions open. Their snapshots are gone.
     const closed = this.db.prepare("UPDATE runs SET state='dead',finished_at=? WHERE thread_id=? AND finished_at IS NULL")
       .run(Date.now(), snapshot.id);
     if (closed.changes) this.db.prepare('UPDATE threads SET records_revision=records_revision+1 WHERE id=?').run(snapshot.id);
+  }
+  /** The request whose run a placed, marked input belongs to: itself if it started one. */
+  private ownerOf(thread: string, id: string): string | undefined {
+    const row = this.db.prepare('SELECT entry,consumed FROM requests WHERE scope=? AND id=? AND state IS NULL AND input IS NOT NULL').get(thread, id);
+    if (row?.consumed === 'started') return id;
+    return row?.consumed === 'steered' && row.entry !== null ? this.turnStart(thread, Number(row.entry), true) : undefined;
+  }
+  /**
+   * The request whose run a placed steering input joined, or undefined when unknown.
+   * Marked steering joined the nearest earlier marked start. An unmarked row was consumed
+   * before `consumed` existed, so ownership is inferred from before records: a direct
+   * admission, or a follow-up with its own before record, started a turn.
+   */
+  private turnStart(thread: string, entry: number, steered: boolean): string | undefined {
+    if (steered) {
+      const nearest = this.db.prepare(`SELECT id,consumed FROM requests WHERE scope=? AND state IS NULL AND input IS NOT NULL
+        AND entry<? AND (consumed IS NULL OR consumed='started') ORDER BY entry DESC LIMIT 1`).get(thread, entry);
+      if (nearest?.consumed === 'started') return String(nearest.id);
+    }
+    const owner = this.db.prepare(`SELECT r.run_request FROM records r
+      JOIN requests q ON q.scope=r.thread AND q.id=r.run_request
+      WHERE r.thread=? AND r.kind='before' AND q.entry<=?
+        AND NOT EXISTS (SELECT 1 FROM records a WHERE a.before=r.id AND a.kind='undo')
+        AND NOT EXISTS (SELECT 1 FROM requests n
+          WHERE n.scope=q.scope AND n.state IS NULL AND n.input IS NOT NULL AND n.entry>q.entry AND n.entry<=?
+            AND (n.consumed='started' OR (n.consumed IS NULL AND (
+              NOT EXISTS (SELECT 1 FROM checkout_waiters w WHERE w.thread=n.scope AND w.request=n.id AND w.kind='follow_up')
+              OR EXISTS (SELECT 1 FROM records b WHERE b.thread=n.scope AND b.run_request=n.id AND b.kind='before')))))
+      ORDER BY q.entry DESC LIMIT 1`).get(thread, entry, entry);
+    return owner ? String(owner.run_request) : undefined;
   }
   createRun(runId: string, threadId: string, requestId: string, harness: string): void {
     this.db.prepare('INSERT OR IGNORE INTO runs (run_id,thread_id,request_id,harness,state,last_seq,created_at) VALUES (?,?,?,?,?,0,?)')
@@ -231,7 +285,10 @@ export class Store {
   place(id: string, requestId: string, entry: number) {
     // A steering input the run took leaves the queue in the same write.
     this.transaction(() => {
-      this.db.prepare('UPDATE requests SET entry=?,state=NULL,queue=NULL WHERE scope=? AND id=?').run(entry, id, requestId);
+      // An input that still has a state (queued, or cancelled after the run already took it) is
+      // steering. A run's own input has no state here and keeps the mark its start gave it.
+      this.db.prepare(`UPDATE requests SET entry=?,consumed=CASE WHEN state IS NOT NULL THEN 'steered' ELSE consumed END,state=NULL,queue=NULL
+        WHERE scope=? AND id=?`).run(entry, id, requestId);
       this.waiters.set(id, requestId, 'started');
     });
   }
@@ -245,6 +302,15 @@ export class Store {
     return this.input(id,row);
   }
   private head(id: string) { return Number(this.db.prepare('SELECT head FROM threads WHERE id=?').get(id)?.head ?? 0); }
+  /**
+   * Where a starting input sits in the conversation. Codex and Claude Code store a placement
+   * before the snapshot's head catches up, so the saved head can trail a durable entry; an
+   * input anchored below it would rank behind that entry in recovery.
+   */
+  private anchor(id: string) {
+    const placed = Number(this.db.prepare('SELECT MAX(entry) AS entry FROM requests WHERE scope=? AND state IS NULL').get(id)?.entry ?? 0);
+    return Math.max(this.head(id), placed);
+  }
   transaction<T>(work: () => T): T {
     if (this.txDepth > 0) {
       const sp = `sp_${this.txDepth}`;
@@ -296,8 +362,8 @@ export class Store {
   /** Moves a queued input into the conversation at the current position, as its run starts. */
   dequeue(input: InputRecord, snapshot: Snapshot) {
     return this.transaction(() => {
-      const head = this.head(snapshot.id);
-      const changed = this.db.prepare("UPDATE requests SET state=NULL,queue=NULL,anchor=? WHERE scope=? AND id=? AND state IN ('queued','checkout_queued')").run(head, snapshot.id, input.request_id);
+      const head = this.anchor(snapshot.id);
+      const changed = this.db.prepare("UPDATE requests SET state=NULL,queue=NULL,anchor=?,consumed='started' WHERE scope=? AND id=? AND state IN ('queued','checkout_queued')").run(head, snapshot.id, input.request_id);
       if (!changed.changes) fail('not_found', 'Queued message already started or was cancelled.');
       this.waiters.set(snapshot.id,input.request_id,'started');
       pushMessage(snapshot, inputMessage(input));
@@ -402,7 +468,7 @@ export class Store {
   admit(scope: string, id: string, input: unknown, result: unknown, snapshot: Snapshot, root?: FileIdentity, images: string[] = [], vcs?: 'git' | 'folder') {
     // Acceptance and dedup commit before the harness can execute any effect.
     return this.transaction(() => {
-      const head = this.head(snapshot.id);
+      const head = this.anchor(snapshot.id);
       if (scope === snapshot.id && typeof input === 'string') {
         pushMessage(snapshot, inputMessage({ request_id: id, text: input, images: this.images.refs(snapshot.id, images), entry: null, anchor: head }));
         if (input.length > 4096) snapshot.truncated = true;
@@ -412,7 +478,9 @@ export class Store {
       const changed = this.save(snapshot);
       if (root) this.db.prepare('INSERT INTO roots VALUES (?,?)').run(snapshot.id, JSON.stringify(root));
       if (vcs) this.db.prepare('INSERT INTO thread_vcs VALUES (?,?)').run(snapshot.id, vcs);
-      this.db.prepare('INSERT INTO requests (scope,id,hash,result,input,anchor) VALUES (?,?,?,?,?,?)').run(scope, id, digest(images.length ? { text: input, images } : input), JSON.stringify(result), JSON.stringify(input), head);
+      // A thread input admitted directly is the input of the run it starts. Other requests stay unmarked.
+      const consumed = scope === snapshot.id && typeof input === 'string' ? 'started' : null;
+      this.db.prepare('INSERT INTO requests (scope,id,hash,result,input,anchor,consumed) VALUES (?,?,?,?,?,?,?)').run(scope, id, digest(images.length ? { text: input, images } : input), JSON.stringify(result), JSON.stringify(input), head, consumed);
       this.images.attach(snapshot.id, id, images);
       return changed;
     });
