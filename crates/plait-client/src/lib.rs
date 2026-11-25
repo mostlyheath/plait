@@ -19,6 +19,7 @@ pub mod host;
 pub mod host_state;
 pub mod images;
 pub use plait_protocol::lease;
+pub mod linear_drafts;
 pub mod linear_issues;
 pub mod linear_settings;
 #[cfg(feature = "local-host")]

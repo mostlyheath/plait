@@ -79,6 +79,40 @@ pub enum Request {
         state_id: String,
         request_id: String,
     },
+    /// A person-initiated new issue in a team.
+    LinearCreateIssue {
+        team_id: String,
+        title: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        state_id: Option<String>,
+        request_id: String,
+    },
+    /// A person-initiated edit of an issue's title or description, refused
+    /// when the issue changed since `expected_updated_at`.
+    LinearUpdateIssue {
+        issue_id: String,
+        expected_updated_at: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+        request_id: String,
+    },
+    /// One chunk of an image in Linear's file storage, read by the host.
+    LinearReadImage {
+        url: String,
+        offset: usize,
+    },
+    /// An issue's exact title and description, for an edit.
+    LinearGetIssueText {
+        issue_id: String,
+    },
+    /// The host's saved outcome for a write request, read locally.
+    LinearGetWrite {
+        request_id: String,
+    },
 }
 impl fmt::Debug for Request {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -104,6 +138,12 @@ pub struct Features {
     pub exact_issue_resolution: bool,
     pub workspace_links: bool,
     pub typed_rate_limits: bool,
+    /// `linear_create_issue` and `linear_update_issue`. Older hosts omit it.
+    #[serde(default)]
+    pub issue_writes: bool,
+    /// `linear_read_image`. Older hosts omit it.
+    #[serde(default)]
+    pub images: bool,
 }
 #[derive(Clone, Debug, Deserialize)]
 pub struct Info {
@@ -283,4 +323,57 @@ pub struct StateUpdate {
     pub partial: bool,
     pub warning: Option<String>,
     pub outcome: String,
+}
+/// The reply to creating or editing an issue: Linear accepted it. `issue` is
+/// the refreshed detail, or null when that read failed and `warning` says so.
+#[derive(Clone, Debug, Deserialize)]
+pub struct IssueWrite {
+    /// The created issue's id; absent for an edit.
+    #[serde(default)]
+    pub issue_id: Option<String>,
+    #[serde(default)]
+    pub identifier: Option<String>,
+    pub issue: Option<IssueDetail>,
+    #[serde(default)]
+    pub partial: bool,
+    pub warning: Option<String>,
+    pub outcome: String,
+}
+/// One base64 chunk of a Linear image, `size` bytes in all.
+#[derive(Clone, Debug, Deserialize)]
+pub struct ImagePart {
+    pub url: String,
+    pub size: usize,
+    pub offset: usize,
+    pub data: String,
+}
+/// An issue's title and description exactly as Linear stores them. When they
+/// do not fit what Plait can write back unchanged, `editable` is false and both
+/// are null: edit that issue in Linear.
+#[derive(Clone, Debug, Deserialize)]
+pub struct IssueText {
+    pub issue_id: String,
+    pub updated_at: String,
+    pub editable: bool,
+    pub title: Option<String>,
+    pub description: Option<String>,
+}
+/// The host's record of one write request, or none if it never saw it.
+#[derive(Clone, Debug, Deserialize)]
+pub struct WriteLookup {
+    pub request_id: String,
+    pub write: Option<WriteRecord>,
+}
+#[derive(Clone, Debug, Deserialize)]
+pub struct WriteRecord {
+    /// `not_sent`, `rejected`, `accepted` or `unknown`.
+    pub outcome: String,
+    #[serde(default)]
+    pub receipt: Option<WriteRecordReceipt>,
+}
+/// The part of an accepted receipt the desktop uses.
+#[derive(Clone, Debug, Deserialize)]
+pub struct WriteRecordReceipt {
+    #[serde(default)]
+    pub issue_id: Option<String>,
 }

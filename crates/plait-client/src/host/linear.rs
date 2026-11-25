@@ -1,5 +1,6 @@
 //! Additive, bounded Linear host operations.
 use super::{Client, Error};
+use base64::Engine;
 use std::path::PathBuf;
 
 pub use plait_protocol::host::linear::*;
@@ -458,13 +459,140 @@ pub enum WriteFailure {
     Lost,
     /// Refused or not sent. Retrying the same request may send it again.
     Refused(Rejection),
+    /// The issue changed in Linear since it was read; nothing was sent.
+    Changed,
 }
 pub fn write_failure(error: &Error) -> WriteFailure {
     match error {
         Error::Rejected(e) if e.code == "linear_write_unknown" => WriteFailure::Unknown,
+        Error::Rejected(e) if e.code == "linear_issue_changed" => WriteFailure::Changed,
         Error::Transport(_) | Error::Protocol(_) => WriteFailure::Lost,
         Error::Rejected(_) => WriteFailure::Refused(classify(error, false)),
     }
+}
+
+fn issue_write(v: &IssueWrite) -> bool {
+    v.outcome == "accepted"
+        && opt(&v.warning, 2048)
+        && oid(&v.issue_id)
+        && v.identifier.as_deref().is_none_or(identifier)
+        && v.issue.as_ref().is_none_or(detail)
+}
+/// Creates an issue in `team_id`, on a person's explicit action. The host
+/// derives the new issue's id from `request_id`, so a retry cannot make two.
+pub fn create_issue(
+    c: &Client,
+    team_id: String,
+    title: String,
+    description: Option<String>,
+    state_id: Option<String>,
+    request_id: String,
+) -> Result<IssueWrite, Error> {
+    let v: IssueWrite = send(
+        c,
+        &Request::LinearCreateIssue {
+            team_id: team_id.clone(),
+            title,
+            description,
+            state_id,
+            request_id,
+        },
+    )?;
+    let ok = issue_write(&v)
+        && v.issue_id.is_some()
+        && v.issue.as_ref().is_none_or(|d| {
+            d.summary.team_id == team_id && Some(&d.summary.id) == v.issue_id.as_ref()
+        });
+    checked(v, ok)
+}
+/// Changes an issue's title or description, on a person's explicit action.
+/// The host refuses with `linear_issue_changed` when the issue is no longer
+/// at `expected_updated_at`.
+pub fn update_issue(
+    c: &Client,
+    issue_id: String,
+    expected_updated_at: String,
+    title: Option<String>,
+    description: Option<String>,
+    request_id: String,
+) -> Result<IssueWrite, Error> {
+    let v: IssueWrite = send(
+        c,
+        &Request::LinearUpdateIssue {
+            issue_id: issue_id.clone(),
+            expected_updated_at,
+            title,
+            description,
+            request_id,
+        },
+    )?;
+    let ok = issue_write(&v) && v.issue.as_ref().is_none_or(|d| d.summary.id == issue_id);
+    checked(v, ok)
+}
+/// An issue's exact title and description, for an edit that must not lose text.
+pub fn get_issue_text(c: &Client, issue_id: String) -> Result<IssueText, Error> {
+    let v: IssueText = send(
+        c,
+        &Request::LinearGetIssueText {
+            issue_id: issue_id.clone(),
+        },
+    )?;
+    let ok = id(&v.issue_id)
+        && text(&v.updated_at, 64)
+        && v.title.is_some() == v.editable
+        && v.description.is_some() == v.editable
+        && v.title.as_ref().is_none_or(|t| t.chars().count() <= 512)
+        && v.description.as_ref().is_none_or(|d| d.len() <= 32 * 1024);
+    checked(v, ok)
+}
+/// What became of a write request, from the host's local record.
+pub fn get_write(c: &Client, request_id: String) -> Result<WriteLookup, Error> {
+    let v: WriteLookup = send(
+        c,
+        &Request::LinearGetWrite {
+            request_id: request_id.clone(),
+        },
+    )?;
+    let ok = v.request_id == request_id
+        && v.write.as_ref().is_none_or(|w| {
+            matches!(
+                w.outcome.as_str(),
+                "not_sent" | "rejected" | "accepted" | "unknown"
+            ) && w.receipt.as_ref().is_none_or(|r| oid(&r.issue_id))
+        });
+    checked(v, ok)
+}
+/// An image from Linear's file storage, read through the host in chunks. Only
+/// a PNG or JPEG within the thread image bounds is returned.
+pub fn read_image(c: &Client, url: &str) -> Result<Vec<u8>, Error> {
+    let mut bytes = Vec::new();
+    loop {
+        let part: ImagePart = send(
+            c,
+            &Request::LinearReadImage {
+                url: url.to_owned(),
+                offset: bytes.len(),
+            },
+        )?;
+        let chunk = base64::engine::general_purpose::STANDARD
+            .decode(&part.data)
+            .map_err(|_| invalid())?;
+        let valid = part.url == url
+            && part.offset == bytes.len()
+            && part.size <= crate::images::IMAGE_BYTES
+            && !chunk.is_empty()
+            && chunk.len() <= crate::images::READ_CHUNK
+            && bytes.len() + chunk.len() <= part.size;
+        if !valid {
+            return Err(invalid());
+        }
+        bytes.extend(chunk);
+        if bytes.len() == part.size {
+            break;
+        }
+    }
+    crate::images::inspect(&bytes).map_err(Error::Protocol)?;
+    Ok(bytes)
 }
 
 #[cfg(test)]

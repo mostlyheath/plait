@@ -295,7 +295,8 @@ impl Element for InputElement {
             let mut failure = input.layout.failure.clone();
             window.with_content_mask(Some(ContentMask { bounds }), |window| {
                 if input.draft.value.text.is_empty()
-                    && let Err(error) = paint_placeholder(bounds, window, cx)
+                    && let Err(error) =
+                        paint_placeholder(input.placeholder.clone(), bounds, window, cx)
                 {
                     failure = Some(error);
                 }
@@ -363,12 +364,12 @@ impl Element for InputElement {
 }
 
 fn paint_placeholder(
+    text: SharedString,
     bounds: Bounds<Pixels>,
     window: &mut Window,
     cx: &mut App,
 ) -> Result<(), String> {
     let style = window.text_style();
-    let text: SharedString = PLACEHOLDER.into();
     let run = TextRun {
         len: text.len(),
         font: style.font(),

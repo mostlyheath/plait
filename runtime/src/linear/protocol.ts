@@ -1,7 +1,10 @@
 import { fail } from '../protocol.ts';
 import { issueReference } from './identity.ts';
 import { validateLinearKey } from './auth.ts';
-import { FIELD_LIMITS, LINEAR_COMMENT_BODY_MAX_BYTES, LINEAR_FILTER_PRESETS } from './types.ts';
+import {
+  FIELD_LIMITS, LINEAR_COMMENT_BODY_MAX_BYTES, LINEAR_DESCRIPTION_MAX_BYTES, LINEAR_FILTER_PRESETS,
+  LINEAR_IMAGE_HOST,
+} from './types.ts';
 import type { LinearFilterPreset } from './types.ts';
 
 type OperationSpec = { required: readonly string[]; optional: readonly string[] };
@@ -25,6 +28,10 @@ const OPERATIONS: Record<string, OperationSpec> = {
   linear_list_thread_links: { required: [], optional: ['limit', 'cursor'] },
   linear_post_comment: { required: ['issue_id', 'body', 'request_id'], optional: [] },
   linear_update_issue_state: { required: ['issue_id', 'state_id', 'request_id'], optional: [] },
+  linear_create_issue: { required: ['team_id', 'title', 'request_id'], optional: ['description', 'state_id'] },
+  linear_update_issue: { required: ['issue_id', 'expected_updated_at', 'request_id'], optional: ['title', 'description'] },
+  linear_read_image: { required: ['url', 'offset'], optional: [] },
+  linear_get_issue_text: { required: ['issue_id'], optional: [] },
 };
 
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
@@ -82,6 +89,26 @@ function checkHttpsUrl(value: unknown, field: string): string {
     fail('invalid_request', `${field} must be an https URL without embedded credentials.`);
   }
   return url.href;
+}
+
+/** Multiline Markdown written by a person: tabs and newlines allowed, other controls refused. */
+function checkDescription(value: unknown): string {
+  if (typeof value !== 'string' || COMMENT_CONTROL_PATTERN.test(value)) {
+    fail('invalid_request', 'description must be a string without control characters.');
+  }
+  if (Buffer.byteLength(value, 'utf8') > LINEAR_DESCRIPTION_MAX_BYTES) {
+    fail('invalid_request', 'description must be at most 32 KiB.');
+  }
+  return value;
+}
+
+/** Only Linear's own file storage, over https, with no credentials or port. */
+export function checkImageUrl(value: unknown): URL {
+  const url = new URL(checkHttpsUrl(value, 'url'));
+  if (url.hostname !== LINEAR_IMAGE_HOST || url.port || url.pathname.length < 2) {
+    fail('invalid_request', `url must be an image on ${LINEAR_IMAGE_HOST}.`);
+  }
+  return url;
 }
 
 export function parseLinkCursor(value: string): { linkedAt: number; threadId: string } {
@@ -193,6 +220,32 @@ export function validateLinearRequest(input: unknown): LinearRequest {
       checkId(request.issue_id, 'issue_id');
       checkId(request.state_id, 'state_id');
       checkId(request.request_id, 'request_id');
+      return request;
+    case 'linear_create_issue':
+      checkId(request.team_id, 'team_id');
+      checkId(request.request_id, 'request_id');
+      checkBoundedText(request.title, 'title', FIELD_LIMITS.title);
+      if (request.description !== undefined) checkDescription(request.description);
+      if (request.state_id !== undefined) checkId(request.state_id, 'state_id');
+      return request;
+    case 'linear_update_issue':
+      checkId(request.issue_id, 'issue_id');
+      checkId(request.request_id, 'request_id');
+      checkBoundedText(request.expected_updated_at, 'expected_updated_at', FIELD_LIMITS.timestamp);
+      if (request.title === undefined && request.description === undefined) {
+        fail('invalid_request', 'title or description is required.');
+      }
+      if (request.title !== undefined) checkBoundedText(request.title, 'title', FIELD_LIMITS.title);
+      if (request.description !== undefined) checkDescription(request.description);
+      return request;
+    case 'linear_get_issue_text':
+      checkId(request.issue_id, 'issue_id');
+      return request;
+    case 'linear_read_image':
+      checkImageUrl(request.url);
+      if (!Number.isSafeInteger(request.offset) || (request.offset as number) < 0) {
+        fail('invalid_request', 'offset must be a nonnegative integer.');
+      }
       return request;
     default:
       fail('invalid_request', 'Unknown operation or field.');

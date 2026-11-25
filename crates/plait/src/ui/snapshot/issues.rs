@@ -135,9 +135,81 @@ fn changed(h: &mut Harness, status: plait_client::linear_issues::ChangeStatus) {
     });
 }
 
+/// A host that creates and edits issues and reads their images.
+fn writable(h: &mut Harness, selected: bool) {
+    linked(h, false, selected);
+    h.update(|p, _, _| {
+        p.issues.view.writes = Some(true);
+        p.issues.view.issue_writes = true;
+        p.issues.view.images = true;
+    });
+}
+
+fn new_issue(h: &mut Harness) {
+    writable(h, false);
+    h.update(|p, window, cx| p.open_new_issue(window, cx));
+    h.update(|p, _, cx| {
+        let fields = p.issues.form_fields_for_scene().expect("the form is open");
+        fields.0.update(cx, |field, cx| {
+            field.set_text("Show Linear images in the issue", cx)
+        });
+    });
+    // The description takes typing at once: a new composer starts disabled.
+    h.update(|p, window, cx| {
+        let fields = p.issues.form_fields_for_scene().expect("the form is open");
+        fields.1.update(cx, |editor, cx| {
+            editor.type_text("Draw them **inline**, not as links.", window, cx)
+        });
+        assert_eq!(
+            fields.1.read(cx).saved_draft().0,
+            "Draw them **inline**, not as links."
+        );
+    });
+}
+
+fn edit_refused(h: &mut Harness) {
+    writable(h, true);
+    h.update(|p, window, cx| {
+        let text = serde_json::from_value(serde_json::json!({"issue_id": "i1",
+            "updated_at": "2026-11-18T12:00:00.000Z", "editable": true,
+            "title": "Retry rate-limited requests with backoff", "description": DESCRIPTION}))
+        .unwrap();
+        p.open_edit(&text, window, cx)
+    });
+    h.update(|p, _, cx| {
+        let fields = p.issues.form_fields_for_scene().expect("editing");
+        fields.0.update(cx, |field, cx| {
+            field.set_text("Retry 429s with backoff and jitter", cx)
+        });
+        p.issues.view.edits.get_mut("i1").expect("editing").status =
+            plait_client::linear_issues::FormStatus::Changed;
+        // Linear's newer version, read again after the refusal.
+        let shown = &mut p.issues.view.detail.as_mut().unwrap().issue;
+        shown.summary.title = "Retry rate-limited requests (owner: Sam)".into();
+        shown.summary.updated_at = "2026-11-19T08:00:00.000Z".into();
+        shown.description = Some("Sam is taking this. Retry at most three times.".into());
+    });
+}
+
+/// The description's image, as if the host had read it.
+fn image_read(h: &mut Harness) {
+    writable(h, true);
+    h.update(|p, _, _| {
+        let pixels = super::super::images::decode(
+            include_bytes!("../../../../../runtime/test/support/images/0.png"),
+            1600,
+        )
+        .unwrap();
+        p.issues.images.insert(
+            "https://uploads.linear.app/acme/ab12/failure.png".into(),
+            super::super::issue_text::Picture::Ready(pixels),
+        );
+    });
+}
+
 type Scene = (&'static str, fn(&mut Harness), &'static [&'static str]);
 
-fn scenes() -> [Scene; 7] {
+fn scenes() -> [Scene; 10] {
     [
         (
             "issues-signed-out",
@@ -195,6 +267,27 @@ fn scenes() -> [Scene; 7] {
                 )
             },
             &["Try again", "Dismiss", "Status: In Progress"],
+        ),
+        (
+            "issues-new",
+            new_issue,
+            &[
+                "Issue title",
+                "Issue description",
+                "Save",
+                "Discard",
+                "Refresh",
+            ],
+        ),
+        (
+            "issues-edit-changed",
+            edit_refused,
+            &["Issue title", "Keep editing mine", "Discard mine"],
+        ),
+        (
+            "issues-image",
+            image_read,
+            &["Image: Failure in the thread", "Edit", "New issue"],
         ),
         (
             "issues-status-unknown",
@@ -417,5 +510,56 @@ fn opening_issues_shows_them_at_once() {
     linked(&mut h, false, false);
     h.capture("issues-from-thread");
     assert_issues_drawn(&mut h, "thread open");
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
+/// A Linear description is plain text: Enter in the title moves on, Enter in
+/// the description adds a line, and Cmd-Enter saves.
+#[cfg(debug_assertions)]
+#[core::prelude::v1::test]
+fn issue_form_keys_match_an_editor() {
+    if !isolated("issues::issue_form_keys_match_an_editor") {
+        return;
+    }
+    let scratch = std::env::temp_dir().join(format!("plait-issues-keys-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    let mut h = Harness::new(&repo, None, 1380., 860.);
+    h.connect(&repo, false);
+    open(&mut h);
+    writable(&mut h, false);
+    h.update(|p, window, cx| p.open_new_issue(window, cx));
+    h.draw_a11y();
+    h.update(|p, _, cx| {
+        let (title, _) = p.issues.form_fields_for_scene().unwrap();
+        title.update(cx, |field, cx| field.set_text("Keys", cx));
+    });
+    h.keystroke("enter");
+    h.update(|p, window, cx| {
+        let (_, description) = p.issues.form_fields_for_scene().unwrap();
+        assert!(
+            description.focus_handle(cx).is_focused(window),
+            "Enter in the title moves to the description"
+        );
+        description.update(cx, |editor, cx| editor.type_text("one", window, cx));
+    });
+    h.keystroke("enter");
+    h.update(|p, window, cx| {
+        let (_, description) = p.issues.form_fields_for_scene().unwrap();
+        description.update(cx, |editor, cx| editor.type_text("two", window, cx));
+        assert_eq!(description.read(cx).saved_draft().0, "one\ntwo");
+        assert_eq!(
+            p.issues.view.form().unwrap().status,
+            plait_client::linear_issues::FormStatus::Editing,
+            "Enter did not save"
+        );
+    });
+    h.keystroke("cmd-enter");
+    h.update(|p, _, _| {
+        assert_eq!(
+            p.issues.view.form().unwrap().status,
+            plait_client::linear_issues::FormStatus::Saving,
+            "Cmd-Enter saves"
+        );
+    });
     std::fs::remove_dir_all(scratch).unwrap();
 }

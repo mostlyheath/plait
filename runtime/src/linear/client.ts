@@ -15,6 +15,8 @@ import {
   boundLinearText,
   safeLinearUrl,
   safeNumber,
+  LINEAR_DESCRIPTION_MAX_BYTES,
+  LINEAR_IMAGE_HOST,
 } from './types.ts';
 import type {
   LinearAttachment,
@@ -32,6 +34,8 @@ import type {
 export type LinearClientOptions = {
   /** Test-only override; production code always uses LINEAR_GRAPHQL_URL. */
   endpoint?: string;
+  /** Test-only: read image paths from this origin instead of their own. */
+  imageOrigin?: string;
   timeoutMs?: number;
   maxResponseBytes?: number;
   now?: () => number;
@@ -114,6 +118,33 @@ const ISSUE_UPDATE_STATE_MUTATION = `mutation PlaitIssueUpdateState($id: String!
     issue { id }
   }
 }`;
+
+// Field names from Linear's SDK schema (IssueCreateInput, IssueUpdateInput) at the
+// revision LINEAR.md cites. `id` is the documented optional UUID v4 for a new issue.
+const ISSUE_CREATE_MUTATION = `mutation PlaitIssueCreate($id: String!, $teamId: String!, $title: String!, $description: String, $stateId: String) {
+  issueCreate(input: { id: $id, teamId: $teamId, title: $title, description: $description, stateId: $stateId }) {
+    success
+    issue { id identifier }
+  }
+}`;
+
+const ISSUE_UPDATE_TEXT_MUTATION = `mutation PlaitIssueUpdateText($id: String!, $title: String, $description: String) {
+  issueUpdate(id: $id, input: { title: $title, description: $description }) {
+    success
+    issue { id }
+  }
+}`;
+
+const ISSUE_TEXT_QUERY = `query PlaitIssueText($id: String!) {
+  issue(id: $id) { id title description updatedAt }
+}`;
+
+/** Image bytes read from Linear's file storage; the desktop decodes them. */
+export const LINEAR_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+// The characters the write validators refuse; text holding them cannot round-trip.
+const EDIT_TITLE_CONTROL = /[\u0000-\u001f\u007f]/;
+const EDIT_DESCRIPTION_CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
 
 const MAX_WAIT_SECONDS = 86_400;
 const DEFAULT_RATE_LIMIT_WAIT_SECONDS = 60;
@@ -365,9 +396,11 @@ export class LinearClient {
   private readonly timeoutMs: number;
   private readonly maxResponseBytes: number;
   private readonly now: () => number;
+  private readonly imageOrigin: string | undefined;
 
   constructor(options: LinearClientOptions = {}) {
     this.endpoint = options.endpoint ?? LINEAR_GRAPHQL_URL;
+    this.imageOrigin = options.imageOrigin;
     this.timeoutMs = options.timeoutMs ?? LINEAR_TIMEOUT_MS;
     this.maxResponseBytes = options.maxResponseBytes ?? LINEAR_MAX_RESPONSE_BYTES;
     this.now = options.now ?? Date.now;
@@ -561,6 +594,136 @@ export class LinearClient {
       ?? new LinearError('offline', 'Linear returned an unreadable write result.');
   }
 
+  /** Creates an issue with a caller-chosen id. Only called on an explicit person action. */
+  async createIssue(apiKey: string, input: {
+    id: string; teamId: string; title: string; description: string | null; stateId: string | null;
+  }, signal?: AbortSignal): Promise<{ issue_id: string; identifier: string | null }> {
+    const sanitize = makeSanitizer(apiKey);
+    const response = await this.graphql(apiKey, ISSUE_CREATE_MUTATION, { ...input }, 'write', signal);
+    const payload = asObject(response.data?.issueCreate);
+    const issue = asObject(payload?.issue);
+    if (payload?.success === true) {
+      return {
+        issue_id: sanitize.text(issue?.id, FIELD_LIMITS.id) || input.id,
+        identifier: sanitize.text(issue?.identifier, FIELD_LIMITS.identifier) || null,
+      };
+    }
+    if (payload?.success === false) {
+      throw rejected(this.fallbackError(response.errors, 'write', response.headers)
+        ?? new LinearError('invalid_request', 'Linear did not create the issue.'));
+    }
+    throw this.fallbackError(response.errors, 'write', response.headers)
+      ?? new LinearError('offline', 'Linear returned an unreadable write result.');
+  }
+
+  /**
+   * An issue's title and description exactly as Linear stores them, for an
+   * edit that must not lose text. Display reads bound and escape these; this
+   * one does not, so it returns them only when they fit what Plait can write
+   * back and carry no secret. Otherwise `editable` is false and both are null.
+   */
+  async getIssueText(apiKey: string, issueId: string, signal?: AbortSignal): Promise<{
+    issue_id: string; updated_at: string; editable: boolean; title: string | null; description: string | null;
+  } | null> {
+    const sanitize = makeSanitizer(apiKey);
+    const response = await this.graphql(apiKey, ISSUE_TEXT_QUERY, { id: issueId }, 'read', signal);
+    const issue = asObject(response.data?.issue);
+    if (!issue) return null;
+    const id = sanitize.text(issue.id, FIELD_LIMITS.id);
+    const updatedAt = sanitize.text(issue.updatedAt, FIELD_LIMITS.timestamp);
+    if (!id || !updatedAt) throw new LinearError('offline', 'Linear returned an unreadable issue.');
+    const title = typeof issue.title === 'string' ? issue.title : null;
+    const description = issue.description === null || issue.description === undefined
+      ? ''
+      : typeof issue.description === 'string' ? issue.description : null;
+    const editable = title !== null && description !== null
+      && title.trim().length > 0 && title.length <= FIELD_LIMITS.title
+      && !EDIT_TITLE_CONTROL.test(title)
+      && Buffer.byteLength(description, 'utf8') <= LINEAR_DESCRIPTION_MAX_BYTES
+      && !EDIT_DESCRIPTION_CONTROL.test(description)
+      && !sanitize.containsSecret(title) && !sanitize.containsSecret(description);
+    return { issue_id: id, updated_at: updatedAt, editable,
+      title: editable ? title : null, description: editable ? description : null };
+  }
+
+  /** Changes an issue's title or description. Only called on an explicit person action. */
+  async updateIssueText(apiKey: string, issueId: string, text: { title?: string; description?: string },
+    signal?: AbortSignal): Promise<{ issue_id: string }> {
+    const sanitize = makeSanitizer(apiKey);
+    const variables: JsonObject = { id: issueId };
+    if (text.title !== undefined) variables.title = text.title;
+    if (text.description !== undefined) variables.description = text.description;
+    const response = await this.graphql(apiKey, ISSUE_UPDATE_TEXT_MUTATION, variables, 'write', signal);
+    const payload = asObject(response.data?.issueUpdate);
+    const updatedId = sanitize.text(asObject(payload?.issue)?.id, FIELD_LIMITS.id);
+    if (payload?.success === true) return { issue_id: updatedId || issueId };
+    if (payload?.success === false) {
+      throw rejected(this.fallbackError(response.errors, 'write', response.headers)
+        ?? new LinearError('invalid_request', 'Linear did not accept the edit.'));
+    }
+    throw this.fallbackError(response.errors, 'write', response.headers)
+      ?? new LinearError('offline', 'Linear returned an unreadable write result.');
+  }
+
+  /**
+   * Reads one file from Linear's storage with the key, as Linear documents.
+   * A redirect is followed once, without the key, so it never leaves Linear.
+   */
+  async readImage(apiKey: string, url: URL, signal?: AbortSignal): Promise<Buffer> {
+    const timeout = AbortSignal.timeout(this.timeoutMs);
+    const combined = signal ? AbortSignal.any([timeout, signal]) : timeout;
+    const get = async (target: URL, authorized: boolean) => {
+      try {
+        return await fetch(target, {
+          headers: authorized ? { authorization: apiKey } : {},
+          redirect: 'manual',
+          signal: combined,
+        });
+      } catch (error) {
+        if (timeout.aborted || (error as Error | undefined)?.name === 'TimeoutError') {
+          throw new LinearError('offline', 'Linear image request timed out.');
+        }
+        throw new LinearError('offline', 'Linear could not be reached.');
+      }
+    };
+    const first = this.imageOrigin ? new URL(url.pathname + url.search, this.imageOrigin) : url;
+    let response = await get(first, true);
+    if (REDIRECT_STATUSES.has(response.status)) {
+      const location = response.headers.get('location');
+      await response.body?.cancel().catch(() => {});
+      const next = location && URL.canParse(location, first) ? new URL(location, first) : null;
+      // The same allowlist as the first request, checked before connecting:
+      // Linear's storage host over https on the default port. Tests use their own origin.
+      const local = this.imageOrigin !== undefined && next?.origin === new URL(this.imageOrigin).origin;
+      const allowed = next !== null && !next.username && !next.password && (local
+        || (next.protocol === 'https:' && next.hostname === LINEAR_IMAGE_HOST && next.port === ''));
+      if (!allowed) {
+        throw new LinearError('offline', 'Linear redirected the image away from its file storage.');
+      }
+      response = await get(next, false);
+      if (REDIRECT_STATUSES.has(response.status)) {
+        await response.body?.cancel().catch(() => {});
+        throw new LinearError('offline', 'Linear redirected the image more than once.');
+      }
+    }
+    if (response.status === 429) {
+      await response.body?.cancel().catch(() => {});
+      const seconds = parseRetryAfterSeconds(response.headers, this.now());
+      throw new LinearError('rate_limited', `Linear rate limit reached. Retry in ${seconds} seconds.`, seconds);
+    }
+    // One file the key cannot read says nothing about the key, so this never
+    // marks the sign-in rejected.
+    if (response.status === 401 || response.status === 403 || response.status === 404) {
+      await response.body?.cancel().catch(() => {});
+      throw new LinearError('not_found', 'Linear has no image this key can read at this address.');
+    }
+    if (response.status !== 200) {
+      await response.body?.cancel().catch(() => {});
+      throw new LinearError('offline', 'Linear could not be reached.');
+    }
+    return this.readBoundedBytes(response, timeout, LINEAR_IMAGE_MAX_BYTES);
+  }
+
   private fallbackError(errors: GraphQlError[], mode: AccessMode, headers: Headers): LinearError | null {
     if (!errors.length) return null;
     return classifyGraphQlErrors(errors, mode, headers, this.now())
@@ -647,18 +810,22 @@ export class LinearClient {
   }
 
   private async readBoundedBody(response: Response, timeout: AbortSignal): Promise<string> {
+    return (await this.readBoundedBytes(response, timeout)).toString('utf8');
+  }
+
+  private async readBoundedBytes(response: Response, timeout: AbortSignal, limit = this.maxResponseBytes): Promise<Buffer> {
     const declared = response.headers.get('content-length');
-    if (declared && /^\d+$/.test(declared.trim()) && Number(declared.trim()) > this.maxResponseBytes) {
+    if (declared && /^\d+$/.test(declared.trim()) && Number(declared.trim()) > limit) {
       await response.body?.cancel().catch(() => {});
       throw new LinearError('offline', 'Linear response exceeded the size limit.');
     }
-    if (!response.body) return '';
+    if (!response.body) return Buffer.alloc(0);
     const chunks: Uint8Array[] = [];
     let total = 0;
     try {
       for await (const chunk of response.body) {
         total += chunk.byteLength;
-        if (total > this.maxResponseBytes) {
+        if (total > limit) {
           await response.body.cancel().catch(() => {});
           throw new LinearError('offline', 'Linear response exceeded the size limit.');
         }
@@ -671,7 +838,7 @@ export class LinearClient {
       }
       throw new LinearError('offline', 'Linear could not be reached.');
     }
-    return Buffer.concat(chunks).toString('utf8');
+    return Buffer.concat(chunks);
   }
 }
 

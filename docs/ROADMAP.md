@@ -206,9 +206,20 @@ Linear settings and project issue views are built: search and read issues,
 insert references into drafts, and start a thread from an issue while retaining
 its source link. The host stores the key, project binding, cache, and thread
 links. Explicit person-initiated comments and workflow changes have durable
-write receipts; no automatic activity or agent access to native operations is
-implied. Issue-triggered runs and browser OAuth require separate agreement.
+write receipts; nothing writes automatically. No harness or agent receives a Linear tool; writes come only from explicit requests on the host socket, which any process running as you can reach. Issue-triggered runs and browser OAuth require separate agreement.
 Live API verification remains open. See [Linear](LINEAR.md).
+
+**Issue writes and images (agreed).** The owner asked on 2026-11-25 for the
+Issues tab to create and edit issues and to show their images. Agreed: three
+additive host operations, which the desktop sends only on a person's explicit
+action. No harness or agent receives a Linear tool; writes come only from explicit requests on the host socket, which any process running as you can reach. `linear_create_issue` creates an issue in the linked team with a
+title, an optional description and state. `linear_update_issue` changes an
+issue's title or description and refuses when the issue changed in Linear since
+it was read. Both use the existing durable write receipts and request IDs.
+`linear_read_image` reads a PNG or JPEG uploaded to Linear's file storage
+(`uploads.linear.app`) through the host, so the key never reaches the desktop,
+in bounded chunks with a bounded cache. `linear_info` reports each capability;
+an older host shows no such controls.
 
 ## Proposed, not yet agreed
 
