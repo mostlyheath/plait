@@ -119,7 +119,43 @@ pub(super) fn scene(
         p.workspace.diff_scroll=UniformListScrollHandle::new(); p.workspace.file_scroll=UniformListScrollHandle::new();p.workspace.tab=Workspace::Changes;
     });
 }
+fn changed_patch_scene(h: &mut Harness, repository: &Path, suffix: &str) {
+    scene(h, repository, "ready", None);
+    h.update(|p, _, cx| {
+        let panel = p.tabs.model.panel_mut().unwrap();
+        panel.open_on(plait_client::panel::PanelKind::Changes);
+        panel.select_scope(plait_client::panel::Scope::ThisTurn);
+        p.workspace.tab = Workspace::Conversation;
+        let mut bookmark = p.capture_tab_bookmark(None, cx);
+        bookmark.changes.anchor.as_mut().unwrap().fingerprint = "previous patch".into();
+        bookmark.changes.selection = Some((1, 2));
+        p.workspace.restore = Some(bookmark);
+        p.workspace.restore_pending[1] = true;
+        p.restore_ready_bookmarks(cx);
+    });
+    capture_both(h, &format!("tabs-patch-changed-{suffix}"));
+    #[cfg(debug_assertions)]
+    assert!(
+        h.draw_a11y()
+            .nodes
+            .iter()
+            .any(|n| n.path.contains("patch-restore-notice"))
+    );
+}
+
+#[core::prelude::v1::test]
+fn changed_patch_restore_notice() {
+    if !isolated("turn_review::changed_patch_restore_notice") {
+        return;
+    }
+    let root = fixture_repository(&PathBuf::from(std::env::var_os(SCENE_HOME).unwrap()));
+    let output = std::env::var_os("PLAIT_SNAPSHOT_DIR").map(PathBuf::from);
+    let mut h = this_turn::harness(&root, output.as_deref(), 900., 600.);
+    changed_patch_scene(&mut h, &root, "narrow");
+}
+
 pub(super) fn walk(h: &mut Harness, repository: &Path, suffix: &str) {
+    changed_patch_scene(h, repository, suffix);
     for (name, kind) in [
         ("turn-recorded", "ready"),
         ("turn-recorded-clean", "clean"),

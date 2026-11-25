@@ -105,7 +105,7 @@ pub(super) fn walk(harness: &mut Harness, repository: &Path, suffix: &str) {
     });
     harness.capture(&format!("message-box-mode-differs-{suffix}"));
 
-    // 5. Narrow-friendly wrapping with long model name, effort, approval, context, Stop, Send.
+    // 5. Single settings row with a long model name, effort, approval, context, and Stop.
     harness.update(|plait, _, cx| {
         configure_reasoning_model(
             plait,

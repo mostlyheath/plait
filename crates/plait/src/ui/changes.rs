@@ -15,6 +15,9 @@ fn diff_line_height() -> f32 {
     code_size() + 9.
 }
 
+const PATCH_CHANGED: &str =
+    "The patch changed. Showing its current contents without the old selection.";
+
 pub(super) fn diff_limit_notice(recorded: bool) -> (&'static str, &'static str) {
     if recorded {
         (
@@ -819,6 +822,17 @@ impl Plait {
                 column()
                     .flex_1()
                     .min_h_0()
+                    .when(
+                        self.workspace.changed_patch.as_ptr() == std::sync::Arc::as_ptr(&diff),
+                        |el| {
+                            el.child(
+                                tag("patch-restore-notice", PATCH_CHANGED, colors().muted)
+                                    .px_4()
+                                    .py_2()
+                                    .text_size(px(12.)),
+                            )
+                        },
+                    )
                     .when(truncated, |el| {
                         el.child(
                             div()

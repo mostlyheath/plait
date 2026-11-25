@@ -301,7 +301,7 @@ impl Plait {
         let locked = self.draft_locked();
         if harness != HarnessId::Pi {
             let permissions = self.draft_harness_permissions()?;
-            return self.permissions_chip("draft-permissions", permissions, cx);
+            return self.permissions_chip("draft-permissions", permissions, true, cx);
         }
         let mode = self.draft_approval();
         let value = draft_approval_value(mode);

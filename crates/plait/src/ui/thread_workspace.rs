@@ -25,6 +25,8 @@ pub(super) struct ThreadWorkspace {
     pub(super) sheet_body: Bounds<Pixels>,
     pub(super) restore: Option<plait_client::tabs::bookmark::ThreadBookmark>,
     pub(super) restore_pending: [bool; 4],
+    /// A restore notice belongs to the patch whose saved selection no longer fits.
+    pub(super) changed_patch: std::sync::Weak<plait_client::model::Diff>,
     pub(super) cancelled: Arc<std::sync::atomic::AtomicBool>,
     /// Existing per-thread editors; selection keeps their drafts and IME state.
     pub(super) composers: HashMap<String, Entity<super::composer::Composer>>,
@@ -72,6 +74,7 @@ impl ThreadWorkspace {
             sheet_body: Default::default(),
             restore: None,
             restore_pending: [false; 4],
+            changed_patch: Default::default(),
             cancelled: Arc::default(),
             composers: HashMap::new(),
             host_watch: None,

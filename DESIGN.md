@@ -414,7 +414,8 @@ Inside, two rows:
    the picker it opens today; then, at the right, context use when the host
    reports it, and Send. `Full access` is drawn in sand. Lock reasons,
    notices, and the note that a run is using a different approval mode stay
-   as built. When the row does not fit it wraps; the draft keeps its width.
+   as built. Keep the row on one line. Shorten labels when space is tight
+   and keep Send or Stop visible.
 
 Send is the primary button: 28 square, 8 corners. With nothing to send it is
 disabled. While a run is active and the draft is empty it is Stop, in coral.
