@@ -98,6 +98,28 @@ test('a first message waiting for a checkout is named once without starting a co
   } finally { h.runtime.active.delete(h.root); }
 });
 
+test('a name saved while a queued message is admitted survives the start', async t => {
+  const h = await fixture(t);
+  await h.runtime.handle({ op: 'set_thread_naming', enabled: false, model: h.choice });
+  const thread = await h.create('create');
+  h.runtime.active.set(h.root, 'another-writer');
+  await h.runtime.handle({ op: 'submit_checkout', thread_id: thread.id, request_id: 'first', text: 'Fix retries', approval: 'ask' });
+  // Admission reads the queued input after its awaits; save a name there, as a naming reply or rename would.
+  const store = h.runtime.store;
+  const waitingInput = store.waitingInput.bind(store);
+  store.waitingInput = (id, request) => {
+    const saved = store.get(id); saved.title = 'My name'; saved.renamed = true; saved.archived = true; store.save(saved);
+    return waitingInput(id, request);
+  };
+  h.runtime.active.delete(h.root);
+  (h.runtime as unknown as { drainCheckout(root: string): void }).drainCheckout(h.root);
+  await until(() => h.runtime.snapshot(thread.id).messages.length === 2 && !h.runtime.sessions.has(thread.id));
+  const saved = h.runtime.store.get(thread.id);
+  assert.equal(saved.title, 'My name');
+  assert.equal(saved.renamed, true);
+  assert.equal(saved.archived, true);
+});
+
 test('existing conversations are not renamed when naming is enabled later', async t => {
   const h = await fixture(t);
   await h.runtime.handle({ op: 'set_thread_naming', enabled: false, model: h.choice });

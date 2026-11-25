@@ -1177,6 +1177,8 @@ export class Runtime {
           if (this.closing || current?.state !== 'waiting') fail('cancelled','This queued message is no longer ready to start.');
           const latest = this.store.get(next.thread_id);
           if (next.kind === 'checkout' && (queueSettings(latest) !== next.settings || commandPolicy(this.store,root,next.identity) !== next.policy)) fail('queue_settings_changed','Queued settings changed during admission. Send again with the intended settings.');
+          // A rename, generated name or archive saved during admission's awaits must survive the dequeue save.
+          snapshot.title = latest.title; snapshot.renamed = latest.renamed; snapshot.archived = latest.archived;
           return this.store.dequeue(input,snapshot);
         });
         this.changed('#'); return;
