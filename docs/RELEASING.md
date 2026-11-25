@@ -10,15 +10,20 @@ the next preview. Nobody tags by hand.
 1. **Work on a branch.** `main` changes only through a pull request; GitHub
    refuses a direct push.
 2. **Open a pull request.** GitHub runs the tests on it: the macOS check
-   (format, lint, tests, and the real command sandbox) and the Linux check. A
-   request that changes only prose skips the macOS check. The request can merge
-   when both pass. It need not be up to date with `main`. A change that writes
-   a person's files, or a file an older build reads, is also read by someone
-   who did not write it before it merges.
+   (format, lint, tests, and the real command sandbox, in a Rust half and a
+   runtime half that run side by side) and the Linux check. A request that
+   changes only prose skips the macOS check. The request can merge when both
+   pass. It need not be up to date with `main`. A change that writes a
+   person's files, or a file an older build reads, is also read by someone who
+   did not write it before it merges.
 3. **Merge.** The push to `main` runs the macOS check again, so changes that
-   passed apart are tested together. A failure there is fixed with another
-   pull request before the next release. A merge that changes only prose
-   skips it. Nothing is built for release and nothing is published.
+   passed apart are tested together. If the merged commit has the exact tree
+   the request's passing check tested, `main` reuses that result instead,
+   and its run links the request's run. That holds only for a single merged
+   request from this repository; anything else, or any doubt, runs the full
+   check. A failure there is fixed with another pull request before the next
+   release. A merge that changes only prose skips it. Nothing is built for
+   release and nothing is published.
 4. **Release, when ready.** Run the **macOS build** workflow on `main` with
    **Build main and publish the next preview** checked, or:
 
@@ -35,7 +40,8 @@ the next preview. Nobody tags by hand.
    [native acceptance check](VERIFICATION.md#scenes-and-native-checks) drives
    the same package in a job of its own; it is advisory, and publishing does
    not wait for it. Check that the latest run on `main` passed before
-   starting a release: the release run does not repeat those tests.
+   starting a release, whether it ran the tests or reused a pull request's
+   result: the release run does not repeat those tests.
 
 A release run on a `main` that changed only docs, tests or CI since the last
 preview publishes nothing; `scripts/release_plan.py` holds the list of paths

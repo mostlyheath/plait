@@ -25,17 +25,25 @@ concurrency:
 
 jobs:
   # A change is tested on its pull request and again when it reaches main,
-  # since a request need not be up to date with main to merge. Nothing is
-  # released by a merge: a person starts a release by hand, on main. This job
-  # decides which of these this run is, and for a release whether main holds
-  # unreleased code that ships and which preview that makes.
+  # since a request need not be up to date with main to merge, unless the
+  # request's check already passed on the exact tree main now holds. Nothing
+  # is released by a merge: a person starts a release by hand, on main. This
+  # job decides which of these this run is, and for a release whether main
+  # holds unreleased code that ships and which preview that makes.
   plan:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
     outputs:
       test: ${{ steps.decide.outputs.test }}
       release: ${{ steps.decide.outputs.release }}
       tag: ${{ steps.decide.outputs.tag }}
+      reused: ${{ steps.reuse.outputs.reused }}
+      reused_run: ${{ steps.reuse.outputs.reused_run }}
+      tree: ${{ steps.tree.outputs.tree }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -65,12 +73,27 @@ jobs:
               fi
               ;;
           esac | tee -a "$GITHUB_OUTPUT"
+      # A merge whose exact tree passed the check on its pull request is not
+      # tested again. The script prints reused=false on any doubt, and anything
+      # but reused=true runs the full check.
+      - id: reuse
+        if: github.event_name == 'push' && steps.decide.outputs.test == 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BEFORE: ${{ github.event.before }}
+        run: python3 scripts/release_reuse.py "$GITHUB_SHA" "$BEFORE" | tee -a "$GITHUB_OUTPUT"
+      # The tree this run tests; a passing pull request records it for the merge.
+      - id: tree
+        run: echo "tree=$(git rev-parse 'HEAD^{tree}')" | tee -a "$GITHUB_OUTPUT"
 
-  # The tests that gate a merge. They run on the pull request, and again on
-  # main after the merge, where they see every merged change together.
-  check:
+  # The tests that gate a merge, in two halves that run side by side. They run
+  # on the pull request, and again on main after the merge, where they see
+  # every merged change together, unless the plan reuses the request's result.
+  check-rust:
     needs: plan
-    if: needs.plan.outputs.test == 'true'
+    if: needs.plan.outputs.test == 'true' && needs.plan.outputs.reused != 'true'
     runs-on: macos-26
     timeout-minutes: 45
     env:
@@ -85,6 +108,8 @@ jobs:
         uses: ./.github/actions/macos-tools
       - name: Install iOS target
         run: rustup target add aarch64-apple-ios
+      - name: Install pinned cargo-nextest
+        run: bash scripts/install-nextest.sh
       - name: Restore native build cache
         id: cargo-cache
         uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
@@ -93,24 +118,108 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target/debug
-          key: macos26-${{ runner.arch }}-${{ steps.tools.outputs.cache-id }}-check-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
-          restore-keys: macos26-${{ runner.arch }}-${{ steps.tools.outputs.cache-id }}-check-
-      - name: Check workspace and real command sandbox
-        run: bash scripts/check.sh --require-command-sandbox
+            target/aarch64-apple-ios/debug
+          key: macos26-${{ runner.arch }}-${{ steps.tools.outputs.cache-id }}-check-v2-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            macos26-${{ runner.arch }}-${{ steps.tools.outputs.cache-id }}-check-v2-
+            macos26-${{ runner.arch }}-${{ steps.tools.outputs.cache-id }}-check-
+      - name: Check Rust workspace
+        run: bash scripts/check.sh rust --require-command-sandbox
+      - name: Check installer planning
+        run: python3 -m unittest discover -s scripts -p 'test_release_*.py'
+
+  check-runtime:
+    needs: plan
+    if: needs.plan.outputs.test == 'true' && needs.plan.outputs.reused != 'true'
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '15.0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: tools
+        uses: ./.github/actions/macos-tools
+      - name: Restore native build cache
+        id: cargo-cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/debug
+            target/aarch64-apple-ios/debug
+          key: macos26-${{ runner.arch }}-${{ steps.tools.outputs.cache-id }}-check-v2-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            macos26-${{ runner.arch }}-${{ steps.tools.outputs.cache-id }}-check-v2-
+            macos26-${{ runner.arch }}-${{ steps.tools.outputs.cache-id }}-check-
+      - name: Check runtime and real command sandbox
+        run: bash scripts/check.sh runtime --require-command-sandbox
       - name: Check runtime recovery without credentials
         working-directory: experiments/pi-durable
         run: |
           npm ci --ignore-scripts
           npm test
-      - name: Check installer planning
-        run: python3 -m unittest discover -s scripts -p 'test_release_*.py'
+
+  # The required check. It keeps the name branch protection asks for and
+  # passes only when both halves passed, there was nothing to test, or the
+  # plan reused the pull request's passing result for this exact tree. A
+  # skipped, cancelled or failed half fails it.
+  check:
+    needs: [plan, check-rust, check-runtime]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require both halves
+        env:
+          PLAN: ${{ needs.plan.result }}
+          TEST: ${{ needs.plan.outputs.test }}
+          REUSED: ${{ needs.plan.outputs.reused }}
+          REUSED_RUN: ${{ needs.plan.outputs.reused_run }}
+          RUST: ${{ needs.check-rust.result }}
+          RUNTIME: ${{ needs.check-runtime.result }}
+        run: |
+          if [[ $PLAN != success ]]; then
+            echo "::error::The plan did not succeed ($PLAN)."
+            exit 1
+          fi
+          if [[ $TEST != true ]]; then
+            echo 'Nothing in this change needs the tests.'
+            exit 0
+          fi
+          if [[ $REUSED == true ]]; then
+            echo "::notice::This tree passed the check on its pull request: $REUSED_RUN"
+            exit 0
+          fi
+          if [[ $RUST != success || $RUNTIME != success ]]; then
+            echo "::error::Rust check: $RUST. Runtime check: $RUNTIME."
+            exit 1
+          fi
+      - name: Record the tested tree
+        if: github.event_name == 'pull_request' && needs.plan.outputs.test == 'true'
+        env:
+          TREE: ${{ needs.plan.outputs.tree }}
+        run: |
+          test -n "$TREE"
+          printf '%s\n' "$TREE" > tested-tree
+      - name: Upload the tested tree
+        if: github.event_name == 'pull_request' && needs.plan.outputs.test == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tested-tree
+          path: tested-tree
+          if-no-files-found: error
+          retention-days: 30
 
   # A pull request can read a build cache only if main saved it. When the
-  # lockfile or toolchain changes, main builds the test binaries once and
-  # saves them for the pull requests that follow.
+  # lockfile or toolchain changes, main builds everything the check builds
+  # once (test binaries, lints, the no-default-features and iOS checks, and
+  # the host) and saves it for the pull requests that follow.
   test-cache:
     needs: plan
-    # After a merge that is tested, and with a release.
+    # After a merge that is tested or reused, and with a release.
     if: (github.event_name == 'push' && needs.plan.outputs.test == 'true') || needs.plan.outputs.release == 'true'
     runs-on: macos-26
     timeout-minutes: 45
@@ -130,11 +239,18 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target/debug
-          key: macos26-${{ runner.arch }}-${{ steps.tools.outputs.cache-id }}-check-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+            target/aarch64-apple-ios/debug
+          key: macos26-${{ runner.arch }}-${{ steps.tools.outputs.cache-id }}-check-v2-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
           lookup-only: true
-      - name: Build the test binaries
+      - name: Build what the check builds
         if: steps.cargo-cache.outputs.cache-hit != 'true'
-        run: cargo test --locked --workspace --no-run
+        run: |
+          rustup target add aarch64-apple-ios
+          cargo test --locked --workspace --no-run
+          cargo clippy --locked --workspace --all-targets
+          cargo check --locked -p plait-client --no-default-features
+          cargo check --locked -p plait-client --no-default-features --target aarch64-apple-ios
+          cargo build --locked -p plait-host
       - name: Save native build cache
         if: steps.cargo-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
@@ -143,6 +259,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target/debug
+            target/aarch64-apple-ios/debug
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   # The one build of a release: installers, the installer test, and the
@@ -213,7 +330,7 @@ jobs:
   # Packaged on pull requests too, so a broken Linux archive fails before a release.
   linux-host:
     needs: plan
-    if: needs.plan.outputs.release == 'true' || needs.plan.outputs.test == 'true'
+    if: needs.plan.outputs.release == 'true' || (needs.plan.outputs.test == 'true' && needs.plan.outputs.reused != 'true')
     strategy:
       matrix:
         include:

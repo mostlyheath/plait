@@ -29,9 +29,11 @@ UNSHIPPED = PROSE + (
     "scripts/acceptance-macos.sh",
     "scripts/bench-*.sh",
     "scripts/check.sh",
+    "scripts/install-nextest.sh",
     "scripts/probe-*.mjs",
     "scripts/readme-screenshots.sh",
     "scripts/release_plan.py",
+    "scripts/release_reuse.py",
     "scripts/snapshots.sh",
     "scripts/test_*.py",
 )

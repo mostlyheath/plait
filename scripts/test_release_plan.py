@@ -66,6 +66,7 @@ class Ships(unittest.TestCase):
             "docs/VERIFICATION.md", "AGENTS.md", ".github/workflows/macos.yml",
             "runtime/test/checkout-queue.test.ts", "scripts/acceptance/run.py",
             "scripts/test_release_plan.py", "scripts/release_plan.py", "scripts/check.sh",
+            "scripts/release_reuse.py", "scripts/install-nextest.sh", "scripts/test_release_reuse.py",
         ]))
 
     def test_code_and_what_packaging_reads_do(self):
