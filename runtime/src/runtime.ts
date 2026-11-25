@@ -2,6 +2,7 @@ import { harnessLogin } from './harness-sign-in.ts';
 import { installable, installTool, managedPath } from './agent-tools.ts';
 import { threadKind } from './store.ts';
 import { Devices } from './devices.ts';
+import { ThreadNaming } from './thread-naming.ts';
 import { CheckoutWatcher } from './watcher.ts';
 import { queueOperation, queueRequest, queueSettings, CHECKOUT_QUEUE_LIMIT, CHECKOUT_QUEUE_BYTES } from './checkout-queue.ts';
 import { runHeader } from './safety.ts';
@@ -98,6 +99,7 @@ export class Runtime {
   workspace: Workspace;
   folders = new Folders();
   devices: Devices;
+  naming: ThreadNaming;
   private checkoutWatcher: CheckoutWatcher;
   linear: LinearService;
   worktrees: Worktrees;
@@ -148,6 +150,13 @@ export class Runtime {
     this.directory = directory; this.models = models; this.authenticated = authenticated;
     this.runnerRegistry = new RunnerRegistry(directory);
     this.store = new Store(directory);
+    const runtime = this;
+    this.naming = new ThreadNaming(this.store, {
+      get models() { return runtime.models; },
+      get authenticated() { return runtime.authenticated; },
+      snapshot: id => this.snapshot(id),
+      save: snapshot => this.save(snapshot),
+    });
     this.store.waiters.changed = () => this.changed('#');
     this.records = new Records(this.store, directory, id => this.changed(id));
     this.turnReview = new TurnReview(this.store, this.records, directory);
@@ -465,6 +474,7 @@ export class Runtime {
       this.draining = false; this.wakeQueue(); return { draining: false };
     }
     if (op === 'create_worktree_thread' || op === 'create_admitted_thread' || op === 'submit_checkout' || op === 'create_thread' && !expectedCheckout || op === 'submit' || op === 'undo_turn') this.admitWork();
+    if (this.naming.handles(input)) return this.naming.handle(input);
     if (this.providers?.handles(input)) return this.providers.handle(input);
     if (handlesCleanup(input)) return this.checkoutCleanup(input);
     if (this.turnReview.handles(input)) return this.turnReview.handle(input);
@@ -854,6 +864,7 @@ export class Runtime {
   }
   async submit(id: string, requestId: string, text: string, mode: ApprovalMode = 'ask', whenBusy?: QueueMode, images: string[] = []) {
     const snapshot = this.snapshot(id);
+    const firstMessage = !snapshot.title && !snapshot.messages.length && !snapshot.renamed;
     const selected = this.external.resolveHarness(snapshot);
     if (selected.kind === 'unknown') unsupportedHarness();
     if (whenBusy === 'steer' && selected.kind === 'external' && !selected.harness.supportsSteer) {
@@ -876,6 +887,7 @@ export class Runtime {
       if (this.store.queue(id).length >= QUEUE_LIMIT) fail('busy', `This thread already has ${QUEUE_LIMIT} queued messages.`);
       this.admitWork();
       this.notify(id, this.store.enqueue(requestId, text, result, { mode: whenBusy, approval: mode }, snapshot, images));
+      if (firstMessage) this.naming.accepted(id, requestId, text);
       this.changed('#');
       if (runnerSession) {
         if (whenBusy === 'steer') runnerSession.steer(requestId, text, this.store.images.refs(id, images));
@@ -885,6 +897,7 @@ export class Runtime {
     }
     if (this.store.waiters.line(snapshot.checkout).some(waiter => waiter.state === 'waiting' || waiter.kind === 'checkout')) fail('busy', 'This checkout has waiting messages. Choose Wait to join its queue.');
     await this.start(snapshot, requestId, text, mode, () => this.store.admit(id, requestId, text, result, snapshot, undefined, images));
+    if (firstMessage) this.naming.accepted(id, requestId, text);
     this.store.waiters.resumeThread(id);
     return result;
   }
@@ -1112,7 +1125,9 @@ export class Runtime {
       if (refs.length && this.imageInput(current) === 'no') fail('model_unavailable','This model cannot take images.');
       const result = { thread_id: id, request_id: request.request_id, accepted: true };
       this.admitWork();
+      const firstMessage = !current.title && !current.messages.length && !current.renamed;
       this.notify(id,this.store.enqueue(request.request_id,request.text,result,{mode:'follow_up',approval},current,images,true));
+      if (firstMessage) this.naming.accepted(id, request.request_id, request.text);
       this.changed('#'); this.drainCheckout(current.checkout); return result;
     });
     if (request.op === 'resume_checkout_queue') {
@@ -1391,6 +1406,7 @@ export class Runtime {
   }
   async close() {
     this.closing = true;
+    await this.naming.close();
     clearTimeout(this.queueWake);
     await Promise.allSettled(this.queueDrains.values());
     // Detached runners survive host shutdown: disconnect without stopping or interrupting.

@@ -50,6 +50,7 @@ mod settings_keyboard;
 mod settings_linear;
 mod settings_machines;
 mod settings_modal;
+mod settings_naming;
 mod settings_policy;
 mod settings_project;
 mod settings_providers;
@@ -186,6 +187,7 @@ pub struct Plait {
     agent: settings_agent::AgentState,
     harnesses: harnesses::HarnessesState,
     providers: settings_providers::ProviderState,
+    naming: plait_client::host::thread_naming::State,
     linear: settings_linear::LinearState,
     issues: issues_view::IssuesUi,
     machines: settings_machines::MachinesUi,
@@ -350,6 +352,7 @@ impl Plait {
             agent: Default::default(),
             harnesses: Default::default(),
             providers: Default::default(),
+            naming: Default::default(),
             linear: Default::default(),
             issues: Default::default(),
             machines: Default::default(),
@@ -414,6 +417,7 @@ impl Plait {
             this.sync_project_settings(cx);
             this.sync_harnesses(cx);
             this.sync_provider_settings(cx);
+            this.sync_naming_settings(cx);
             this.sync_linear_settings(cx);
             this.sync_issues_view(cx);
             this.sync_issue_links(cx);
@@ -777,6 +781,7 @@ impl Plait {
                 self.prepare_code_font(cx);
                 self.prepare_editor_settings(cx);
                 self.prepare_providers(cx);
+                self.load_naming_settings(cx);
             }
             Some(settings::SettingsPage::Project) => {
                 self.close_provider_form(cx);

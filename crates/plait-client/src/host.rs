@@ -342,6 +342,7 @@ impl Frames {
 }
 
 pub mod history;
+pub mod thread_naming;
 pub mod threads;
 mod watch;
 pub use history::{HistoryField, HistoryItem, HistoryPage, HistoryText, More};

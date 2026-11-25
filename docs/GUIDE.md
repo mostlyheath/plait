@@ -157,6 +157,22 @@ The host owns all provider credentials; the desktop never reads or saves them. O
 
 Credentials are stored on the host in `~/.pi/agent/auth.json` (mode `0600`) and custom servers in `~/.pi/agent/models.json`. You can also authenticate via the bundled Pi CLI (`/login`) and reload providers without restarting. Set the default harness, default model, and default thinking level in **Settings → New threads**; change an open thread's model (`Cmd-Shift-M`) or effort in the message box between runs.
 
+**Thread naming:** In **Settings → New threads → Thread naming**, choose a
+naming model to enable short, task-focused names. This model is separate from
+the coding model and works for Pi, Codex, and Claude Code threads. For a local
+model, add its OpenAI-compatible endpoint in **Providers**, then select it here.
+The address must be reachable from the selected host; `localhost` means that
+host, not the desktop.
+
+Naming is off until you choose a model. When enabled, the host sends up to
+8,000 characters of the first message text in one extra model call. It sends
+no images, files, tools, or later conversation. The coding run does not wait
+for the name. A timeout, unavailable model, or full naming queue leaves the
+prompt-based title in place; no other provider is used. Existing conversations
+and names you set yourself stay unchanged. Turn **Automatic names** off to stop
+new naming calls and cancel pending ones. These settings belong to the host,
+so naming continues when the desktop closes.
+
 ### Agents (Pi, Codex, Claude Code)
 
 - **Pi** (built in): Uses Plait's approval mode and per-project command policy. Pi threads load your user-level `AGENTS.md`, Pi skills, and prompt templates (listed in **Project settings** and offered via `/`). Pi also supports configured stdio and anonymous or header-key HTTP **MCP servers**: toggle servers per project in **Project settings → MCP servers**. Project-defined entries in `.pi/mcp.json` start disabled as **Needs review** and bind to their exact definition (changing the file disables them as **Changed**). MCP browser OAuth and named CLIs are planned.

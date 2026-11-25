@@ -74,6 +74,32 @@ async function server(t: TestContext, handler: Parameters<typeof createServer>[1
   return { url: `http://127.0.0.1:${(listener.address() as AddressInfo).port}/v1`, seen };
 }
 
+test('thread naming uses a configured keyless local endpoint with no tools or conversation context', async t => {
+  const { nameThread } = await import('../src/thread-naming.ts');
+  const f = await host(t);
+  const requests: Record<string, any>[] = [];
+  const local = await server(t, async (request, response) => {
+    assert.equal(request.url, '/v1/chat/completions');
+    let body = ''; for await (const chunk of request) body += chunk;
+    requests.push(JSON.parse(body));
+    response.setHeader('content-type', 'text/event-stream');
+    const chunk = (delta: object, finish_reason: string | null) => ({ id: 'name', object: 'chat.completion.chunk', created: 1, model: 'local-small', choices: [{ index: 0, delta, finish_reason }] });
+    response.write(`data: ${JSON.stringify(chunk({ role: 'assistant', content: 'Improve thread naming' }, null))}\n\n`);
+    response.end(`data: ${JSON.stringify(chunk({}, 'stop'))}\n\ndata: [DONE]\n\n`);
+  });
+  const added = await f.call({ op: 'add_endpoint', id: 'local-naming', name: 'Local naming', base_url: local.url, model_ids: ['local-small'] });
+  assert.equal(added.ok, true, JSON.stringify(added));
+  const result = await nameThread(f.holder.models, { provider: 'local-naming', model_id: 'local-small' }, 'Please improve how threads get their names.', AbortSignal.timeout(5000));
+  assert.equal(result, 'Improve thread naming');
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].model, 'local-small');
+  assert.equal(requests[0].tools, undefined);
+  assert.deepEqual(requests[0].messages.map((message: { role: string }) => message.role), ['system', 'user']);
+  assert.equal(requests[0].messages[1].content, 'Please improve how threads get their names.');
+  assert.equal(requests[0].max_tokens ?? requests[0].max_completion_tokens, 2048);
+  f.noSecrets();
+});
+
 test('Pi providers are listed with their sign-in and key methods', async t => {
   const f = await host(t);
   const list = (await f.call<List>({ op: 'list_providers' })).result.providers;

@@ -301,6 +301,7 @@ impl Plait {
                     .child(self.default_thinking_setting(cx))
                     .child(self.approval_setting(cx)),
             )
+            .child(self.naming_settings(cx))
             .child(self.catalog_settings())
     }
 

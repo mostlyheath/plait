@@ -257,8 +257,10 @@ A version 3 snapshot has every version 2 key, with these changes and additions:
   last message with text, as before. Redacted reasoning is never sent.
 - **`title`.** `""` until the first accepted message, then that message with
   whitespace runs collapsed to one space, control characters removed, and at
-  most 72 characters (Unicode scalar values). A renamed thread keeps its name.
-  Threads saved before version 3 get a title from their first message once.
+  most 72 characters (Unicode scalar values). With optional [thread naming](#thread-naming)
+  enabled, a background model call may replace this fallback with a short task
+  summary. A renamed thread keeps its name. Threads saved before version 3 get
+  a title from their first message once; enabling naming does not rename them.
 - **`created_at`, `updated_at`.** `updated_at` advances when the thread's status
   changes, which includes every accepted run. Streaming text, rename, and archive
   do not advance it. Threads saved before version 3 report the time the store
@@ -370,6 +372,45 @@ during a run. A title is normalized like a derived one, with a limit of 200
 characters; a title with no visible text is `invalid_request`. `"archived":false`
 restores a thread. Archiving changes only listing: the thread, its history, and
 its files are kept, and it can still run.
+
+### Thread naming
+
+These separate operations leave all existing status and thread reply shapes
+unchanged. An older host rejects them with `invalid_request`; the desktop shows
+an update notice instead of saving a device-only preference.
+
+```json
+{"op":"get_thread_naming"}
+{"op":"set_thread_naming","enabled":true,"model":{"provider":"local","model_id":"small-model"}}
+```
+
+Both return `{"enabled":true,"model":{"provider":"local","model_id":"small-model"}}`.
+The initial value is `{"enabled":false,"model":null}`. Enabling requires an
+exact, available model from the host's Pi provider catalog. A model can be
+kept while disabled even if it is no longer available. Credentials and local
+endpoints use the existing Providers setup, never Codex or Claude Code's
+private credentials. The host stores the setting as `thread_naming_v1` in its
+settings table; older hosts ignore it. No schema migration is required.
+
+After the first new submission is accepted, including a checkout-queued
+submission, the host can send its first 8,000 UTF-16 units (without splitting
+a surrogate pair) to the selected naming model. This is a separate text-only
+request with no tools, files, images, later messages, or conversation session.
+It works for every coding harness. Naming requests run one at a time, with
+at most 32 waiting, a 45-second deadline per call, a 2,048-token output budget,
+and no retry or provider fallback. An empty text prompt makes no call.
+Naming usage is not added to the coding conversation's usage field.
+
+A successful title is one plain line of at most 72 Unicode scalar values.
+An invalid response, error, deadline, full queue, or host shutdown leaves the
+fallback title unchanged. Work is not replayed after a restart, on a duplicate
+submission, or on a later message. Enabling naming does not scan old threads.
+Settings changes abort current naming work and drop waiting names. A late
+result must still match the initial title and settings; it never replaces a
+manual rename or changes the run's state or activity time. A saved name uses
+the existing snapshot and thread-summary notifications.
+
+### Thread-list watch
 
 `watch_threads` is a subscription shaped like `watch`. Its first frame is
 `{"ok":true,"result":{"threads":[SUMMARY]}}` with the 200 most recently updated

@@ -61,6 +61,14 @@ in wide and narrow layouts. Export them with:
 bash scripts/snapshots.sh /tmp/plait-snapshots
 ```
 
+The `naming-*` scenes cover disabled and enabled naming, an unavailable model,
+and an older host, at wide and narrow sizes and in the light theme. Runtime
+tests cover exact model selection, a keyless loopback endpoint, bounded inputs
+and queues, deadlines, late replies after settings changes or manual renames,
+and submission replay. Client tests reject replies and picker choices from a
+previous host connection. These tests do not establish title quality from a
+live local model or native settings interaction; those checks remain open.
+
 The `bubbles` and `turns-line` scenes draw the same request and reply. Additional bubble scenes cover wrapping, narrow windows, attachments, streaming, folded turns, Find and selection. Headless tests check that both styles expose the authors and select the same text across their messages.
 
 The `work-*` conversation scenes cover finished and running work, failure, a direct answer, Find inside a fold, and the appearance preference. The `closing-line-*` scenes cover outcomes, file lists, Undo refusal, a narrow column, and the older-host fallback. Native checks include opening work from the bottom of the conversation, following a recorded file through Review, and moving through the controls with the keyboard.

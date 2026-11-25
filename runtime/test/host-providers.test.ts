@@ -25,6 +25,19 @@ const open = (port: number) => new Promise<boolean>(done => {
   socket.once('error', () => done(false));
 });
 
+test('naming settings cross the host socket without changing the status shape', async t => {
+  const f = await setup(t);
+  assert.deepEqual((await ask(f.store, { op: 'get_thread_naming' })).result, { enabled: false, model: null });
+  const value = { enabled: true, model: { provider: 'faux', model_id: 'faux-1' } };
+  const saved = await ask(f.store, { op: 'set_thread_naming', ...value });
+  assert.equal(saved.ok, true, JSON.stringify(saved));
+  assert.deepEqual(saved.result, value);
+  assert.deepEqual((await ask(f.store, { op: 'get_thread_naming' })).result, value);
+  assert.equal((await ask(f.store, { op: 'get_thread_naming', extra: true })).error?.code, 'invalid_request');
+  const status = await ask(f.store, { op: 'status', protocol_version: 3 });
+  assert.deepEqual(Object.keys(status.result as object).sort(), ['default_model', 'models', 'protocol_version']);
+});
+
 test('a reload during an active run changes the catalog and leaves the run alone', { timeout: 60000 }, async t => {
   const f = await setup(t);
   const thread = await f.create();
