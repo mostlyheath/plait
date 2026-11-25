@@ -6,6 +6,7 @@ mod appearance;
 mod branches;
 mod build_output;
 mod changes;
+mod checkout_chips;
 mod checkout_queue;
 mod cleanup;
 mod commands;
@@ -1009,13 +1010,14 @@ impl Plait {
             if self.tabs.list_open {
                 self.measure_tabs(window);
             }
-            header = header
-                .child(self.header_title())
-                .when(
-                    self.tabs.model.active().is_some() && self.panels.viewport >= 760.,
-                    |el| el.child(self.environment(cx)),
-                )
-                .child(div().flex_1().min_w(px(16.)));
+            let title = self.header_title();
+            header = if self.tabs.model.active().is_some() && self.panels.viewport >= 760. {
+                header.child(self.checkout_context(Some(title), cx).flex_1().min_w_0())
+            } else {
+                header
+                    .child(checkout_chips::title_label(title))
+                    .child(div().flex_1().min_w(px(16.)))
+            };
         }
         header
             .children(self.cleanup_control(cx))
@@ -1111,8 +1113,8 @@ impl Plait {
         )
     }
 
-    fn header_title(&self) -> impl IntoElement {
-        let title = if self.worktrees_visible() {
+    fn header_title(&self) -> String {
+        if self.worktrees_visible() {
             "Worktrees".to_owned()
         } else if self.issues_visible() {
             "Linear issues".to_owned()
@@ -1122,19 +1124,8 @@ impl Plait {
             self.current_draft_title().to_owned()
         } else {
             self.active_project().name.clone()
-        };
-        div()
-            .id("header-title")
-            .min_w_0()
-            .truncate()
-            .text_size(px(14.))
-            .font_weight(FontWeight::SEMIBOLD)
-            .text_color(rgb(colors().strong))
-            .child(a11y_text("title", title.replace(['\r', '\n'], " ")))
-            .tooltip(move |_, cx| {
-                cx.new(|_| thread_controls::TextTooltip(title.clone()))
-                    .into()
-            })
+        }
+        .replace(['\r', '\n'], " ")
     }
 
     fn header_state(&self) -> Option<(&'static str, u32, AnyElement)> {
@@ -1192,90 +1183,6 @@ impl Plait {
         .on_activate(cx, |this, window, cx| this.toggle_panel(window, cx))
     }
 
-    /// The same checkout chips sit beside the title or below the message box.
-    fn environment(&self, cx: &mut Context<Self>) -> Div {
-        let checkout = self.visible_project_checkout();
-        let path = checkout.display().to_string();
-        let worktree = self.lists().worktree(checkout);
-        let branch = self
-            .state
-            .repository
-            .snapshot()
-            .ready()
-            .filter(|snapshot| snapshot.root == *checkout && !snapshot.plain)
-            .map(|snapshot| snapshot.branch.as_str())
-            .or_else(|| worktree.map(|tree| tree.branch.as_str()))
-            .filter(|branch| !branch.is_empty() && checkout == self.host.creation.checkout);
-        let label = |id, value: String| {
-            div()
-                .min_w_0()
-                .truncate()
-                .child(a11y_text(id, value.replace(['\r', '\n'], " ")))
-        };
-        let chip = |glyph: &'static str| {
-            icon(glyph)
-                .size(px(12.))
-                .flex_shrink_0()
-                .text_color(rgb(colors().muted))
-        };
-        row()
-            .min_w_0()
-            .gap(px(8.))
-            .text_size(px(11.))
-            .text_color(rgb(colors().muted))
-            .child(
-                row()
-                    .id("checkout-project")
-                    .min_w_0()
-                    .max_w(px(160.))
-                    .gap_1()
-                    .h(px(22.))
-                    .px(px(6.))
-                    .rounded(px(6.))
-                    .bg(rgba(colors().hover))
-                    .child(chip("folder"))
-                    .child(label("project-name", self.active_project().name.clone()))
-                    .tooltip(move |_, cx| {
-                        cx.new(|_| thread_controls::TextTooltip(path.clone()))
-                            .into()
-                    }),
-            )
-            .when_some(branch, |el, branch| {
-                let blocker = self.branch_blocker();
-                let tip = format!("{} · {}", branch, blocker.unwrap_or("Switch Branch"));
-                el.child(
-                    button("checkout-branch", "")
-                        .map(|el| self.covered_tab_control(el))
-                        .min_w_0()
-                        .flex_shrink(1.)
-                        .max_w(px(190.))
-                        .gap_1()
-                        .h(px(22.))
-                        .px(px(6.))
-                        .rounded(px(6.))
-                        .bg(rgba(colors().hover))
-                        .text_size(px(11.))
-                        .font_weight(FontWeight::NORMAL)
-                        .aria_label(format!("Switch Branch: {branch}"))
-                        .aria_keyshortcuts(self.shortcut_aria("git.switch_branch"))
-                        .child(if worktree.is_some() {
-                            chip("branch").into_any_element()
-                        } else {
-                            div()
-                                .w(px(12.))
-                                .flex_shrink_0()
-                                .text_size(px(12.))
-                                .child("⑂")
-                                .into_any_element()
-                        })
-                        .child(label("branch-name", branch.to_owned()))
-                        .tooltip(move |_, cx| {
-                            cx.new(|_| thread_controls::TextTooltip(tip.clone())).into()
-                        })
-                        .on_activate(cx, |this, window, cx| this.open_branches(false, window, cx)),
-                )
-            })
-    }
     /// Idle checkout context and the model and policy reported by older hosts.
     pub(super) fn connection_details(
         &self,

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" role="img" aria-labelledby="art-title art-description">
+  <title id="art-title">Plait worktree icon</title>
+  <desc id="art-description">A folder with a branching path inside.</desc>
+  <g id="worktree-icon" color="#D5D7DE" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 7V5.5A1.5 1.5 0 0 1 4.5 4H9l3 3h7.5A1.5 1.5 0 0 1 21 8.5V19H3Z"/>
+    <path d="M7.5 9v7m0-3h5l3-3"/>
+  </g>
+</svg>

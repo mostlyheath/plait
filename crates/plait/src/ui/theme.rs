@@ -832,6 +832,7 @@ impl AssetSource for Assets {
             "folder" => include_str!("../../../../assets/branding/icons/plait-projects.svg"),
             "machine" => include_str!("../../../../assets/branding/icons/plait-machines.svg"),
             "thread" => include_str!("../../../../assets/branding/icons/plait-threads.svg"),
+            "worktree" => include_str!("../../../../assets/branding/icons/plait-worktree.svg"),
             "branch" => include_str!("../../../../assets/branding/icons/plait-git.svg"),
             _ => return Ok(None),
         };
@@ -971,6 +972,7 @@ mod tests {
             "machine",
             "thread",
             "branch",
+            "worktree",
             "down",
             "right",
             "plus",
