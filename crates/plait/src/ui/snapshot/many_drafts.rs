@@ -612,6 +612,7 @@ fn restore_with_open_empty_draft(worktrees_front: bool) {
         },
         settings: DraftSettings::default(),
         host: None,
+        machine: None,
     };
     // A crash after the journal save, before the tab file, leaves an empty entry
     // that no tab record names. It is the checkout's legacy owner.
@@ -1295,6 +1296,7 @@ fn waiting_first_send_journal_stays_readable_by_the_released_build() {
                 draft,
                 settings: Default::default(),
                 host: None,
+                machine: None,
             },
         );
         let bytes = serde_json::to_vec(&session).unwrap();

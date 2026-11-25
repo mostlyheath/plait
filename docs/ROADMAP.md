@@ -37,7 +37,7 @@ for evidence and limits.
 - Show several independent machines in one sidebar. Hosts report a
   fingerprint per project and the client can group copies across machines;
   no view uses it yet. Drafts, saved thread work, folded projects and worktree
-  removal replies now name their machine
+  removal results now belong to a verified host identity
   ([#132](https://github.com/mostlyheath/plait/issues/132)); a parked
   checkout's write outcome is still matched by path. See
   [#133](https://github.com/mostlyheath/plait/issues/133).

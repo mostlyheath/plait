@@ -4,7 +4,7 @@ use super::{Plait, composer::Composer};
 use gpui::*;
 use plait_client::{
     host::{MessageRole, ThreadSummary},
-    session::{self, Draft, Journal, Session, Thread},
+    session::{self, Draft, Journal, Owner, Session, Thread},
 };
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
@@ -21,6 +21,11 @@ pub(super) struct SessionState {
     pub note: Option<String>,
     pub(super) restore_thread: Option<String>,
     save: Option<Task<()>>,
+    /// The owner whose saved sends and composer text were last brought back.
+    adopted: Option<(
+        plait_client::tabs::HostKey,
+        plait_client::machines::MachineId,
+    )>,
 }
 
 impl SessionState {
@@ -28,6 +33,12 @@ impl SessionState {
         !self.closing && (!self.required || (!self.loading && self.journal.is_some()))
     }
 }
+
+/// A saved draft's verified host and provisional machine.
+type DraftOwner = (
+    Option<plait_client::tabs::HostKey>,
+    Option<plait_client::machines::MachineId>,
+);
 
 impl Plait {
     pub(super) fn acknowledge_saved_draft(
@@ -37,8 +48,16 @@ impl Plait {
         revision: Option<u64>,
         cx: &mut Context<Self>,
     ) {
+        // Another machine's saved work for the same thread ID is left alone.
+        let owned = self
+            .session
+            .data
+            .as_ref()
+            .and_then(|data| data.threads.get(id))
+            .zip(self.known_owner())
+            .is_some_and(|(thread, owner)| thread.owned_by(owner));
         if let Some(data) = self.session.data.as_mut() {
-            if let Some(thread) = data.threads.get_mut(id) {
+            if owned && let Some(thread) = data.threads.get_mut(id) {
                 let draft = &mut thread.draft;
                 let revision = revision.or_else(|| {
                     draft
@@ -131,14 +150,6 @@ impl Plait {
                                 if let Err(error) = journal.flush() { eprintln!("Plait workspace: {error}"); }
                             })
                         }).detach();
-                        for (id, thread) in &data.threads {
-                            for pending in thread.pending.iter().chain(&thread.pending_submissions) {
-                                this.host.submissions.restore(id.clone(), pending.clone());
-                            }
-                            for pending in &thread.queued_submissions {
-                                this.host.submissions.restore_accepted(id.clone(), pending.clone());
-                            }
-                        }
                         let selected = data.selected.clone();
                         this.session.journal = Some(journal);
                         this.session.data = Some(data);
@@ -153,6 +164,7 @@ impl Plait {
                             this.change_checkout(path, window, cx);
                             this.session.restore_thread = selected;
                         }
+                        this.adopt_saved_work(cx);
                         this.capture_session(cx);
                         this.verify_tab_identity(window, cx);
                         this.try_restore_tabs(window, cx);
@@ -302,12 +314,73 @@ impl Plait {
         self.session
             .data
             .as_ref()?
-            .saved_thread(summary, self.known_machine())
+            .saved_thread(summary, self.known_owner())
     }
 
-    /// The connected machine, once this connection's identity has been read.
-    pub(super) fn known_machine(&self) -> Option<&plait_client::tabs::HostKey> {
-        (self.tabs.identity.verified && self.tab_identity_current()).then_some(&self.tabs.host)
+    /// The verified owner of the work on screen: the host identity read on this
+    /// connection, for the machine selected now. `None` while connecting, during
+    /// a machine switch, or before the identity is read.
+    pub(super) fn known_owner(&self) -> Option<Owner<'_>> {
+        (self.tabs.identity.verified
+            && self.tab_identity_current()
+            && self.tabs.identity.machine.as_ref() == Some(&self.machines.active))
+        .then_some(Owner {
+            host: &self.tabs.host,
+            machine: &self.machines.active,
+        })
+    }
+
+    /// Bring back the verified owner's saved sends, and composer text for
+    /// threads opened before the owner was known. Runs after each identity
+    /// check; only that owner's work is read.
+    pub(super) fn adopt_saved_work(&mut self, cx: &mut Context<Self>) {
+        let Some(owner) = self.known_owner() else {
+            return;
+        };
+        let key = (owner.host.clone(), owner.machine.clone());
+        if self.session.adopted.as_ref() == Some(&key) {
+            return;
+        }
+        let Some(data) = &self.session.data else {
+            return;
+        };
+        let owned: Vec<(String, Thread)> = data
+            .threads
+            .iter()
+            .filter(|(_, thread)| thread.owned_by(owner))
+            .map(|(id, thread)| (id.clone(), thread.clone()))
+            .collect();
+        self.session.adopted = Some(key);
+        for (id, thread) in owned {
+            for pending in thread.pending.iter().chain(&thread.pending_submissions) {
+                self.host.submissions.restore(id.clone(), pending.clone());
+            }
+            for pending in &thread.queued_submissions {
+                self.host
+                    .submissions
+                    .restore_accepted(id.clone(), pending.clone());
+            }
+        }
+        let empty: Vec<_> = self
+            .workspace
+            .composers
+            .iter()
+            .filter(|(_, composer)| {
+                let (text, _, submitted) = composer.read(cx).saved_draft();
+                text.is_empty() && submitted.is_none()
+            })
+            .map(|(id, composer)| (id.clone(), composer.clone()))
+            .collect();
+        for (id, composer) in empty {
+            self.restore_composer(&id, &composer, cx);
+        }
+    }
+
+    /// Leaving a machine: its saved sends stay in the journal under its owner,
+    /// and none of them is shown, reconciled or saved for the next machine.
+    pub(super) fn forget_saved_work(&mut self) {
+        self.host.submissions = Default::default();
+        self.session.adopted = None;
     }
 
     pub(super) fn session_accepts_thread(&self, id: &str) -> bool {
@@ -320,7 +393,7 @@ impl Plait {
                 self.session
                     .data
                     .as_ref()
-                    .is_none_or(|data| data.accepts(summary, self.known_machine()))
+                    .is_none_or(|data| data.accepts(summary, self.known_owner()))
             })
     }
 
@@ -347,37 +420,36 @@ impl Plait {
         }
     }
 
-    /// The machine a saved draft is for. Its open tab names it; otherwise the
-    /// saved record keeps the machine it had, so a draft set aside during a
-    /// machine switch is never stamped with the machine switched to. Before
-    /// this connection's identity is read the machine is not known yet.
-    fn draft_machine(&self, id: &str) -> Option<plait_client::tabs::HostKey> {
+    /// The owner fields to save draft `id` with, or `None` when the saved draft
+    /// is another machine's and must stay as it is. Before the owner is
+    /// verified, a saved draft keeps its fields and a new one is provisionally
+    /// the selected machine's, so a remote draft is never taken for a local one.
+    fn draft_owner(&self, id: &str) -> Option<DraftOwner> {
         let saved = self
             .session
             .data
             .as_ref()
-            .and_then(|data| data.draft_tabs.get(id))
-            .and_then(|tab| tab.host.clone());
-        if !self.tabs.identity.verified {
-            return saved;
+            .and_then(|data| data.draft_tabs.get(id));
+        match (saved, self.known_owner()) {
+            (Some(saved), Some(owner)) if !saved.owned_by(owner) => None,
+            (_, Some(owner)) => Some((Some(owner.host.clone()), Some(owner.machine.clone()))),
+            (Some(saved), None) => Some((saved.host.clone(), saved.machine.clone())),
+            (None, None) => Some((None, Some(self.machines.active.clone()))),
         }
-        let open = self
-            .tabs
-            .model
-            .tabs()
-            .iter()
-            .find_map(|tab| match tab.session().target() {
-                plait_client::tabs::TabTarget::Draft { id: open, checkout } if open == id => {
-                    Some(checkout.host.clone())
-                }
-                _ => None,
-            });
-        open.or(saved).or_else(|| self.known_machine().cloned())
     }
 
-    /// Whether a saved draft is recovered on the machine this window shows.
+    /// Whether a saved draft is the verified owner's. Nothing is, before the
+    /// owner is verified.
     pub(super) fn draft_is_here(&self, tab: &plait_client::session::DraftTab) -> bool {
-        tab.belongs_to(&self.tabs.host, self.host_is_local())
+        self.known_owner().is_some_and(|owner| tab.owned_by(owner))
+    }
+
+    /// Why the open draft cannot be sent here: its saved owner is another machine.
+    pub(super) fn draft_elsewhere(&self) -> bool {
+        self.draft
+            .id
+            .as_deref()
+            .is_some_and(|id| self.draft_owner(id).is_none())
     }
 
     pub(super) fn capture_session(&mut self, cx: &mut Context<Self>) {
@@ -387,8 +459,10 @@ impl Plait {
             return;
         };
         let mut next = data.clone();
+        let owner = self.draft.id.as_deref().and_then(|id| self.draft_owner(id));
         if let Some(composer) = &self.draft.composer
             && let Some(id) = &self.draft.id
+            && let Some((host, machine)) = owner.clone()
         {
             let composer = composer.read(cx);
             let (text, revision, submitted) = composer.saved_draft();
@@ -399,7 +473,8 @@ impl Plait {
                     creation: self.draft.saved_creation(),
                     checkout: self.host.creation.checkout.clone(),
                     settings: self.draft.settings(),
-                    host: self.draft_machine(id),
+                    host,
+                    machine,
                     draft: Draft {
                         text: text.into(),
                         revision,
@@ -413,6 +488,7 @@ impl Plait {
         // An open empty tab still survives restart before its composer is mounted.
         if self.draft.composer.is_none()
             && let Some(id) = &self.draft.id
+            && let Some((host, machine)) = owner
             && self.tabs.model.tabs().iter().any(|tab| matches!(tab.session().target(), plait_client::tabs::TabTarget::Draft { id: open, .. } if open == id))
         {
             next.set_draft_tab(id.clone(), plait_client::session::DraftTab {
@@ -421,7 +497,8 @@ impl Plait {
                 checkout: self.host.creation.checkout.clone(),
                 settings: self.draft.settings(),
                 draft: self.draft.saved.clone(),
-                host: self.draft_machine(id),
+                host,
+                machine,
             });
         }
         if self.host_is_local()
@@ -436,7 +513,13 @@ impl Plait {
             .selected
             .clone()
             .or_else(|| self.session.restore_thread.clone());
+        // Thread work is read and written only for a verified owner.
+        let owner = self.known_owner();
+        let mut conflict = None;
         for summary in self.host.connection.threads() {
+            let Some(owner) = owner else {
+                break;
+            };
             let Some(composer) = self.workspace.composers.get(&summary.id) else {
                 continue;
             };
@@ -486,14 +569,21 @@ impl Plait {
                         .collect(),
                     queued_submissions: self.host.submissions.accepted(&summary.id).to_vec(),
                     approval: self.thread_approval(&summary.id),
-                    host: self.known_machine().cloned(),
+                    host: None,
+                    machine: None,
                 },
+                owner,
             ) {
-                self.session.note = Some(error);
+                conflict = Some(error);
             }
         }
-        // Submission ownership survives parking and a background first-send acknowledgement.
-        for (id, thread) in &mut next.threads {
+        // Submission ownership survives parking and a background first-send
+        // acknowledgement. Only the verified owner's sends are in memory.
+        for (id, thread) in next
+            .threads
+            .iter_mut()
+            .filter(|(_, thread)| owner.is_some_and(|owner| thread.owned_by(owner)))
+        {
             thread.pending = self.host.submissions.pending(id).cloned();
             thread.pending_submissions = self
                 .host
@@ -504,6 +594,9 @@ impl Plait {
                 .cloned()
                 .collect();
             thread.queued_submissions = self.host.submissions.accepted(id).to_vec();
+        }
+        if let Some(error) = conflict {
+            self.session.note = Some(error);
         }
         if *data == next {
             return;

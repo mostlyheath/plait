@@ -702,6 +702,14 @@ struct Harness {
     _host: Option<test_host::TestHost>,
 }
 
+/// The verified host identity scenes connect as.
+pub(super) fn fixture_host() -> plait_client::tabs::HostKey {
+    plait_client::tabs::HostKey {
+        id: "fixture-host".into(),
+        store: "/store".into(),
+    }
+}
+
 impl Harness {
     fn new(repository: &Path, output: Option<&Path>, width: f32, height: f32) -> Self {
         Self::with_host(
@@ -928,6 +936,7 @@ impl Harness {
                 },
             ];
             plait.tabs = Default::default();
+            plait.verify_identity_for_test(fixture_host());
             assert!(plait.open_thread_tab(THREAD.into(), checkout.clone(), cx));
             plait.refresh_tab_rows();
             // Mirror select_host_thread without opening a socket.

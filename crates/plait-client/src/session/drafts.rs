@@ -1,6 +1,8 @@
 //! Additive schema-1 draft identities. Legacy fields remain complete snapshots.
+use super::Owner;
 use super::{Draft, Session, identifier};
 use crate::host::{ApprovalMode, ModelChoice, ThinkingLevel, harness::HarnessId};
+use crate::machines::MachineId;
 use crate::tabs::HostKey;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -93,22 +95,36 @@ pub struct DraftTab {
     pub draft: Draft,
     #[serde(default)]
     pub settings: DraftSettings,
-    /// The machine whose host this draft is for. Omitted by older builds, so
-    /// absent means a draft saved before drafts named their machine.
+    /// The host this draft is for, once its identity was verified. Omitted by
+    /// older builds and while unknown.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<HostKey>,
+    /// The machine chosen when this draft was written: provisional ownership
+    /// until `host` is known, so a remote draft is never taken for a local one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine: Option<MachineId>,
 }
 
 impl DraftTab {
-    /// Whether this draft is recovered on `host`. The same path on two machines
-    /// is two projects, so a draft only returns where it was written. A draft
-    /// from before drafts named their machine returns only on this computer's
-    /// host: that is where every draft lived until remote machines, and showing
-    /// it nowhere would lose it.
-    pub fn belongs_to(&self, host: &HostKey, local: bool) -> bool {
-        match &self.host {
-            Some(saved) => saved == host,
-            None => local,
+    /// The same path on two machines is two projects, so a draft returns only
+    /// to its own machine. A draft from before drafts named their machine
+    /// returns only on this computer: every draft lived there until remote
+    /// machines, and showing it nowhere would lose it.
+    pub fn owned_by(&self, owner: Owner<'_>) -> bool {
+        owner.owns(
+            self.host.as_ref(),
+            self.machine.as_ref(),
+            *owner.machine == MachineId::default(),
+        )
+    }
+
+    /// Whether this draft could be this machine's before its host is verified:
+    /// used only to choose which saved folders the host is asked to identify.
+    pub fn maybe_on(&self, machine: &MachineId) -> bool {
+        match (&self.host, &self.machine) {
+            (_, Some(saved)) => saved == machine,
+            (Some(_), None) => false,
+            (None, None) => *machine == MachineId::default(),
         }
     }
 }
@@ -251,6 +267,7 @@ impl Session {
                     draft,
                     settings: DraftSettings::default(),
                     host: None,
+                    machine: None,
                 },
             );
         }
@@ -308,6 +325,7 @@ impl Session {
                     draft,
                     settings: DraftSettings::default(),
                     host: None,
+                    machine: None,
                 },
             );
         }
@@ -419,6 +437,7 @@ mod tests {
             },
             settings: DraftSettings::default(),
             host: None,
+            machine: None,
         }
     }
     #[test]
@@ -745,31 +764,48 @@ mod tests {
         assert!(bytes.len() <= super::super::FILE_LIMIT);
         assert_eq!(bytes, serde_json::to_vec(&large).unwrap());
     }
-    /// A draft returns only on the machine it was written for. One saved by an
-    /// older build, without a machine, returns only on this computer (#132).
+    /// A draft returns only to its own machine: a verified host, else the
+    /// machine it was provisionally saved for. One saved by an older build,
+    /// with neither, returns only on this computer (#132).
     #[test]
-    fn a_draft_returns_only_on_its_own_machine() {
-        let machine = |id: &str| HostKey {
+    fn a_draft_returns_only_to_its_own_machine() {
+        let host = |id: &str| HostKey {
             id: id.into(),
             store: "/store".into(),
         };
-        let (zaphod, arthur) = (machine("zaphod"), machine("arthur"));
+        let (zaphod, arthur) = (host("zaphod"), host("arthur"));
+        let (local, remote) = (MachineId::default(), MachineId::new("workstation").unwrap());
+        let owner = |host, machine| Owner { host, machine };
         let mut named = tab("for zaphod");
         named.host = Some(zaphod.clone());
-        assert!(named.belongs_to(&zaphod, false));
-        assert!(!named.belongs_to(&arthur, false));
-        assert!(!named.belongs_to(&arthur, true));
+        assert!(named.owned_by(owner(&zaphod, &remote)));
+        assert!(!named.owned_by(owner(&arthur, &local)));
         let legacy = tab("older build");
-        assert!(legacy.belongs_to(&zaphod, true));
-        assert!(!legacy.belongs_to(&arthur, false));
-        // The field round-trips, and is left out when unknown so older builds,
-        // which ignore unknown fields, read the same file.
-        let written = serde_json::to_value(&named).unwrap();
-        assert_eq!(written["host"]["id"], "zaphod");
-        assert_eq!(serde_json::from_value::<DraftTab>(written).unwrap(), named);
+        assert!(legacy.owned_by(owner(&zaphod, &local)));
+        assert!(!legacy.owned_by(owner(&arthur, &remote)));
+        // Typed on the remote machine before its host was verified: never local.
+        let mut provisional = tab("remote, unverified");
+        provisional.machine = Some(remote.clone());
+        assert!(!provisional.owned_by(owner(&zaphod, &local)));
+        assert!(provisional.owned_by(owner(&arthur, &remote)));
+        // Which saved folders a machine's host is asked to identify.
+        assert!(provisional.maybe_on(&remote) && !provisional.maybe_on(&local));
+        assert!(legacy.maybe_on(&local) && !legacy.maybe_on(&remote));
+        assert!(!named.maybe_on(&local));
+        // The fields round-trip, and are left out when unknown so older
+        // builds, which ignore unknown fields, read the same file.
+        provisional.host = Some(arthur);
+        let written = serde_json::to_value(&provisional).unwrap();
+        assert_eq!(written["host"]["id"], "arthur");
+        assert_eq!(written["machine"], "workstation");
+        assert_eq!(
+            serde_json::from_value::<DraftTab>(written).unwrap(),
+            provisional
+        );
         let old = serde_json::to_value(&legacy).unwrap();
-        assert!(old.get("host").is_none());
-        assert_eq!(serde_json::from_value::<DraftTab>(old).unwrap().host, None);
+        assert!(old.get("host").is_none() && old.get("machine").is_none());
+        let loaded = serde_json::from_value::<DraftTab>(old).unwrap();
+        assert_eq!((loaded.host, loaded.machine), (None, None));
     }
     #[test]
     fn released_build_keeps_an_unanswered_first_send_and_its_request() {

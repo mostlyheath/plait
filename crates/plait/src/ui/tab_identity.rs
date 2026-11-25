@@ -11,6 +11,9 @@ use std::{collections::HashMap, path::PathBuf};
 pub(super) struct Identity {
     pub verified: bool,
     verified_epoch: Option<u64>,
+    /// The machine selected when `verified` was set. A switch changes the
+    /// selected machine before its link and identity are made.
+    pub machine: Option<plait_client::machines::MachineId>,
     pub pending: Option<(HostKey, Vec<CheckoutKey>)>,
     pub checkouts: HashMap<PathBuf, DirectoryIdentity>,
     /// Checkouts a remote host vouched for. This Mac cannot stat them, so they
@@ -263,9 +266,35 @@ impl Plait {
         cx.notify();
     }
 
+    /// Scenes have no host to ask: treat `host` as this connection's verified
+    /// identity for the selected machine, as a completed check would.
+    #[cfg(test)]
+    pub(super) fn verify_identity_for_test(&mut self, host: HostKey) {
+        self.tabs.host = host;
+        self.tabs.identity.verified = true;
+        self.tabs.identity.verified_epoch = Some(self.host.connection.epoch);
+        self.tabs.identity.machine = Some(self.machines.active.clone());
+    }
+
     pub(super) fn tab_identity_current(&self) -> bool {
         !self.tabs.identity.verified
             || self.tabs.identity.verified_epoch == Some(self.host.connection.epoch)
+    }
+
+    /// Saved draft folders the selected machine's host is asked to identify.
+    /// Another machine's folders are not this host's to see or vouch for.
+    pub(super) fn saved_draft_roots(&self) -> Vec<PathBuf> {
+        let Some(data) = &self.session.data else {
+            return Vec::new();
+        };
+        // The path-only fields kept for older builds are left out: they mirror
+        // drafts of any machine, and loading turns each older build's entry
+        // into a draft tab, which names its machine.
+        data.draft_tabs
+            .values()
+            .filter(|tab| tab.maybe_on(&self.machines.active))
+            .map(|tab| tab.checkout.clone())
+            .collect()
     }
 
     pub(super) fn verify_tab_identity(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -297,11 +326,7 @@ impl Plait {
                 .iter()
                 .map(|t| t.session().target().checkout().root.clone()),
         );
-        if let Some(data) = &self.session.data {
-            roots.extend(data.draft_tabs.values().map(|tab| tab.checkout.clone()));
-            roots.extend(data.new_drafts.keys().cloned());
-            roots.extend(data.new_draft.as_ref().map(|(root, _)| root.clone()));
-        }
+        roots.extend(self.saved_draft_roots());
         roots.sort();
         roots.dedup();
         let client = self.host_client();
@@ -423,6 +448,7 @@ impl Plait {
             let had_tabs = !self.tabs.model.tabs().is_empty();
             self.tabs.model.disconnected(&previous);
             self.capture_session(cx);
+            self.forget_saved_work();
             self.park_workspace(cx);
             // A machine switch already put the previous machine's tabs away.
             if had_tabs {
@@ -432,6 +458,7 @@ impl Plait {
         self.tabs.host = host;
         self.tabs.identity.verified = true;
         self.tabs.identity.verified_epoch = Some(self.host.connection.epoch);
+        self.tabs.identity.machine = Some(self.machines.active.clone());
         self.tabs.identity.remote = checkouts
             .iter()
             .filter(|c| c.directory.is_none())
@@ -441,6 +468,8 @@ impl Plait {
             .into_iter()
             .filter_map(|c| c.directory.map(|d| (c.root, d)))
             .collect();
+        // The owner is verified now: bring back its saved sends and text.
+        self.adopt_saved_work(cx);
         if self.host.connection.connected {
             let result = self
                 .tabs

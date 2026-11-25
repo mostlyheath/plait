@@ -592,7 +592,32 @@ fn removal_here_marks_the_folder_missing_for_the_sidebar() {
             worktree: None,
             error: None,
         };
-        p.settle_worktree_removal(&attempt, &elsewhere, Ok(removed), cx);
+        p.settle_worktree_removal(&attempt, &elsewhere, Ok(removed.clone()), cx);
+        assert!(p.worktrees.removal.pending.is_none());
+        assert_eq!(p.navigation.available.get(&row.path), Some(&true));
+        // Its result shows only in the asking machine's Worktrees tab, not in
+        // another machine's tab for the same path.
+        let root = p.host.creation.checkout.clone();
+        p.worktrees.removal_project = Some((p.machines.active.clone(), root));
+        assert!(p.removal_here());
+        let local = std::mem::replace(&mut p.machines.active, elsewhere);
+        assert!(!p.removal_here());
+        p.machines.active = local.clone();
+        // After a reconnect, before the host is verified again, a reply on the
+        // same machine changes no list either.
+        assert!(
+            p.worktrees
+                .removal
+                .ask(&row, p.tabs.host.clone(), "reconnected".into())
+        );
+        let attempt = p
+            .worktrees
+            .removal
+            .answer(Some(plait_client::worktree_removal::Choice::RemoveIfPushed))
+            .unwrap();
+        p.host.connection.epoch += 1;
+        assert!(p.known_owner().is_none());
+        p.settle_worktree_removal(&attempt, &local, Ok(removed), cx);
         assert!(p.worktrees.removal.pending.is_none());
         assert_eq!(p.navigation.available.get(&row.path), Some(&true));
     });

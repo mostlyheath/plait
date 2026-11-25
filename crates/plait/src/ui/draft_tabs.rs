@@ -564,7 +564,9 @@ impl Plait {
         let Some(sending) = draft.sending.take() else {
             return;
         };
-        let known = self.known_machine().cloned();
+        let owner = self
+            .known_owner()
+            .map(|owner| (owner.host.clone(), owner.machine.clone()));
         if let Some(data) = &mut self.session.data {
             let mut saved = data
                 .draft_tab(&draft_id, &source_root)
@@ -589,7 +591,8 @@ impl Plait {
                     pending_submissions: Vec::new(),
                     queued_submissions: Vec::new(),
                     approval: sending.choice,
-                    host: known,
+                    host: owner.as_ref().map(|(host, _)| host.clone()),
+                    machine: owner.map(|(_, machine)| machine),
                 },
             );
             data.clear_draft_tab(&draft_id);

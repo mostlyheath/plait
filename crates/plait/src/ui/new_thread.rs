@@ -374,6 +374,15 @@ impl Plait {
         if !self.tab_identity_current() {
             return Some("Checking the reconnected host…".into());
         }
+        // A draft is sent only to its own, verified machine.
+        if self.known_owner().is_none() {
+            return Some("Checking which machine this is…".into());
+        }
+        if self.draft_elsewhere() {
+            return Some(
+                "This draft was written for another machine. Switch back to it to send.".into(),
+            );
+        }
         if self.draft_pending() {
             // Sending again retries the same creation.
             return None;

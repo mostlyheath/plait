@@ -52,7 +52,16 @@ The client negotiates host protocol versions **1 through 7** per request and deg
 
 ## Machines
 
-**Settings → Machines** selects which machine's host this window works with: **This Mac**, or another Mac or Linux machine over **SSH** or **Tailscale**. Each window works with one machine at a time; showing projects from several machines in one sidebar is planned ([Host-first Plait](HOST-FIRST.md)). The open folder belongs to the machine it was chosen on: after a switch, the window opens one of the new machine's projects and never lists or saves the other machine's folder as its own. The same path on two machines is two projects: an unsent draft returns only on the machine it was written for, folding a project folds it only on that machine, and a worktree removal that finishes after a switch updates only the machine it ran on. A draft saved by an earlier Plait version, before drafts named their machine, returns on this Mac.
+**Settings → Machines** selects which machine's host this window works with: **This Mac**, or another Mac or Linux machine over **SSH** or **Tailscale**. Each window works with one machine at a time; showing projects from several machines in one sidebar is planned ([Host-first Plait](HOST-FIRST.md)). The open folder belongs to the machine it was chosen on: after a switch, the window opens one of the new machine's projects and never lists or saves the other machine's folder as its own.
+
+The same path on two machines is two projects. Saved work belongs to the machine whose host identity Plait verified when it was saved. Until the selected machine's host is verified, after launch, a reconnect or a switch, Plait shows, restores, saves over and sends none of it:
+
+- **Unsent drafts** return, reopen and send only on their own machine. A draft typed before its machine's host was verified belongs to the machine selected then, never to this Mac by default.
+- **Thread drafts and unsent or waiting messages** are kept per machine. A thread on another machine with the same ID and folder neither shows nor changes them.
+- **Folded projects** fold only on the machine where you folded them.
+- **A worktree removal** that finishes after a switch or reconnect updates the lists, and shows its result, only on the machine it ran on.
+
+Limits: a draft or thread saved by an earlier Plait version names no machine. Such a draft returns only on this Mac. Such a thread is kept by the first verified host that lists it with the same ID and folder; thread IDs are random, so another host matching both is unlikely. When you reopen a folder, the message from its last Git write is still matched by folder alone.
 
 To add a remote machine, choose **Add machine…**:
 

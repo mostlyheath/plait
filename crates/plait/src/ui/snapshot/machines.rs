@@ -613,70 +613,205 @@ fn switching_machines_puts_the_previous_tabs_away() {
     std::fs::remove_dir_all(scratch).unwrap();
 }
 
-/// The same path on two machines is two projects. A draft and a folded project
-/// stay with the machine they belong to; a draft from an older build returns
-/// only on this computer (#132).
+fn host_key(id: &str) -> plait_client::tabs::HostKey {
+    plait_client::tabs::HostKey {
+        id: id.into(),
+        store: "/store".into(),
+    }
+}
+
+fn saved_draft(
+    root: &Path,
+    host: Option<&str>,
+    machine: Option<&plait_client::machines::MachineId>,
+) -> plait_client::session::DraftTab {
+    plait_client::session::DraftTab {
+        legacy: false,
+        creation: None,
+        checkout: root.to_owned(),
+        draft: plait_client::session::Draft {
+            text: "unsent".into(),
+            ..Default::default()
+        },
+        settings: Default::default(),
+        host: host.map(host_key),
+        machine: machine.cloned(),
+    }
+}
+
+fn recovered(p: &Plait) -> Vec<String> {
+    let mut ids: Vec<String> = p
+        .recoverable_tab_drafts()
+        .into_iter()
+        .filter_map(|target| match target {
+            plait_client::tabs::TabTarget::Draft { id, .. } => Some(id),
+            _ => None,
+        })
+        .collect();
+    ids.sort();
+    ids
+}
+
+/// The same path on two machines is two projects. A draft returns only to its
+/// verified machine, never during a switch, and a provisional remote draft is
+/// never taken for a local one (#132).
 #[core::prelude::v1::test]
-fn same_path_state_stays_with_its_machine() {
-    if !isolated("machines::same_path_state_stays_with_its_machine") {
+fn drafts_return_only_to_their_verified_machine() {
+    if !isolated("machines::drafts_return_only_to_their_verified_machine") {
         return;
     }
-    use plait_client::session::{DraftTab, Session};
-    let scratch = std::env::temp_dir().join(format!("plait-same-path-{}", std::process::id()));
+    let scratch = std::env::temp_dir().join(format!("plait-same-drafts-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    let other = scratch.join("elsewhere");
+    let mut h = Harness::new(&repo, None, 900., 600.);
+    h.connect(&repo, false);
+    h.update(|p, window, cx| {
+        let local = p.machines.active.clone();
+        let remote = plait_client::machines::MachineId::new("workstation").unwrap();
+        let mut data = plait_client::session::Session::empty("/host".into());
+        data.set_draft_tab(
+            "here".into(),
+            saved_draft(&repo, Some("fixture-host"), Some(&local)),
+        );
+        data.set_draft_tab("zaphod".into(), saved_draft(&other, Some("zaphod"), None));
+        data.set_draft_tab("older".into(), saved_draft(&repo, None, None));
+        // Typed on the remote machine before its identity was read.
+        data.set_draft_tab("remote".into(), saved_draft(&repo, None, Some(&remote)));
+        p.session.data = Some(data);
+        // Verified on this computer: its own drafts and the older build's.
+        assert_eq!(recovered(p), ["here", "older"]);
+        // Only folders that could be this machine's are sent to its host.
+        assert!(!p.saved_draft_roots().contains(&other));
+
+        // Switching to the remote machine, before its identity arrives: nothing
+        // returns, nothing is sent, and a capture keeps every saved owner.
+        p.machines.active = remote.clone();
+        assert!(p.known_owner().is_none());
+        assert!(recovered(p).is_empty());
+        p.draft.id = Some("older".into());
+        p.draft.composer = Some(cx.new(|cx| Composer::new(window, cx)));
+        assert!(p.draft_blocked().is_some());
+        p.capture_session(cx);
+        let older = &p.session.data.as_ref().unwrap().draft_tabs["older"];
+        assert_eq!((older.host.as_ref(), older.machine.as_ref()), (None, None));
+        assert_eq!(p.saved_draft_roots(), std::slice::from_ref(&repo));
+
+        // Verified as the remote machine: only its provisional draft returns.
+        p.draft = Default::default();
+        p.verify_identity_for_test(host_key("workstation-host"));
+        assert_eq!(recovered(p), ["remote"]);
+
+        // Back on this computer, before verification: still nothing.
+        p.machines.active = local.clone();
+        assert!(recovered(p).is_empty());
+        p.verify_identity_for_test(host_key("fixture-host"));
+
+        // Another machine's open draft is neither saved over nor sent here.
+        p.draft.id = Some("zaphod".into());
+        p.draft.composer = Some(cx.new(|cx| Composer::new(window, cx)));
+        assert!(p.draft_elsewhere());
+        assert!(p.draft_blocked().is_some());
+        p.capture_session(cx);
+        let zaphod = &p.session.data.as_ref().unwrap().draft_tabs["zaphod"];
+        assert_eq!(zaphod.host, Some(host_key("zaphod")));
+        assert_eq!(zaphod.draft.text, "unsent");
+        p.draft = Default::default();
+        p.session.data = None;
+    });
+    drop(h);
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
+/// Saved thread work is read, shown, reconciled and saved only for its
+/// verified owner: never for a thread with the same ID on another machine, and
+/// never while the owner is unverified (#132).
+#[core::prelude::v1::test]
+fn thread_work_is_kept_for_its_verified_owner() {
+    if !isolated("machines::thread_work_is_kept_for_its_verified_owner") {
+        return;
+    }
+    use plait_client::host_state::PendingSubmit;
+    let scratch = std::env::temp_dir().join(format!("plait-same-thread-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    let mut h = Harness::new(&repo, None, 900., 600.);
+    h.connect(&repo, false);
+    h.update(|p, _, cx| {
+        let wait = |id: &str| PendingSubmit {
+            checkout_wait: true,
+            images: Vec::new(),
+            request_id: id.into(),
+            text: "Wait for the checkout".into(),
+            approval: None,
+            when_busy: None,
+            draft_revision: None,
+        };
+        let record = |host: &str, request: &str| plait_client::session::Thread {
+            checkout: repo.clone(),
+            model: choice(),
+            title: "Saved".into(),
+            draft: plait_client::session::Draft {
+                text: format!("{host}'s text"),
+                ..Default::default()
+            },
+            pending: None,
+            pending_submissions: Vec::new(),
+            queued_submissions: vec![wait(request)],
+            approval: None,
+            host: Some(host_key(host)),
+            machine: None,
+        };
+        let mut data = plait_client::session::Session::empty("/host".into());
+        // The same thread ID and path, saved by another machine's host.
+        data.threads
+            .insert(THREAD.into(), record("zaphod", "zaphod-wait"));
+        data.threads
+            .insert("thr_0c44a9d1".into(), record("fixture-host", "own-wait"));
+        p.session.data = Some(data);
+        p.forget_saved_work();
+        p.adopt_saved_work(cx);
+        // This owner's waiting message returns; the other machine's does not.
+        assert_eq!(p.host.submissions.accepted("thr_0c44a9d1").len(), 1);
+        assert!(p.host.submissions.accepted(THREAD).is_empty());
+        let summary = p.host.connection.threads()[0].clone();
+        assert_eq!(summary.id, THREAD);
+        assert!(p.saved_thread(&summary).is_none());
+        assert!(!p.session_accepts_thread(THREAD));
+        // A capture and an acknowledgement here leave the other machine's
+        // record, its text and its waiting message, unchanged.
+        let before = p.session.data.as_ref().unwrap().threads[THREAD].clone();
+        p.capture_session(cx);
+        p.acknowledge_saved_draft(THREAD, "zaphod's text", None, cx);
+        assert_eq!(p.session.data.as_ref().unwrap().threads[THREAD], before);
+
+        // During a switch, even this owner's work is neither read nor written.
+        let own = p.host.connection.threads()[1].clone();
+        assert!(p.saved_thread(&own).is_some());
+        p.machines.active = plait_client::machines::MachineId::new("workstation").unwrap();
+        assert!(p.saved_thread(&own).is_none());
+        let before = p.session.data.clone();
+        p.capture_session(cx);
+        assert_eq!(p.session.data, before);
+        p.session.data = None;
+    });
+    drop(h);
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
+/// Folding a project on one machine leaves the same path open on another.
+#[core::prelude::v1::test]
+fn folded_projects_stay_with_their_machine() {
+    if !isolated("machines::folded_projects_stay_with_their_machine") {
+        return;
+    }
+    let scratch = std::env::temp_dir().join(format!("plait-same-fold-{}", std::process::id()));
     let repo = fixture_repository(&scratch);
     let mut h = Harness::new(&repo, None, 900., 600.);
     h.connect(&repo, false);
     h.update(|p, _, _| {
-        let machine = |id: &str| plait_client::tabs::HostKey {
-            id: id.into(),
-            store: "/store".into(),
-        };
-        let (zaphod, arthur) = (machine("zaphod"), machine("arthur"));
-        let draft = |host: Option<plait_client::tabs::HostKey>| DraftTab {
-            legacy: false,
-            creation: None,
-            checkout: repo.clone(),
-            draft: plait_client::session::Draft {
-                text: "unsent".into(),
-                ..Default::default()
-            },
-            settings: Default::default(),
-            host,
-        };
-        let mut data = Session::empty("/host".into());
-        data.set_draft_tab("zaphod-draft".into(), draft(Some(zaphod.clone())));
-        data.set_draft_tab("arthur-draft".into(), draft(Some(arthur.clone())));
-        data.set_draft_tab("older-draft".into(), draft(None));
-        p.session.data = Some(data);
-        let recovered = |p: &Plait| {
-            let mut ids: Vec<String> = p
-                .recoverable_tab_drafts()
-                .into_iter()
-                .filter_map(|target| match target {
-                    plait_client::tabs::TabTarget::Draft { id, checkout } => {
-                        assert_eq!(checkout.root, repo);
-                        Some(id)
-                    }
-                    _ => None,
-                })
-                .collect();
-            ids.sort();
-            ids
-        };
-        p.tabs.host = zaphod;
-        assert_eq!(recovered(p), ["older-draft", "zaphod-draft"]);
-        p.tabs.host = arthur;
-        p.host_local = false;
-        assert_eq!(recovered(p), ["arthur-draft"]);
-        p.host_local = true;
-        p.session.data = None;
-
-        // Folding a project on this computer leaves the same path open elsewhere.
         let local = p.machines.active.clone();
-        let remote = plait_client::machines::MachineId::new("workstation").unwrap();
         p.set_project_collapsed(repo.clone(), true);
         assert!(p.project_collapsed(&repo));
-        p.machines.active = remote;
+        p.machines.active = plait_client::machines::MachineId::new("workstation").unwrap();
         assert!(!p.project_collapsed(&repo));
         p.machines.active = local;
         assert!(p.project_collapsed(&repo));

@@ -10,13 +10,22 @@ pub(super) fn show_tabs(plait: &mut Plait) {
 }
 
 pub(super) fn install(harness: &mut Harness, count: usize) {
-    install_projects(harness, count, false);
+    install_projects(harness, count, false, false);
 }
 
-fn install_projects(harness: &mut Harness, count: usize, projects: bool) {
+/// As `install`, with the fixture host verified before any tab opens, for
+/// scenes that capture saved work: it is saved only for a verified owner.
+fn install_verified(harness: &mut Harness, count: usize) {
+    install_projects(harness, count, false, true);
+}
+
+fn install_projects(harness: &mut Harness, count: usize, projects: bool, verified: bool) {
     harness.update(move |plait, _, _| {
         show_tabs(plait);
         plait.tabs = Default::default();
+        if verified {
+            plait.verify_identity_for_test(super::fixture_host());
+        }
         let template = plait
             .host
             .connection
@@ -110,7 +119,7 @@ pub(super) fn walk(
         ("twenty", 20, false),
         ("overflow-open", 20, true),
     ] {
-        install_projects(&mut h, count, true);
+        install_projects(&mut h, count, true, false);
         h.update(move |p, _, _| {
             p.tabs.list_open = name == "overflow-open";
             if name == "twenty" {
@@ -266,7 +275,7 @@ pub(super) fn cold_workspaces() {
     let repository = fixture_repository(&scratch);
     let mut h = Harness::new(&repository, None, 900., 600.);
     h.connect(&repository, false);
-    install(&mut h, 3);
+    install_verified(&mut h, 3);
     h.update(|p, _, cx| {
         p.host.connection.connected = false;
         p.workspace.composers[THREAD].update(cx, |c, cx| {
@@ -566,7 +575,7 @@ pub(super) fn journal_limit() {
         plait_client::session::Journal::open(&directory, "/tab-test-host".into()).unwrap();
     let mut h = Harness::new(&repository, None, 900., 600.);
     h.connect(&repository, false);
-    install(&mut h, 20);
+    install_verified(&mut h, 20);
     h.update(|p, _, cx| {
         p.host.connection.connected = false;
         p.session.journal = Some(journal.clone());

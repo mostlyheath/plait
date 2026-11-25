@@ -277,7 +277,12 @@ impl Plait {
         self.host_local = local;
         // A new link to the same machine keeps what is on screen; another
         // machine starts empty, so nothing of the previous one shows as its.
-        if std::mem::replace(&mut self.machines.active, machine) != self.machines.active {
+        if self.machines.active != machine {
+            // Save this machine's work under its own owner before the selection
+            // changes; then nothing of it is shown or saved for the next one.
+            self.capture_session(cx);
+            self.forget_saved_work();
+            self.machines.active = machine;
             self.host.connection.threads_mut().clear();
             self.navigation.available.clear();
             self.host_workspace = self.host_workspace.for_another_machine();
