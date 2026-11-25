@@ -169,91 +169,176 @@ test('migration leaves completed runs without a reported outcome', async () => {
   } finally { await runtime.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
-/** The issue #131 history: run A, then an older build starts a queued follow-up with no before record. */
-async function rolledBackFollowUp(t: { after(fn: () => unknown): void }, legacy: boolean) {
+// Request writes as every build before `requests.consumed` made them (preview.40 through efefb79).
+const older = {
+  dequeue: (store: Runtime['store'], id: string) => store.db.prepare(`UPDATE requests SET state=NULL,queue=NULL,anchor=0
+    WHERE scope='thread' AND id=? AND state IN ('queued','checkout_queued')`).run(id),
+  place: (store: Runtime['store'], id: string, entry: number) => store.db.prepare(`UPDATE requests SET entry=?,state=NULL,queue=NULL
+    WHERE scope='thread' AND id=?`).run(entry, id),
+};
+/** Returns the store to how it was before this change; the next open migrates it again. */
+const unmigrate = (store: Runtime['store']) => store.db.exec(`DROP TRIGGER requests_consumed_insert;
+  DROP TRIGGER requests_consumed_update; ALTER TABLE requests DROP COLUMN consumed`);
+
+async function consumedFixture(t: { after(fn: () => unknown): void }) {
   const directory = await realpath(await mkdtemp(join(tmpdir(), 'plait-consumed-')));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  const open = () => new Runtime(directory, createModels(), new Set());
-  const first = open();
-  const { store } = first;
   const snapshot: Snapshot = { id: 'thread', checkout: directory, model: { provider: 'faux', model_id: 'model' },
     status: 'running', messages: [], tools: [], live_text: '', pending_approval: null, error: null, truncated: false };
-  store.admit('thread', 'original', 'first', { accepted: true }, snapshot, await rootIdentity(directory));
-  store.createRun('run', 'thread', 'original', 'pi');
-  store.db.prepare(`INSERT INTO records(id,thread,run_request,kind,checkout,state,created_at)
-    VALUES ('original','thread','original','before',?,'failed',0)`).run(directory);
-  store.place('thread', 'original', 1);
-  store.enqueue('next', 'next', { accepted: true }, { mode: 'follow_up', approval: 'ask' }, snapshot);
-  // The older build starts the follow-up as its own run. It writes no runs row and no before
-  // record here, and does not know `consumed`.
-  store.dequeue(store.waitingInput('thread', 'next'), snapshot);
-  store.place('thread', 'next', 2);
-  store.db.prepare("UPDATE requests SET consumed=NULL WHERE id='next'").run();
-  if (legacy) {
-    // The same rows written before the column existed: the migration runs again on the next open.
-    store.db.exec("ALTER TABLE requests DROP COLUMN consumed; DELETE FROM settings WHERE key='requests_consumed_after'");
-  }
-  await first.close();
-  const current = open();
-  t.after(() => current.close());
-  await current.recover();
-  assert.equal(current.store.get('thread').status, 'interrupted');
-  return current.store.db.prepare("SELECT outcome,state FROM runs WHERE run_id='run'").get()!;
+  const open = () => new Runtime(directory, createModels(), new Set());
+  const identity = await rootIdentity(directory);
+  /** Run A: a direct admission with a runs row, optionally with its before record, placed at `entry`. */
+  const startA = (host: Runtime, entry: number, before = true, root = true) => {
+    host.store.admit('thread', 'original', 'first', { accepted: true }, snapshot, root ? identity : undefined);
+    host.store.createRun('run', 'thread', 'original', 'pi');
+    if (before) host.store.db.prepare(`INSERT INTO records(id,thread,run_request,kind,checkout,state,created_at)
+      VALUES ('original','thread','original','before',?,'failed',0)`).run(directory);
+    host.store.place('thread', 'original', entry);
+  };
+  /** Shows a queued input in the transcript, as the run that takes it does. */
+  const show = (host: Runtime, id: string) => {
+    snapshot.messages.push(inputMessage(host.store.waitingInput('thread', id)));
+    host.store.save(snapshot);
+  };
+  /** Queues an input; a steering input is shown at once, as the active run takes it. */
+  const queue = (host: Runtime, id: string, mode: 'steer' | 'follow_up') => {
+    host.store.enqueue(id, id, { accepted: true }, { mode, approval: 'ask' }, snapshot);
+    if (mode === 'steer') show(host, id);
+  };
+  /** An older build starts a queued follow-up as its own run: no runs row, no before record. */
+  const olderStart = (host: Runtime, id: string, entry: number) => {
+    show(host, id);
+    older.dequeue(host.store, id);
+    older.place(host.store, id, entry);
+  };
+  /** Restart on this build and return run A's row. */
+  const recover = async () => {
+    const current = open();
+    t.after(() => current.close());
+    await current.recover();
+    assert.equal(current.store.get('thread').status, 'interrupted');
+    return current.store.db.prepare("SELECT outcome,state FROM runs WHERE run_id='run'").get()!;
+  };
+  return { snapshot, open, identity, startA, queue, olderStart, recover };
 }
 
-test('a follow-up an older build started after the column existed is not taken for steering', async t => {
-  const row = await rolledBackFollowUp(t, false);
-  assert.equal(row.outcome, null);
-  assert.equal(row.state, 'dead');
+test('a follow-up an older build starts as its own run ends the earlier turn', async t => {
+  const f = await consumedFixture(t);
+  const host = f.open();
+  f.startA(host, 1);
+  f.queue(host, 'next', 'follow_up');
+  f.olderStart(host, 'next', 2); // After a rollback.
+  await host.close();
+  const row = await f.recover();
+  assert.deepEqual({ ...row }, { outcome: null, state: 'dead' });
 });
 
-test('rows written before the column existed keep the earlier inference', async t => {
+test('a message an older build steers into the active run keeps that run its outcome', async t => {
+  const f = await consumedFixture(t);
+  const host = f.open();
+  f.startA(host, 1);
+  f.queue(host, 'next', 'steer');
+  older.place(host.store, 'next', 2);
+  await host.close();
+  assert.equal((await f.recover()).outcome, 'interrupted');
+});
+
+test('a follow-up queued before the migration and started by an older build after it ends the turn', async t => {
+  const f = await consumedFixture(t);
+  let host = f.open();
+  host.store.admit('thread', 'earlier', 'earlier', { accepted: true }, f.snapshot, f.identity);
+  host.store.place('thread', 'earlier', 1);
+  f.queue(host, 'next', 'follow_up');
+  unmigrate(host.store); // `next` was queued by a build without the column.
+  await host.close();
+  host = f.open();
+  f.startA(host, 2, true, false);
+  f.olderStart(host, 'next', 3); // Rolled back again.
+  await host.close();
+  assert.equal((await f.recover()).outcome, null);
+});
+
+test('a steering message cancelled after its run took it is still steering', async t => {
+  const f = await consumedFixture(t);
+  const host = f.open();
+  f.startA(host, 1);
+  f.queue(host, 'next', 'steer');
+  assert.equal(host.store.cancel('thread', 'next'), 1);
+  host.store.place('thread', 'next', 2); // The run's placement arrives after the cancellation.
+  assert.equal(host.store.db.prepare("SELECT consumed FROM requests WHERE id='next'").get()?.consumed, 'steered');
+  await host.close();
+  assert.equal((await f.recover()).outcome, 'interrupted');
+});
+
+test('marked steering in a plain folder belongs to the nearest marked start', async t => {
+  const f = await consumedFixture(t);
+  const host = f.open();
+  f.startA(host, 1, false); // No before records: a folder project.
+  f.queue(host, 'next', 'steer');
+  host.store.place('thread', 'next', 2);
+  await host.close();
+  assert.equal((await f.recover()).outcome, 'interrupted');
+});
+
+test('inputs consumed before the column existed keep the earlier inference', async t => {
+  const f = await consumedFixture(t);
+  const host = f.open();
+  f.startA(host, 1);
+  f.queue(host, 'next', 'follow_up');
+  f.olderStart(host, 'next', 2);
+  unmigrate(host.store);
+  await host.close();
   // Without before records, a placed follow-up waiter was inferred to be steering, as before this change.
-  const row = await rolledBackFollowUp(t, true);
-  assert.equal(row.outcome, 'interrupted');
+  assert.equal((await f.recover()).outcome, 'interrupted');
 });
 
 test('consumption is recorded as inputs start runs or steer them', async t => {
-  const directory = await realpath(await mkdtemp(join(tmpdir(), 'plait-consumed-')));
-  t.after(() => rm(directory, { recursive: true, force: true }));
-  const runtime = new Runtime(directory, createModels(), new Set());
-  t.after(() => runtime.close());
-  const { store } = runtime;
-  const snapshot: Snapshot = { id: 'thread', checkout: directory, model: { provider: 'faux', model_id: 'model' },
-    status: 'running', messages: [], tools: [], live_text: '', pending_approval: null, error: null, truncated: false };
-  store.admit('thread', 'direct', 'first', { accepted: true }, snapshot, await rootIdentity(directory));
+  const f = await consumedFixture(t);
+  const host = f.open();
+  t.after(() => host.close());
+  const { store } = host;
+  store.admit('thread', 'direct', 'first', { accepted: true }, f.snapshot, f.identity);
   store.place('thread', 'direct', 1);
-  store.enqueue('steer', 'steer', { accepted: true }, { mode: 'steer', approval: 'ask' }, snapshot);
+  f.queue(host, 'steer', 'steer');
   store.place('thread', 'steer', 2);
-  store.enqueue('later', 'later', { accepted: true }, { mode: 'follow_up', approval: 'ask' }, snapshot);
-  store.dequeue(store.waitingInput('thread', 'later'), snapshot);
+  f.queue(host, 'later', 'follow_up');
+  store.dequeue(store.waitingInput('thread', 'later'), f.snapshot);
   store.place('thread', 'later', 3);
-  store.enqueue('waiting', 'waiting', { accepted: true }, { mode: 'follow_up', approval: 'ask' }, snapshot);
+  f.queue(host, 'dropped', 'follow_up');
+  store.cancel('thread', 'dropped');
+  f.queue(host, 'waiting', 'follow_up');
   const consumed = Object.fromEntries(store.db.prepare("SELECT id,consumed FROM requests WHERE scope='thread'").all()
     .map(row => [String(row.id), row.consumed]));
-  assert.deepEqual(consumed, { direct: 'started', steer: 'steered', later: 'started', waiting: null });
+  assert.deepEqual(consumed, { direct: 'started', steer: 'steered', later: 'started', dropped: null, waiting: null });
 });
 
-test('migration marks existing requests as unknown and older writers still work', async () => {
+test('migration leaves existing requests unknown and marks what older builds write later', async () => {
   const directory = await realpath(await mkdtemp(join(tmpdir(), 'plait-consumed-')));
   try {
     const old = new DatabaseSync(join(directory, 'host.sqlite'));
-    // requests DDL and inserts as a build before this column wrote them.
+    // The requests table and a row as a build before this column wrote them.
     old.exec(`CREATE TABLE requests(scope TEXT NOT NULL, id TEXT NOT NULL, hash TEXT NOT NULL, result TEXT NOT NULL, input TEXT, entry INTEGER, anchor INTEGER,
       state TEXT, queue TEXT, PRIMARY KEY(scope,id));
-      INSERT INTO requests (scope,id,hash,result,input,anchor) VALUES ('thread','a','h','{}','"a"',0),('thread','b','h','{}','"b"',0)`);
+      INSERT INTO requests (scope,id,hash,result,input,anchor) VALUES ('thread','a','h','{}','"a"',0)`);
     old.close();
-    let runtime = new Runtime(directory, createModels(), new Set());
-    const mark = () => runtime.store.db.prepare("SELECT value FROM settings WHERE key='requests_consumed_after'").get()?.value;
-    assert.equal(mark(), '2');
-    assert.deepEqual(runtime.store.db.prepare('SELECT consumed FROM requests ORDER BY rowid').all().map(row => row.consumed), [null, null]);
-    // An older build's explicit-column writes ignore the new column.
-    runtime.store.db.prepare(`INSERT INTO requests (scope,id,hash,result,input,anchor,state,queue) VALUES ('thread','c','h','{}','"c"',0,'queued','{}')`).run();
-    runtime.store.db.prepare("UPDATE requests SET state=NULL,queue=NULL,anchor=0 WHERE scope='thread' AND id='c'").run();
-    await runtime.close();
-    runtime = new Runtime(directory, createModels(), new Set());
-    assert.equal(mark(), '2', 'reopening keeps the mark');
-    assert.equal(runtime.store.db.prepare("SELECT consumed FROM requests WHERE id='c'").get()?.consumed, null);
-    await runtime.close();
+    for (let open = 0; open < 2; open++) {
+      const runtime = new Runtime(directory, createModels(), new Set());
+      const { store } = runtime;
+      const consumed = (id: string) => store.db.prepare('SELECT consumed FROM requests WHERE id=?').get(id)?.consumed;
+      assert.equal(store.db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type='trigger' AND name LIKE 'requests_consumed_%'").get()?.n, 2);
+      if (open === 0) {
+        assert.equal(consumed('a'), null, 'consumed before the column existed');
+        // An older build's own statements, after the migration.
+        store.db.prepare(`INSERT INTO requests (scope,id,hash,result,input,anchor) VALUES ('thread','b','h','{}','"b"',0)`).run();
+        store.db.prepare(`INSERT INTO requests (scope,id,hash,result,input,anchor,state,queue) VALUES
+          ('thread','queued','h','{}','"q"',0,'queued','{}'),('thread','steer','h','{}','"s"',0,'queued','{}')`).run();
+        assert.equal(consumed('queued'), null, 'still queued');
+        older.dequeue(store, 'queued');
+        older.place(store, 'steer', 4);
+        store.db.prepare(`INSERT INTO requests (scope,id,hash,result) VALUES ('other','dedup','h','{}')`).run();
+      }
+      assert.deepEqual([consumed('b'), consumed('queued'), consumed('steer'), consumed('dedup')], ['started', 'started', 'steered', null]);
+      await runtime.close();
+    }
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

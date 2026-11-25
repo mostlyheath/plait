@@ -48,8 +48,6 @@ export class Store {
   linear: LinearCache;
   waiters: CheckoutQueue;
   private txDepth = 0;
-  /** Request rows above this rowid were written after `requests.consumed` existed. */
-  private readonly consumedAfter: number;
   constructor(directory: string) {
     this.db = new DatabaseSync(join(directory, 'host.sqlite'));
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
@@ -75,7 +73,7 @@ export class Store {
     for (const [table, column, type] of columns) {
       if (!this.db.prepare(`PRAGMA table_info(${table})`).all().some(row => row.name === column)) this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
     }
-    this.consumedAfter = this.migrateConsumed();
+    this.migrateConsumed();
     this.db.exec(`CREATE TABLE IF NOT EXISTS review_checkouts(id TEXT PRIMARY KEY, canonical_root TEXT NOT NULL, root_dev TEXT NOT NULL, root_ino TEXT NOT NULL, catalog_revision INTEGER NOT NULL DEFAULT 0, UNIQUE(canonical_root,root_dev,root_ino));`);
     for (const operation of ['INSERT', 'UPDATE', 'DELETE']) {
       const row = operation === 'DELETE' ? 'OLD' : 'NEW';
@@ -100,21 +98,24 @@ export class Store {
   }
 
   /**
-   * `requests.consumed` says how a placed input was used: 'started' its own run, or 'steered' into one.
-   * Older builds neither read nor write it, so the migration records the last rowid that existed
-   * before it. A placed input above that mark with no value was placed by an older build after a rollback.
+   * `requests.consumed` says how an input was used: 'started' its own run, or 'steered' into one.
+   * Older builds do not know the column, so triggers stored in the schema mark rows for every
+   * writer, including an older build after a rollback. Every build inserts a direct admission
+   * with no state, dequeues by clearing state without an entry, and places a steering input by
+   * clearing state with an entry. The triggers only fill an empty `consumed` on the same row,
+   * so they cannot fail an older build's write. Rows consumed before the migration stay empty.
    */
-  private migrateConsumed(): number {
-    return this.transaction(() => {
-      const has = this.db.prepare('PRAGMA table_info(requests)').all().some(row => row.name === 'consumed');
-      if (!has) {
+  private migrateConsumed() {
+    this.transaction(() => {
+      if (!this.db.prepare('PRAGMA table_info(requests)').all().some(row => row.name === 'consumed')) {
         this.db.exec('ALTER TABLE requests ADD COLUMN consumed TEXT');
-        const last = Number(this.db.prepare('SELECT COALESCE(MAX(rowid),0) AS last FROM requests').get()?.last ?? 0);
-        this.db.prepare("INSERT OR REPLACE INTO settings(key,value) VALUES ('requests_consumed_after',?)").run(String(last));
       }
-      const mark = this.db.prepare("SELECT value FROM settings WHERE key='requests_consumed_after'").get()?.value;
-      // Without the mark, treat every unmarked row as legacy: recovery then behaves as before.
-      return mark === undefined ? Number.MAX_SAFE_INTEGER : Number(mark);
+      this.db.exec(`CREATE TRIGGER IF NOT EXISTS requests_consumed_insert AFTER INSERT ON requests
+          WHEN NEW.consumed IS NULL AND NEW.state IS NULL AND NEW.input IS NOT NULL
+          BEGIN UPDATE requests SET consumed='started' WHERE rowid=NEW.rowid; END;
+        CREATE TRIGGER IF NOT EXISTS requests_consumed_update AFTER UPDATE OF state ON requests
+          WHEN NEW.consumed IS NULL AND OLD.state IS NOT NULL AND NEW.state IS NULL
+          BEGIN UPDATE requests SET consumed=CASE WHEN NEW.entry IS NULL THEN 'started' ELSE 'steered' END WHERE rowid=NEW.rowid; END;`);
     });
   }
   /** Threads saved before version 3 gain summary columns, timestamps, and a derived title once. */
@@ -137,36 +138,46 @@ export class Store {
     const user = snapshot.messages.findLast(message => message.role === 'user');
     // The transcript can be clipped. Use the durable input position and use the
     // visible request to break ties between admissions at the same position.
-    const inputs = this.db.prepare(`SELECT id,entry,COALESCE(entry,anchor,0) AS position,entry IS NULL AS pending
+    const inputs = this.db.prepare(`SELECT id,entry,consumed,COALESCE(entry,anchor,0) AS position,entry IS NULL AS pending
       FROM requests WHERE scope=? AND state IS NULL AND input IS NOT NULL
       ORDER BY position DESC,pending DESC,('request-' || id=?) DESC LIMIT 2`).all(snapshot.id, user?.id ?? '');
     const [latest, prior] = inputs;
     const tied = prior && latest.position === prior.position && latest.pending === prior.pending;
     const matches = latest && (user ? user.id === `request-${latest.id}` : !tied);
-    // A placed input belongs to the most recent turn start at or before its entry.
-    // A later input that started its own run ends that turn. `consumed` says so when
-    // this host placed it. An unmarked input written since the column existed was
-    // placed by an older build after a rollback; such a build had no runs rows, so it
-    // never steered into one of ours. Older unmarked rows fall back to inference: a
-    // direct admission, or a follow-up with its own before record, started a turn.
-    const owner = matches && latest.entry !== null && this.db.prepare(`SELECT r.run_request FROM records r
-      JOIN requests q ON q.scope=r.thread AND q.id=r.run_request
-      WHERE r.thread=? AND r.kind='before' AND q.entry<=?
-        AND NOT EXISTS (SELECT 1 FROM records a WHERE a.before=r.id AND a.kind='undo')
-        AND NOT EXISTS (SELECT 1 FROM requests n
-          WHERE n.scope=q.scope AND n.state IS NULL AND n.input IS NOT NULL AND n.entry>q.entry AND n.entry<=?
-            AND (n.consumed='started' OR (n.consumed IS NULL AND (n.rowid>?
-              OR NOT EXISTS (SELECT 1 FROM checkout_waiters w WHERE w.thread=n.scope AND w.request=n.id AND w.kind='follow_up')
-              OR EXISTS (SELECT 1 FROM records b WHERE b.thread=n.scope AND b.run_request=n.id AND b.kind='before')))))
-      ORDER BY q.entry DESC LIMIT 1`).get(snapshot.id, latest.entry, latest.entry, this.consumedAfter);
+    const owner = matches && latest.entry !== null && latest.consumed !== 'started'
+      ? this.turnStart(snapshot.id, Number(latest.entry), latest.consumed === 'steered') : undefined;
     const current = matches && this.db.prepare(`SELECT run_id FROM runs WHERE thread_id=?
-      AND request_id=? AND finished_at IS NULL`).get(snapshot.id, owner ? owner.run_request : latest.id);
+      AND request_id=? AND finished_at IS NULL`).get(snapshot.id, owner ?? latest.id);
     if (current) this.saveRunEvent(String(current.run_id), 0, snapshot, { state: 'dead', finished: true });
     else this.save(snapshot);
     // A rollback may have left other admissions open. Their snapshots are gone.
     const closed = this.db.prepare("UPDATE runs SET state='dead',finished_at=? WHERE thread_id=? AND finished_at IS NULL")
       .run(Date.now(), snapshot.id);
     if (closed.changes) this.db.prepare('UPDATE threads SET records_revision=records_revision+1 WHERE id=?').run(snapshot.id);
+  }
+  /**
+   * The request whose run a placed steering input joined, or undefined when unknown.
+   * Marked steering joined the nearest earlier marked start. An unmarked row was consumed
+   * before `consumed` existed, so ownership is inferred from before records: a direct
+   * admission, or a follow-up with its own before record, started a turn.
+   */
+  private turnStart(thread: string, entry: number, steered: boolean): string | undefined {
+    if (steered) {
+      const nearest = this.db.prepare(`SELECT id,consumed FROM requests WHERE scope=? AND state IS NULL AND input IS NOT NULL
+        AND entry<? AND (consumed IS NULL OR consumed='started') ORDER BY entry DESC LIMIT 1`).get(thread, entry);
+      if (nearest?.consumed === 'started') return String(nearest.id);
+    }
+    const owner = this.db.prepare(`SELECT r.run_request FROM records r
+      JOIN requests q ON q.scope=r.thread AND q.id=r.run_request
+      WHERE r.thread=? AND r.kind='before' AND q.entry<=?
+        AND NOT EXISTS (SELECT 1 FROM records a WHERE a.before=r.id AND a.kind='undo')
+        AND NOT EXISTS (SELECT 1 FROM requests n
+          WHERE n.scope=q.scope AND n.state IS NULL AND n.input IS NOT NULL AND n.entry>q.entry AND n.entry<=?
+            AND (n.consumed='started' OR (n.consumed IS NULL AND (
+              NOT EXISTS (SELECT 1 FROM checkout_waiters w WHERE w.thread=n.scope AND w.request=n.id AND w.kind='follow_up')
+              OR EXISTS (SELECT 1 FROM records b WHERE b.thread=n.scope AND b.run_request=n.id AND b.kind='before')))))
+      ORDER BY q.entry DESC LIMIT 1`).get(thread, entry, entry);
+    return owner ? String(owner.run_request) : undefined;
   }
   createRun(runId: string, threadId: string, requestId: string, harness: string): void {
     this.db.prepare('INSERT OR IGNORE INTO runs (run_id,thread_id,request_id,harness,state,last_seq,created_at) VALUES (?,?,?,?,?,0,?)')
@@ -257,9 +268,10 @@ export class Store {
   place(id: string, requestId: string, entry: number) {
     // A steering input the run took leaves the queue in the same write.
     this.transaction(() => {
-      // Only a still-queued input is steering. A run's own input was marked when its run started.
-      this.db.prepare("UPDATE requests SET consumed='steered' WHERE scope=? AND id=? AND state IN ('queued','checkout_queued')").run(id, requestId);
-      this.db.prepare('UPDATE requests SET entry=?,state=NULL,queue=NULL WHERE scope=? AND id=?').run(entry, id, requestId);
+      // An input that still has a state (queued, or cancelled after the run already took it) is
+      // steering. A run's own input has no state here and keeps the mark its start gave it.
+      this.db.prepare(`UPDATE requests SET entry=?,consumed=CASE WHEN state IS NOT NULL THEN 'steered' ELSE consumed END,state=NULL,queue=NULL
+        WHERE scope=? AND id=?`).run(entry, id, requestId);
       this.waiters.set(id, requestId, 'started');
     });
   }

@@ -96,10 +96,11 @@ limits are in [Host](HOST.md#protocol-version-7).
 **Input consumption (agreed).** The owner agreed this change to stored state on
 2026-11-25, for [#131](https://github.com/mostlyheath/plait/issues/131). Each
 accepted request row records how its input was used: it started its own run,
-or it steered into a run. Rows written before the change read as unknown, and
-recovery keeps its earlier inference for them. The change only adds a column
-and a settings key, so older builds still open and write the store. Another
-model reviews it independently before merge.
+or it steered into a run. Rows consumed before the change read as unknown, and
+recovery keeps its earlier inference for them. The change adds a column and two
+triggers that fill it. The triggers are stored in the schema, so writes made by
+an older build after a rollback are marked too, and those writes still succeed.
+Another model reviews it independently before merge.
 
 Client and host releases must be independently selectable and publishable.
 Compatibility is negotiated through protocol versions and capabilities, not

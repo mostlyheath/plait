@@ -2158,22 +2158,33 @@ prunes them after 30 days. A turn without a retained record has no reported outc
 **Which run a restart interrupts.** After a restart, the host closes the
 unfinished run that owns the latest placed input as `interrupted`, and closes
 any other unfinished run with no outcome. Each request row stores how its input
-was used: `started` its own run, or `steered` into one. An input that started
-a run ends the turn before it, so an earlier run is never given its outcome.
-Rows written before this column existed are unknown. For them the host infers
-as before: a direct admission, or a follow-up with a before record, started a
-turn, and other placed follow-ups count as steering. The host records the last
-request row that existed when it added the column. A later unmarked row was
-placed by an older build after a rollback. Such builds have no runs rows and
-never steer into one, so that input counts as starting its own run. Older
-builds ignore the column and the settings key.
+was used: `started` its own run, or `steered` into one.
 
-Verification: tests write the store as an older build would, by clearing the
-column and by dropping it before the migration runs again. Once, by hand, the
-store code of the previous release (revision `efefb79`) queued, started and
-placed a follow-up in a store this change had migrated, and this build then
-recovered the earlier run without an outcome. That check drove the store
-directly, not a running previous host, and builds without runs rows were not run.
+- An input that started a run ends the turn before it, so an earlier run is
+  never given its outcome.
+- A steering input belongs to the nearest earlier input marked `started`, with
+  or without checkout records, so plain folders resolve too.
+- An input consumed before this column existed is unknown. For those rows the
+  host infers as before: a direct admission, or a follow-up with a before
+  record, started a turn, and other placed follow-ups count as steering.
+
+Two triggers stored in the schema fill the column for every writer, including
+an older build after a rollback. Every build inserts a direct admission with no
+state, dequeues a follow-up by clearing its state without an entry, and places
+a steering input by clearing its state with an entry. Each trigger only fills an
+empty value on the row being written, so an older build's writes still succeed.
+A request still queued when the column was added is marked when it is consumed.
+The host itself marks a steering input placed after it was cancelled, which
+happens when a run took the message just before the cancellation.
+
+Verification: tests use the exact request statements of older builds, before
+and after the migration, including a follow-up queued across the upgrade. By
+hand, the store code of the previous release (revision `efefb79`) steered a
+message into, and separately started a follow-up after, a run in a store this
+change had migrated. Its writes were marked `steered` and `started`, and this
+build then gave the earlier run `interrupted` and no outcome respectively. That
+check drove the store directly, not a running previous host. No build without
+runs rows was run.
 
 ## Recorded turn review
 
