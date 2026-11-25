@@ -42,6 +42,9 @@ for evidence and limits.
 - Complete independent client and host releases and update flows.
 - Verify detached Pi runners that survive a host restart; they are built behind
   `PLAIT_DETACHED_RUNNERS=1` and remain off by default.
+- Build automations: threads that run on a schedule in a project or
+  directory, run by the host. The design and host contract are agreed; see
+  [Automations](AUTOMATIONS.md).
 
 ### Later
 
@@ -251,7 +254,7 @@ an older host shows no such controls.
 - Run person-selected checks after a turn and show their results.
 - Trace lines to turns, expand turn records, shelve results, or bisect turns.
 - Provide an interactive proof of sandbox and undo behavior.
-- Offer hosted machines or unattended automations.
+- Offer hosted machines.
 - Add a browser, rendered documents, or a file editor.
 - Extend editor and terminal handoffs.
 - Show local usage totals with agreed accounting and storage.
