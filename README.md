@@ -123,5 +123,5 @@ and [Design](DESIGN.md).
 Plait's code and documentation are [MIT licensed](LICENSE). Dependencies keep
 their own licenses, including GPUI's Apache-2.0. The bundled Base16 schemes in
 `assets/themes/base16` are from tinted-theming/schemes (MIT, license kept beside
-them); the Stillwater theme is from
+them); the Stillwater themes are from
 [Stillwater](https://github.com/heath0xFF/stillwater) (MIT).
