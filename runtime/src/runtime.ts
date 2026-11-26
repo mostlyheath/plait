@@ -29,7 +29,7 @@ import { createRegistry, Harness, ROOT_CONVERSATION_ID } from '@earendil-works/p
 import type { Conversation, ConversationRetryPolicy, ConversationWatch, Cursor, EntryQuery, EntryRecord, Submission, SubmissionDraft } from '@earendil-works/pi-durable';
 import { SqliteStorage } from '@earendil-works/pi-durable/storage/sqlite';
 import { openNodeSqliteDatabase } from '@earendil-works/pi-durable/storage/sqlite/node';
-import { PROTOCOL_VERSIONS, fail, failure, queuedView, summaryView, THINKING_LEVELS, validate, version, view } from './protocol.ts';
+import { PROTOCOL_VERSIONS, fail, failure, queuedView, steersRun, summaryView, THINKING_LEVELS, validate, version, view } from './protocol.ts';
 import type { ApprovalMode, HarnessId, ModelChoice, Protocol, QueueMode, Request, Snapshot, InputRecord, ThinkingLevel } from './protocol.ts';
 import { Store } from './store.ts';
 import { RunnerRegistry, type RunnerEntry } from './runner/registry.ts';
@@ -918,7 +918,8 @@ export class Runtime {
       if (!session && !runnerSession && this.active.has(snapshot.checkout)) fail('busy', 'This checkout already has an active run.');
       if (this.store.queue(id).length >= QUEUE_LIMIT) fail('busy', `This thread already has ${QUEUE_LIMIT} queued messages.`);
       this.admitWork();
-      this.notify(id, this.store.enqueue(requestId, text, result, { mode: whenBusy, approval: mode }, snapshot, images));
+      const steerRunId = whenBusy === 'steer' ? (session?.runId ?? runnerSession?.runId) : undefined;
+      this.notify(id, this.store.enqueue(requestId, text, result, { mode: whenBusy, approval: mode, steerRunId }, snapshot, images));
       if (firstMessage) this.naming.accepted(id, requestId, text);
       this.changed('#');
       if (runnerSession) {
@@ -1099,6 +1100,11 @@ export class Runtime {
       }
     }
   }
+  private *pendingSteers(session: Session) {
+    for (const input of session.inputs) {
+      if (steersRun(input, session.runId) && !session.steered.has(input.request_id)) yield input;
+    }
+  }
   /** Offers queued steering inputs to the run that is active now, under that run's authorization. */
   private async steer(session: Session) {
     const selected = this.external.resolveHarness(session.snapshot);
@@ -1108,8 +1114,7 @@ export class Runtime {
       case 'pi': break;
     }
     if (!session.started || !session.root || session.authorization.signal.aborted) return;
-    for (const input of session.inputs) {
-      if (input.queued?.mode !== 'steer' || session.steered.has(input.request_id)) continue;
+    for (const input of this.pendingSteers(session)) {
       try {
         session.steered.set(input.request_id, await session.root.submit(
           { type: 'input', requestId: steerKey(input.request_id), content: await this.piInput(session, input.request_id, input.text), whenBusy: 'steer', whenIdle: 'reject' }, context));
@@ -1120,8 +1125,7 @@ export class Runtime {
   private async steerCodex(session: Session) {
     const run = session.external?.harness === 'codex' ? session.external.run : undefined;
     if (!session.started || !run) return;
-    for (const input of session.inputs) {
-      if (input.queued?.mode !== 'steer' || session.steered.has(input.request_id)) continue;
+    for (const input of this.pendingSteers(session)) {
       // Marked first, so a second submit during the request does not send it twice.
       session.steered.set(input.request_id, JOINED);
       if (!await run.steer(input.request_id, input.text, this.imageData(session.snapshot.id, input.request_id))) session.steered.delete(input.request_id);
@@ -1131,8 +1135,7 @@ export class Runtime {
   private steerClaude(session: Session) {
     const run = session.external?.harness === 'claude' ? session.external.run : undefined;
     if (!session.started || !run) return;
-    for (const input of session.inputs) {
-      if (input.queued?.mode !== 'steer' || session.steered.has(input.request_id)) continue;
+    for (const input of this.pendingSteers(session)) {
       if (run.steer(input.request_id, input.text, this.imageData(session.snapshot.id, input.request_id))) session.steered.set(input.request_id, JOINED);
     }
   }
@@ -1280,8 +1283,9 @@ export class Runtime {
   createTurnSink(snapshot: Snapshot, phase: () => void, finish: () => void): TurnSink {
     return new InProcessSink(snapshot, this.store, head => this.save(snapshot, head), phase, finish);
   }
-  async run(session: Session, requestId: string, text: string) {
+  async run(session: Session, requestId: string, text: string): Promise<void> {
     const snapshot = session.snapshot;
+    let interruption: Snapshot['error'] = null;
     let record: string | undefined;
     const vcs = threadKind(this.store, snapshot.id);
     try {
@@ -1305,7 +1309,11 @@ export class Runtime {
       const selected = this.external.resolveHarness(snapshot);
       switch (selected.kind) {
         case 'unknown': return unsupportedHarness();
-        case 'external': return selected.id === 'codex' ? await this.runCodex(session, requestId, text, header) : await this.runClaude(session, requestId, text, header);
+        case 'external':
+          interruption = (selected.id === 'codex'
+            ? await this.runCodex(session, requestId, text, header)
+            : await this.runClaude(session, requestId, text, header)) ?? null;
+          return;
         case 'pi': break;
       }
       const executor = session.executor!;
@@ -1350,14 +1358,18 @@ export class Runtime {
       session.sink?.flush();
       snapshot.pending_approval = null; snapshot.live_text = ''; snapshot.live_reasoning = ''; snapshot.retry = null;
       await this.gate(snapshot.id, () => this.release(session)).catch(() => session.lease?.cleanup?.track(NEVER, 'The harness did not confirm cleanup.'));
-      if (snapshot.status === 'interrupted') {
-        for (const tool of snapshot.tools) if (tool.status === 'running') tool.status = 'interrupted';
-      }
       // After every outcome, with the harness gone and the checkout still this run's.
       await this.finishCleanup(session, record).catch(() => { snapshot.error = { code: 'cleanup_uncertain', message: 'Stop unconfirmed. The host could not save cleanup confirmation. New runs and Git changes remain blocked.' }; });
       await session.lease?.close(); session.lease = undefined;
       this.active.delete(snapshot.checkout);
       this.capacity.phases.delete(snapshot.id);
+      if (interruption && snapshot.status !== 'stopped' && snapshot.status !== 'interrupted') {
+        snapshot.status = 'interrupted';
+        snapshot.error ??= interruption;
+      }
+      if (snapshot.status === 'interrupted') {
+        for (const tool of snapshot.tools) if (tool.status === 'running') tool.status = 'interrupted';
+      }
       // Idle means a following submit can acquire the checkout immediately.
       if (snapshot.status !== 'stopped' && snapshot.status !== 'interrupted') snapshot.status = snapshot.error ? 'error' : 'idle';
       if (session.sink) session.sink.emit({ type: 'finished' });
@@ -1406,7 +1418,7 @@ export class Runtime {
     const turn = run.run(requestId, text, model.id, codexEffort(snapshot.thinking_level, model.efforts), this.imageData(id, requestId));
     session.started = true; this.capacity.phases.set(snapshot.id, 'running');
     await this.steer(session);
-    await turn;
+    return turn;
   }
   /** A Claude Code thread's run: one Claude Code process, in the thread's mode, with Plait's approvals. */
   private async runClaude(session: Session, requestId: string, text: string, instructions: string) {
@@ -1440,7 +1452,7 @@ export class Runtime {
     session.authorization.activate();
     const turn = run.run(requestId, text, this.imageData(id, requestId));
     session.started = true; this.capacity.phases.set(snapshot.id, 'running');
-    await turn;
+    return turn;
   }
   async close() {
     if (this.automations) await this.automations.close();

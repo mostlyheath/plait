@@ -86,7 +86,7 @@ export class CodexRun {
 
   /** Runs one turn for `text`; resolves when Codex ends it, and throws when it fails. */
   async run(requestId: string, input: string, model: string, effort: string | undefined, images: ImageData[] = []) {
-    try { await this.turnFor(requestId, input, model, effort, images); }
+    try { return await this.turnFor(requestId, input, model, effort, images); }
     catch (error) {
       // Codex's own errors and output can quote the provider or the machine, so the client gets a fixed message.
       if (error instanceof HostError) throw error;
@@ -146,6 +146,9 @@ export class CodexRun {
         ended,
         lease.server.exited.then(() => fail('runtime_error', 'Codex stopped unexpectedly. Inspect the checkout before a new submission.')),
       ]);
+      if (end.status === 'interrupted' && !signal.aborted) {
+        return { code: 'interrupted', message: 'Codex interrupted the turn.' };
+      }
       // A failed turn's message is Codex's own and may quote the provider, so it is not passed on.
       if (end.status === 'failed') fail('runtime_error', 'Codex ended the turn with an error. Its own logs have the details.');
     } finally {

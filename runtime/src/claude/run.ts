@@ -88,7 +88,7 @@ export class ClaudeRun {
 
   /** Runs until Claude Code has answered every message; throws a fixed message when it fails. */
   async run(requestId: string, input: string, images: ImageData[] = []) {
-    try { await this.turns(requestId, input, images); }
+    try { return await this.turns(requestId, input, images); }
     catch (error) {
       // Claude Code's own errors can quote the provider, the account, or the machine.
       if (error instanceof HostError) throw error;
@@ -160,14 +160,14 @@ export class ClaudeRun {
       this.transcript.sent(session.send(input, requestId, images), requestId, input);
       this.open = true;
       this.context.opened();
-      await consumed;
+      return await consumed;
     } finally {
       signal.removeEventListener('abort', stop);
     }
   }
 
   /** Reads Claude Code's messages until every sent message is answered, Stop ends the turn, or Claude Code exits. */
-  private async consume(messages: AsyncIterator<SDKMessage>, resumed: boolean): Promise<void> {
+  private async consume(messages: AsyncIterator<SDKMessage>, resumed: boolean) {
     const { signal } = this.context;
     for (;;) {
       let next: IteratorResult<SDKMessage>;
@@ -185,7 +185,10 @@ export class ClaudeRun {
       if (typeof reported === 'string') this.report(reported);
       const end = isTurnEnd(message);
       if (!end) continue;
-      if (signal.aborted || end.status === 'interrupted') return;
+      if (signal.aborted) return;
+      if (end.status === 'interrupted') {
+        return { code: 'interrupted', message: 'Claude Code interrupted the turn.' };
+      }
       if (end.status === 'failed') fail('runtime_error', resumed && !this.started ? RESUME_FAILED : TURN_FAILED);
       // A message sent after the turn's last step runs as a turn of its own.
       if (this.open && end.queued === 0 && this.transcript.unplaced().length === 0) return;

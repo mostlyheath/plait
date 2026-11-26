@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux';
+import { createPiTurn } from '../src/runner/pi-runner.ts';
 import { Runtime } from '../src/runtime.ts';
 import type { TurnEvent } from '../src/turn-executor.ts';
 import { acquireCheckout } from '../src/safety.ts';
@@ -37,7 +38,7 @@ class TestRuntime extends Runtime {
   override async resources() { return { skills: [], templates: [], problems: [], mcpServers: [], mcpEntries: new Map() }; }
 }
 type Responses = Parameters<ReturnType<typeof fauxProvider>['setResponses']>[0];
-async function fixture(t: Parameters<typeof setup>[0], responses: Responses) {
+async function fixture(t: Parameters<typeof setup>[0], responses: Responses, scriptedRunner = detached) {
   const { root, base } = await setup(t);
   await writeFile(join(root, 'source.txt'), 'base\n');
   await exec('/usr/bin/git', ['-C', root, 'add', '.']);
@@ -45,7 +46,7 @@ async function fixture(t: Parameters<typeof setup>[0], responses: Responses) {
   const store = join(base, 'store'); await mkdir(store, { mode: 0o700 });
   const prevScenario = process.env.PLAIT_TEST_SCENARIO;
   const prevTestTurns = process.env.PLAIT_RUNNER_TEST_TURNS;
-  if (detached) {
+  if (scriptedRunner) {
     process.env.PLAIT_TEST_SCENARIO = 'pi-script';
     process.env.PLAIT_RUNNER_TEST_TURNS = '1';
     await writeFile(join(store, 'pi-test-script.json'), JSON.stringify({
@@ -57,7 +58,7 @@ async function fixture(t: Parameters<typeof setup>[0], responses: Responses) {
   faux.setResponses(responses); models.setProvider(faux.provider);
   const runtime = new TestRuntime(store, models, new Set(['faux'])); runtime.retry.enabled = false;
   t.after(async () => {
-    if (detached) {
+    if (scriptedRunner) {
       if (prevScenario === undefined) delete process.env.PLAIT_TEST_SCENARIO;
       else process.env.PLAIT_TEST_SCENARIO = prevScenario;
       if (prevTestTurns === undefined) delete process.env.PLAIT_RUNNER_TEST_TURNS;
@@ -192,4 +193,44 @@ test('Pi sink preserves event order for plain and approval turns', async t => {
     for (let i = 0; i < events.length; i++) if (events[i] === 'live') assert.equal(events[i + 1], 'commit');
     assert.deepEqual(events.slice(-2), ['record_after', 'finished']);
   }
+});
+
+test('a held steer starts separately with its saved approval after a fresh auto run', async t => {
+  const h = await fixture(t, [fauxAssistantMessage('Fresh run finished.'), write('held.txt', 'held'), fauxAssistantMessage('Done.')]);
+  // Recreate the durable queue left by startup recovery before the fresh submission.
+  const snapshot = h.runtime.snapshot(h.id);
+  h.runtime.store.enqueue('old', 'Old steer', {}, { mode: 'steer', approval: 'ask' }, snapshot);
+  h.runtime.store.waiters.hold(h.id);
+  await h.submit('fresh', 'Fresh request');
+  await h.until(() => !!h.runtime.snapshot(h.id).pending_approval);
+  const followUp = h.runtime.snapshot(h.id);
+  assert.equal(followUp.approval_mode, 'ask');
+  const pending = followUp.pending_approval!;
+  await h.call({ op: 'approve', thread_id: h.id, approval_id: pending.id, allow: false });
+  await h.settled();
+  assert.deepEqual((await h.records()).map(record => record.request_ids), [['old'], ['fresh']]);
+});
+
+test('the detached Pi turn places only steers owned by its run', async t => {
+  const h = await fixture(t, [fauxAssistantMessage('Started.'), fauxAssistantMessage('Steered.')], true);
+  const snapshot = h.runtime.snapshot(h.id);
+  for (const [id, steerRunId] of [['legacy', undefined], ['stale', 'previous'], ['current', 'active']] as const) {
+    h.runtime.store.enqueue(id, id, {}, { mode: 'steer', approval: 'ask', steerRunId }, snapshot);
+  }
+  const lease = await acquireCheckout(h.root, 'writer');
+  const placed = new Set<string>();
+  try {
+    const result = await createPiTurn().start({
+      kind: 'pi', thread_id: h.id, request_id: 'fresh', text: 'Fresh request', checkout: h.root, vcs: 'git',
+      model: { provider: 'faux', modelId: 'faux-1' }, approval_mode: 'auto', root_identity: lease.identity,
+      max_turns: 10, retry: h.runtime.retry,
+    }, event => {
+      if (event.type === 'commit' && Array.isArray(event.placed)) for (const id of event.placed) placed.add(id);
+    }, new AbortController().signal, {
+      store: h.runtime.directory, lease,
+      manifest: { run_id: 'active', thread_id: h.id, request_id: 'fresh', checkout: h.root, harness: 'pi', build_id: 'test' },
+    });
+    assert.deepEqual(result, { status: 'idle' });
+    assert.deepEqual([...placed], ['current']);
+  } finally { await lease.close(); }
 });
