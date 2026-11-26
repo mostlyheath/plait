@@ -188,7 +188,7 @@ fn the_keyboard_leaves_a_hidden_composer_and_returns_to_it() {
     assert_eq!(tab(&mut harness), Workspace::Changes);
     let (_, composer, _) = composer_state(&mut harness);
     assert!(!composer, "the hidden composer gives up the keyboard");
-    harness.keystroke("cmd-shift-3");
+    harness.keystroke("cmd-y");
     assert_eq!(tab(&mut harness), Workspace::History);
     // By click: Files, found by its name, since other controls share the bar.
     #[cfg(debug_assertions)]

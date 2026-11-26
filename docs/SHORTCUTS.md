@@ -33,7 +33,7 @@ This table matches `ACTIONS` in `crates/plait/src/ui/actions.rs` (checked by aut
 | Cmd-Shift-D | Toggle Diagnostics | `view.toggle_diagnostics` |
 | Cmd-Shift-1 | Conversation | `view.conversation` |
 | Cmd-Shift-2 | Changes | `view.changes` |
-| Cmd-Shift-3 | History | `view.history` |
+| Cmd-Y | History | `view.history` |
 | Cmd-F | Find | `file.find` |
 | Cmd-G | Find Next | `file.find_next` |
 | Cmd-Shift-G | Find Previous | `file.find_previous` |
@@ -60,6 +60,7 @@ This table matches `ACTIONS` in `crates/plait/src/ui/actions.rs` (checked by aut
 
 Notes on application shortcuts:
 
+- **Commit.** With the commit message focused and the Commit button enabled, Cmd-Shift-C commits the staged changes, just like Return. Otherwise it opens Changes and focuses the commit message.
 - **Thread tabs.** All tab shortcuts, including **Show All Tabs…**, work with either **Hide** or **Show** in Settings → Appearance.
 - **Rebinding rules:** Text-editing keys and reserved macOS system shortcuts (such as `Cmd-Space`, `Cmd-Tab`, and `Cmd-Shift-3`–`5`) cannot be assigned. `Tab` and `Shift-Tab` always keep a binding. Each numbered jump set (`tab_jump.1`–`9` and `jump.1`–`9`) changes modifiers as one set.
 - **Approvals (`Cmd-Option-Y`, `Cmd-Option-period`) and Undo (`Cmd-Option-U`):** Act only in the visible conversation with no modal or palette open over it. An approval key works with focus in the draft after **Reply instead**. Holding the key answers at most one card.
