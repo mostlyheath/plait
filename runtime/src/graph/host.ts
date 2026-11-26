@@ -1,3 +1,4 @@
+import { realpath } from 'node:fs/promises';
 import { randomUUID, createHash } from 'node:crypto';
 import type { HarnessEntry } from '../harness.ts';
 import { validateAdmission, type Admission, type Start } from '../admission.ts';
@@ -140,7 +141,8 @@ export class Graph {
         fail('invalid_request', 'Unknown graph operation or field.');
       if (r.op_id !== undefined && (typeof r.op_id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(r.op_id))) fail('invalid_request', 'Invalid operation ID.');
       if (op === 'graph') {
-        const project = string(r.project, 'project', 4096);
+        const named = string(r.project, 'project', 4096);
+        const project = await realpath(named).catch(() => named);
         if (!project.startsWith('/')) fail('invalid_request', 'Expected an absolute project path.');
         return this.view.read(this.store, project, JSON.stringify(await rootIdentity(project).catch(() => null)), r.revision, await this.list(send));
       }
@@ -189,7 +191,9 @@ export class Graph {
     }
     const parent = r.op === 'fork_thread' ? await this.resolve(r.parent_id, send) : undefined;
     if (parent && !parent.started) fail('invalid_request', 'Only a thread can be forked.');
-    const project = parent?.project ?? string(r.checkout, 'checkout', 4096);
+    // Admission compares canonical roots (on macOS /var is a link to /private/var).
+    const given = parent ? undefined : string(r.checkout, 'checkout', 4096);
+    const project = parent?.project ?? await realpath(given!).catch(() => given!);
     if (r.project !== undefined && r.project !== project) fail('invalid_request', 'Checkout belongs to another project.');
     const id = randomUUID();
     const checkout = parent ? (await this.watch(parent.thread!, send)).thread.checkout : project;
