@@ -3,6 +3,16 @@
 What changed in each Plait preview, newest first. Notes for the next preview
 wait in [changes/](changes/README.md) until a release collects them.
 
+## v0.1.0-preview.84
+
+### Added
+
+- Markdown files open rendered, with a Source switch, heading outline, Find, checkout images, and a check for broken local links.
+
+### Fixed
+
+- If Plait can’t read your saved Linear drafts, it protects them and tries again when you reopen Issues.
+
 ## v0.1.0-preview.83
 
 ### Added
