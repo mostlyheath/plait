@@ -119,6 +119,10 @@ pub fn format_diff(
         rows,
         widest_row: widest,
         hunks,
+        patch_digest: {
+            use sha2::{Digest, Sha256};
+            Some(format!("{:x}", Sha256::digest(bytes)))
+        },
         truncated,
         elapsed,
     }

@@ -219,6 +219,7 @@ impl Plait {
             format!("Discard unstaged changes to {}?", change.display_path())
         };
         let op = WriteOp::Discard {
+            guard: None,
             path: change.path.clone(),
             untracked,
             hunk: None,

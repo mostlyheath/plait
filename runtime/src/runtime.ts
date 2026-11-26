@@ -483,7 +483,7 @@ export class Runtime {
             build_id = typeof metadata.build_id === 'string' ? metadata.build_id : null;
           }
         } catch { /* Development hosts have no packaged metadata. */ }
-        return { schema: 1, release, build_id, protocol_min: PROTOCOL_VERSIONS[0], protocol_max: PROTOCOL_VERSIONS[PROTOCOL_VERSIONS.length - 1], capabilities: ['drain_v1', 'checkout_identity_v1', 'project_fingerprint_v1'], storage_schema: 1 };
+        return { schema: 1, release, build_id, protocol_min: PROTOCOL_VERSIONS[0], protocol_max: PROTOCOL_VERSIONS[PROTOCOL_VERSIONS.length - 1], capabilities: ['drain_v1', 'checkout_identity_v1', 'project_fingerprint_v1', 'guarded_discard_v1'], storage_schema: 1 };
       }
       if (op === 'drain_for_update') {
         this.draining = true;

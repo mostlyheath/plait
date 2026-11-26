@@ -229,6 +229,7 @@ fn writes_run_on_the_host_checkout_with_its_identity() {
         &repo,
         id,
         WriteOp::Discard {
+            guard: None,
             path: "src/lib.rs".into(),
             untracked: false,
             hunk: None,
@@ -332,4 +333,95 @@ fn a_remounted_folder_keeps_its_identity_but_a_replaced_one_does_not() {
     std::os::unix::fs::symlink(&root, &link).unwrap();
     assert!(super::current_identity(&link, remounted).is_err());
     std::fs::remove_dir_all(base).unwrap();
+}
+
+#[test]
+fn legacy_client_discards_by_header_and_restores_tracked_blob() {
+    use serde_json::json;
+    let repo = repository("legacy-client");
+    let id = local_identity(&repo);
+    let request = json!({"Discard": {"path": "c3JjL2xpYi5ycw==", "untracked":false, "hunk":[0,"@@ -1 +1,2 @@"]}});
+    let mut stale = request.clone();
+    stale["Discard"]["hunk"][1] = json!("@@ -2 +2 @@");
+    assert!(
+        write_here(&repo, id, serde_json::from_value(stale).unwrap())
+            .unwrap_err()
+            .contains("changed since")
+    );
+    let saved = write_here(&repo, id, serde_json::from_value(request).unwrap())
+        .unwrap()
+        .backup
+        .unwrap();
+    assert_eq!(
+        std::fs::read(repo.join("src/lib.rs")).unwrap(),
+        b"fn one() {}\n"
+    );
+    let legacy = json!({"Restore":{"path":"c3JjL2xpYi5ycw==","executable": saved.executable,"blob":saved.blob}});
+    write_here(&repo, id, serde_json::from_value(legacy).unwrap()).unwrap();
+    assert_eq!(
+        std::fs::read(repo.join("src/lib.rs")).unwrap(),
+        b"fn one() {}\nfn two() {}\n"
+    );
+}
+
+fn client_for_git_helper(guarded: bool) -> plait_client::host::Client {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    use serde_json::json;
+    plait_client::host::Client::with_test_reads(move |mut request| {
+        if request["op"] == "host_info" {
+            let capabilities = if guarded {
+                vec!["guarded_discard_v1"]
+            } else {
+                vec![]
+            };
+            return json!({"ok":true,"result":{"schema":1,"release":null,"build_id":null,"protocol_min":1,"protocol_max":7,"capabilities":capabilities,"storage_schema":1}});
+        }
+        assert_eq!(
+            request.as_object_mut().unwrap().remove("op").unwrap(),
+            "git_write"
+        );
+        request.as_object_mut().unwrap().remove("op_id");
+        if let Some(discard) = request["write"].get("Discard") {
+            assert_eq!(discard.get("guard").is_some(), guarded);
+            assert_eq!(discard["hunk"], json!([0, "@@ -1 +1,2 @@"]));
+        }
+        let input: WriteInput = serde_json::from_value(request).unwrap();
+        let bytes = execute_write(&input);
+        json!({"ok":true,"result":{"total":bytes.len(),"data":STANDARD.encode(bytes),"token":null}})
+    })
+}
+
+#[test]
+fn new_client_checks_the_digest_only_on_a_capable_host() {
+    let repo = repository("legacy-host");
+    let id = local_identity(&repo);
+    let op = WriteOp::Discard {
+        path: "src/lib.rs".into(),
+        untracked: false,
+        hunk: Some((0, "@@ -1 +1,2 @@".into())),
+        guard: Some(plait_protocol::git::write::DiscardGuard {
+            digest: Some("unsupported".into()),
+        }),
+    };
+    let capable = client_for_git_helper(true);
+    let error = plait_client::host::git::write(&capable, &repo, id, &op).unwrap_err();
+    assert!(error.to_string().contains("changed since"), "{error}");
+    assert_eq!(
+        std::fs::read(repo.join("src/lib.rs")).unwrap(),
+        b"fn one() {}\nfn two() {}\n"
+    );
+    let client = client_for_git_helper(false);
+    let backup = plait_client::host::git::write(&client, &repo, id, &op)
+        .unwrap()
+        .backup
+        .unwrap();
+    assert_eq!(
+        std::fs::read(repo.join("src/lib.rs")).unwrap(),
+        b"fn one() {}\n"
+    );
+    plait_client::host::git::write(&client, &repo, id, &WriteOp::Restore(backup)).unwrap();
+    assert_eq!(
+        std::fs::read(repo.join("src/lib.rs")).unwrap(),
+        b"fn one() {}\nfn two() {}\n"
+    );
 }
