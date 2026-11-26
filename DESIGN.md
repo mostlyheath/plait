@@ -647,7 +647,7 @@ some actions a new title and target, adds one, and retires three. Change
 | Cmd-Backslash | Fill Panel (was Toggle Work View) | `view.toggle_work` | 15 |
 | Cmd-Shift-1 | Conversation: closes the panel and focuses the conversation | `view.conversation` | 15 |
 | Cmd-Shift-2 | Changes: opens the panel on Changes | `view.changes` | 15 |
-| Cmd-Shift-3 | History: opens the panel on History | `view.history` | 15 |
+| Cmd-Y | History: opens the panel on History | `view.history` | 15 |
 | — | Files: opens the panel on Files | `view.files` | 15 |
 | Cmd-Option-Right | Focus Next Pane: conversation, then panel | `pane.next` | 15 |
 | Cmd-Option-Left | Focus Previous Pane | `pane.previous` | 15 |

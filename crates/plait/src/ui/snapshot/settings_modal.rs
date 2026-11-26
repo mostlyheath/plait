@@ -121,7 +121,7 @@ fn focus_cycles_inside_and_workspace_shortcuts_are_inert() {
     }
     for key in [
         "cmd-shift-2",
-        "cmd-shift-3",
+        "cmd-y",
         "cmd-n",
         "cmd-p",
         "cmd-b",

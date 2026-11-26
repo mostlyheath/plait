@@ -31,6 +31,29 @@ pub(super) fn change_paths(change: &Change) -> Vec<PathBuf> {
     paths
 }
 
+fn commit_blocker(
+    busy: bool,
+    conflicts: usize,
+    staged: usize,
+    message: &str,
+) -> Option<&'static str> {
+    if busy {
+        Some("Git is still working.")
+    } else if conflicts > 0 {
+        Some("Resolve the conflicts, then mark each file resolved.")
+    } else if staged == 0 {
+        Some("Stage a change to commit it.")
+    } else if message.trim().is_empty() {
+        Some("Write a commit message.")
+    } else {
+        None
+    }
+}
+
+fn shortcut_submits(focused: bool, blocker: Option<&str>) -> bool {
+    focused && blocker.is_none()
+}
+
 impl Plait {
     /// Ask for a write and start it if nothing else is running.
     pub(super) fn git_write(&mut self, op: WriteOp, cx: &mut Context<Self>) {
@@ -92,24 +115,12 @@ impl Plait {
 
     /// Why Commit is unavailable, in words, or `None` when it can run.
     fn commit_blocker(&self, cx: &App) -> Option<&'static str> {
-        if self.state.repository.write().busy() {
-            Some("Git is still working.")
-        } else if self.state.repository.conflicts() > 0 {
-            Some("Resolve the conflicts, then mark each file resolved.")
-        } else if self.staged_count() == 0 {
-            Some("Stage a change to commit it.")
-        } else if self
-            .workspace
-            .commit_message
-            .read(cx)
-            .text()
-            .trim()
-            .is_empty()
-        {
-            Some("Write a commit message.")
-        } else {
-            None
-        }
+        commit_blocker(
+            self.state.repository.write().busy(),
+            self.state.repository.conflicts(),
+            self.staged_count(),
+            self.workspace.commit_message.read(cx).text(),
+        )
     }
 
     pub(super) fn commit_staged(&mut self, cx: &mut Context<Self>) {
@@ -285,13 +296,18 @@ impl Plait {
         )
     }
 
-    /// Put the cursor in the commit message, on the Changes tab.
-    pub(super) fn focus_commit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Submit from the message field, or take the user there.
+    pub(super) fn commit_shortcut(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.panel_recorded() {
             return;
         }
+        let field = self.workspace.commit_message.focus_handle(cx);
+        if shortcut_submits(field.is_focused(window), self.commit_blocker(cx)) {
+            self.commit_staged(cx);
+            return;
+        }
         self.show_tab(super::Workspace::Changes, window, cx);
-        window.focus(&self.workspace.commit_message.focus_handle(cx), cx);
+        window.focus(&field, cx);
         cx.notify();
     }
 
@@ -449,6 +465,19 @@ mod tests {
     use super::change_paths;
     use plait_client::model::Change;
     use std::path::PathBuf;
+
+    #[test]
+    fn shortcut_submits_only_from_a_ready_message_field() {
+        for (focused, message, staged, submits) in [
+            (true, "Fix typo", 1, true),
+            (false, "Fix typo", 1, false),
+            (true, "  ", 1, false),
+            (true, "Fix typo", 0, false),
+        ] {
+            let blocker = super::commit_blocker(false, 0, staged, message);
+            assert_eq!(super::shortcut_submits(focused, blocker), submits);
+        }
+    }
 
     #[test]
     fn a_rename_stages_both_of_its_paths() {

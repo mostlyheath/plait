@@ -126,7 +126,7 @@ pub(super) const ACTIONS: &[AppAction] = &[
     entry("view.toggle_diagnostics", "Toggle Diagnostics", "View", Some("cmd-shift-d"), Item, || Box::new(ToggleDiagnostics)),
     entry("view.conversation", "Conversation", "View", Some("cmd-shift-1"), Item, || Box::new(Conversation)),
     entry("view.changes", "Changes", "View", Some("cmd-shift-2"), Item, || Box::new(Changes)),
-    entry("view.history", "History", "View", Some("cmd-shift-3"), Item, || Box::new(CommitHistory)),
+    entry("view.history", "History", "View", Some("cmd-y"), Item, || Box::new(CommitHistory)),
     entry("view.files", "Files", "View", None, Item, || Box::new(ShowFiles)),
     entry("file.find", "Find", "View", Some("cmd-f"), Group, || Box::new(FindInFile)),
     entry("file.find_next", "Find Next", "View", Some("cmd-g"), Item, || Box::new(FindNext)),
@@ -239,13 +239,17 @@ pub(super) fn bind(cx: &mut App, overrides: &KeyOverrides) {
     cx.bind_keys(bindings);
 }
 
-/// Which actions keep their keys when a saved keymap gives two one key. GPUI
+/// A saved binding takes priority over a new default. For ties, GPUI
 /// ranks a binding with a context above one without, then a later binding
 /// above an earlier. Only that winner is bound: the held-key guard lets a key
 /// go on to lower bindings, so a loser would act in the winner's place.
 fn winning_bindings(overrides: &KeyOverrides) -> Vec<bool> {
     let mut ranked = (0..ACTIONS.len()).collect::<Vec<_>>();
-    ranked.sort_by_key(|&ix| std::cmp::Reverse((ACTIONS[ix].context().is_some(), ix)));
+    ranked.sort_by_cached_key(|&ix| {
+        let action = &ACTIONS[ix];
+        let custom = overrides.get(action.id).is_some_and(|key| parses(key));
+        std::cmp::Reverse((custom, action.context().is_some(), ix))
+    });
     let mut taken = Vec::new();
     let mut wins = vec![false; ACTIONS.len()];
     for ix in ranked {
@@ -842,9 +846,30 @@ mod tests {
             assert!(!action.title.is_empty() && !action.category.is_empty());
             if let Some(key) = action.key {
                 assert!(parses(key), "{key} does not parse");
+                assert!(
+                    !super::SYSTEM_KEYS
+                        .iter()
+                        .any(|(reserved, _)| super::parsed(reserved) == super::parsed(key)),
+                    "{key} is reserved by macOS"
+                );
                 assert!(keys.insert(key), "{key} is bound twice");
             }
         }
+    }
+
+    #[test]
+    fn a_saved_shortcut_survives_the_new_history_default() {
+        let index = |id| ACTIONS.iter().position(|action| action.id == id).unwrap();
+        let history = index("view.history");
+        let new_thread = index("thread.new");
+        let mut saved = KeyOverrides::from([("thread.new".into(), "cmd-y".into())]);
+        let wins = winning_bindings(&saved);
+        assert!(wins[new_thread]);
+        assert!(!wins[history]);
+
+        saved.insert("view.history".into(), "ctrl-alt-y".into());
+        assert_eq!(keystroke(&ACTIONS[history], &saved), Some("ctrl-alt-y"));
+        assert!(winning_bindings(&saved)[history]);
     }
 
     #[test]
