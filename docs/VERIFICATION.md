@@ -126,6 +126,8 @@ that the application's frame or latency goals are met.
 
 ## Known gaps
 
+- Rendered Markdown has narrow light and wide dark Linux scenes. The parser timing test uses a 1 MiB file. Scrolling frame times and native macOS inspection remain open.
+
 - The message box, changed-files strip, and approval card have wide and narrow
   test scenes. Native focus, input-method composition, VoiceOver, and the cost
   of drawing the box shadow while typing and scrolling still need inspection.

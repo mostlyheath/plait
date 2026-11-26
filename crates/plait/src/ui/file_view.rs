@@ -30,6 +30,8 @@ const TAB_WIDTH: usize = 4;
 
 #[derive(Default)]
 pub(super) struct FileViewer {
+    pub doc: super::document::DocumentView,
+    cache: std::collections::VecDeque<(PathBuf, Arc<Opened>)>,
     /// Checkout-relative path, and the root it is relative to.
     pub path: Option<PathBuf>,
     pub root: PathBuf,
@@ -254,6 +256,9 @@ impl Plait {
             cx.notify();
             return;
         }
+        if line.is_some() && plait_client::markdown::document::markdown_path(&path) {
+            self.remember_document_mode(&path, true);
+        }
         self.tabs.lifecycle.view_revision += 1;
         if let Some(panel) = self.tabs.model.panel_mut() {
             panel.open_on(plait_client::panel::PanelKind::Files);
@@ -272,14 +277,48 @@ impl Plait {
             return self.check_file(cx);
         }
         let viewer = &mut self.workspace.file_viewer;
+        if let (Some(old), Some(opened)) = (viewer.path.take(), viewer.opened.take())
+            && viewer.root == root
+            && matches!(&opened.contents,Contents::Text(t) if t.document.is_some())
+        {
+            viewer.cache.retain(|(p, _)| p != &old);
+            viewer.cache.push_back((old, opened));
+            while viewer.cache.len() > 3 {
+                viewer.cache.pop_front();
+            }
+        }
+        if viewer.root != root {
+            viewer.cache.clear();
+        }
+        viewer.doc = Default::default();
+        viewer.doc.source = self
+            .state
+            .checkout_key()
+            .is_some_and(|key| self.document_sources.contains(&(key.clone(), path.clone())));
+        viewer.generation += 1;
+        viewer.find.generation += 1;
+        viewer.opened = viewer
+            .cache
+            .iter()
+            .find(|(p, _)| p == &path)
+            .map(|(_, o)| o.clone());
         viewer.path = Some(path);
         viewer.root = root;
-        viewer.opened = None;
+        viewer.loading = false;
         viewer.error = None;
         viewer.note = None;
         viewer.find.matches = Arc::default();
         viewer.scroll = UniformListScrollHandle::new();
-        self.read_file(false, cx);
+        if viewer.opened.is_some() {
+            viewer.prepare_document();
+            self.reveal_line(cx);
+            self.update_find(cx);
+            self.load_document_images(cx);
+            self.check_file(cx);
+            cx.notify();
+        } else {
+            self.read_file(false, cx);
+        }
     }
 
     fn read_file(&mut self, reload: bool, cx: &mut Context<Self>) {
@@ -316,15 +355,21 @@ impl Plait {
                         let changed = viewer
                             .opened
                             .as_ref()
-                            .is_none_or(|old| old.contents != opened.contents);
+                            .is_none_or(|old| old.stamp != opened.stamp);
                         if reload && changed {
                             viewer.note = Some("Updated from disk.".into());
                         } else if reload {
                             viewer.note = None;
                         }
-                        viewer.opened = Some(Arc::new(opened));
+                        if changed {
+                            viewer.opened = Some(Arc::new(opened));
+                        }
                         viewer.error = None;
                         if changed {
+                            viewer.doc.pictures.clear();
+                            viewer.doc.results = None;
+                            viewer.prepare_document();
+                            this.load_document_images(cx);
                             this.update_find(cx);
                         }
                         this.reveal_line(cx);
@@ -348,6 +393,16 @@ impl Plait {
             && !self.shows_kind(plait_client::panes::PaneKind::Files)
         {
             return;
+        }
+        if let (Some(key), Some(path)) =
+            (self.state.checkout_key(), &self.workspace.file_viewer.path)
+        {
+            let source = self.document_sources.contains(&(key.clone(), path.clone()));
+            if source != self.workspace.file_viewer.doc.source {
+                self.workspace.file_viewer.doc.source = source;
+                self.update_find(cx);
+                cx.notify();
+            }
         }
         let owner = self.host.read_stamp();
         let cancelled = self.workspace.cancelled.clone();
@@ -517,7 +572,7 @@ impl Plait {
     }
 
     /// Search off the UI thread; a large file with no match scans it all.
-    fn update_find(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn update_find(&mut self, cx: &mut Context<Self>) {
         let owner = self.host.read_stamp();
         let cancelled = self.workspace.cancelled.clone();
         let find = &mut self.workspace.file_viewer.find;
@@ -527,16 +582,21 @@ impl Plait {
             (Some(field), true) => field.read(cx).text().to_owned(),
             _ => String::new(),
         };
-        let text = match self.workspace.file_viewer.opened.as_deref() {
-            Some(Opened {
-                contents: Contents::Text(text),
-                ..
-            }) => text.text.clone(),
-            _ => String::new(),
-        };
-        let task = cx
-            .background_executor()
-            .spawn(async move { file_view::find(&text, &query) });
+        let opened = self.workspace.file_viewer.opened.clone();
+        let rendered = self.workspace.file_viewer.rendered();
+        let metadata = self.workspace.file_viewer.doc.metadata;
+        let task = cx.background_executor().spawn(async move {
+            if query.is_empty() {
+                return Vec::new();
+            }
+            match opened.as_deref().map(|o| &o.contents) {
+                Some(Contents::Text(text)) if rendered && let Some(doc) = &text.document => {
+                    doc.find(&query, metadata)
+                }
+                Some(Contents::Text(text)) => file_view::find(&text.text, &query),
+                _ => Vec::new(),
+            }
+        });
         cx.spawn(async move |this, cx| {
             let matches = task.await;
             let _ = this.update(cx, |this, cx| {
@@ -587,6 +647,28 @@ impl Plait {
             viewer.find.matches.get(viewer.find.current),
             viewer.opened.as_deref().map(|opened| &opened.contents),
         ) {
+            if viewer.rendered()
+                && let Some(doc) = viewer.document()
+                && let Some(list) = &viewer.doc.list
+            {
+                if found.start >= doc.text.len() {
+                    let line = file_view::line_of(&doc.metadata_rows, found.start - doc.text.len());
+                    viewer
+                        .doc
+                        .metadata_scroll
+                        .scroll_to_item(line, ScrollStrategy::Center);
+                    cx.notify();
+                    return;
+                }
+                let block = file_view::line_of(&doc.ranges, found.start);
+                list.scroll_to(ListOffset {
+                    item_ix: doc.row_at(block, found.start.saturating_sub(doc.ranges[block].start)),
+                    offset_in_item: px(0.),
+                });
+                self.load_document_images(cx);
+                cx.notify();
+                return;
+            }
             let line = file_view::line_of(&text.lines, found.start);
             viewer.scroll.scroll_to_item(line, ScrollStrategy::Center);
         }
@@ -697,6 +779,12 @@ impl Plait {
             }
             (None, None, _) => empty("Reading…", display.clone()).into_any_element(),
             (None, Some(opened), _) => match &opened.contents {
+                Contents::Text(text)
+                    if viewer.rendered()
+                        && let Some(doc) = &text.document =>
+                {
+                    self.document_body(doc, cx)
+                }
                 Contents::Text(_) => self.file_lines(cx),
                 Contents::Binary { len } => empty(
                     "Binary file",
@@ -724,6 +812,7 @@ impl Plait {
             .flex_1()
             .min_h_0()
             .child(header)
+            .children(viewer.document().map(|_| self.document_controls(cx)))
             .children(viewer.find.open.then(|| self.find_bar(FindIn::File, cx)))
             .child(body)
             .into_any_element()

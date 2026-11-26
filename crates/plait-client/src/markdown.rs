@@ -11,6 +11,7 @@ use crate::{
 use pulldown_cmark::{Alignment, CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use std::{collections::HashMap, ops::Range, sync::Arc};
 
+pub mod document;
 mod request;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -207,6 +208,8 @@ impl Message {
 
 #[derive(Default)]
 struct Projection {
+    document: bool,
+    images: Vec<(usize, String)>,
     blocks: Vec<Block>,
     current: Block,
     strong: usize,
@@ -310,14 +313,22 @@ impl Projection {
     }
 
     fn end_link(&mut self, image: bool) {
-        if image {
+        if image && !self.document {
             self.text("]", false);
         }
         let Some((destination, start)) = self.links.pop() else {
             return;
         };
         let start = start.min(self.current.text.len());
-        let url = safe_url(&destination).filter(|_| !image && self.current.links.len() < 4096);
+        if image && self.document {
+            self.images.push((self.blocks.len(), destination.clone()));
+        }
+        let url = if self.document {
+            Some(destination.as_str())
+                .filter(|url| url.len() <= URL_LIMIT && self.current.links.len() < 4096)
+        } else {
+            safe_url(&destination).filter(|_| !image && self.current.links.len() < 4096)
+        };
         let Some(url) = url else {
             // Not a web link: keep the destination readable and inert.
             if !destination.is_empty() {
@@ -352,7 +363,7 @@ impl Projection {
             return;
         };
         let cells: usize = table.rows.iter().map(Vec::len).sum();
-        if cells > CELL_LIMIT {
+        if cells > CELL_LIMIT && !self.document {
             self.current.kind = Kind::Code(String::new());
             return self.flush();
         }
@@ -438,7 +449,9 @@ impl Projection {
                     .push((dest_url.into_string(), self.current.text.len()));
             }
             Event::Start(Tag::Image { dest_url, .. }) => {
-                self.text("[image: ", false);
+                if !self.document {
+                    self.text("[image: ", false);
+                }
                 self.links
                     .push((dest_url.into_string(), self.current.text.len()));
             }

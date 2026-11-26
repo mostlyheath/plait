@@ -105,6 +105,7 @@ pub(super) const ACTIONS: &[AppAction] = &[
     entry("project.worktrees", "Worktrees", "File", None, Item, || Box::new(super::worktrees_view::Worktrees)),
     entry("project.issues", "Linear Issues", "File", None, Item, || Box::new(super::issues_view::Issues)),
     entry("project.settings", "Project Settings…", "File", None, Item, || Box::new(ProjectSettings)),
+    entry("file.check_links", "Check Links", "File", None, Item, || Box::new(CheckDocumentLinks)),
     entry("file.open", "Open File…", "File", Some("cmd-p"), Item, || Box::new(QuickOpen)),
     entry("git.refresh", "Refresh Git Status", "File", Some("cmd-r"), Item, || Box::new(Refresh)),
     // Ways out. Option and Command, with E for editor and T for terminal.

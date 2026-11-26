@@ -15,6 +15,7 @@ mod commits;
 mod composer;
 mod conversation;
 mod conversation_find;
+mod document;
 mod draft_tabs;
 mod draft_titles;
 mod file_view;
@@ -109,6 +110,7 @@ actions!(
         CommitHistory,
         ShowFiles,
         QuickOpen,
+        CheckDocumentLinks,
         FindInFile,
         FindNext,
         FindPrevious,
@@ -157,6 +159,7 @@ pub(super) use plait_client::thread_view::ThreadView as Workspace;
 const EXPANDED_CHROME_WIDTH: f32 = 1150.;
 
 pub struct Plait {
+    document_sources: std::collections::HashSet<(plait_client::ownership::CheckoutKey, PathBuf)>,
     tabs: tabs::Tabs,
     state: AppState,
     host: HostState,
@@ -334,6 +337,7 @@ impl Plait {
         let commit_message =
             cx.new(|cx| text_field::TextField::new("Commit message", "Commit message", cx));
         let mut this = Self {
+            document_sources: Default::default(),
             tabs: Default::default(),
             state,
             host,
@@ -1414,7 +1418,9 @@ impl Render for Plait {
                 this.toggle_command_palette(window, cx)
             }))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                if event.keystroke.key == "escape"
+                if this.outline_key(&event.keystroke.key, cx) {
+                    cx.stop_propagation();
+                } else if event.keystroke.key == "escape"
                     && this.workspace.images.enlarged.take().is_some()
                 {
                     this.focus_composer(window, cx);
@@ -1470,6 +1476,9 @@ impl Render for Plait {
             .on_action(cx.listener(|this, _: &ShowFiles, window, cx| {
                 this.show_tab(Workspace::Files, window, cx)
             }))
+            .on_action(
+                cx.listener(|this, _: &CheckDocumentLinks, _, cx| this.check_document_links(cx)),
+            )
             .on_action(cx.listener(|this, _: &QuickOpen, window, cx| this.quick_open(window, cx)))
             .on_action(cx.listener(|this, _: &FindInFile, window, cx| {
                 if let Some(target) = this.find_target() {

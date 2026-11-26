@@ -33,7 +33,7 @@ pub(super) fn token_color(token: Token) -> u32 {
     }
 }
 
-fn highlight(style: &Style) -> HighlightStyle {
+pub(super) fn highlight(style: &Style) -> HighlightStyle {
     let link = style.link.is_some();
     let color = if link {
         Some(colors().blue)
@@ -79,7 +79,7 @@ pub(super) fn overlapping_spans<'a>(
 }
 
 /// Clip a block's spans to `range` and make them relative to it.
-fn local_spans(block: &Block, range: &Range<usize>) -> Vec<(Range<usize>, Style)> {
+pub(super) fn local_spans(block: &Block, range: &Range<usize>) -> Vec<(Range<usize>, Style)> {
     overlapping_spans(block, range)
         .iter()
         .map(|(span, style)| {

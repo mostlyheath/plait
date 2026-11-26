@@ -2530,6 +2530,11 @@ see its Git."
   stopped after 240 seconds; a helper that fails reports only "The host could
   not finish this change. Refresh to see the checkout as it is."
 
+Markdown images use the existing checkout file read. The host opens regular
+files beneath the verified checkout without following symlinks and caps each
+read at 8 MiB. The desktop recognizes PNG, JPEG, GIF and WebP from their
+bytes and decodes a bounded thumbnail on the background executor.
+
 ## Linear
 
 These additive host operations let the desktop manage Linear sign-in, read

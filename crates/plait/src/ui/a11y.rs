@@ -306,6 +306,23 @@ pub fn text(id: impl Into<ElementId>, text: impl Into<SharedString>) -> Audited<
     }
 }
 
+/// Collect the native accessibility node after the caller configures its links.
+pub fn linked_text(
+    id: impl Into<ElementId>,
+    text: StyledText,
+    configure: impl FnOnce(InteractiveText) -> InteractiveText,
+) -> Audited<InteractiveText> {
+    let element = configure(InteractiveText::new(id, text));
+    #[cfg(all(test, debug_assertions))]
+    {
+        Audited(element)
+    }
+    #[cfg(not(all(test, debug_assertions)))]
+    {
+        element
+    }
+}
+
 /// Wraps a role-bearing stateful element so debug tests observe it in `prepaint`.
 pub trait AuditA11y: Sized {
     fn audited(self) -> Audited<Self>;
