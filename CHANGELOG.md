@@ -8,10 +8,16 @@ wait in [changes/](changes/README.md) until a release collects them.
 ### Added
 
 - Markdown files open rendered, with a Source switch, heading outline, Find, checkout images, and a check for broken local links.
+- Stillwater Light joins the light themes in Settings → Appearance.
+
+### Changed
+
+- The disk image now holds only Plait and an Applications shortcut, so installing is one drag. The one-time Open Anyway step is described in the guide.
 
 ### Fixed
 
 - If Plait can’t read your saved Linear drafts, it protects them and tries again when you reopen Issues.
+- Cmd-Y opens History by default, instead of the macOS screenshot key. Cmd-Shift-C commits staged changes when the commit message already has focus and Commit is enabled; otherwise it takes you to the message.
 
 ## v0.1.0-preview.83
 
