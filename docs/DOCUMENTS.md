@@ -154,10 +154,12 @@ Diagrams and math are laid out in the background and cached by their source.
 5. Math, then Mermaid flowcharts and sequence diagrams.
 6. Inspection in the native macOS app, with the speed targets measured.
 
-## Open questions
+## Decided later
 
-1. **Order against v0.1.0.** Does this come before or after the first
-   official release? Automations and the thread graph are already the
-   v0.1.0 work.
-2. **Sidelit's future.** Once Plait covers documents, Sidelit keeps or drops
-   its own Pi delivery.
+- **Documents is part of v0.1.0,** beside automations and the thread graph.
+  Rendered reading and asking about a passage come first, since they change
+  no storage. Editing follows once its host contract is reviewed.
+
+## Open question
+
+Once Plait covers documents, does Sidelit keep its own Pi delivery?
