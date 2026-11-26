@@ -94,42 +94,38 @@ Reply codes: `invalid_request`, `not_found`, `busy`, `conflict`, `model_unavaila
 `interrupted`, and, in version 3 snapshots, `turn_limit`. Never send credentials, auth paths, or raw
 provider error bodies. Errors are not accepted submissions.
 
-## Background requests (agreed)
+## Background requests (built)
 
-**Agreed 2026-11-26 for [#265](https://github.com/mostlyheath/plait/issues/265): use the host’s existing local client socket (C). Not built yet.**
-The automation timer and graph reconciler currently send their reads, admissions
-and submissions through an in-process FIFO to `handle()` in the feature
-implementations. Rust never sees those exchanges. The exchange deadline
-covers one stdin write and one stdout reply, starting after the caller acquires
-the sidecar mutex. A transport failure kills the sidecar, and notification EOF
-ends the host. The mutex serializes exchanges without promising FIFO fairness.
+The automation timer and graph reconciler use the host’s local client socket
+(option C in [#265](https://github.com/mostlyheath/plait/issues/265)). The host
+passes its path in `PLAIT_BACKGROUND_SOCKET` when either feature is enabled. After the runtime recovers and
+answers its startup status, Rust binds the socket and restricts its permissions.
+If it supplied the background socket path and the startup status advertises `background_socket_v1`, it then signals readiness on the notification descriptor. Only then does the runtime
+enable the requested background features. Foreground requests are served even if readiness never arrives. An older host leaves them inactive.
 
-| Option | Protocol and code changes | Ordering, deadline and compatibility |
-| --- | --- | --- |
-| A. Return a request on the sidecar pipe | Add private, correlated background-request and result frames. Rust needs a continuous stdout reader even when idle, to distinguish requests from replies. Dispatch each request on a separate worker. TypeScript must route results independently of ordinary stdin requests. Timers and claims stay in TypeScript. | The worker takes the client mutex and uses the same timed exchange. Neither reader may wait for a worker holding or waiting for that mutex. Negotiate framing at startup before either end emits it. Older pairs keep ordinary replies. |
-| B. Move timers to Rust | Move timer arming, wake handling and step dispatch to the host. Add private operations to ask the feature for its next wake or claimed step and record the result. Graph changes and schedule edits must wake the Rust driver. SQLite decisions stay with the feature. | Release the pipe after every step and send the next operation through the ordinary dispatch path with a fresh deadline. On restart Rust queries due work again. Enable the driver only when the sidecar advertises the step protocol. |
-| C. Connect to the local socket | Keep both schedulers and replace their background send callback with a client of the owner-checked Unix socket. Open one connection per operation, verify socket and parent ownership, peer UID and frame bounds, read one reply and close (including after the initial `watch` snapshot). | The existing socket handler takes the same mutex and calls the same timed exchange. Client traffic can interleave between steps. No new public operation, pipe frame or storage migration. |
+Each operation checks socket and parent ownership and permissions, connects,
+verifies the peer UID, sends one bounded request and closes after the first
+reply. Background admission polls return the current placement state immediately. Background thread reads use stored snapshots and skip harness catalog refreshes. The client's 60-second timeout covers the
+whole operation. The host's separate 20-second pipe deadline starts when the
+socket handler acquires the sidecar mutex. Desktop traffic can interleave
+between steps. The mutex makes no FIFO guarantee. Foreground operations call
+the runtime handler directly and return without waiting for background work.
 
-For C, have Rust opt in the bundled sidecar at launch and supply the socket
-path. Arm background dispatch after recovery and socket readiness: Rust waits
-for the sidecar’s startup status **before** binding the socket. A foreground
-handler must return without awaiting the background work it triggers. The
-stdio loop cannot read the next request until that handler returns. Recheck
-mutable feature guards such as the automation revision at submission handling
-time, after the socket request has waited its turn. Older desktop clients keep
-their existing protocol. Without host/sidecar opt-in, leave the new background
-driver inactive and withhold the affected feature capability. An older sidecar
-requires an upgrade to provide this guarantee.
-
-All three options use the same recovery rule. Persist the automation occurrence
-claim and revision before submission. For a graph start, retain the node’s
-admission ID and persist the submission text before sending its stable
-`submit-<node id>` request. Keep these records in each feature’s SQLite store.
-After either process dies or a reply is lost, discard transport waiters,
-rescan pending claims and nodes, and reconcile admission and submission receipts.
-Retry unresolved work only with its original ID and payload. An accepted or
-interrupted run is never launched again. C requires the least new machinery
-because Rust already implements the required serialization and failure path.
+Automations persist each occurrence claim and revision before submission. The
+submit carries `expect.claim` with its request ID and revision. At enqueue, the
+automation service checks that the claim is pending for this thread, the revision
+is current, and the message approval matches the saved definition. A stale claim
+returns `conflict`. The host accepts `expect` only with `PLAIT_AUTOMATIONS=1`
+or `PLAIT_GRAPH=1`. Each supplied settings field
+(`command_policy`, `harness`, `provider`, `model_id`, `mode`, `thinking`, or
+`approval`) must match the current setting before a new message is enqueued.
+Mode and thinking accept null. Approval compares the thread setting, while
+top-level approval applies to the message. A mismatch returns
+`queue_settings_changed`. Omitting `expect` preserves ordinary submit behavior.
+Graph persists the node’s admission ID and the submission text before sending
+its stable `submit-<node id>` request. After a restart or lost reply, both
+drivers reconcile durable receipts and retry unresolved work with its original
+ID and payload.
 
 ## Operations
 
@@ -3298,7 +3294,7 @@ existing reply shapes are unchanged:
 | Operation | Result and meaning |
 | --- | --- |
 | `checkout_queue_info {}` | `{schema:1,checkout_queue_v1:true,limit:32,payload_bytes:33554432}`. An older host's `invalid_request`, any other refusal, or a capability with other values makes Wait unavailable; the desktop's thread listing, which probes first, still loads. |
-| `submit_checkout {thread_id,request_id,text,approval?,images?}` | The existing acceptance fields `{thread_id,request_id,accepted:true}` after a durable commit. Approval defaults to `ask`; image IDs refer to completed thread-owned uploads. An available checkout may start immediately. |
+| `submit_checkout {thread_id,request_id,text,approval?,images?,identity?,expect?}` | The existing acceptance fields `{thread_id,request_id,accepted:true}` after a durable commit. Approval defaults to `ask`; image IDs refer to completed thread-owned uploads. An available checkout may start immediately. |
 | `checkout_queue {thread_id}` | `{schema:1,thread_id,checkout,waiters}` with up to 32 checkout waiter receipts in acceptance order: pending inputs first for inclusion, then recent terminal receipts. Each has `request_id`, `state`, `position` (zero when terminal), and nullable `error`. Cancellation replies always include the requested receipt. |
 | `cancel_checkout_wait {thread_id,request_id}` | The same queue receipt. Waiting or held input becomes cancelled. If that exact input already started and is still the active run, the operation requests the existing Stop. It never stops a later run or silently discards an executing input. Repeating cancellation is safe. |
 | `resume_checkout_queue {thread_id}` | The same queue receipt. Explicitly releases every held checkout waiter for this thread's checkout in its original order. A held follow-up is not released: it keeps its own thread's next-send rule. It does not replay an interrupted run. |

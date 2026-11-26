@@ -1,6 +1,6 @@
 # Thread graph
 
-**Agreed design.** The host operations are built behind `PLAIT_GRAPH=1`, off by default and not ready to turn on: issues labelled [`blocks-flag`](https://github.com/mostlyheath/plait/issues?q=label%3Ablocks-flag) (#265, #269–#271) must be fixed first. The desktop Graph tab and Discuss enforcement are planned. The project owner agreed the product
+**Agreed design.** The host operations are built behind `PLAIT_GRAPH=1`, off by default and not ready to turn on: issues labelled [`blocks-flag`](https://github.com/mostlyheath/plait/issues?q=label%3Ablocks-flag) (#269–#271) must be fixed first. The desktop Graph tab and Discuss enforcement are planned. The project owner agreed the product
 decisions and the host contract below. Each pull request that changes storage or the protocol needs its independent review (see
 [Contributing](../CONTRIBUTING.md)).
 
@@ -12,7 +12,7 @@ This is different from the [prompt tree](HOST-FIRST.md#the-prompt-tree),
 which is about retries and edits inside one thread. The graph is about links
 between threads.
 
-For background graph starts, see [Background requests (agreed)](HOST.md#background-requests-agreed).
+For background graph starts, see [Background requests (built)](HOST.md#background-requests-built).
 
 ## What a person sees
 
@@ -142,7 +142,7 @@ unknown-operation error.
   2,000 edges.
 
 With the graph enabled, each background host request shares the desktop
-request FIFO. Admission, result collection, and submission take separate
+client’s socket dispatch path. Admission, result collection, and submission take separate
 turns. To edit a draft waiting in the checkout queue, first withdraw its
 submission with `cancel_queued`. A graph poll selects unstarted drafts by
 the project device and inode captured at creation. A worktree admission

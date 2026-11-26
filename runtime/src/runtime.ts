@@ -108,13 +108,6 @@ export class Runtime {
   worktrees: Worktrees;
   admissions: Admissions;
   private automations?: Automations;
-  private requestTail?: Promise<void>;
-
-  private enqueue<T>(work: () => Promise<T>) {
-    const result = (this.requestTail ?? Promise.resolve()).then(work);
-    this.requestTail = result.then(() => {}, () => {});
-    return result;
-  }
   capacity = new RunCapacity();
   sessions = new Map<string, Session>();
   runnerSessions = new Map<string, RunnerSession>();
@@ -170,10 +163,6 @@ export class Runtime {
       snapshot: id => this.snapshot(id),
       save: snapshot => this.save(snapshot),
     });
-    if (process.env.PLAIT_GRAPH === '1') {
-      this.graph = new Graph(directory, request => this.enqueue(() => this.handle(request)),
-        id => this.store.refreshRootIdentity(id, this.store.get(id).checkout), (id, request) => this.store.waiters.get(id, request));
-    }
     this.store.waiters.changed = () => this.changed('#');
     this.records = new Records(this.store, directory, id => this.changed(id));
     this.turnReview = new TurnReview(this.store, this.records, directory);
@@ -190,11 +179,21 @@ export class Runtime {
       made: (tree, creation) => this.workspace.madeWorktree(tree.path, tree.parent.root, tree.branch, creation, tree.identity),
       removed: folder => this.workspace.removedWorktree(folder),
     });
-    if (process.env.PLAIT_AUTOMATIONS === '1') this.automations = new Automations(directory, (request, guard) => this.enqueue(() => {
-      guard?.();
-      return this.handle(request);
-    }));
     this.admissions = new Admissions(this.store, this.worktrees, this.capacity, (input, identity) => this.handle(input, identity), root => this.active.has(root) || this.records.busy(root) || this.store.waiters.line(root).some(waiter => waiter.kind === 'checkout' || waiter.state === 'waiting'), () => this.admitWork());
+  }
+  startBackground(client: (request: Record<string, unknown>) => Promise<unknown>) {
+    const send = (request: Record<string, unknown>) => client(
+      request.op === 'create_admitted_thread' || request.op === 'admission_status' ? { ...request, poll: true } : request);
+    if (process.env.PLAIT_GRAPH === '1') {
+      this.graph = new Graph(this.directory, send,
+        id => this.store.refreshRootIdentity(id, this.store.get(id).checkout), (id, request) => this.store.waiters.get(id, request));
+    }
+    if (process.env.PLAIT_AUTOMATIONS === '1') {
+      this.automations = new Automations(this.directory, send,
+        (id, request) => this.store.waiters.get(id, request)?.kind === 'checkout');
+      this.automations.start();
+    }
+    this.graph?.wake();
   }
   /** Reconcile persisted work before accepting requests. */
   async recover(): Promise<void> {
@@ -268,8 +267,6 @@ export class Runtime {
       this.store.transaction(() => this.store.closeRecoveredRuns(snapshot));
     }
     this.records.start(liveCheckouts);
-    this.automations?.start();
-    this.graph?.wake();
   }
   private runnerEventHooks() {
     return {
@@ -509,11 +506,16 @@ export class Runtime {
     if (this.workspace.handles(input)) return this.workspace.handle(input);
     if (this.linear.handles(input)) return this.linear.handle(input);
     if (this.worktrees.handles(input)) return this.worktrees.handle(input);
+    if ((this.graph || this.automations) && (op === 'admission_status' || op === 'create_admitted_thread')) {
+      const { poll, ...request } = input as Record<string, unknown>;
+      if (poll === true) return this.admissions.handle(request, true);
+    }
     if (handlesAdmission(input)) return this.admissions.handle(input);
     if (queueOperation(input)) return this.checkoutQueue(input);
-    const request = validate(input);
+    const stored = op === 'stored_thread' && (this.graph || this.automations);
+    const request = validate(stored ? { ...input as object, op: 'watch' } : input);
     const protocol = version(request);
-    const result = await this.dispatch(request, protocol, expectedCheckout);
+    const result = stored ? { thread: this.snapshot(String(request.thread_id)) } : await this.dispatch(request, protocol, expectedCheckout);
     // Every snapshot leaves through the negotiated wire shape.
     if (result && typeof result === 'object' && 'thread' in result) return { ...result, thread: view({ ...(result.thread as Snapshot), image_input: this.imageInput(result.thread as Snapshot), records_revision: this.records.revision((result.thread as Snapshot).id) }, protocol) };
     return result;
@@ -1175,8 +1177,26 @@ export class Runtime {
         if (!previous || previous.kind !== 'checkout') fail('conflict','Request ID already belongs to another submission.');
         return duplicate;
       }
-      const current = this.snapshot(id);
-      this.usable(current); await this.store.refreshRootIdentity(id, current.checkout);
+      let current = this.snapshot(id);
+      this.usable(current);
+      await this.store.refreshRootIdentity(id, current.checkout);
+      if (this.graph || this.automations) current = this.snapshot(id);
+      if (request.expect) {
+        const actual: Record<string, unknown> = {
+          command_policy: commandPolicy(this.store, current.checkout, this.store.rootIdentity(id)),
+          harness: current.harness?.id ?? 'pi', mode: current.harness?.mode ?? null,
+          provider: current.model.provider, model_id: current.model.model_id,
+          thinking: current.thinking_level ?? 'off', approval: current.approval_mode ?? 'ask'
+        };
+        const { claim, ...settings } = request.expect;
+        if (claim) {
+          if (!this.automations) fail('conflict', 'Automation service is unavailable.');
+          this.automations.checkSubmission(id, claim, approval);
+        }
+        for (const [key, expected] of Object.entries(settings)) {
+          if (actual[key] !== expected) fail('queue_settings_changed', `Checkout setting ${key} changed before submission.`);
+        }
+      }
       const refs = this.store.images.refs(id,images);
       if (refs.length && this.imageInput(current) === 'no') fail('model_unavailable','This model cannot take images.');
       const result = { thread_id: id, request_id: request.request_id, accepted: true };
@@ -1508,9 +1528,6 @@ export class Runtime {
   }
   async reply(input: unknown) {
     try {
-      this.automations?.observeArrival(input);
-      // With either background feature on, client requests take turns with its requests.
-      if (this.automations || this.graph) return { ok: true, result: await this.enqueue(() => this.handle(input)) };
       return { ok: true, result: await this.handle(input) };
     } catch (error) { return { ok: false, error: failure(resourceError(error)) }; }
   }

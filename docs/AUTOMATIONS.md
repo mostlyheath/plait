@@ -1,6 +1,6 @@
 # Automations
 
-**The host scheduler is built behind `PLAIT_AUTOMATIONS=1`, off by default and not ready to turn on: issues labelled [`blocks-flag`](https://github.com/mostlyheath/plait/issues?q=label%3Ablocks-flag) (#265–#268) must be fixed first. The desktop controls below are planned.** The project owner agreed the product
+**The host scheduler is built behind `PLAIT_AUTOMATIONS=1`, off by default and not ready to turn on: issues labelled [`blocks-flag`](https://github.com/mostlyheath/plait/issues?q=label%3Ablocks-flag) (#266–#268) must be fixed first. The desktop controls below are planned.** The project owner agreed the product
 decisions and the host contract below. Each pull request that changes storage
 or the protocol still needs its independent review (see
 [Contributing](../CONTRIBUTING.md)).
@@ -10,7 +10,7 @@ An automation is a thread that runs on a schedule. You give it instructions
 once, say where it works and when, and the host runs it while you are away.
 Results arrive the way any thread's do: an unread mark and an alert.
 
-For timer requests, see [Background requests (agreed)](HOST.md#background-requests-agreed).
+For timer requests, see [Background requests (built)](HOST.md#background-requests-built).
 
 ## What a person sees
 
@@ -139,14 +139,18 @@ The host owns automations. The desktop is a client of them, like threads.
   the saved definition. A mismatch pauses the schedule. An active thread or
   busy checkout skips the occurrence. Otherwise the host accepts the message
   through the desktop's durable Wait operation, `submit_checkout`. The
-  occurrence receipt says `queued` when the host accepts it. If another run
+  host checks the pending claim, current automation revision and saved approval
+  immediately before enqueueing. The occurrence receipt says `queued` when the host accepts it. If another run
   takes the checkout during admission, the message waits with its saved
   approval and command policy. Desktop requests continue during that wait.
   A missing or replaced checkout pauses the schedule.
 - **Run now:** when an occurrence is due within the catch-up window, the click
   uses that occurrence's scheduled request ID. If the host accepts it and
   restarts before saving the automation receipt, catch-up can submit the same
-  ID safely. A click arriving during scheduled submission shares its claim.
+  ID safely. A click delivered after the scheduled receipt was saved returns
+  that receipt if the host received the click within the catch-up window in effect when the occurrence was claimed.
+  Edits preserve that receipt. If an edit overtakes a click and the host cannot
+  match it to an occurrence, Run now returns a conflict.
   Other clicks create manual claims. The host saves the click and claim in
   one transaction before submission. A retry looks up the original click,
   even when another occurrence has since become due. Claims and receipts
@@ -155,7 +159,7 @@ The host owns automations. The desktop is a client of them, like threads.
   `pending` while work is outstanding. Read the final receipt with
   `get_automation`, or repeat the same click ID.
 - **Request ordering:** with automations enabled, desktop requests and individual
-  background host requests take turns in one FIFO. A desktop edit can run
+  background host requests take turns on the host’s sidecar mutex. A desktop edit can run
   between the scheduler's checkout check and submission. Placement, polling
   and run completion happen in background steps.
 - **Operations:** `list_automations` returns each automation's ID, name,

@@ -34,6 +34,31 @@ async function pi(t: Parameters<typeof setup>[0], responses: Parameters<ReturnTy
 }
 const start=(root:string,id:string,harness='pi')=>({op:'create_admitted_thread',request_id:id,checkout:root,placement:'project',harness,provider:harness==='pi'?'faux':harness,model_id:harness==='pi'?'faux-1':harness==='codex'?'gpt-fake':'default',approval:'auto',...(harness==='pi'?{}:{mode:harness==='codex'?'ask':'auto'})});
 
+test('background polls and repeated starts return while placement is still preparing', async t => {
+  const { runtime, root } = await pi(t, []);
+  const admissions = runtime.admissions;
+  const original = admissions['createHere'].bind(admissions);
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  admissions['createHere'] = async (input, identity) => {
+    await gate;
+    return original(input, identity);
+  };
+  const request = start(root, 'pending');
+  const timeout = setTimeout(release, 3000);
+  try {
+    await admissions.handle(request, true);
+    for (const poll of [{ op: 'admission_status', request_id: request.request_id }, request]) {
+      const reply = await admissions.handle(poll, true) as { admission: Admission };
+      assert.equal(reply.admission.state, 'preparing');
+    }
+  } finally {
+    clearTimeout(timeout);
+    release();
+  }
+  await admitted(runtime, request.request_id);
+});
+
 test('strict admission fields refuse queue, forged identity and protocol fields',()=>{
   for(const request of [{...start('/repo','one'),placement:'queue'},{...start('/repo','one'),protocol_version:6},{...start('/repo','one'),extra:true},{op:'set_project_isolation',checkout:'/repo',identity:{dev:'01',ino:'2'},auto_worktree:true},{...start('/repo','one'),source_thread_id:'existing'},{op:'admission_info',checkout:'/repo/../other'}]) assert.throws(()=>validateAdmission(request));
 });

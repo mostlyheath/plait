@@ -68,7 +68,7 @@ export class Admissions {
       if ((JSON.parse(String(row.result)) as Admission).state === 'preparing') this.start(String(row.request_id));
     }
   }
-  async handle(input: unknown) {
+  async handle(input: unknown, poll = false) {
     const request = validateAdmission(input);
     if (request.op === 'run_preparation') { this.store.get(request.thread_id); return { schema: 1, thread_id: request.thread_id, phase: this.capacity.phases.get(request.thread_id) ?? null }; }
     if (request.op === 'admission_info') return this.info(request.checkout);
@@ -85,9 +85,9 @@ export class Admissions {
       const row = this.store.db.prepare("SELECT result FROM thread_admissions WHERE json_extract(result,'$.thread_id')=? ORDER BY rowid DESC LIMIT 1").get(request.thread_id);
       return { schema: 1, admission: row ? JSON.parse(String(row.result)) : null };
     }
-    if (request.op === 'admission_status') return { schema: 1, admission: await this.status(request.request_id) };
+    if (request.op === 'admission_status') return { schema: 1, admission: await this.status(request.request_id, poll) };
     const earlier = this.admitting.get(request.request_id); if (earlier) await earlier;
-    const admission = this.create(request); this.admitting.set(request.request_id, admission);
+    const admission = this.create(request, poll); this.admitting.set(request.request_id, admission);
     try { return { schema: 1, admission: await admission }; }
     finally { if (this.admitting.get(request.request_id) === admission) this.admitting.delete(request.request_id); }
   }
@@ -130,11 +130,11 @@ export class Admissions {
     return JSON.parse(String(row.result));
   }
   private put(result: Admission) { this.store.db.prepare('UPDATE thread_admissions SET result=? WHERE request_id=?').run(JSON.stringify(result), result.request_id); }
-  private async create(request: Start): Promise<Admission> {
+  private async create(request: Start, poll: boolean): Promise<Admission> {
     const previous = this.store.db.prepare('SELECT input FROM thread_admissions WHERE request_id=?').get(request.request_id);
     if (previous) {
       if (previous.input !== canonical(request)) fail('invalid_request', 'This admission request ID has a different payload.');
-      return this.status(request.request_id);
+      return this.status(request.request_id, poll);
     }
     const info = await this.info(request.checkout);
     if (request.source_thread_id) {
@@ -160,9 +160,12 @@ export class Admissions {
     const task = this.finish(id).finally(() => this.pending.delete(id));
     this.pending.set(id, task); void task.catch(() => {});
   }
-  private async status(id: string) {
+  private async status(id: string, poll: boolean) {
     const result = this.get(id);
-    if (result.state === 'preparing') { this.start(id); return this.pending.get(id)!; }
+    if (result.state === 'preparing') {
+      this.start(id);
+      if (!poll) return this.pending.get(id)!;
+    }
     return result;
   }
   private async finish(id: string): Promise<Admission> {
