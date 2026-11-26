@@ -166,6 +166,11 @@ export class Automations {
             fail('permission_denied', 'An automation thread cannot create automations.');
         }
         const d = definition(r.definition);
+        // Admission compares canonical roots, so save the path the host resolves
+        // (on macOS the temporary folder /var is a link to /private/var).
+        // A path that cannot be resolved is left as given; the host refuses it at placement.
+        if (d.target.kind === 'directory') d.target.path = await realpath(d.target.path).catch(() => (d.target as { path: string }).path);
+        else d.target.checkout = await realpath(d.target.checkout).catch(() => (d.target as { checkout: string }).checkout);
         const request = key(r.request_id);
         const id = createHash('sha256').update(request).digest('hex');
         return { automation: this.create(d, id) };

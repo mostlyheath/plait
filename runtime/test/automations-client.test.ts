@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test, type TestContext } from 'node:test';
-import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, symlinkSync, mkdtempSync, renameSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createModels } from '@earendil-works/pi-ai/models';
@@ -130,8 +130,10 @@ test('real Runtime gates routing and storage on the flag', async t => {
 
 test('real placement creates a thread, Run now submits to it, and removal pauses the schedule', async t => {
   const dir = directory(t);
-  const path = join(dir, 'folder'), store = join(dir, 'store');
-  mkdirSync(path); mkdirSync(store);
+  const real = join(dir, 'folder'), store = join(dir, 'store');
+  mkdirSync(real); mkdirSync(store);
+  // Reach the folder through a link, as macOS reaches /private/var through /var.
+  const path = join(dir, 'link'); symlinkSync(real, path);
   const old = process.env.PLAIT_AUTOMATIONS;
   process.env.PLAIT_AUTOMATIONS = '1';
   const models = createModels(), faux = fauxProvider({ tokensPerSecond: 1e8 });
@@ -170,7 +172,7 @@ test('real placement creates a thread, Run now submits to it, and removal pauses
     const thread = runtime.snapshot(automation.thread_id);
     assert.ok(thread.messages.some(m => m.text === 'Complete'));
 
-    renameSync(path, join(dir, 'moved'));
+    renameSync(real, join(dir, 'moved'));
     assert.equal((await run('later')).occurrence.detail, 'target missing');
     await runtime.handle({ op: 'delete_automation', id: automation.id });
     assert.equal(runtime.snapshot(thread.id).id, thread.id);
