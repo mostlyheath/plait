@@ -10,8 +10,12 @@ export const readsAsTyped = (text: string | undefined): text is string => text?.
 export type InputRecord = {
   request_id: string; text: string; images?: ImageRef[]; entry: number | null; anchor: number;
   /** Set while the input waits behind a run; it is not part of the conversation yet. */
-  queued?: { mode: QueueMode; approval: ApprovalMode };
+  queued?: { mode: QueueMode; approval: ApprovalMode; steerRunId?: string };
 };
+// A recovered steer without an owner waits for its own turn.
+export const steersRun = (input: InputRecord, runId: string) =>
+  input.queued?.mode === 'steer' && input.queued.steerRunId === runId;
+
 export const inputMessage = (input: InputRecord) => ({ id: `request-${input.request_id}`, role: 'user' as const, text: clipTail(input.images?.length ? escapeDisplay(input.text) : input.text, 4096), ...(input.images?.length ? { images: input.images } : {}) });
 
 export type ModelChoice = { provider: string; model_id: string };
