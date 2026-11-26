@@ -186,3 +186,82 @@ test('cancelling a follow-up refreshes other waiters positions',async t=>{
  }finally{hold.release();}
  await until(()=>h.runtime.active.size===0&&h.runtime.store.waiters.line(h.root).length===0);
 });
+
+test('enqueue refuses changed command policy or harness mode without recording a submission', async t => {
+  const previous = process.env.PLAIT_GRAPH;
+  process.env.PLAIT_GRAPH = '1';
+  t.after(() => { if (previous === undefined) delete process.env.PLAIT_GRAPH; else process.env.PLAIT_GRAPH = previous; });
+  const h = await fixture(t);
+  const id = await thread(h.runtime, h.root, 'destination');
+  for (const expect of [{ command_policy: 'sandboxed' }, { mode: 'plan' }]) {
+    const reply = await h.runtime.reply({ ...queue(id, 'guarded'), expect });
+    assert.equal(reply.error?.code, 'queue_settings_changed');
+    assert.match(reply.error!.message, new RegExp(Object.keys(expect)[0]));
+    assert.equal(h.runtime.store.waiters.get(id, 'guarded'), undefined);
+  }
+});
+
+test('submit_checkout accepts expect only with a background feature enabled', t => {
+  const env = { ...process.env };
+  delete env.PLAIT_AUTOMATIONS;
+  delete env.PLAIT_GRAPH;
+  const previous = process.env;
+  process.env = env;
+  t.after(() => { process.env = previous; });
+  const request = { ...queue('thread', 'request'), expect: {} };
+  assert.throws(() => queueRequest(request), { code: 'invalid_request', message: 'Unknown checkout queue field.' });
+  for (const flag of ['PLAIT_AUTOMATIONS', 'PLAIT_GRAPH']) {
+    env[flag] = '1';
+    assert.deepEqual(queueRequest(request), request);
+    delete env[flag];
+  }
+});
+
+test('a background snapshot reads a Codex thread while its catalog refresh is pending', async t => {
+  const h = await fixture(t);
+  const id = await thread(h.runtime, h.root, 'codex-read');
+  const snapshot = h.runtime.store.get(id);
+  snapshot.harness = { id: 'codex', mode: 'default', version: null };
+  h.runtime.store.save(snapshot);
+  const read = { op: 'stored_thread', protocol_version: 6, thread_id: id };
+  assert.equal((await h.runtime.reply(read)).error?.code, 'invalid_request');
+  const previous = process.env.PLAIT_AUTOMATIONS;
+  process.env.PLAIT_AUTOMATIONS = '1';
+  try { h.runtime.startBackground(request => h.runtime.handle(request)); }
+  finally { if (previous === undefined) delete process.env.PLAIT_AUTOMATIONS; else process.env.PLAIT_AUTOMATIONS = previous; }
+
+  const pending = barrier();
+  const entry = t.mock.method(h.runtime.codex, 'entry', () => pending.waiting);
+  const foreground = h.runtime.handle({ ...read, op: 'watch' });
+  try {
+    assert.equal(entry.mock.callCount(), 1);
+    const background = h.runtime.handle(read);
+    assert.equal(entry.mock.callCount(), 1);
+    const result = await background as { thread: { id: string } };
+    assert.equal(result.thread.id, id);
+  } finally { pending.release(); await foreground; }
+});
+
+test('submit_checkout keeps the pre-identity snapshot until a background feature is active', async t => {
+  const h = await fixture(t);
+  const id = await thread(h.runtime, h.root, 'title-race');
+  const lease = await acquireCheckout(h.root);
+  const refresh = h.runtime.store.refreshRootIdentity.bind(h.runtime.store);
+  t.mock.method(h.runtime.store, 'refreshRootIdentity', async (threadId: string, checkout: string) => {
+    const identity = await refresh(threadId, checkout);
+    const snapshot = h.runtime.store.get(threadId);
+    snapshot.title = 'Generated title';
+    h.runtime.store.save(snapshot);
+    return identity;
+  });
+  try {
+    await h.runtime.handle(queue(id, 'first', 'Fallback title'));
+    assert.equal(h.runtime.store.get(id).title, 'Fallback title');
+    const previous = process.env.PLAIT_AUTOMATIONS;
+    process.env.PLAIT_AUTOMATIONS = '1';
+    try { h.runtime.startBackground(request => h.runtime.handle(request)); }
+    finally { if (previous === undefined) delete process.env.PLAIT_AUTOMATIONS; else process.env.PLAIT_AUTOMATIONS = previous; }
+    await h.runtime.handle(queue(id, 'second'));
+    assert.equal(h.runtime.store.get(id).title, 'Generated title');
+  } finally { await lease.close(); }
+});

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { realpath } from 'node:fs/promises';
+import { lstat, realpath } from 'node:fs/promises';
 import { projectKind } from '../safety.ts';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -9,17 +9,16 @@ import { fail, HostError, validate, type Snapshot } from '../protocol.ts';
 import { defaultCatchUpMs, dueOccurrences, nextOccurrences, validateSchedule, type Schedule } from './schedule.ts';
 import { schema } from './schema.ts';
 
-type Send = (request: Record<string, unknown>, guard?: () => void) => Promise<unknown>;
+type Send = (request: Record<string, unknown>) => Promise<unknown>;
 type Definition = Pick<Start, 'harness' | 'provider' | 'model_id' | 'mode' | 'thinking' | 'approval'> & {
   name: string; instructions: string; target: { kind: 'project' | 'worktree'; checkout: string } | { kind: 'directory'; path: string };
   command_policy: 'sandboxed' | 'trusted'; schedule: Schedule; catch_up_ms: number;
 };
-type ScheduledClaim = { request_id: string; due: number; revision: number };
 type Automation = { id: string; thread_id: string; definition: Definition; revision: number; state: string; pause_reason: string | null; cursor: number; missed_count: number };
 const fields: Record<string, string[]> = {
   list_automations: [], automation_status: ['id'], get_automation: ['id'], create_automation: ['definition', 'request_id', 'caller'],
   update_automation: ['id', 'definition'], pause_automation: ['id'], resume_automation: ['id'],
-  delete_automation: ['id'], run_automation_now: ['id', 'request_id'],
+  delete_automation: ['id'], run_automation_now: ['id', 'request_id', 'received_at_ms'],
 };
 const settle = 60_000;
 const drift = 'Settings changed outside the automation';
@@ -60,16 +59,20 @@ function decode(row: Record<string, unknown>) {
 export class Automations {
   private db: DatabaseSync;
   private send: Send;
+  private accepted: (thread: string, request: string) => boolean;
   private runs = new Map<string, Promise<unknown>>();
   private timer?: NodeJS.Timeout;
   private running = false;
   private ticking?: Promise<void>;
   private readyAt = 0;
-  constructor(directory: string, send: Send) {
+  constructor(directory: string, send: Send, accepted: Automations['accepted'] = () => false) {
     this.send = send;
+    this.accepted = accepted;
     this.db = new DatabaseSync(join(directory, 'automations.sqlite'));
     this.db.exec('PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL');
     this.db.exec(schema);
+    if (!this.db.prepare('PRAGMA table_info(automation_claims)').all().some(column => column.name === 'catch_up_ms'))
+      this.db.exec('ALTER TABLE automation_claims ADD COLUMN catch_up_ms INTEGER');
   }
   handles(input: unknown) { return Object.hasOwn(fields, (input as { op?: string } | null)?.op ?? ''); }
   private list() { return this.db.prepare('SELECT * FROM automations ORDER BY rowid').all().map(decode); }
@@ -218,8 +221,10 @@ export class Automations {
         }
         case 'run_automation_now': {
           const click = key(r.request_id);
-          const now = Date.now();
-          const claim = this.claimClick(a, click, now, this.arrivals.get(r));
+          const now = typeof r.received_at_ms === 'number' && Number.isSafeInteger(r.received_at_ms) ? r.received_at_ms : Date.now();
+          const claim = this.claimClick(a, click, now);
+          if (!this.runs.has(String(claim.request_id))) this.reconcileAccepted(a, String(claim.request_id), Number(claim.due),
+            'revision' in claim ? Number(claim.revision) : a.revision);
           const receipt = this.receipt(id, String(claim.request_id));
           if (receipt) return { occurrence: receipt };
           if ('revision' in claim && claim.revision !== a.revision) return { occurrence: { ...claim, outcome: 'pending' } };
@@ -233,30 +238,25 @@ export class Automations {
       if (r.op !== 'list_automations' && r.op !== 'get_automation') this.arm();
     });
   }
-  private arrivals = new WeakMap<object, ScheduledClaim>();
-  private scheduled = new Map<string, ScheduledClaim>();
-  // Remember overlap at socket arrival, even if the receipt commits before the FIFO reaches the click.
-  observeArrival(input: unknown) {
-    const r = input as { op?: string; id?: string };
-    if (r?.op !== 'run_automation_now' || typeof r.id !== 'string') return;
-    const claim = this.scheduled.get(r.id);
-    if (claim) this.arrivals.set(r, claim);
+  checkSubmission(thread: string, claim: { id: string; revision: number }, approval: string) {
+    const row = this.db.prepare(`SELECT a.definition FROM automation_claims c
+      JOIN automations a ON a.id=c.automation_id AND a.revision=c.revision
+      WHERE c.id=? AND c.revision=? AND a.thread_id=? AND NOT EXISTS
+      (SELECT 1 FROM automation_occurrences WHERE automation_id=a.id AND request_id=c.id)`).get(claim.id, claim.revision, thread);
+    if (!row || JSON.parse(String(row.definition)).approval !== approval)
+      fail('conflict', 'Automation changed before submission.');
   }
-  private claimClick(a: Automation, click: string, now: number, arrival?: ScheduledClaim) {
+  private claimClick(a: Automation, click: string, now: number) {
     const id = a.id;
     return this.transaction(() => {
       const saved = this.db.prepare('SELECT c.request_id,c.due,k.revision FROM automation_clicks c JOIN automation_claims k ON k.id=c.request_id WHERE c.automation_id=? AND click=?').get(id, click);
       if (saved) return saved;
-      let pending;
-      if (a.state === 'active') {
-        pending = this.claimDue(a, now, true);
-        if (!pending && arrival?.revision === a.revision && arrival.due <= now && now - arrival.due <= a.definition.catch_up_ms)
-          pending = arrival;
-        pending ??= this.db.prepare(`SELECT id AS request_id,due FROM automation_claims c
-          WHERE automation_id=? AND occurrence BETWEEN ? AND ? AND revision=?
-          AND NOT EXISTS (SELECT 1 FROM automation_occurrences WHERE automation_id=c.automation_id AND request_id=c.id)
-          ORDER BY occurrence DESC LIMIT 1`).get(id, now - a.definition.catch_up_ms, now, a.revision);
-      }
+      const due = a.state === 'active' ? this.claimDue(a, now, true) : null;
+      const pending = due ?? this.db.prepare(`SELECT id AS request_id,due,revision FROM automation_claims
+        WHERE automation_id=? AND occurrence <= ? AND ? - occurrence <= coalesce(catch_up_ms, ?)
+        ORDER BY occurrence DESC LIMIT 1`).get(id, now, now, a.definition.catch_up_ms);
+      if (!pending && now < a.cursor && a.revision > 1)
+        fail('conflict', 'Automation changed after this click was received.');
       const claim = pending ?? this.insertClaim(a, null, now, 'manual-' + createHash('sha256').update(id + '-' + click).digest('hex'));
       this.db.prepare('INSERT INTO automation_clicks VALUES (?,?,?,?)').run(id, click, claim.request_id, claim.due);
       return claim;
@@ -265,14 +265,17 @@ export class Automations {
   private receipt(automation: string, id: string) {
     return this.db.prepare('SELECT * FROM automation_occurrences WHERE automation_id=? AND request_id=?').get(automation, id);
   }
+  private reconcileAccepted(a: Automation, id: string, due: number, revision: number) {
+    if (!this.accepted(a.thread_id, id)) return false;
+    // A lost reply can leave a pending claim for an already accepted submission.
+    this.db.prepare("INSERT OR IGNORE INTO automation_occurrences VALUES (?,?,?,?,'queued',NULL)")
+      .run(a.id, id, revision, due);
+    return true;
+  }
   private launch(a: Automation, due: number, id: string) {
     const active = this.runs.get(id);
     if (active) return active;
-    if (id === a.id + '-' + due) this.scheduled.set(a.id, { request_id: id, due, revision: a.revision });
-    const task = this.run(a, due, id).finally(() => {
-      this.runs.delete(id);
-      if (this.scheduled.get(a.id)?.request_id === id) this.scheduled.delete(a.id);
-    });
+    const task = this.run(a, due, id).finally(() => { this.runs.delete(id); });
     this.runs.set(id, task);
     return task;
   }
@@ -281,9 +284,15 @@ export class Automations {
     let outcome = 'queued', detail: string | null = null;
     let checkout: string | undefined;
     try {
-      const { thread } = await this.send({ op: 'watch', protocol_version: 6, thread_id: a.thread_id }) as { thread: Snapshot };
+      const { thread } = await this.send({ op: 'stored_thread', protocol_version: 6, thread_id: a.thread_id }) as { thread: Snapshot };
       checkout = thread.checkout;
-      const { busy } = await this.send({ op: 'admission_info', checkout }) as { busy: boolean };
+      const { busy } = await this.send({ op: 'admission_info', checkout }).catch(async error => {
+        if (error instanceof HostError && error.code === 'internal') {
+          const missing = await lstat(thread.checkout).then(() => false, (cause: NodeJS.ErrnoException) => cause.code === 'ENOENT');
+          if (missing) fail('checkout_missing', 'The automation checkout no longer exists.');
+        }
+        throw error;
+      }) as { busy: boolean };
       if (busy || thread.status === 'running' || thread.status === 'awaiting_approval') {
         // A retry can find its own accepted message occupying the checkout.
         const { waiters } = await this.send({ op: 'checkout_queue', thread_id: a.thread_id }) as { waiters: { request_id: string }[] };
@@ -297,8 +306,9 @@ export class Automations {
           || (d.thinking !== undefined && thread.thinking_level !== d.thinking) || policy !== d.command_policy) {
           detail = drift; outcome = 'paused';
         } else {
-          await this.send({ op: 'submit_checkout', thread_id: a.thread_id, request_id, text: d.instructions, approval: d.approval }, () => {
-            if (this.get(a.id).revision !== a.revision) fail('conflict', 'Automation changed before submission.');
+          await this.send({ op: 'submit_checkout', thread_id: a.thread_id, request_id, text: d.instructions, approval: d.approval,
+            expect: { claim: { id: request_id, revision: a.revision }, command_policy: d.command_policy, harness: d.harness, mode: d.mode ?? null,
+              provider: d.provider, model_id: d.model_id, ...(d.thinking === undefined ? {} : { thinking: d.thinking }) }
           });
         }
       }
@@ -309,6 +319,7 @@ export class Automations {
       if (!(error instanceof HostError) && !missing) throw error;
       detail = (error as Error).message;
       if (error instanceof HostError && error.code === 'busy') outcome = 'skipped';
+      else if (error instanceof HostError && error.code === 'queue_settings_changed') { outcome = 'paused'; detail = drift; }
       else if (missing || error instanceof HostError && (error.code === 'checkout_missing' || error.code === 'permission_denied' && /checkout (?:root )?(?:identity )?changed/i.test(detail))) {
         outcome = 'paused'; detail = 'target missing';
       } else outcome = 'failed';
@@ -326,8 +337,8 @@ export class Automations {
     return Math.max(a.cursor, Number(row?.latest ?? a.cursor));
   }
   private insertClaim(a: Automation, occurrence: number | null, due: number, id: string) {
-    this.db.prepare('INSERT INTO automation_claims VALUES (?,?,?,?,?)').run(id, a.id, occurrence, due, a.revision);
-    return { request_id: id, due };
+    this.db.prepare('INSERT INTO automation_claims(id,automation_id,occurrence,due,revision,catch_up_ms) VALUES (?,?,?,?,?,?)').run(id, a.id, occurrence, due, a.revision, a.definition.catch_up_ms);
+    return { request_id: id, due, revision: a.revision };
   }
   private claimDue(a: Automation, now: number, forClick = false) {
     const due = dueOccurrences(a.definition.schedule, this.boundary(a), now, a.definition.catch_up_ms);
@@ -346,11 +357,13 @@ export class Automations {
       const pending = this.db.prepare(`SELECT id,due,revision FROM automation_claims c WHERE automation_id=?
         AND NOT EXISTS (SELECT 1 FROM automation_occurrences WHERE automation_id=c.automation_id AND request_id=c.id) ORDER BY due`).all(a.id);
       for (const claim of pending) {
-        if (this.runs.has(String(claim.id))) tasks.push(this.runs.get(String(claim.id))!);
-        else if (claim.revision !== a.revision) {
+        const id = String(claim.id), active = this.runs.get(id);
+        if (active) { tasks.push(active); continue; }
+        if (this.reconcileAccepted(a, id, Number(claim.due), Number(claim.revision))) continue;
+        if (claim.revision !== a.revision) {
           this.db.prepare("INSERT OR IGNORE INTO automation_occurrences VALUES (?,?,?,?,'skipped','Automation changed before submission.')")
             .run(a.id, claim.id, claim.revision, claim.due);
-        } else tasks.push(this.launch(a, Number(claim.due), String(claim.id)));
+        } else tasks.push(this.launch(a, Number(claim.due), id));
       }
     }
     const results = await Promise.allSettled(tasks);

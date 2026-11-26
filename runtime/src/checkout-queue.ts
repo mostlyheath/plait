@@ -26,8 +26,24 @@ export function queueRequest(input: unknown): Record<string, any> {
     checkout_queue: ['thread_id'], cancel_checkout_wait: ['thread_id','request_id'], resume_checkout_queue: ['thread_id'],
     watch_threads_queue: ['archived'], list_threads_queue: ['archived','checkout','limit','cursor'],
   };
+  if (process.env.PLAIT_AUTOMATIONS === '1' || process.env.PLAIT_GRAPH === '1') fields.submit_checkout.push('expect');
   if (Object.keys(value).some(key => key !== 'op' && !fields[value.op].includes(key))) fail('invalid_request', 'Unknown checkout queue field.');
-  if (value.op === 'submit_checkout') validate({ ...value, op: 'submit', protocol_version: 6 });
+  if (value.op === 'submit_checkout') {
+    const { expect, ...submit } = value;
+    validate({ ...submit, op: 'submit', protocol_version: 6 });
+    if (expect !== undefined && (!expect || typeof expect !== 'object' || Array.isArray(expect) ||
+        Object.entries(expect).some(([key, setting]) => {
+          if (key === 'claim') {
+            const claim = setting as { id?: unknown; revision?: unknown } | null;
+            return !claim || typeof claim !== 'object' || Object.keys(claim).some(k => k !== 'id' && k !== 'revision') ||
+              claim.id !== value.request_id || typeof claim.revision !== 'number' || !Number.isSafeInteger(claim.revision) || claim.revision < 1;
+          }
+          if (key === 'command_policy') return setting !== 'sandboxed' && setting !== 'trusted';
+          if (key === 'approval') return setting !== 'ask' && setting !== 'auto';
+          if ((key === 'mode' || key === 'thinking') && setting === null) return false;
+          return !['harness','provider','model_id','mode','thinking'].includes(key) || typeof setting !== 'string';
+        }))) fail('invalid_request', 'Invalid expected checkout settings.');
+  }
   else if (value.op.endsWith('threads_queue')) validate({ ...value, op: value.op.replace('_queue',''), protocol_version: 6 });
   else for (const key of fields[value.op]) if (typeof value[key] !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(value[key])) fail('invalid_request','Invalid queue thread or request ID.');
   return value;
