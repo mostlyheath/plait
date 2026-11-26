@@ -258,6 +258,9 @@ an older host shows no such controls.
 - Trace lines to turns, expand turn records, shelve results, or bisect turns.
 - Provide an interactive proof of sandbox and undo behavior.
 - Offer hosted machines.
+- Integrate [Sidelit](https://github.com/mostlyheath/sidelit): send its review
+  requests into Plait threads of any harness, and open files in it for
+  rendered review. See [#195](https://github.com/mostlyheath/plait/issues/195).
 - Add a browser, rendered documents, or a file editor.
 - Extend editor and terminal handoffs.
 - Show local usage totals with agreed accounting and storage.
