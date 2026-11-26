@@ -79,7 +79,10 @@ and private modes before connecting. Linux supports trusted commands and trusted
 One request and one reply per connection, then EOF, except `watch` and the
 version 3 `watch_threads`. No greeting.
 Request limit: 64 KiB including newline. Reply/event limit: 1 MiB including
-newline. Absolute input deadline: 5 seconds; sidecar exchange deadline: 20 seconds. Slow watchers are disconnected rather
+newline. The host allows 5 seconds to receive a request. Once the request holds the
+sidecar mutex, the exchange has 20 seconds, or 242 seconds for `git_write`.
+The extra time lets the runtime stop its helper at 240 seconds and return
+the outcome. Other requests wait for the same pipe while the write runs. Slow watchers are disconnected rather
 than accumulating an unbounded queue. Reconnect starts with the latest snapshot;
 clients replace state, not append it. Unknown operations and malformed requests
 return an error and close the connection. Unknown object fields are rejected.
@@ -96,7 +99,7 @@ provider error bodies. Errors are not accepted submissions.
 **Agreed 2026-11-26 for [#265](https://github.com/mostlyheath/plait/issues/265): use the host’s existing local client socket (C). Not built yet.**
 The automation timer and graph reconciler currently send their reads, admissions
 and submissions through an in-process FIFO to `handle()` in the feature
-implementations. Rust never sees those exchanges. Its 20-second deadline
+implementations. Rust never sees those exchanges. The exchange deadline
 covers one stdin write and one stdout reply, starting after the caller acquires
 the sidecar mutex. A transport failure kills the sidecar, and notification EOF
 ends the host. The mutex serializes exchanges without promising FIFO fairness.

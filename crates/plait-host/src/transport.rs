@@ -130,7 +130,13 @@ struct Sidecar {
 
 impl Sidecar {
     fn request(&mut self, request: &Value) -> io::Result<Value> {
-        let deadline = Instant::now() + Duration::from_secs(20);
+        // Leave time to return a helper timeout before the client's 245-second limit.
+        let timeout = if request["op"] == "git_write" {
+            Duration::from_secs(242)
+        } else {
+            Duration::from_secs(20)
+        };
+        let deadline = Instant::now() + timeout;
         let mut exchange = || -> io::Result<Value> {
             let mut bytes = serde_json::to_vec(request)?;
             bytes.push(b'\n');
@@ -471,6 +477,34 @@ fn thread_changes(previous: &Value, current: &Value) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn slow_git_write_returns_and_sidecar_serves_the_next_request() {
+        // Stand in for the runtime waiting on a helper beyond the ordinary deadline.
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg(r#"read -r write && sleep 21 && echo '{"ok":true,"result":"committed"}' && read -r status && echo '{"ok":true,"result":"ready"}'"#)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let sidecar = Mutex::new(Sidecar {
+            input: child.stdin.take().unwrap(),
+            output: child.stdout.take().unwrap(),
+            child,
+        });
+        thread::scope(|scope| {
+            let mut writer = sidecar.lock().unwrap();
+            let other_client =
+                scope.spawn(|| sidecar.lock().unwrap().request(&json!({"op":"status"})));
+            assert_eq!(
+                writer.request(&json!({"op":"git_write"})).unwrap()["result"],
+                "committed"
+            );
+            drop(writer);
+            assert_eq!(other_client.join().unwrap().unwrap()["result"], "ready");
+        });
+    }
 
     #[test]
     fn wire_objects_keep_sorted_keys_in_every_build() {
