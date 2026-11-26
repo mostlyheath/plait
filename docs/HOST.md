@@ -43,6 +43,12 @@ runtime dependencies; it does not need a development checkout or shell Node.
 
 ## Detached runners
 
+**Experimental, off by default, and not part of v0.1.0.** They are unverified
+on real machines, cover Pi only, and refuse providers whose keys come from the
+login shell ([#175](https://github.com/mostlyheath/plait/issues/175)).
+Automations never use them. Whether to finish or remove them is decided after
+v0.1.0 ([#201](https://github.com/mostlyheath/plait/issues/201)).
+
 Detached Pi runners are available with `PLAIT_DETACHED_RUNNERS=1` in the host
 runtime environment. The default is off pending verification. When enabled, an
 accepted Pi run can continue through a host or sidecar restart, including an

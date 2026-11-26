@@ -40,8 +40,6 @@ for evidence and limits.
 - Update Linux hosts in place, from the machine and from the Mac. Prebuilt
   Linux hosts are published with each release and install from the Mac.
 - Complete independent client and host releases and update flows.
-- Verify detached Pi runners that survive a host restart; they are built behind
-  `PLAIT_DETACHED_RUNNERS=1` and remain off by default.
 - Build automations: threads that run on a schedule in a project or
   directory, run by the host. The design and host contract are agreed; see
   [Automations](AUTOMATIONS.md).
@@ -55,6 +53,12 @@ for evidence and limits.
 
 ### Later
 
+- Decide whether runs survive a host restart, after v0.1.0. Detached Pi
+  runners are built behind `PLAIT_DETACHED_RUNNERS=1`, off by default and
+  unverified. v0.1.0 ships the durable baseline instead: a restart keeps
+  every saved thread, draft, queue and turn record, marks the running turn
+  interrupted, and never replays it ([Guide](GUIDE.md#recovery-and-troubleshooting),
+  [#201](https://github.com/mostlyheath/plait/issues/201)).
 - Add the next ACP harness under the [agreed contract](ACP.md).
 - Complete turn review: safe staging by turn and changes since last reviewed;
   agree authorship, overlap, review semantics, and storage first.
