@@ -20,7 +20,7 @@ const thread = (id: string) => ({
   status: 'idle', archived: false, approval_mode: 'ask', error: null, messages: [{ role: 'assistant', text: 'done' }]
 });
 async function fixture(t: TestContext) {
-  const dir = await mkdtemp(join(tmpdir(), 'graph-client-'));
+  const dir = await realpath(await mkdtemp(join(tmpdir(), 'graph-client-')));
   const root = join(await realpath(dir), 'project');
   await mkdir(root);
   const calls: Request[] = [];
@@ -147,7 +147,7 @@ test('fork stops at twenty pages', async t => {
 test('flag unset preserves ordinary runtime dispatch and opens no graph store', async t => {
   const previous = process.env.PLAIT_GRAPH;
   delete process.env.PLAIT_GRAPH;
-  const dir = await mkdtemp(join(tmpdir(), 'ordinary-host-'));
+  const dir = await realpath(await mkdtemp(join(tmpdir(), 'ordinary-host-')));
   const host = new Runtime(dir, createModels(), new Set());
   t.after(async () => {
     await host.close(); await rm(dir, { recursive: true, force: true });
@@ -161,7 +161,7 @@ test('flag unset preserves ordinary runtime dispatch and opens no graph store', 
 test('feature-on runtime admits a draft and submits through the host handler', async t => {
   const previous = process.env.PLAIT_GRAPH;
   process.env.PLAIT_GRAPH = '1';
-  const dir = await mkdtemp(join(tmpdir(), 'graph-integration-'));
+  const dir = await realpath(await mkdtemp(join(tmpdir(), 'graph-integration-')));
   const { mkdir } = await import('node:fs/promises');
   const root = join(dir, 'checkout'), store = join(dir, 'store');
   await mkdir(root); await mkdir(store);
@@ -226,7 +226,7 @@ test('500 visible drafts have stable layout and a bounded page', async t => {
 });
 
 test('reopening the graph preserves creation receipts without repeating the queued submission', async t => {
-  const dir = await mkdtemp(join(tmpdir(), 'graph-reopen-'));
+  const dir = await realpath(await mkdtemp(join(tmpdir(), 'graph-reopen-')));
   const submissions: Request[] = [];
   const identity = await rootIdentity(dir);
   const receipt = () => submissions.length ? { state: "started", error: null } : undefined;
