@@ -163,7 +163,7 @@ fn keys_focus_fill_and_tab_memory() {
     h.update(|p, w, cx| {
         assert!(p.panel_focus[p.panel_focus_kind() as usize].contains_focused(w, cx));
     });
-    h.keystroke("cmd-shift-3");
+    h.keystroke("cmd-y");
     h.draw();
     h.update(|p, _, _| assert_eq!(p.panel_kind(), Some(PanelKind::History)));
     h.keystroke("cmd-\\");

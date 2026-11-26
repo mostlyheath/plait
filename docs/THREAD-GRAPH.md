@@ -12,6 +12,8 @@ This is different from the [prompt tree](HOST-FIRST.md#the-prompt-tree),
 which is about retries and edits inside one thread. The graph is about links
 between threads.
 
+For background graph starts, see [Background requests (agreed)](HOST.md#background-requests-agreed).
+
 ## What a person sees
 
 Each project has a **Graph** tab, opened like Worktrees: from the project's

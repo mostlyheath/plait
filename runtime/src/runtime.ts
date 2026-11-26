@@ -1,3 +1,4 @@
+import { Automations } from './automations/service.ts';
 import { harnessLogin } from './harness-sign-in.ts';
 import { installable, installTool, managedPath } from './agent-tools.ts';
 import { threadKind } from './store.ts';
@@ -104,6 +105,14 @@ export class Runtime {
   linear: LinearService;
   worktrees: Worktrees;
   admissions: Admissions;
+  private automations?: Automations;
+  private requestTail?: Promise<void>;
+
+  private enqueue<T>(work: () => Promise<T>) {
+    const result = (this.requestTail ?? Promise.resolve()).then(work);
+    this.requestTail = result.then(() => {}, () => {});
+    return result;
+  }
   capacity = new RunCapacity();
   sessions = new Map<string, Session>();
   runnerSessions = new Map<string, RunnerSession>();
@@ -175,6 +184,10 @@ export class Runtime {
       made: (tree, creation) => this.workspace.madeWorktree(tree.path, tree.parent.root, tree.branch, creation, tree.identity),
       removed: folder => this.workspace.removedWorktree(folder),
     });
+    if (process.env.PLAIT_AUTOMATIONS === '1') this.automations = new Automations(directory, (request, guard) => this.enqueue(() => {
+      guard?.();
+      return this.handle(request);
+    }));
     this.admissions = new Admissions(this.store, this.worktrees, this.capacity, (input, identity) => this.handle(input, identity), root => this.active.has(root) || this.records.busy(root) || this.store.waiters.line(root).some(waiter => waiter.kind === 'checkout' || waiter.state === 'waiting'), () => this.admitWork());
   }
   /** Reconcile persisted work before accepting requests. */
@@ -249,6 +262,7 @@ export class Runtime {
       this.store.transaction(() => this.store.closeRecoveredRuns(snapshot));
     }
     this.records.start(liveCheckouts);
+    this.automations?.start();
   }
   private runnerEventHooks() {
     return {
@@ -476,6 +490,7 @@ export class Runtime {
       this.draining = false; this.wakeQueue(); return { draining: false };
     }
     if (op === 'create_worktree_thread' || op === 'create_admitted_thread' || op === 'submit_checkout' || op === 'create_thread' && !expectedCheckout || op === 'submit' || op === 'undo_turn') this.admitWork();
+    if (this.automations?.handles(input)) return this.automations.handle(input, request => this.handle(request));
     if (this.naming.handles(input)) return this.naming.handle(input);
     if (this.providers?.handles(input)) return this.providers.handle(input);
     if (handlesCleanup(input)) return this.checkoutCleanup(input);
@@ -1413,6 +1428,7 @@ export class Runtime {
     await turn;
   }
   async close() {
+    if (this.automations) await this.automations.close();
     this.closing = true;
     await this.naming.close();
     clearTimeout(this.queueWake);
@@ -1443,8 +1459,13 @@ export class Runtime {
     this.store.close();
   }
   async reply(input: unknown) {
-    try { return { ok: true, result: await this.handle(input) }; }
-    catch (error) { return { ok: false, error: failure(resourceError(error)) }; }
+    try {
+      if (this.automations) {
+        this.automations.observeArrival(input);
+        return { ok: true, result: await this.enqueue(() => this.handle(input)) };
+      }
+      return { ok: true, result: await this.handle(input) };
+    } catch (error) { return { ok: false, error: failure(resourceError(error)) }; }
   }
 }
 

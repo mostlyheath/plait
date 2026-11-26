@@ -1511,7 +1511,7 @@ impl Render for Plait {
                 this.git_write(plait_client::git::WriteOp::UnstageAll, cx)
             }))
             .on_action(
-                cx.listener(|this, _: &CommitStaged, window, cx| this.focus_commit(window, cx)),
+                cx.listener(|this, _: &CommitStaged, window, cx| this.commit_shortcut(window, cx)),
             )
             .on_action(cx.listener(|this, _: &Push, window, cx| {
                 if this.panel_recorded() {

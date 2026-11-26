@@ -232,7 +232,7 @@ locally with `open dist/Plait.app --args /absolute/path/to/repository`.
 
 **Signing status:** The client and Rust host are ad-hoc signed, and bundled Node
 keeps its upstream signature. Releases are **not** Developer ID signed or
-notarized ([Issue #6](https://github.com/heath0xFF/plait/issues/6)). Update
+notarized, and that is not planned. Update
 manifest signatures cover update verification only; standalone artifact
 checksums detect corruption rather than publisher identity.
 

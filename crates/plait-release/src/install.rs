@@ -17,8 +17,8 @@ use std::{
 pub const LABEL: &str = "dev.plait.host";
 const LEGACY_AGENT: &str = "/Library/LaunchAgents/dev.plait.host.plist";
 const MIGRATE: &str = "This Plait was installed system-wide by an Installer package. \
-    Download the latest release and open Move from system-wide install.command from its disk image once \
-    to move it to a per-user install; later updates install from here.";
+    Run the Terminal install command from the Plait README once to move it to a per-user install; \
+    it asks for your administrator password once, and later updates install from here.";
 
 /// Where one user's host releases, service definition, and store live.
 pub struct Layout {
