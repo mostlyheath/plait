@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { access, mkdir, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { acquireCheckout } from '../src/safety.ts';
@@ -61,16 +61,28 @@ for (const mode of ['finish', 'stop', 'reattach', 'kill'] as const) test(`runner
 test('runner exits without attach and start', async t => {
   const { root, base } = await setup(t); const lease = await acquireCheckout(root); const registry = new RunnerRegistry(base);
   const runId = 'orphan';
+  const log = registry.path(runId, '.log');
   await registry.writeManifest({ run_id: runId, thread_id: 'thread', request_id: 'request', checkout: root, harness: 'test', build_id: 'test', lease: { root, identity: lease.identity } });
-  const pid = await spawnRunner(resolve('src/runner/main.ts'), lease, { PLAIT_RUNNER_STORE: base, PLAIT_RUNNER_ID: runId, PLAIT_RUNNER_TEST_TURNS: '1', PLAIT_RUNNER_TEST_ORPHAN_MS: '500' });
+  let noticeExit!: (code: number | null) => void;
+  let pid: number | undefined;
+  const exited = new Promise<number | null>(resolve => { noticeExit = resolve; });
+  let timer: NodeJS.Timeout | undefined;
   try {
-    // The runner may come and go before a scan sees it live on a slow machine,
-    // so wait for the process itself to exit, then check what it left behind.
+    pid = await spawnRunner(resolve('src/runner/main.ts'), lease, { PLAIT_RUNNER_STORE: base, PLAIT_RUNNER_ID: runId, PLAIT_RUNNER_TEST_TURNS: '1', PLAIT_RUNNER_TEST_ORPHAN_MS: '500' }, log, noticeExit);
     await lease.close();
-    await waitFor(() => { try { process.kill(pid, 0); return false; } catch { return true; } });
+    // The orphan timer starts only after the child loads its modules and opens its socket.
+    const code = await Promise.race([exited, new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('Orphan runner did not exit')), 30_000);
+    })]);
+    pid = undefined;
+    assert.equal(code, 0, await readFile(log, 'utf8'));
     assert.equal((await registry.scan())[0]?.status, 'dead');
     const next = await acquireCheckout(root); await next.close();
-  } finally { try { process.kill(pid, 'SIGKILL'); } catch {} await lease.close(); }
+  } finally {
+    clearTimeout(timer);
+    if (pid) { try { process.kill(pid, 'SIGKILL'); } catch {} }
+    await lease.close();
+  }
 });
 
 test('heartbeat timeout reconnects while runner lock is held and never declares it dead', async t => {
