@@ -1,12 +1,12 @@
 # Documents
 
-**Agreed direction; the details below are proposed and not implemented.**
+**Agreed design and host contract. Rendered reading is built; asking and editing are not.**
 The project owner decided that Plait takes on what
 [Sidelit](https://github.com/mostlyheath/sidelit) does for documents. That
 means reading files as they will appear, pointing at a passage to ask the
 agent about it, and editing them, all natively, with no web view. The
-storage and host-contract parts need agreement and an independent review
-before they are built (see [Contributing](../CONTRIBUTING.md)). Tracked in
+host contract below was agreed on 2026-11-26. Its implementation still gets
+an independent review before it merges (see [Contributing](../CONTRIBUTING.md)). Tracked in
 [#195](https://github.com/mostlyheath/plait/issues/195).
 
 Agents produce plans, designs, diagrams and docs. Reading them as raw text
@@ -107,7 +107,7 @@ Markdown and plain-text files can be edited, rendered or in Source.
   changes, the card asks you to save first, or to attach the draft's changes
   to the request.
 
-## Host contract (proposed)
+## Host contract (agreed)
 
 - **Reading a document** uses the existing bounded, symlink-safe file read.
   An image read returns bytes with a size cap, for paths inside the
