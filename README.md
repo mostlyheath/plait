@@ -48,9 +48,9 @@ Follow one message from Send to Undo in the [system walkthrough](docs/WALKTHROUG
 - **Approvals you can read.** Let the agent work, or approve each edit and
   command. On a Mac, a project can run commands in a sandbox that cannot write
   the checkout or reach the network.
-- **Undo a run.** The host records the checkout before and after every run.
-  One press puts back what that run changed and leaves your own later edits
-  alone.
+- **Undo a run.** The host records the files a run changes. One press puts
+  them back and leaves your own later edits alone. Untracked files inside
+  Git-ignored folders are not recorded.
 - **Git review built in.** Stage and discard by file or hunk, commit, push,
   pull, and switch branches. The host watches the checkout, so Changes stays
   current without polling.
