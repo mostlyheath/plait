@@ -125,11 +125,15 @@ fn discard_hunk_button(
     target: &HunkTarget,
     hunk: usize,
     header: &str,
+    digest: Option<&str>,
     cx: &mut Context<Plait>,
 ) -> Control {
     let owner = target.checkout;
     let epoch = target.epoch;
     let op = WriteOp::Discard {
+        guard: Some(plait_protocol::git::write::DiscardGuard {
+            digest: digest.map(str::to_owned),
+        }),
         path: target.path.clone(),
         untracked: false,
         hunk: Some((hunk, header.to_owned())),
@@ -977,7 +981,11 @@ impl Plait {
                                                             target.mode == DiffMode::Unstaged,
                                                             |el| {
                                                                 el.child(discard_hunk_button(
-                                                                    target, hunk, &line.text, cx,
+                                                                    target,
+                                                                    hunk,
+                                                                    &line.text,
+                                                                    diff.patch_digest.as_deref(),
+                                                                    cx,
                                                                 ))
                                                             },
                                                         )
@@ -1364,7 +1372,7 @@ pub(super) fn assert_hunk_action_font(plait: &Plait, cx: &mut Context<Plait>, ex
         );
         if mode == DiffMode::Unstaged {
             assert_eq!(
-                discard_hunk_button(&target, 0, "@@", cx)
+                discard_hunk_button(&target, 0, "@@", None, cx)
                     .text_style()
                     .font_family
                     .as_deref(),

@@ -2565,8 +2565,11 @@ see its Git."
   identity is required. The checkout must be the top of its work tree, and
   the write takes the same checkout leases as a desktop write on this
   machine, so it is refused while a thread writes there. The reply has the
-  same shape, with the write's outcome. A discard's backup is a blob in the
-  repository's object store, so `restore` works on the host unchanged.
+  same shape, with the write's outcome. Discard saves the file as a blob in
+  the repository before changing it. Hunk discard takes the hunk index and
+  the displayed header. Clients probe `host_info` for `guarded_discard_v1`
+  before including the optional guard and reviewed diff digest. Older pairings
+  use the header check. Restore accepts the original three-field backup.
 - A write runs with the host's environment: its Git configuration, hooks,
   credential helpers, and `SSH_AUTH_SOCK` if the host has one. Prompts are
   off, so a missing credential fails with Git's own message. A write is

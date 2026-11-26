@@ -10,7 +10,7 @@ test('host release operations are versionless and drain admission', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'plait-drain-'));
   const runtime = new Runtime(directory, createModels(), new Set());
   t.after(async () => { await runtime.close(); await rm(directory, { recursive: true, force: true }); });
-  assert.deepEqual(await runtime.handle({ op: 'host_info' }), { schema: 1, release: null, build_id: null, protocol_min: 1, protocol_max: 7, capabilities: ['drain_v1', 'checkout_identity_v1', 'project_fingerprint_v1'], storage_schema: 1 });
+  assert.deepEqual(await runtime.handle({ op: 'host_info' }), { schema: 1, release: null, build_id: null, protocol_min: 1, protocol_max: 7, capabilities: ['drain_v1', 'checkout_identity_v1', 'project_fingerprint_v1', 'guarded_discard_v1'], storage_schema: 1 });
   assert.equal((await runtime.reply({ op: 'host_info', protocol_version: 1 })).error?.code, 'invalid_request');
   const versions = [1, 2, 3, 4, 5, 6, 7];
   const statuses = await Promise.all(versions.map(protocol_version => runtime.handle({ op: 'status', protocol_version })));
