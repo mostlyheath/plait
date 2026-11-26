@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtemp, rm, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, readFile, writeFile, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context';
@@ -100,7 +100,8 @@ test('executor handles write approvals through commands without Runtime', async 
 
 
 test('plain turn state sends a write postimage to its sink', async t => {
-  const directory = await mkdtemp(join(tmpdir(), 'plait-executor-'));
+  // Resolved, as the desktop sends it (on macOS /var is a link to /private/var).
+  const directory = await realpath(await mkdtemp(join(tmpdir(), 'plait-executor-')));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const checkout = join(directory, 'plain');
   await mkdir(checkout);
