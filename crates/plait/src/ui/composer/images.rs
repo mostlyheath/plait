@@ -77,7 +77,7 @@ impl Composer {
         }
     }
     pub fn restore_images(&mut self, references: Vec<ImageRef>, cx: &mut Context<Self>) {
-        self.restore_originals(references, None, None, cx);
+        self.load_originals(references, None, None, false, cx);
     }
     #[cfg(test)]
     pub fn restore_thread_images(
@@ -100,28 +100,55 @@ impl Composer {
         client: plait_client::host::Client,
         cx: &mut Context<Self>,
     ) {
-        self.restore_originals(references, Some(thread), Some(client), cx);
+        self.load_originals(references, Some(thread), Some(client), false, cx);
     }
-    fn restore_originals(
+    /// Append recovered thread images onto the draft's current attachments
+    /// without dropping existing decoded thumbnails or exceeding message limits.
+    pub(in crate::ui) fn apply_recovered_images(
+        &mut self,
+        references: Vec<ImageRef>,
+        thread: String,
+        client: plait_client::host::Client,
+        cx: &mut Context<Self>,
+    ) {
+        self.draft.revision += 1;
+        self.load_originals(references, Some(thread), Some(client), true, cx);
+    }
+    fn load_originals(
         &mut self,
         references: Vec<ImageRef>,
         thread: Option<String>,
         client: Option<plait_client::host::Client>,
+        keep_pixels: bool,
         cx: &mut Context<Self>,
     ) {
         self.images.generation += 1;
         self.pin_images(&references);
         self.images.references = references.clone();
-        self.images.pixels.clear();
+        if keep_pixels {
+            self.images
+                .pixels
+                .retain(|id, _| references.iter().any(|r| r.id == *id));
+        } else {
+            self.images.pixels.clear();
+        }
         self.images.failed.clear();
         self.images.error = None;
-        self.images.loading = !references.is_empty();
+        let to_load: Vec<ImageRef> = references
+            .iter()
+            .filter(|reference| !self.images.pixels.contains_key(&reference.id))
+            .cloned()
+            .collect();
+        self.images.loading = !to_load.is_empty();
+        if keep_pixels {
+            cx.notify();
+        }
         let generation = self.images.generation;
         let pending_pin = images::pin(&references);
         let task = cx.background_executor().spawn(async move {
             let pin = pending_pin?;
             images::validate_message(&references)?;
-            let prepared = references
+            let prepared = to_load
                 .into_iter()
                 .map(|reference| {
                     let result = restore_original(&reference, thread.as_deref(), client.as_ref());
@@ -159,6 +186,7 @@ impl Composer {
                             .images
                             .references
                             .iter()
+                            .filter(|reference| !this.images.pixels.contains_key(&reference.id))
                             .map(|reference| (reference.id.clone(), error.clone()))
                             .collect();
                     }
@@ -391,6 +419,53 @@ fn restore_original(
         Ok(bytes)
     })?;
     decode(&bytes, 192)
+}
+
+/// Result of merging recovered images into a draft's current attachments.
+#[derive(Debug, PartialEq, Eq)]
+pub(in crate::ui) struct MergedImages {
+    pub references: Vec<ImageRef>,
+    pub added: usize,
+    pub already_attached: usize,
+    pub overflow: usize,
+}
+
+/// Merge `incoming` images onto `existing` attachments without duplicates,
+/// staying within the per-message image count and byte limits.
+pub(in crate::ui) fn merge_draft_images(
+    existing: &[ImageRef],
+    incoming: &[ImageRef],
+) -> MergedImages {
+    let mut references = existing.to_vec();
+    let mut total_bytes: usize = existing.iter().map(|image| image.size).sum();
+    let mut added = 0;
+    let mut already_attached = 0;
+    let mut overflow = 0;
+    let mut seen = std::collections::HashSet::new();
+    for image in incoming {
+        if !seen.insert(&image.id) {
+            continue;
+        }
+        if existing.iter().any(|current| current.id == image.id) {
+            already_attached += 1;
+            continue;
+        }
+        if references.len() < images::COUNT
+            && total_bytes.saturating_add(image.size) <= images::MESSAGE_BYTES
+        {
+            total_bytes += image.size;
+            references.push(image.clone());
+            added += 1;
+        } else {
+            overflow += 1;
+        }
+    }
+    MergedImages {
+        references,
+        added,
+        already_attached,
+        overflow,
+    }
 }
 
 #[cfg(test)]

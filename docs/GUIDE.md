@@ -145,7 +145,7 @@ Only one thread writes a checkout at a time. Sending a new draft in a busy proje
 
 An existing thread in a busy checkout offers **Wait** or **Continue separately** (which creates a linked worktree thread from `HEAD` without copying conversation history). You can set **Project settings → New threads → When this project is busy** to **Own worktree** to skip the prompt for new threads, or press `Cmd-Option-N` anytime to create a worktree thread directly.
 
-A host restart marks not-started queued messages as **Held**; choose **Resume** to release held checkout waiters in order (interrupted runs are never replayed). Changing a queued thread's model, thinking level, permissions, or command policy causes that waiter to fail when its turn arrives and returns its text/images to the draft (or clipboard if the draft is nonempty).
+A host restart marks not-started queued messages as **Held**; choose **Resume** to release held checkout waiters in order (interrupted runs are never replayed). Changing a queued thread's model, thinking level, permissions, or command policy causes that waiter to fail when its turn arrives and returns its text and images to an empty draft; if the draft is not empty, Plait keeps your draft in place, copies any message text to the clipboard, and attaches any images that fit within the message limits to the draft.
 
 ### Images in messages
 
