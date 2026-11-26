@@ -2,7 +2,7 @@ import { Automations } from './automations/service.ts';
 import { Graph } from './graph/host.ts';
 import { harnessLogin } from './harness-sign-in.ts';
 import { installable, installTool, managedPath } from './agent-tools.ts';
-import { threadKind } from './store.ts';
+import { promoteThreadToGit, threadKind } from './store.ts';
 import { Devices } from './devices.ts';
 import { ThreadNaming } from './thread-naming.ts';
 import { CheckoutWatcher } from './watcher.ts';
@@ -36,7 +36,7 @@ import { RunnerRegistry, type RunnerEntry } from './runner/registry.ts';
 import { RunnerSession, applyRunnerReceipt } from './runner/session.ts';
 import { Records } from './records.ts';
 import { checkout, projectKind, gitCheckout, dirtyPaths, fileAction, acquireCheckout, rootIdentity, checkRoot, verifyExpectedIdentity } from './safety.ts';
-import type { CheckoutLease, FileIdentity, LeaseHandle } from './safety.ts';
+import type { CheckoutLease, FileIdentity, ProjectVcs } from './safety.ts';
 import { registry } from './tools.ts';
 import { mcpPolicy, setMcpEnabled } from './mcp/policy.ts';
 import { fingerprint, nameKey } from './mcp/tools.ts';
@@ -944,13 +944,26 @@ export class Runtime {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
     return { ...(parsed as Record<string, unknown>), kind: 'test' };
   }
+  private async leasedKind(snapshot: Snapshot, lease: CheckoutLease): Promise<ProjectVcs> {
+    const current = await checkRoot(snapshot.checkout, this.store.rootIdentity(snapshot.id));
+    if (current.dev !== lease.identity.dev || current.ino !== lease.identity.ino) {
+      fail('permission_denied', 'Checkout changed while taking its lease.');
+    }
+    if (threadKind(this.store, snapshot.id) === 'git') {
+      await gitCheckout(snapshot.checkout);
+      return 'git';
+    }
+    const project = await projectKind(snapshot.checkout);
+    if (project.root !== snapshot.checkout) fail('invalid_request', 'Checkout must be an accessible Git working tree.');
+    return project.vcs;
+  }
   /** Admits one detached runner: reserves checkout, hands off lease, and commits acceptance. */
   private async startDetached(
     snapshot: Snapshot,
     requestId: string,
     mode: ApprovalMode,
     accept: () => boolean,
-    payload: Record<string, unknown> | ((root: FileIdentity) => Record<string, unknown>),
+    payload: Record<string, unknown> | ((root: FileIdentity, vcs: ProjectVcs) => Record<string, unknown>),
   ): Promise<void> {
     const id = snapshot.id;
     if (this.active.has(snapshot.checkout)) fail('busy', 'This checkout already has an active run.');
@@ -967,7 +980,8 @@ export class Runtime {
       await this.admissions.probing(snapshot.checkout);
       if (this.records.busy(snapshot.checkout)) await this.records.settled(snapshot.checkout);
       lease = await acquireCheckout(snapshot.checkout, 'writer');
-      const resolvedPayload = typeof payload === 'function' ? payload(lease.identity) : payload;
+      const vcs = await this.leasedKind(snapshot, lease);
+      const resolvedPayload = typeof payload === 'function' ? payload(lease.identity, vcs) : { ...payload, vcs };
       cleanupToken = randomUUID();
       await cleanupHelper('begin', snapshot.checkout, cleanupToken, RESTART_REASON, lease);
       this.admitWork();
@@ -985,6 +999,7 @@ export class Runtime {
         beforeStart: () => {
           summaryChanged = this.store.transaction(() => {
             const changed = accept();
+            if (vcs === 'git') promoteThreadToGit(this.store, id);
             this.store.createRun(runId, id, requestId, String(resolvedPayload.kind ?? 'test'));
             return changed;
           });
@@ -1017,7 +1032,7 @@ export class Runtime {
       // accepted, one whose credential here depends on the login shell, so it never runs with another.
       const problem = await this.providers?.detachedRunProblem(snapshot.model.provider);
       if (problem) fail('model_unavailable', problem);
-      return this.startDetached(snapshot, requestId, mode, accept, root => {
+      return this.startDetached(snapshot, requestId, mode, accept, (root, vcs) => {
         const policy = commandPolicy(this.store, snapshot.checkout, root);
         return {
           kind: 'pi',
@@ -1025,7 +1040,7 @@ export class Runtime {
           request_id: requestId,
           text,
           checkout: snapshot.checkout,
-          vcs: threadKind(this.store, snapshot.id),
+          vcs,
           model: { provider: snapshot.model.provider, modelId: snapshot.model.model_id },
           thinking_level: snapshot.thinking_level ?? null,
           max_turns: this.maxTurns,
@@ -1043,7 +1058,7 @@ export class Runtime {
     this.active.set(snapshot.checkout, id);
     this.capacity.phases.set(id, 'preparing');
     let accepted = false;
-    let lease: LeaseHandle | undefined;
+    let lease: CheckoutLease | undefined;
     let authorization: RunAuthorization | undefined;
     let admitted: Session | undefined;
     try {
@@ -1054,6 +1069,7 @@ export class Runtime {
       await this.worktrees.builds.yieldToRun(snapshot.checkout);
       await this.admissions.probing(snapshot.checkout);
       if (!this.records.busy(snapshot.checkout)) lease = await acquireCheckout(snapshot.checkout, 'writer');
+      const vcs = lease ? await this.leasedKind(snapshot, lease) : undefined;
       const save = () => this.save(snapshot);
       let sink: TurnSink | undefined;
       const approvals = new InteractiveApproval(snapshot, save);
@@ -1063,7 +1079,7 @@ export class Runtime {
       const runId = randomUUID();
       const finish = () => this.notify(id, this.store.saveRunEvent(runId, 0, snapshot, { state: 'finished', finished: true }));
       const session: Session = {
-        runId, finish, snapshot, vcs: threadKind(this.store, id), baseline: [], protected: [], rootIdentity: this.store.rootIdentity(id), buildCache: { store: this.directory, thread: id }, owned: new Map(), inputs: [], requestId,
+        runId, finish, snapshot, vcs, baseline: [], protected: [], rootIdentity: this.store.rootIdentity(id), buildCache: { store: this.directory, thread: id }, owned: new Map(), inputs: [], requestId,
         authorization, approvals, mcpApproval: executor ?? approvals, lease, save, outputs: this.store.outputs, record: image => this.store.record(id, image), steered: new Map(),
       };
       if (executor) {
@@ -1082,6 +1098,7 @@ export class Runtime {
       snapshot.approval_mode = mode;
       this.notify(id, this.store.transaction(() => {
         const changed = accept();
+        if (vcs === 'git') promoteThreadToGit(this.store, id);
         this.store.createRun(session.runId, id, requestId, selected.kind === 'external' ? selected.id : selected.kind);
         return changed;
       }));
@@ -1287,17 +1304,20 @@ export class Runtime {
     const snapshot = session.snapshot;
     let interruption: Snapshot['error'] = null;
     let record: string | undefined;
-    const vcs = threadKind(this.store, snapshot.id);
     try {
-      if (vcs === 'git') await gitCheckout(snapshot.checkout);
       if (this.external.resolveHarness(snapshot).kind === 'unknown') unsupportedHarness();
       if (!session.lease) {
         await this.records.settled(snapshot.checkout);
         await checkRoot(snapshot.checkout, session.rootIdentity);
         await this.worktrees.builds.yieldToRun(snapshot.checkout);
-        session.lease = await acquireCheckout(snapshot.checkout, 'writer');
+        const lease = await acquireCheckout(snapshot.checkout, 'writer');
+        session.lease = lease;
+        session.vcs = await this.leasedKind(snapshot, lease);
+        if (session.vcs === 'git') promoteThreadToGit(this.store, snapshot.id);
       }
       await this.beginCleanup(session);
+      const vcs = session.vcs;
+      if (!vcs) fail('internal', 'Run has no verified checkout kind.');
       // Before any harness starts: a run the host cannot record does not run.
       if (vcs === 'git') {
         const capture = () => this.capacity.prepare(session.rootIdentity.dev, snapshot.id, session.authorization.signal,
@@ -1379,7 +1399,7 @@ export class Runtime {
       this.changed('#');
       for (const root of this.store.waiters.roots()) this.drainCheckout(root);
       const selected = this.external.resolveHarness(snapshot);
-      if (vcs === 'git') switch (selected.kind) {
+      if (session.vcs === 'git') switch (selected.kind) {
         case 'unknown': break;
         case 'external': if (!snapshot.error) this.worktrees.builds.scheduleSeed(snapshot.checkout, ''); break;
         case 'pi': if (!snapshot.error) this.worktrees.builds.scheduleSeed(snapshot.checkout, session.commandPolicy === 'sandboxed' ? snapshot.id : ''); break;
