@@ -154,9 +154,9 @@ test('real placement creates a thread, Run now submits to it, and removal pauses
       throw Error('Timed out waiting for the occurrence receipt');
     };
     for (let attempts = 0; ; attempts++) {
-      const result = await runtime.handle({ op: 'get_automation', id: automation.id }) as { automation: typeof automation & { state: string } };
+      const result = await runtime.handle({ op: 'get_automation', id: automation.id }) as { automation: typeof automation & { state: string; error?: string | null } };
       if (result.automation.state === 'active') { automation.thread_id = result.automation.thread_id; break; }
-      assert.equal(result.automation.state, 'preparing');
+      assert.equal(result.automation.state, 'preparing', `Placement failed: ${result.automation.error}`);
       assert.ok(attempts < 500);
       await delay(10);
     }
