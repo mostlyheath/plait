@@ -9,7 +9,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 pub const BUNDLE_ID: &str = "dev.plait.desktop";
-const MIGRATE: &str = "This Plait was installed system-wide by an Installer package. Download the latest release and open Move from system-wide install.command from its disk image once to move it to a per-user install; later updates install from here.";
+const MIGRATE: &str = "This Plait was installed system-wide by an Installer package. Run the Terminal install command from the Plait README once to move it to a per-user install; it asks for your administrator password once, and later updates install from here.";
 fn uid() -> u32 {
     unsafe { libc::geteuid() }
 }

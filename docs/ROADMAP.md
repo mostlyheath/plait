@@ -69,7 +69,8 @@ for evidence and limits.
 - Explore Linux command containment; trusted execution is built. See
   [Linux sandbox](LINUX-SANDBOX.md).
 - Complete installed first-launch and live remote and Linear verification;
-  signing and notarization remain deferred.
+  Developer ID signing and notarization are not planned; releases stay ad-hoc
+  signed.
 
 ## Milestones
 

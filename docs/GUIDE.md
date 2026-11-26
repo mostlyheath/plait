@@ -16,7 +16,7 @@ curl --proto '=https' -fsSL \
 
 Use `--version <tag>` to pin a release or `--download <dir>` to verify and save the archive without installing. Initial script downloads verify SHA-256 checksums over HTTPS (detecting corruption, not publisher identity).
 
-**Unsigned previews:** Previews are ad-hoc signed and not notarized. On first launch, review the source and approve the app in **System Settings → Privacy & Security → Open Anyway** if prompted. Do not disable Gatekeeper. Earlier root-owned system-wide package installs (`.pkg`) must migrate once using **Move from system-wide install.command** from the DMG (or the script above), which asks for administrator access once; threads, drafts, and credentials are preserved.
+**Unsigned releases:** Plait is ad-hoc signed and not notarized; Developer ID signing is not planned. The first time you open it, macOS blocks it: open **System Settings → Privacy & Security** and choose **Open Anyway**, once. Do not disable Gatekeeper. An earlier root-owned system-wide package install (`.pkg`) migrates once with the Terminal command above, which asks for administrator access once; threads, drafts, and credentials are preserved.
 
 ### In-app and headless updates
 

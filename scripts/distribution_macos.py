@@ -65,36 +65,10 @@ def verify_image(source, mount):
 def build_distribution(installers, version, revision, work, archive, bundle):
     image_root = work / "disk-image"
     image_root.mkdir()
-    # Drag Plait.app onto Applications. The app sets up its server on first launch.
+    # Only the app and an Applications shortcut: one thing to drag. The app sets
+    # up its server on first launch; setup notes live in the guide.
     run("ditto", bundle, image_root / "Plait.app")
     (image_root / "Applications").symlink_to("/Applications")
-    # Only for moving an earlier system-wide package install; new installs drag.
-    command = image_root / "Move from system-wide install.command"
-    command.write_text('''#!/bin/bash
-set -euo pipefail
-here=$(cd "$(dirname "$0")" && pwd)
-/usr/bin/codesign --verify --deep --strict "$here/Plait.app"
-/bin/bash "$here/Plait.app/Contents/Resources/install-user.sh" --app "$here/Plait.app"
-''')
-    command.chmod(0o755)
-    (image_root / "Read me first.txt").write_text(
-        "PLAIT — LOCAL PREVIEW\n\n"
-        "Drag Plait into Applications, then open it from Applications.\n"
-        "On first launch Plait sets up its local server for your user account.\n"
-        "No source checkout, Xcode, Rust, Node, or Terminal command is needed.\n\n"
-        "This preview is ad-hoc signed and not notarized. The first time you open it,\n"
-        "macOS asks you to approve it in System Settings > Privacy & Security >\n"
-        "Open Anyway. Do that only if you trust this release. Do not disable Gatekeeper.\n\n"
-        "Installed an earlier preview with the Installer packages? Open\n"
-        "Move from system-wide install.command once instead; it needs your\n"
-        "administrator password once.\n\n"
-        "Open a repository and choose an authenticated model in Settings.\n"
-        "Model requests need internet access. Project build tools are not bundled.\n\n"
-        "Threads, drafts, and credentials are preserved. Future updates install from\n"
-        "Plait > Check for Updates after active tasks finish.\n\n"
-        "Setup, authentication, and updates:\n"
-        "https://github.com/heath0xFF/plait/blob/main/docs/GUIDE.md\n"
-    )
     image = work / f"Plait-{version}-{revision}-macos-arm64.dmg"
     run("hdiutil", "create", "-volname", "Plait", "-srcfolder", image_root,
         "-fs", "HFS+", "-format", "UDZO", image)
