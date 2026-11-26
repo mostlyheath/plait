@@ -18,8 +18,10 @@ test('an inherited Node test context cannot silently skip the runtime suite', as
     import { writeFileSync } from 'node:fs';
     test('disposable runner fixture', () => writeFileSync(${JSON.stringify(marker)}, 'executed'));
   `);
+  // The installed suite reports active tests through a helper this fixture lacks.
+  const { PLAIT_ACTIVE_TESTS: _, ...inherited } = process.env;
   const { stdout, stderr } = await execute(process.execPath, [join(directory, 'run.mjs')], {
-    env: { ...process.env, NODE_TEST_CONTEXT: 'child-v8' }, timeout: 10000,
+    env: { ...inherited, NODE_TEST_CONTEXT: 'child-v8' }, timeout: 10000,
   });
   assert.equal(await readFile(marker, 'utf8'), 'executed');
   assert(!stderr.includes('skipping running files'), stderr);
