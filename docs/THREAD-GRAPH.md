@@ -1,8 +1,7 @@
 # Thread graph
 
-**Proposed design; not implemented.** The project owner made the product
-decisions below. The host contract still needs agreement, and each pull
-request that changes storage or the protocol needs its independent review (see
+**Agreed design; not implemented yet.** The project owner agreed the product
+decisions and the host contract below. Each pull request that changes storage or the protocol needs its independent review (see
 [Contributing](../CONTRIBUTING.md)).
 
 Some work is too big for one thread. The thread graph lets you split a topic
@@ -43,7 +42,7 @@ A card shows one state, taken from the thread:
 | Queued #n | Its checkout is busy; it is nth in line. |
 | Discussing / Building | Running. |
 | Needs you | Waiting on an approval, or failed. |
-| Done | Its last run finished, and nothing has been sent since. |
+| Done | Its last run finished without error, and nothing has been sent since. |
 
 ## Two kinds of thread
 
@@ -93,7 +92,7 @@ When a parent's children finish, the parent's card and its thread show
 bounded and linked, into the parent's message box. You edit and send it
 yourself. Plait makes no model call of its own to summarize them.
 
-## Host contract (proposed)
+## Host contract
 
 The host owns the graph; clients render what it streams. This builds on the
 host model from the closed [#86](https://github.com/mostlyheath/plait/pull/86).
@@ -165,11 +164,11 @@ Panning and zooming never wait on the host.
    **Ask for a split** card.
 5. **Inspection** in the native macOS app, with the speed targets measured.
 
-## Open questions
+## Decided
 
-1. **Should Done be explicit?** A discuss thread may answer, then be asked a
-   follow-up. Is "last run finished" enough, or do threads need a **Mark
-   done** button?
-2. **How does an archived thread count?** Archiving a thread others wait for
-   could count as done, count as removed, or be refused until the links are
-   removed.
+- **Done is not a button.** A thread is done when its last run finished
+  without error. Sending it another message makes it running again, and the
+  threads waiting for it wait again unless they have already started.
+- **Archiving a thread others wait for** asks first. Once archived, it counts
+  as done if its last run finished without error. Otherwise the threads
+  waiting for it are **Blocked** and name it.
