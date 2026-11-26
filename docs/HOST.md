@@ -91,6 +91,43 @@ Reply codes: `invalid_request`, `not_found`, `busy`, `conflict`, `model_unavaila
 `interrupted`, and, in version 3 snapshots, `turn_limit`. Never send credentials, auth paths, or raw
 provider error bodies. Errors are not accepted submissions.
 
+## Background requests (proposed)
+
+**Recommendation for [#265](https://github.com/mostlyheath/plait/issues/265): use the host’s existing local client socket (C).**
+The automation timer and graph reconciler currently send their reads, admissions
+and submissions through an in-process FIFO to `handle()` in the feature
+implementations. Rust never sees those exchanges. Its 20-second deadline
+covers one stdin write and one stdout reply, starting after the caller acquires
+the sidecar mutex. A transport failure kills the sidecar, and notification EOF
+ends the host. The mutex serializes exchanges without promising FIFO fairness.
+
+| Option | Protocol and code changes | Ordering, deadline and compatibility |
+| --- | --- | --- |
+| A. Return a request on the sidecar pipe | Add private, correlated background-request and result frames. Rust needs a continuous stdout reader even when idle, to distinguish requests from replies. Dispatch each request on a separate worker. TypeScript must route results independently of ordinary stdin requests. Timers and claims stay in TypeScript. | The worker takes the client mutex and uses the same timed exchange. Neither reader may wait for a worker holding or waiting for that mutex. Negotiate framing at startup before either end emits it. Older pairs keep ordinary replies. |
+| B. Move timers to Rust | Move timer arming, wake handling and step dispatch to the host. Add private operations to ask the feature for its next wake or claimed step and record the result. Graph changes and schedule edits must wake the Rust driver. SQLite decisions stay with the feature. | Release the pipe after every step and send the next operation through the ordinary dispatch path with a fresh deadline. On restart Rust queries due work again. Enable the driver only when the sidecar advertises the step protocol. |
+| C. Connect to the local socket | Keep both schedulers and replace their background send callback with a client of the owner-checked Unix socket. Open one connection per operation, verify socket and parent ownership, peer UID and frame bounds, read one reply and close (including after the initial `watch` snapshot). | The existing socket handler takes the same mutex and calls the same timed exchange. Client traffic can interleave between steps. No new public operation, pipe frame or storage migration. |
+
+For C, have Rust opt in the bundled sidecar at launch and supply the socket
+path. Arm background dispatch after recovery and socket readiness: Rust waits
+for the sidecar’s startup status **before** binding the socket. A foreground
+handler must return without awaiting the background work it triggers. The
+stdio loop cannot read the next request until that handler returns. Recheck
+mutable feature guards such as the automation revision at submission handling
+time, after the socket request has waited its turn. Older desktop clients keep
+their existing protocol. Without host/sidecar opt-in, leave the new background
+driver inactive and withhold the affected feature capability. An older sidecar
+requires an upgrade to provide this guarantee.
+
+All three options use the same recovery rule. Persist the automation occurrence
+claim and revision before submission. For a graph start, retain the node’s
+admission ID and persist the submission text before sending its stable
+`submit-<node id>` request. Keep these records in each feature’s SQLite store.
+After either process dies or a reply is lost, discard transport waiters,
+rescan pending claims and nodes, and reconcile admission and submission receipts.
+Retry unresolved work only with its original ID and payload. An accepted or
+interrupted run is never launched again. C requires the least new machinery
+because Rust already implements the required serialization and failure path.
+
 ## Operations
 
 ```json
