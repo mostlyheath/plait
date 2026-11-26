@@ -482,7 +482,7 @@ export class Runtime {
         try {
           const metadata = JSON.parse(readFileSync(join(dirname(dirname(process.env.PLAIT_HOST_EXE ?? '')), 'component.json'), 'utf8'));
           if (metadata.component === 'host') {
-            release = typeof metadata.version === 'string' ? metadata.version : null;
+            release = typeof metadata.release === 'string' ? metadata.release : null;
             build_id = typeof metadata.build_id === 'string' ? metadata.build_id : null;
           }
         } catch { /* Development hosts have no packaged metadata. */ }

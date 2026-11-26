@@ -123,7 +123,7 @@ def package(arch, out, node_archive, allow_dirty, tag=None):
         normalize_modes(host)
         metadata = manifest("host", version, revision)
         package_json = json.loads((runtime / "package.json").read_text())
-        metadata.update(platform=f"linux-{arch}", node_version=node_version,
+        metadata.update(release=release, platform=f"linux-{arch}", node_version=node_version,
                         runtime_sdk_version=package_json["dependencies"]["@earendil-works/pi-coding-agent"],
                         payload_sha256=payload_digest(host))
         metadata["build_id"] = f"{version}-{metadata['payload_sha256'][:20]}"

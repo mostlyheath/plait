@@ -24,17 +24,19 @@ the next preview. Nobody tags by hand.
    the request's passing check tested, `main` reuses that result instead,
    and its run links the request's run. That holds only for a single merged
    request from this repository; anything else, or any doubt, runs the full
-   check, including the same layout tests on macOS when their inputs changed.
+   check, including the installed layout tests on macOS.
    A failure there is fixed with another pull request before the next
-   release. A merge that changes only prose skips it. Nothing is built for
-   release and nothing is published.
+   release. Even a prose-only push can replace a pending code check, so it checks
+   the combined tree. Nothing is built for release and nothing is published.
 4. **Collect the release notes.** A pull request with a change people will
    notice adds a note to [`changes/`](../changes/README.md). Before a release,
    open a release-prep pull request that finds the next tag with
    `python3 scripts/release_plan.py main` and runs
    `python3 scripts/changelog.py collect <tag>`. That moves the notes into a
    new section of [CHANGELOG.md](../CHANGELOG.md). Read the section as a
-   person updating would, edit it if needed, and merge it.
+   person updating would, edit it if needed, and merge it. If more notes land
+   before dispatch, fold them into that section and remove the collected note
+   files in a follow-up pull request. Outstanding notes block publication.
 5. **Release, when ready.** Run the **macOS build** workflow on `main` with
    **Build main and publish the next preview** checked, or:
 

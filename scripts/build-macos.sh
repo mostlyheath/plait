@@ -11,6 +11,7 @@ PLAIT_BUILD_REVISION=$(git rev-parse --short=12 HEAD)
 [[ -z $(git status --porcelain) ]] || PLAIT_BUILD_REVISION+='-dirty'
 export PLAIT_BUILD_REVISION
 # Tagged builds know their release version, so installed apps can compare updates.
+unset PLAIT_RELEASE_VERSION
 if [[ -n ${PLAIT_RELEASE_TAG:-} ]]; then
     [[ $PLAIT_RELEASE_TAG =~ ^v([0-9]+\.[0-9]+\.[0-9]+(-preview\.[1-9][0-9]*)?)$ ]] || {
         echo "Unrecognized release tag: $PLAIT_RELEASE_TAG" >&2
