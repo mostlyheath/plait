@@ -51,6 +51,7 @@ pub struct Text {
     /// First line with the widest clipped width.
     pub widest_index: usize,
     pub hash: u64,
+    pub document: Option<std::sync::Arc<crate::markdown::document::Document>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -109,6 +110,8 @@ pub fn prepare(text: String, path: &str) -> Text {
     let spans = highlight::highlight(highlight::language_for_path(path), &text);
     Text {
         hash: hash(&text),
+        document: crate::markdown::document::markdown_path(Path::new(path))
+            .then(|| std::sync::Arc::new(crate::markdown::document::Document::parse(&text))),
         text,
         lines,
         spans,

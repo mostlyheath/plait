@@ -44,6 +44,24 @@ fn decode_image(bytes: &[u8], edge: u32) -> Result<Decoded, String> {
     } else {
         image::ImageFormat::Jpeg
     };
+    decode_format(bytes, edge, format, Some((info.width, info.height)))
+}
+
+pub(super) fn document_image(bytes: &[u8]) -> Result<Arc<RenderImage>, String> {
+    use image::ImageFormat::*;
+    let format = image::guess_format(bytes).map_err(|_| "Unknown image format.")?;
+    if !matches!(format, Png | Jpeg | Gif | WebP) {
+        return Err("Unsupported document image.".into());
+    }
+    Ok(decode_format(bytes, 1024, format, None)?.pixels)
+}
+
+fn decode_format(
+    bytes: &[u8],
+    edge: u32,
+    format: image::ImageFormat,
+    expected: Option<(u32, u32)>,
+) -> Result<Decoded, String> {
     let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), format);
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(8192);
@@ -54,7 +72,11 @@ fn decode_image(bytes: &[u8], edge: u32) -> Result<Decoded, String> {
     let mut decoder = reader
         .into_decoder()
         .map_err(|_| "The image could not be decoded.")?;
-    if decoder.dimensions() != (info.width, info.height) {
+    let (width, height) = decoder.dimensions();
+    if u64::from(width) * u64::from(height) > images::PIXELS {
+        return Err("Image exceeds the pixel limit.".into());
+    }
+    if expected.is_some_and(|size| (width, height) != size) {
         return Err("Image dimensions changed while decoding.".into());
     }
     let orientation = decoder
@@ -64,7 +86,12 @@ fn decode_image(bytes: &[u8], edge: u32) -> Result<Decoded, String> {
         .map_err(|_| "The image could not be decoded.")?;
     decoded.apply_orientation(orientation);
     let dimensions = Some((decoded.width(), decoded.height()));
-    let mut pixels = decoded.thumbnail(edge, edge).into_rgba8();
+    let mut pixels = if decoded.width() > edge || decoded.height() > edge {
+        decoded.thumbnail(edge, edge)
+    } else {
+        decoded
+    }
+    .into_rgba8();
     for pixel in pixels.as_chunks_mut::<4>().0 {
         pixel.swap(0, 2);
     }

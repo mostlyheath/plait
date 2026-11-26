@@ -50,6 +50,21 @@ impl Backend {
         }
     }
 
+    pub fn document_image(
+        &self,
+        root: &Path,
+        key: Option<&CheckoutKey>,
+        path: &Path,
+    ) -> Result<Vec<u8>, String> {
+        let key = expected(key, root)?;
+        let Self::Host(client) = self;
+        remote::file_bytes(client, root, Some(identity(key)), path)
+            .map_err(text)?
+            .result
+            .1
+            .ok_or_else(|| "Image exceeds the file read limit.".into())
+    }
+
     pub fn file_stamp(
         &self,
         root: &Path,

@@ -171,6 +171,12 @@ fn action_items(view: &Plait, window: &Window) -> Vec<Item> {
             let run = action.action();
             let hint = shortcut(run.as_ref(), window);
             let refusal = match action.id {
+                "file.check_links"
+                    if !view.workspace.file_viewer.rendered()
+                        || view.selected_view() != super::Workspace::Files =>
+                {
+                    Some("Open a rendered Markdown file first.")
+                }
                 "pane.next" | "pane.previous" if view.overview.is_some() => {
                     Some("Close Every Thread to focus a pane.")
                 }

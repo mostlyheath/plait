@@ -694,7 +694,14 @@ impl Plait {
             _ => ("M", colors().blue),
         };
         let available = line.availability == Availability::Ready;
-        let detail = self.closing_file_detail(file, line).to_owned();
+        let document = (file.change != "Deleted"
+            && plait_client::markdown::document::markdown_path(&file.path))
+        .then(|| file.path.clone());
+        let detail = if document.is_some() && available {
+            "Open the current checkout file.".into()
+        } else {
+            self.closing_file_detail(file, line).to_owned()
+        };
         let mut target = target.clone();
         target.path = Some(file.path.clone());
         nav_row(
@@ -736,7 +743,9 @@ impl Plait {
                 .child(file.counts.clone()),
         )
         .on_activate(cx, move |this, window, cx| {
-            if available {
+            if available && let Some(path) = &document {
+                this.open_file_in_view(path.clone(), window, cx);
+            } else if available {
                 this.open_turn_review(target.clone(), window, cx);
             }
         })

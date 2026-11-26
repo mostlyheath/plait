@@ -49,6 +49,7 @@ mod branches;
 mod bubbles;
 mod cards;
 mod code_size;
+mod documents;
 mod find;
 mod finished_work;
 mod folded_turns;
@@ -750,6 +751,17 @@ impl Harness {
             || plait_client::host::Client::with_test_git_host(None, repository.join("absent.sock")),
             test_host::TestHost::client,
         );
+        Self::with_client(repository, output, width, height, host, client)
+    }
+
+    fn with_client(
+        repository: &Path,
+        output: Option<&Path>,
+        width: f32,
+        height: f32,
+        host: Option<test_host::TestHost>,
+        client: plait_client::host::Client,
+    ) -> Self {
         let text_system = text_system();
         let render = output.is_some();
         let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(Assets), move || {
@@ -2332,6 +2344,7 @@ fn walk(output: Option<&Path>) {
     let repository = fixture_repository(&scratch);
 
     header::walk(output);
+    documents::walk(output);
     git_step::walk(output);
     for (suffix, width, height) in [("wide", 1380., 860.), ("narrow", 900., 600.)] {
         tokens::walk(output, suffix, width, height);

@@ -239,6 +239,19 @@ pub fn file(
     id: Option<DirIdentity>,
     path: &Path,
 ) -> Result<Remote<file_view::Opened>, Error> {
+    let remote = file_bytes(c, root, id, path)?;
+    Ok(Remote {
+        identity: remote.identity,
+        result: file_view::classify(remote.result.0, remote.result.1, path),
+    })
+}
+type FileRead = (file_view::Stamp, Option<Vec<u8>>);
+pub(crate) fn file_bytes(
+    c: &Client,
+    root: &Path,
+    id: Option<DirIdentity>,
+    path: &Path,
+) -> Result<Remote<FileRead>, Error> {
     let remote: Remote<FileBytes> = read(c, root, id, Read::File { path: path.into() })?;
     let bytes = match remote.result.base64 {
         Some(text) => Some(
@@ -250,7 +263,7 @@ pub fn file(
     };
     Ok(Remote {
         identity: remote.identity,
-        result: file_view::classify(remote.result.stamp, bytes, path),
+        result: (remote.result.stamp, bytes),
     })
 }
 /// One worktree's size, measured by the host that owns it.

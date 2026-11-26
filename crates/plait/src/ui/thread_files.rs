@@ -272,6 +272,9 @@ impl Plait {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if plait_client::markdown::document::markdown_path(&path) {
+            return self.open_file_in_view(path, window, cx);
+        }
         let entering_uncommitted = !self.shows_kind(PaneKind::Changes)
             || self
                 .tabs

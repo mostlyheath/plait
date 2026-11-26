@@ -78,6 +78,8 @@ pub struct Client {
 }
 #[derive(Clone)]
 enum Transport {
+    #[cfg(feature = "test-host")]
+    TestReads(std::sync::Arc<dyn Fn(serde_json::Value) -> serde_json::Value + Send + Sync>),
     #[cfg(feature = "local-host")]
     Local(PathBuf),
     Link(std::sync::Arc<crate::remote::link::Link>),
@@ -131,6 +133,16 @@ impl Client {
         }
     }
 
+    /// An in-process request/reply host for scenes that exercise checkout reads.
+    #[cfg(feature = "test-host")]
+    pub fn with_test_reads(
+        handler: impl Fn(serde_json::Value) -> serde_json::Value + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            transport: Transport::TestReads(std::sync::Arc::new(handler)),
+        }
+    }
+
     /// A client whose repository reads (and unscripted writes) go to `git`,
     /// while all other host operations use `host` (if present).
     #[cfg(feature = "test-host")]
@@ -148,6 +160,10 @@ impl Client {
 
     fn socket(&self) -> std::io::Result<UnixStream> {
         match &self.transport {
+            #[cfg(feature = "test-host")]
+            Transport::TestReads(_) => Err(std::io::Error::other(
+                "The test read handler has no streaming connection.",
+            )),
             #[cfg(feature = "local-host")]
             Transport::Local(path) => crate::local_socket::connect(path),
             Transport::Link(link) => link.open(),
@@ -383,6 +399,12 @@ impl Client {
         request: &R,
         wait: Duration,
     ) -> Result<T, Error> {
+        #[cfg(feature = "test-host")]
+        if let Transport::TestReads(reply) = &self.transport {
+            let request = serde_json::to_value(request)
+                .map_err(|_| Error::Protocol("Cannot encode test request.".into()))?;
+            return decode(reply(request).to_string().as_bytes());
+        }
         let mut bytes = serde_json::to_vec(request)
             .map_err(|_| Error::Protocol("Cannot encode host request.".into()))?;
         let result = self.send_encoded(&bytes);

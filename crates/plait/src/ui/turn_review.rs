@@ -706,6 +706,12 @@ impl Plait {
                     .font_weight(FontWeight::MEDIUM)
                     .child(path),
             )
+            .when_some(
+                self.recorded_file().filter(|f| {
+                    plait_client::markdown::document::markdown_path(&f.path) && f.label != "Deleted"
+                }),
+                |el, file| el.child(self.checkout_document_buttons(file.path.clone(), cx)),
+            )
             .when(self.recorded_file().is_some(), |el| {
                 el.child(self.recorded_switch(cx))
             })

@@ -42,6 +42,17 @@ pub(super) struct TestHost {
 }
 
 impl TestHost {
+    pub(super) fn read_client(store: PathBuf) -> Client {
+        let pages = Mutex::new(Pages::default());
+        Client::with_test_reads(move |request| match request["op"].as_str() {
+            Some("git_read") => handle_git_read(&request, &pages, &store),
+            Some("git_read_page") => handle_git_read_page(&request, &pages),
+            _ => err(
+                "invalid_request",
+                "The document scene only serves repository reads.",
+            ),
+        })
+    }
     pub(super) fn start() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         // Keep the socket path short for macOS's 104-byte Unix socket limit.

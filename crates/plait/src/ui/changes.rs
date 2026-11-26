@@ -533,15 +533,21 @@ impl Plait {
             .ml_auto()
             .gap_2()
             // A deleted file has nothing left to open.
-            .when(!in_panel && change.worktree != b'D', |el| {
-                let path = change.path.clone();
-                el.child(
-                    button("diff-open-file", "Open")
-                        .aria_label(format!("Open {} in Files", change.display_path()))
-                        .on_activate(cx, move |this, window, cx| {
-                            this.open_file_in_view(path.clone(), window, cx)
-                        }),
-                )
+            .when(super::ways_out::on_disk(change), |el| {
+                if plait_client::markdown::document::markdown_path(&change.path) {
+                    el.child(self.checkout_document_buttons(change.path.clone(), cx))
+                } else if !in_panel {
+                    let path = change.path.clone();
+                    el.child(
+                        button("diff-open-file", "Open")
+                            .aria_label(format!("Open {} in Files", change.display_path()))
+                            .on_activate(cx, move |this, window, cx| {
+                                this.open_file_in_view(path.clone(), window, cx)
+                            }),
+                    )
+                } else {
+                    el
+                }
             })
             .when(!in_panel && super::ways_out::on_disk(change), |el| {
                 el.child(super::ways_out::editor_button(
