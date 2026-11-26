@@ -89,7 +89,8 @@ curl --proto '=https' -fsSL \
   bash -s -- --allow-unsigned
 ```
 
-**Previews are unsigned and not notarized.** Read the
+**Plait is ad-hoc signed and not notarized.** The first open needs
+**System Settings → Privacy & Security → Open Anyway**, once. Read the
 [guide](docs/GUIDE.md#install-and-updates) first, and do not disable Gatekeeper.
 Updates come from **Plait → Check for Updates…** and are checked against signed
 manifests. To run a host on Linux, see [Remote hosts](docs/REMOTE.md).

@@ -480,7 +480,8 @@ jobs:
             '' \
             'The host includes Node and the runtime. Model credentials and project build tools are not included.' \
             'Per-user installs update from **Plait → Check for Updates…**; headless hosts run `plait-host update`.' \
-            'An earlier system-wide package install moves once with **Move from system-wide install.command** on the DMG; it needs administrator access once. Threads, drafts, and credentials are preserved.' \
+            'The first open needs **System Settings → Privacy & Security → Open Anyway**, once.' \
+            'An earlier system-wide package install moves once with the Terminal command in the README; it needs administrator access once. Threads, drafts, and credentials are preserved.' \
             '' \
             'Native code display, copy controls, saved drafts, and safe submission recovery are included.' \
             'The installed coding/reconnect test uses a scripted provider and real sandboxed Cargo commands, not a live model.' \

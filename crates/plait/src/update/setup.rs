@@ -89,8 +89,8 @@ impl Refusal {
                  then open it from there to finish setup.",
             ),
             Self::Legacy => Some(
-                "This Mac has an earlier system-wide Plait install. Open Move from system-wide \
-                 install.command from the latest disk image once to move it to your user account.",
+                "This Mac has an earlier system-wide Plait install. Run the Terminal install \
+                 command from the Plait README once to move it to your user account.",
             ),
             Self::Malformed => Some(
                 "This copy of Plait is missing its server. Download it again from the releases page.",
