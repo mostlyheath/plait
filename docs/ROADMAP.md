@@ -48,6 +48,10 @@ for evidence and limits.
 - Build the thread graph: split work into linked threads, with a Graph tab
   per project. The design and host contract are agreed; see
   [Thread graph](THREAD-GRAPH.md).
+- Read and edit documents natively, as Sidelit does: rendered Markdown,
+  math and Mermaid, select a passage to ask the agent, and explicit saves.
+  Rendered Markdown is built. The design and host contract are agreed; see
+  [Documents](DOCUMENTS.md).
 
 ### Later
 
@@ -258,10 +262,6 @@ an older host shows no such controls.
 - Trace lines to turns, expand turn records, shelve results, or bisect turns.
 - Provide an interactive proof of sandbox and undo behavior.
 - Offer hosted machines.
-- Read and edit documents natively, as Sidelit does: rendered Markdown,
-  math and Mermaid, select a passage to ask the agent, and explicit saves.
-  The direction is agreed; the host contract is not. See
-  [Documents](DOCUMENTS.md).
 - Add a browser or a web view.
 - Extend editor and terminal handoffs.
 - Show local usage totals with agreed accounting and storage.
