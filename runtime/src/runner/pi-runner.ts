@@ -11,7 +11,7 @@ import type { CommandPolicy } from '../command/policy.ts';
 import type { ImageData, ImageRef } from '../images.ts';
 import { fingerprint, nameKey } from '../mcp/tools.ts';
 import { piProviders } from '../pi-providers.ts';
-import { failure, type InputRecord, type Snapshot, type ThinkingLevel } from '../protocol.ts';
+import { failure, steersRun, type InputRecord, type Snapshot, type ThinkingLevel } from '../protocol.ts';
 import { capture, RECORD_FAILED, type Made } from '../records.ts';
 import { resourceFailure } from '../run-capacity.ts';
 import { gitCheckout, runHeader, type FileIdentity, type Postimage } from '../safety.ts';
@@ -357,7 +357,7 @@ export function createPiTurn(): RunnerTurn {
       const steer = async () => {
         if (!started || !root || authorization!.signal.aborted) return;
         for (const input of inputs) {
-          if (input.entry !== null || input.queued?.mode !== 'steer' || steered.has(input.request_id) || steerAttempted.has(input.request_id)) continue;
+          if (input.entry !== null || !steersRun(input, runnerContext.manifest.run_id) || steered.has(input.request_id) || steerAttempted.has(input.request_id)) continue;
           // Mark synchronously before awaiting submission so resent steer commands are idempotent.
           steerAttempted.add(input.request_id);
           try {
@@ -380,7 +380,7 @@ export function createPiTurn(): RunnerTurn {
           text,
           entry: null,
           anchor: sink.head,
-          queued: { mode: 'steer', approval: 'ask' },
+          queued: { mode: 'steer', approval: 'ask', steerRunId: runnerContext.manifest.run_id },
           ...(images.length ? { images } : {}),
         });
       };

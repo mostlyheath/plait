@@ -34,7 +34,11 @@ class HostInstallTests(unittest.TestCase):
         (self.bin / 'curl').write_text(
             '#!/bin/sh\nwhile [ "$#" -gt 0 ]; do\n'
             '  case "$1" in https://*) url=$1 ;; --output) shift; output=$1 ;; esac\n'
-            '  shift\ndone\ncp "$TEST_ASSETS/${url#https://fixture/}" "$output"\n')
+            '  shift\ndone\n'
+            'case "$url" in\n'
+            '  https://api.github.com/repos/mostlyheath/plait/*) asset=${url#*/mostlyheath/plait/} ;;\n'
+            '  https://github.com/mostlyheath/plait/releases/download/*) asset=${url#*/plait/releases/} ;;\n'
+            '  *) exit 1 ;;\nesac\ncp "$TEST_ASSETS/$asset" "$output"\n')
         for path in self.bin.iterdir():
             path.chmod(0o755)
         source = self.root / 'source' / BUILD
@@ -56,11 +60,7 @@ class HostInstallTests(unittest.TestCase):
                          'artifacts': {'linux-x86_64': {'name': self.name, 'sha256': self.digest}}}
         self.write_manifest()
         (self.assets / 'releases?per_page=1').write_text(json.dumps([{'tag_name': TAG}]))
-        script = (ROOT / 'scripts/install.sh').read_text()
-        script = script.replace('https://api.github.com/repos/$repository', 'https://fixture')
-        script = script.replace('https://github.com/$repository/releases/download', 'https://fixture/download')
-        self.script = self.root / 'install.sh'
-        self.script.write_text(script)
+        self.script = ROOT / "scripts/install.sh"
         self.env = {**os.environ, 'HOME': str(self.home), 'USER': 'test',
                     'PATH': str(self.bin) + ':/usr/bin:/bin', 'TEST_ASSETS': str(self.assets)}
 

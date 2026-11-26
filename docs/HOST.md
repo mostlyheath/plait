@@ -79,7 +79,10 @@ and private modes before connecting. Linux supports trusted commands and trusted
 One request and one reply per connection, then EOF, except `watch` and the
 version 3 `watch_threads`. No greeting.
 Request limit: 64 KiB including newline. Reply/event limit: 1 MiB including
-newline. Absolute input deadline: 5 seconds; sidecar exchange deadline: 20 seconds. Slow watchers are disconnected rather
+newline. The host allows 5 seconds to receive a request. Once the request holds the
+sidecar mutex, the exchange has 20 seconds, or 242 seconds for `git_write`.
+The extra time lets the runtime stop its helper at 240 seconds and return
+the outcome. Other requests wait for the same pipe while the write runs. Slow watchers are disconnected rather
 than accumulating an unbounded queue. Reconnect starts with the latest snapshot;
 clients replace state, not append it. Unknown operations and malformed requests
 return an error and close the connection. Unknown object fields are rejected.
@@ -3410,7 +3413,7 @@ and a partial frame has a 15-second deadline. SSH uses the bridge.
 
 These additive operations are versionless and do not change protocol versions 1–6. Requests accept only the `op` field; unknown fields return `invalid_request`.
 
-- `{"op":"host_info"}` returns `{"schema":1,"release":null,"build_id":null,"protocol_min":1,"protocol_max":7,"capabilities":["drain_v1","checkout_identity_v1","project_fingerprint_v1"],"storage_schema":1}`. Release and build ID are strings when packaged metadata is available.
+- `{"op":"host_info"}` returns `{"schema":1,"release":null,"build_id":null,"protocol_min":1,"protocol_max":7,"capabilities":["drain_v1","checkout_identity_v1","project_fingerprint_v1"],"storage_schema":1}`. Tagged host packages report the full release version, including the preview number. Untagged builds report a null release. Packaged hosts also report their build ID.
 - `{"op":"drain_for_update"}` returns `{"draining":true,"active_runs":N}`. Running and approval-waiting threads count as active. New work returns `busy` while accepted work, Stop, approvals, reads and watches continue. Repeating the request is safe.
 - `{"op":"cancel_drain"}` returns `{"draining":false}` and wakes the checkout queue. Drain state is in memory and does not survive a host restart.
 - While draining, a retried request that would admit work also returns `busy`, even if an earlier attempt was already accepted; after the update the same request ID returns its saved result as usual, so a client retries after `busy` rather than treating it as a refusal of the original.

@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/heath0xFF/plait/releases"><strong>Download</strong></a> ·
+  <a href="https://github.com/mostlyheath/plait/releases"><strong>Download</strong></a> ·
   <a href="docs/GUIDE.md">Guide</a> ·
   <a href="docs/README.md">Docs</a> ·
   <a href="docs/ROADMAP.md">Roadmap</a> ·
@@ -48,9 +48,9 @@ Follow one message from Send to Undo in the [system walkthrough](docs/WALKTHROUG
 - **Approvals you can read.** Let the agent work, or approve each edit and
   command. On a Mac, a project can run commands in a sandbox that cannot write
   the checkout or reach the network.
-- **Undo a run.** The host records the checkout before and after every run.
-  One press puts back what that run changed and leaves your own later edits
-  alone.
+- **Undo a run.** The host records the files a run changes. One press puts
+  them back and leaves your own later edits alone. Untracked files inside
+  Git-ignored folders are not recorded.
 - **Git review built in.** Stage and discard by file or hunk, commit, push,
   pull, and switch branches. The host watches the checkout, so Changes stays
   current without polling.
@@ -79,13 +79,13 @@ Follow one message from Send to Undo in the [system walkthrough](docs/WALKTHROUG
 Plait runs on **Apple Silicon with macOS 15 or later**, with Git and an account
 with a model provider. The download includes the host and its runtime.
 
-Download the **DMG** from [Releases](https://github.com/heath0xFF/plait/releases),
+Download the **DMG** from [Releases](https://github.com/mostlyheath/plait/releases),
 drag **Plait** into **Applications**, and open it. First launch sets up the host
 for your account. Or from Terminal:
 
 ```sh
 curl --proto '=https' -fsSL \
-  https://raw.githubusercontent.com/heath0xFF/plait/main/scripts/install.sh |
+  https://raw.githubusercontent.com/mostlyheath/plait/main/scripts/install.sh |
   bash -s -- --allow-unsigned
 ```
 

@@ -13,7 +13,7 @@ with Metal. Runtime work also requires Node 22.19 or later and npm. Rustup uses
 requires an update. If Metal is missing, run `xcodebuild -downloadComponent MetalToolchain`.
 
 ```sh
-git clone https://github.com/heath0xFF/plait.git
+git clone https://github.com/mostlyheath/plait.git
 cd plait
 cargo build --locked --release
 cargo run --locked --release -- /absolute/path/to/repository

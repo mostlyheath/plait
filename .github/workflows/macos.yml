@@ -72,7 +72,7 @@ jobs:
                 printf 'test=true\nrelease=false\n'
               fi
               ;;
-          esac | tee -a "$GITHUB_OUTPUT"
+          esac >> "$GITHUB_OUTPUT"
       # A preview ships with its changelog: refuse a release whose tag has no
       # section, before anything is built.
       - name: Require release notes
@@ -164,9 +164,7 @@ jobs:
         run: bash scripts/check.sh runtime --require-command-sandbox
       - name: Check installed runtime layout on a fresh main check
         if: github.event_name == 'push'
-        env:
-          BEFORE: ${{ github.event.before }}
-        run: bash scripts/check-installed-changes.sh "$BEFORE"
+        run: node scripts/installed-layout-check.mjs
       - name: Check runtime recovery without credentials
         working-directory: experiments/pi-durable
         run: |
@@ -196,7 +194,11 @@ jobs:
             echo "::error::The plan did not succeed ($PLAN)."
             exit 1
           fi
-          if [[ $TEST != true ]]; then
+          if [[ $TEST != true && $TEST != false ]]; then
+            echo "::error::Missing or invalid test decision."
+            exit 1
+          fi
+          if [[ $TEST == false ]]; then
             echo 'Nothing in this change needs the tests.'
             exit 0
           fi

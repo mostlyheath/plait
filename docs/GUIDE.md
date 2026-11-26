@@ -4,13 +4,13 @@ Plait is a native Mac app (Apple Silicon, macOS 15 or later) for working with co
 
 ## Install and updates
 
-Download the **DMG** from [GitHub Releases](https://github.com/heath0xFF/plait/releases), open it, and drag **Plait** into **Applications**. Open Plait from Applications; on first launch it sets up its local host automatically. You need Git and a model provider account. No Xcode, Rust, or separate Node installation is required; the host bundles pinned Node **26.12.0** and its runtime.
+Download the **DMG** from [GitHub Releases](https://github.com/mostlyheath/plait/releases), open it, and drag **Plait** into **Applications**. Open Plait from Applications; on first launch it sets up its local host automatically. You need Git and a model provider account. No Xcode, Rust, or separate Node installation is required; the host bundles pinned Node **26.12.0** and its runtime.
 
 For a command-line install or update (run as your normal user, never under `sudo`):
 
 ```sh
 curl --proto '=https' -fsSL \
-  https://raw.githubusercontent.com/heath0xFF/plait/main/scripts/install.sh |
+  https://raw.githubusercontent.com/mostlyheath/plait/main/scripts/install.sh |
   bash -s -- --allow-unsigned
 ```
 
@@ -257,7 +257,8 @@ Preferences live in `~/Library/Application Support/Plait/desktop.json`. Custom B
   - **Held:** queued messages that had not started stay in the queue as **Held** until you choose **Resume**.
   - **When it happens:** updates wait until no thread is running or awaiting approval, so an update never interrupts a run. A restart mid-run happens only if the host crashes, the Mac restarts, or you stop the host yourself.
   - **Runs that keep going through a restart** are not part of v0.1.0. Detached Pi runners are built behind `PLAIT_DETACHED_RUNNERS=1` and off by default; they are unverified, cover Pi only, and can't use provider keys from your login shell. Their future is decided after v0.1.0 ([#201](https://github.com/mostlyheath/plait/issues/201)).
-- **Workspace and draft recovery:** Unsent drafts, image references, and uncertain submission request IDs are saved in `~/Library/Application Support/Plait/session/desktop.json` (private unencrypted JSON; 4 MiB total, 256 KiB per draft). Reopening restores tabs and drafts without sending or replaying anything; **Retry safely** reuses the original request ID so the host never runs a submission twice. If a draft would exceed the 4 MiB journal limit, **Workspace not saved** appears and required saves refuse sending or closing until you shorten or discard drafts. Never delete a damaged journal; close duplicate Plait windows and keep a backup copy first.
+- **Workspace and draft recovery:** Under `~/Library/Application Support/Plait/`, Plait saves each machine’s unsent drafts, image references, and pending submission IDs in `session/desktop-machines/<machine-id>.json`. These files are private, unencrypted JSON. Each machine file can hold up to 8 MiB. If it grows too large to save, keep Plait open and shorten or send drafts. Reopening restores saved tabs and drafts without sending anything. **Retry safely** reuses the original request ID to prevent duplicate submissions.
+  To back up your workspace and drafts, copy the entire `session/` folder, including `desktop.json`, all files in `desktop-machines/`, and the draft images. If a session file is damaged, close duplicate Plait windows and keep a backup before attempting recovery.
 - **Host will not connect:** Click **Reconnect** once. On this Mac, inspect the installed host and its last startup record without stopping running work:
 
 ```sh

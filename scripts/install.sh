@@ -2,7 +2,7 @@
 # Install a published build, not a moving source checkout. Run as your normal user.
 set -euo pipefail
 
-repository='heath0xFF/plait'
+repository='mostlyheath/plait'
 api="https://api.github.com/repos/$repository"
 releases="https://github.com/$repository/releases/download"
 host_base='/Library/Application Support/Plait/Host'

@@ -158,6 +158,11 @@ function serve() {
     const answer = await request;
     turn.approval = undefined;
     if (turn.interrupted) return;
+    if (scenario === 'aborted_tools' || scenario === 'aborted_streaming') {
+      result(turn, { subtype: 'error_during_execution', is_error: true, errors: [], terminal_reason: scenario });
+      active = undefined;
+      return;
+    }
     const decision = answer.response?.response ?? {};
     record({ observed: asks ? 'permission' : 'unasked', tool: tool.name, decision, mode });
     const allowed = answer.response?.subtype === 'success' && decision.behavior === 'allow';
