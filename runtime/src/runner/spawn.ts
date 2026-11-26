@@ -6,7 +6,7 @@ import { handoffDescriptors, type CheckoutLease } from '../safety.ts';
  * `log` receives the runner's stderr, so a runner that dies at startup leaves its reason behind.
  * `onExit` lets a launch stop waiting for a runner that has already died.
  */
-export function spawnRunner(entry: string, lease: CheckoutLease, environment: NodeJS.ProcessEnv = {}, log?: string, onExit?: () => void): Promise<number> {
+export function spawnRunner(entry: string, lease: CheckoutLease, environment: NodeJS.ProcessEnv = {}, log?: string, onExit?: (code: number | null) => void): Promise<number> {
   const env = { ...process.env, ...environment };
   delete env.PLAIT_LOCK_FD;
   delete env.PLAIT_NOTIFY_FD;
