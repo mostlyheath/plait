@@ -26,7 +26,7 @@ includes the prerequisite routing and transcript-store refactor below.
 ### Decisions for the prerequisite refactor
 
 Recorded before the refactor starts; the step plan is on
-[issue #31](https://github.com/heath0xFF/plait/issues/31).
+[issue #31](https://github.com/mostlyheath/plait/issues/31).
 
 6. **A saved harness this host does not know.** Read operations (history,
    watch, rename, archive) keep working on the thread's stored transcript.
@@ -101,7 +101,7 @@ Step 3 is done: a running external thread holds one `ExternalRun` handle
 switch, and one `close()`), and a steering request for a harness without
 `supportsSteer` is refused before acceptance (decision 7). Codex and Claude
 Code both still steer. Step 4 (compatibility tests) follows the plan on
-[issue #31](https://github.com/heath0xFF/plait/issues/31).
+[issue #31](https://github.com/mostlyheath/plait/issues/31).
 
 ## Discovery and authentication
 

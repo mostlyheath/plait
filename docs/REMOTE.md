@@ -62,7 +62,7 @@ normal user (x86_64 or arm64). It needs Python 3, curl or wget, and a SHA-256
 utility:
 
 ```sh
-curl --proto '=https' -fsSL https://raw.githubusercontent.com/heath0xFF/plait/main/scripts/install.sh | bash -s -- --host
+curl --proto '=https' -fsSL https://raw.githubusercontent.com/mostlyheath/plait/main/scripts/install.sh | bash -s -- --host
 ```
 
 It reads the release's `update-host-linux-<arch>.json`, checks the archive's

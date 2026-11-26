@@ -13,6 +13,18 @@ import time
 from release_macos import digest
 
 
+def request(store, operation):
+    with socket.socket(socket.AF_UNIX) as client:
+        client.settimeout(10)
+        client.connect(str(store / "host.sock"))
+        client.sendall((json.dumps({"op": operation}) + "\n").encode())
+        with client.makefile("rb") as stream:
+            reply = json.loads(stream.readline())
+    if not reply.get("ok"):
+        raise ValueError(f"Host {operation} failed: {reply}")
+    return reply["result"]
+
+
 def main(archive):
     checksum = archive.with_name(archive.name + ".sha256").read_text().strip()
     if checksum != f"{digest(archive)}  {archive.name}":
@@ -35,6 +47,8 @@ def main(archive):
         version = json.loads(subprocess.check_output([str(binary), "version"], env=env, text=True))
         if version["component"] != "host" or version["version"] != metadata["version"] or version["revision"] != metadata["revision"]:
             raise ValueError("Host version does not match component metadata")
+        if metadata["release"] != version["release"]:
+            raise ValueError("Archived host release does not match the binary")
         store = root / "store"
         process = subprocess.Popen([str(binary), "run", "--store", str(store)], env=env)
         try:
@@ -43,14 +57,10 @@ def main(archive):
                 if process.poll() is not None or time.monotonic() >= deadline:
                     raise RuntimeError("Host failed to start")
                 time.sleep(0.1)
-            with socket.socket(socket.AF_UNIX) as client:
-                client.settimeout(10)
-                client.connect(str(store / "host.sock"))
-                client.sendall(b'{"op":"status"}\n')
-                with client.makefile("rb") as stream:
-                    reply = json.loads(stream.readline())
-            if not reply.get("ok"):
-                raise ValueError(f"Host status failed: {reply}")
+            request(store, "status")
+            info = request(store, "host_info")
+            if info["release"] != version["release"] or info["build_id"] != build_id:
+                raise ValueError("Running host identity does not match the archive")
         finally:
             process.terminate()
             try:
