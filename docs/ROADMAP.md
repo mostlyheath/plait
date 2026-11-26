@@ -45,6 +45,9 @@ for evidence and limits.
 - Build automations: threads that run on a schedule in a project or
   directory, run by the host. The design and host contract are agreed; see
   [Automations](AUTOMATIONS.md).
+- Build the thread graph: split work into linked threads, with a Graph tab
+  per project. The design and host contract are agreed; see
+  [Thread graph](THREAD-GRAPH.md).
 
 ### Later
 
