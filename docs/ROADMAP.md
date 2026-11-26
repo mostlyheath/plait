@@ -255,6 +255,9 @@ an older host shows no such controls.
 - Trace lines to turns, expand turn records, shelve results, or bisect turns.
 - Provide an interactive proof of sandbox and undo behavior.
 - Offer hosted machines.
+- Split work into linked threads, with a Graph tab per project. Product
+  decisions are made; the host contract needs agreement. See
+  [Thread graph](THREAD-GRAPH.md).
 - Add a browser, rendered documents, or a file editor.
 - Extend editor and terminal handoffs.
 - Show local usage totals with agreed accounting and storage.

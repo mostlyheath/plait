@@ -29,5 +29,7 @@
   harness.
 - [Automations](AUTOMATIONS.md): the agreed design for threads that run on
   a schedule.
+- [Thread graph](THREAD-GRAPH.md): the proposed design for splitting work
+  into linked threads.
 - [Linux sandbox](LINUX-SANDBOX.md): the open command-containment decision.
 - [ADEMark plan](ADEMARK.md): what a published measurement would require.
