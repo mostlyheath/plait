@@ -251,7 +251,8 @@ Preferences live in `~/Library/Application Support/Plait/desktop.json`. Custom B
 
 ## Recovery and troubleshooting
 
-- **Workspace and draft recovery:** Unsent drafts, image references, and uncertain submission request IDs are saved in `~/Library/Application Support/Plait/session/desktop.json` (private unencrypted JSON; 4 MiB total, 256 KiB per draft). Reopening restores tabs and drafts without sending or replaying anything; **Retry safely** reuses the original request ID so the host never runs a submission twice. If a draft would exceed the 4 MiB journal limit, **Workspace not saved** appears and required saves refuse sending or closing until you shorten or discard drafts. Never delete a damaged journal; close duplicate Plait windows and keep a backup copy first.
+- **Workspace and draft recovery:** Under `~/Library/Application Support/Plait/`, Plait saves each machine’s unsent drafts, image references, and pending submission IDs in `session/desktop-machines/<machine-id>.json`. These files are private, unencrypted JSON. Each machine file can hold up to 8 MiB. If it grows too large to save, keep Plait open and shorten or send drafts. Reopening restores saved tabs and drafts without sending anything. **Retry safely** reuses the original request ID to prevent duplicate submissions.
+  To back up your workspace and drafts, copy the entire `session/` folder, including `desktop.json`, all files in `desktop-machines/`, and the draft images. If a session file is damaged, close duplicate Plait windows and keep a backup before attempting recovery.
 - **Host will not connect:** Click **Reconnect** once. On this Mac, inspect the installed host and its last startup record without stopping running work:
 
 ```sh
