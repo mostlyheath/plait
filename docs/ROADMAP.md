@@ -258,7 +258,11 @@ an older host shows no such controls.
 - Trace lines to turns, expand turn records, shelve results, or bisect turns.
 - Provide an interactive proof of sandbox and undo behavior.
 - Offer hosted machines.
-- Add a browser, rendered documents, or a file editor.
+- Read and edit documents natively, as Sidelit does: rendered Markdown,
+  math and Mermaid, select a passage to ask the agent, and explicit saves.
+  The direction is agreed; the host contract is not. See
+  [Documents](DOCUMENTS.md).
+- Add a browser or a web view.
 - Extend editor and terminal handoffs.
 - Show local usage totals with agreed accounting and storage.
 - Add to the thread list what a sidebar card cannot show today: each
