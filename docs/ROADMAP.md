@@ -172,8 +172,8 @@ repository. Threads, approvals, and the file viewer work there; Changes,
 History, branches, worktrees, turn records, and undo need Git and say so.
 A folder is plain only when no repository marker (a `.git` file, or a `.git`
 folder with `HEAD`) exists at it or above it, so a broken repository is
-refused rather than treated as plain. A thread's kind is fixed when it is
-created. Nothing in a plain folder is protected as already changed, and
+refused rather than treated as plain. A thread created in a plain folder
+becomes a Git thread on its next run once the folder is a repository. Nothing in a plain folder is protected as already changed, and
 nothing an agent changes there can be undone. Plait does not initialize
 repositories.
 

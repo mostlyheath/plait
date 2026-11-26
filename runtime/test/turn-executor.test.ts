@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context';
@@ -10,7 +10,7 @@ import { createRegistry, defineTool, defineExtension } from '@earendil-works/pi-
 import type { ToolState } from '../src/tools.ts';
 import type { CommandOutputs } from '../src/tool-output.ts';
 import { rootIdentity } from '../src/safety.ts';
-import { setup } from './support/safety.ts';
+import './support/safety.ts';
 import { TurnExecutor, toolStateFor, type TurnEvent, type TurnSink } from '../src/turn-executor.ts';
 
 test('executor runs a plain Pi turn without Runtime', async () => {
@@ -100,7 +100,10 @@ test('executor handles write approvals through commands without Runtime', async 
 
 
 test('plain turn state sends a write postimage to its sink', async t => {
-  const { root: checkout, base: directory } = await setup(t);
+  const directory = await mkdtemp(join(tmpdir(), 'plait-executor-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const checkout = join(directory, 'plain');
+  await mkdir(checkout);
   const executor = new TurnExecutor();
   const events: TurnEvent[] = [];
   const sink = { emit(event: TurnEvent) { events.push(event); } } as TurnSink;
@@ -123,5 +126,6 @@ test('plain turn state sends a write postimage to its sink', async t => {
     });
     const postimage = events.find(event => event.type === 'postimage');
     assert.equal(postimage?.image.path, 'new.txt');
+    assert.equal(await readFile(join(checkout, 'new.txt'), 'utf8'), 'hello');
   } finally { await harness.close(context); }
 });
