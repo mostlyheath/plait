@@ -8,6 +8,7 @@ pub mod compose;
 pub mod connections;
 pub mod conversation_find;
 pub mod diff;
+pub mod doc_links;
 pub mod file_view;
 pub mod folding;
 pub mod fuzzy;
