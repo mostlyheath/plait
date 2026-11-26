@@ -175,8 +175,44 @@ pub const STILLWATER_DEEP: Palette = Palette {
     ..STILLWATER
 };
 
+/// Stillwater Light, the light companion from the same palette source
+/// (palette.js at 49c10a2): a pale indigo-slate ground with deep, cool ink.
+/// Raised surfaces are lighter than the ground, as in Plait Light.
+pub const STILLWATER_LIGHT: Palette = Palette {
+    light: true,
+    bg: 0xf4f5fb,
+    rail: 0xeaedf6,
+    panel: 0xfbfbfe,
+    raised: 0xffffff,
+    strong: 0x1b2034,
+    faint: 0xa3aac0,
+    border: 0xdfe3ee,
+    text: 0x242a3e,
+    muted: 0x4d5973,
+    subtle: 0x66708a,
+    mint: 0x124428,
+    blue: 0x126171,
+    violet: 0x852261,
+    red: 0xa4392c,
+    amber: 0x76510b,
+    selected: 0xe3e7f2,
+    edge: 0xcbd1e2,
+    focus_edge: 0x4f8798,
+    hover: 0x1b20340a,
+    selection: 0xaab6d4c0,
+    text_selection: 0x12617133,
+    added_fill: 0x1244281f,
+    removed_fill: 0xa4392c1a,
+    failed_edge: 0xa4392c66,
+    raised_hover: 0xeef0f8,
+    scrim: 0x1b203440,
+    warn_edge: 0xd6c39b,
+    warn_fill: 0xf3ecdc,
+};
+
 pub const PLAIT_DARK_NAME: &str = "Plait Dark";
 pub const STILLWATER_NAME: &str = "Stillwater";
+pub const STILLWATER_LIGHT_NAME: &str = "Stillwater Light";
 /// What unset preferences draw with: Stillwater Deep in the dark, Plait Light by day.
 pub const DEFAULT_DARK: Palette = STILLWATER_DEEP;
 pub const DEFAULT_DARK_NAME: &str = "Stillwater Deep";
@@ -276,6 +312,13 @@ pub fn built_in() -> Vec<Theme> {
             name: PLAIT_LIGHT_NAME.into(),
             palette: PLAIT_LIGHT,
             source: Source::BuiltIn,
+        },
+        Theme {
+            name: STILLWATER_LIGHT_NAME.into(),
+            palette: STILLWATER_LIGHT,
+            source: Source::Included {
+                credit: "Stillwater by heath0xFF (MIT)",
+            },
         },
     ];
     let mut bundled: Vec<Theme> = BUNDLED
@@ -600,7 +643,7 @@ mod tests {
     #[test]
     fn every_shipped_theme_meets_contrast_bands() {
         let themes = built_in();
-        assert_eq!(themes.len(), 4 + BUNDLED.len());
+        assert_eq!(themes.len(), 5 + BUNDLED.len());
         for Theme {
             name, palette: p, ..
         } in themes
