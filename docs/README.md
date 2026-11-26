@@ -31,5 +31,7 @@
   a schedule.
 - [Thread graph](THREAD-GRAPH.md): the agreed design for splitting work
   into linked threads.
+- [Documents](DOCUMENTS.md): reading, asking about, and editing documents
+  natively.
 - [Linux sandbox](LINUX-SANDBOX.md): the open command-containment decision.
 - [ADEMark plan](ADEMARK.md): what a published measurement would require.
