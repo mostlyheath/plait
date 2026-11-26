@@ -1,6 +1,6 @@
 # Thread graph
 
-**Agreed design; not implemented yet.** The project owner agreed the product
+**Agreed design.** The host operations are built behind `PLAIT_GRAPH=1`, off by default and not ready to turn on: issues labelled [`blocks-flag`](https://github.com/mostlyheath/plait/issues?q=label%3Ablocks-flag) (#265, #269–#271) must be fixed first. The desktop Graph tab and Discuss enforcement are planned. The project owner agreed the product
 decisions and the host contract below. Each pull request that changes storage or the protocol needs its independent review (see
 [Contributing](../CONTRIBUTING.md)).
 
@@ -41,7 +41,7 @@ A card shows one state, taken from the thread:
 | Draft | Written, not started, and not waiting for anything. |
 | Waiting k/n | Waits for n threads; k of them are done. |
 | Blocked | A thread it waits for failed or was interrupted. Names which. |
-| Queued #n | Its checkout is busy; it is nth in line. |
+| Ready | Its dependencies are done, or its first message is in the checkout queue. |
 | Discussing / Building | Running. |
 | Needs you | Waiting on an approval, or failed. |
 | Done | Its last run finished without error, and nothing has been sent since. |
@@ -51,8 +51,8 @@ A card shows one state, taken from the thread:
 - **Discuss** threads answer, plan and read. Their tools cannot change files
   or run commands that write. Any number run at once, even in one checkout.
 - **Build** threads change files. They take the checkout like any thread
-  today: a busy project offers its own worktree or a place in line, following
-  **Project settings → When this project is busy**.
+  today. Graph admission follows **Project settings → When this project is busy**
+  for automatic worktrees. While its message waits in the desktop checkout queue, the draft stays Ready.
 
 A thread's kind is chosen when it is created and shown on its card. You can
 change it while the thread is not running. Existing threads are Build.
@@ -81,8 +81,8 @@ default. Turn it off, and the draft turns **Ready** and alerts you instead.
 When it starts, the results of the threads it waited for are added to its
 first message: each one's final answer, bounded in length, with a link to
 the thread. Starting follows the usual rules: a Build thread in a busy
-checkout takes its own worktree or a place in line, and an approval waits for
-you as it does in any thread.
+checkout uses ordinary project placement and the durable checkout queue. An approval waits
+for you as it does in any thread.
 
 If a thread it waits for fails or is interrupted, the draft is **Blocked** and
 does not start. Fix or rerun that thread, or remove the link.
@@ -96,43 +96,57 @@ yourself. Plait makes no model call of its own to summarize them.
 
 ## Host contract
 
-The host owns the graph; clients render what it streams. This builds on the
-host model from the closed [#86](https://github.com/mostlyheath/plait/pull/86).
+The graph is a client of the host's ordinary request handler. Enable it with
+`PLAIT_GRAPH=1`. With the flag unset, graph operations receive the ordinary
+unknown-operation error.
 
-- **Storage:**
-  - nodes, which are threads and drafts;
-  - kind (discuss or build);
-  - `start_when_ready`;
-  - edges: `fork` (parent to child) and `depends_on`;
-  - a graph revision per project.
+- **Storage.** `STORE/graph.sqlite` contains nodes, fork and dependency edges,
+  captured draft settings, and a single graph revision. Drafts have stable
+  node IDs. An admitted node also has a unique thread ID. A required
+  `op_id` on create or fork replays the original node ID. Reusing it with
+  different input or after deleting the draft is refused.
+- **Operations.** Use `create_draft`, `fork_thread`, `delete_draft`,
+  `set_dependencies`, `set_start_when_ready`, `set_node_kind`, `start_draft`,
+  and `send_results`. Dependencies must stay within a project and cannot
+  create cycles. Discuss drafts can be represented. Starting one requires
+  the planned read-only execution support.
+- **Starting.** Draft creation records the checkout device and inode. Before admission,
+  a missing or changed checkout blocks the draft with “The project at this path changed”.
+  Manual and automatic starts use project placement, falling back to Wait when
+  admission offers a choice. The admitted checkout, or a worktree’s parent root,
+  must match the requested checkout. The graph saves the first message and uses
+  a request ID derived from the node ID to enqueue it once with `submit_checkout`.
+  The desktop queue captures approval and command policy, preserves renames while
+  waiting, and holds pending messages for Resume after a host restart. A queue
+  refusal makes the draft Blocked and supplies the reason shown on its card.
+- **Completion.** A summary change refreshes linked threads in that project in
+  batches of up to 50, yielding to host requests between batches. Waiting
+  drafts use the same batch size and read dependencies once per batch. An archived
+  thread with a clean finish can satisfy a dependency. An archived unfinished
+  thread blocks it. Forks and dependency answers require the source thread’s
+  saved checkout identity to match the draft’s. A replacement directory at the
+  same path cannot inherit the previous project’s conversation.
+- **Text.** Fork and Send results use `history` and `history_text`. Fork
+  searches up to 20 pages. Each graph request shares one four-second deadline across
+  its reads. Send results returns completed answers and counts the children left out.
+  A brief or assembled draft prompt over 24,576 JSON-escaped content bytes is
+  refused with `invalid_request` (“Brief is too long”). Send results includes at most 20
+  finished children and budgets the text including links and JSON escaping.
+- **Polling.** Request `graph` with a project checkout path. Pass the last
+  `graph_revision` as `revision` on the next poll. A matching revision
+  returns `unchanged: true`. The workspace event stays the same. The view
+  uses graph storage and one unfiltered-by-checkout `list_threads` page,
+  including archived threads. The current list protocol identifies threads
+  by checkout. Unlinked counts cover that page. A partial page or graph
+  sets `truncated`. The host returns a layout for up to 500 cards and
+  2,000 edges.
 
-  One additive migration. Existing threads need no migration: an unlinked
-  thread is a Build thread with no edges.
-- **State is cheap.** It comes from thread columns that already exist or are
-  backfilled once, never from parsing transcripts.
-- **Operations:**
-  - `create_draft` and `delete_draft`;
-  - `fork_thread`, which seeds the child from bounded pages of the parent;
-  - `set_dependencies`, which refuses loops;
-  - `set_node_kind`, which is refused while the thread runs;
-  - `send_results`;
-  - `graph`, a bounded read of one project with a truncation flag.
-
-  Each operation has an optional operation ID. An older host answers
-  `invalid_request`, and the app hides the Graph tab.
-- **Starting is the host's job.** When a thread finishes, the host checks the
-  drafts waiting for it. A draft whose waits are all done and whose
-  `start_when_ready` is on is admitted through the same path as a typed
-  message. The start is recorded before admission, so a crash or a lost reply
-  never starts a draft twice. Interrupted runs are never replayed.
-- **Discuss threads are enforced, not requested.** Their file-writing tools
-  are not offered, and their commands run read-only in the sandbox. On a
-  machine without the sandbox, discuss threads cannot run commands.
-- **Layout is the host's job too.** The host lays the graph out in layers,
-  in a fixed order, so every client draws it the same way. A state change
-  never moves a card. Only a new or removed link moves cards.
-- **Stream:** the workspace stream carries each project's graph revision. A
-  client refetches only when the revision changes and the tab is open.
+With the graph enabled, each background host request shares the desktop
+request FIFO. Admission, result collection, and submission take separate
+turns. To edit a draft waiting in the checkout queue, first withdraw its
+submission with `cancel_queued`. A graph poll selects unstarted drafts by
+the project device and inode captured at creation. A worktree admission
+must match the captured checkout path, device, and inode before submission.
 
 ## Speed
 

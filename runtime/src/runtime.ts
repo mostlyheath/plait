@@ -1,4 +1,5 @@
 import { Automations } from './automations/service.ts';
+import { Graph } from './graph/host.ts';
 import { harnessLogin } from './harness-sign-in.ts';
 import { installable, installTool, managedPath } from './agent-tools.ts';
 import { threadKind } from './store.ts';
@@ -92,6 +93,7 @@ function capabilities(model: Model<Api>) {
   return { reasoning: model.reasoning === true, thinking_levels: getSupportedThinkingLevels(model), context_window: model.contextWindow ?? null, input: [...model.input] };
 }
 export class Runtime {
+  private graph?: Graph;
   store: Store;
   /** The checkout as each run found and left it, in the host's own store. */
   records: Records;
@@ -147,7 +149,7 @@ export class Runtime {
   }
   private changed(id: string) { for (const listener of this.listeners) listener(id); }
   /** `#` tells thread-list watchers that some summary changed; snapshot text alone does not. */
-  private notify(id: string, summary: boolean) { this.changed(id); if (summary) this.changed('#'); }
+  private notify(id: string, summary: boolean) { this.changed(id); if (summary) { this.changed('#'); this.graph?.summaryChanged(id); } }
   private save(snapshot: Snapshot, head = 0) { this.notify(snapshot.id, this.store.save(snapshot, head)); }
   /** One conversation store has one user at a time: open, close, and history reads take turns. */
   private gate<T>(id: string, work: () => Promise<T>): Promise<T> {
@@ -168,6 +170,10 @@ export class Runtime {
       snapshot: id => this.snapshot(id),
       save: snapshot => this.save(snapshot),
     });
+    if (process.env.PLAIT_GRAPH === '1') {
+      this.graph = new Graph(directory, request => this.enqueue(() => this.handle(request)),
+        id => this.store.refreshRootIdentity(id, this.store.get(id).checkout), (id, request) => this.store.waiters.get(id, request));
+    }
     this.store.waiters.changed = () => this.changed('#');
     this.records = new Records(this.store, directory, id => this.changed(id));
     this.turnReview = new TurnReview(this.store, this.records, directory);
@@ -263,6 +269,7 @@ export class Runtime {
     }
     this.records.start(liveCheckouts);
     this.automations?.start();
+    this.graph?.wake();
   }
   private runnerEventHooks() {
     return {
@@ -491,6 +498,7 @@ export class Runtime {
     }
     if (op === 'create_worktree_thread' || op === 'create_admitted_thread' || op === 'submit_checkout' || op === 'create_thread' && !expectedCheckout || op === 'submit' || op === 'undo_turn') this.admitWork();
     if (this.automations?.handles(input)) return this.automations.handle(input, request => this.handle(request));
+    if (this.graph?.handles(input)) return this.graph.handle(input, request => this.handle(request));
     if (this.naming.handles(input)) return this.naming.handle(input);
     if (this.providers?.handles(input)) return this.providers.handle(input);
     if (handlesCleanup(input)) return this.checkoutCleanup(input);
@@ -742,6 +750,13 @@ export class Runtime {
     const snapshot = this.snapshot(id);
     const session = this.sessions.get(id);
     const missing = () => fail('not_found', 'Queued message already started or was cancelled.');
+    if (this.graph?.ownsSubmission(id, requestId)) {
+      const waiter = this.store.waiters.get(id, requestId);
+      if (!waiter || !['waiting', 'held'].includes(waiter.state) || !this.store.cancel(id, requestId)) missing();
+      this.notify(id, true);
+      this.drainCheckout(snapshot.checkout);
+      return snapshot;
+    }
     if (!this.store.queue(id).some(input => input.request_id === requestId)) missing();
     const steered = session?.steered.get(requestId);
     // A steering input the run already took is part of the conversation and cannot be withdrawn.
@@ -1161,7 +1176,7 @@ export class Runtime {
         // Never stop a later run in the same thread with an old cancellation.
         if (this.sessions.get(id)?.requestId === request.request_id || this.runnerSessions.get(id)?.requestId === request.request_id) await this.dispatch(validate({op:'stop',thread_id:id}),1);
       } else if (waiter.state === 'waiting' || waiter.state === 'held') {
-        this.store.cancel(id,request.request_id); this.changed(id); this.changed('#'); this.drainCheckout(snapshot.checkout);
+        this.store.cancel(id,request.request_id); this.notify(id, true); this.drainCheckout(snapshot.checkout);
       }
     }
     const line = this.store.waiters.line(snapshot.checkout);
@@ -1430,6 +1445,7 @@ export class Runtime {
   async close() {
     if (this.automations) await this.automations.close();
     this.closing = true;
+    if (this.graph) await this.graph.close();
     await this.naming.close();
     clearTimeout(this.queueWake);
     await Promise.allSettled(this.queueDrains.values());
@@ -1460,10 +1476,9 @@ export class Runtime {
   }
   async reply(input: unknown) {
     try {
-      if (this.automations) {
-        this.automations.observeArrival(input);
-        return { ok: true, result: await this.enqueue(() => this.handle(input)) };
-      }
+      this.automations?.observeArrival(input);
+      // With either background feature on, client requests take turns with its requests.
+      if (this.automations || this.graph) return { ok: true, result: await this.enqueue(() => this.handle(input)) };
       return { ok: true, result: await this.handle(input) };
     } catch (error) { return { ok: false, error: failure(resourceError(error)) }; }
   }
