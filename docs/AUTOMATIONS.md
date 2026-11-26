@@ -1,6 +1,6 @@
 # Automations
 
-**Agreed design; not implemented yet.** The project owner agreed the product
+**The host scheduler is built behind `PLAIT_AUTOMATIONS=1`, off by default and not ready to turn on: issues labelled [`blocks-flag`](https://github.com/mostlyheath/plait/issues?q=label%3Ablocks-flag) (#265–#268) must be fixed first. The desktop controls below are planned.** The project owner agreed the product
 decisions and the host contract below. Each pull request that changes storage
 or the protocol still needs its independent review (see
 [Contributing](../CONTRIBUTING.md)).
@@ -45,12 +45,11 @@ each harness's own context compaction; Plait does not reset the conversation.
 ### Where it works
 
 - **A Git project:** the automation gets its own worktree, created from the
-  project's current commit at its first run, and every later run continues
+  project's current commit when you create the automation, and every later run continues
   there. Your checkout is never touched. Its changes stay in that worktree
   until you review them in Changes or the Worktrees tab. An automation never
   commits or pushes.
-- **A plain folder or other directory:** runs work in place. If something else
-  is running there, the run waits in the existing checkout queue.
+- **A plain folder:** runs work in place. If you choose a folder inside a broader Git checkout, creation asks you to choose the project instead. If the host reports the directory is busy, the occurrence is skipped.
 
 ### Making one
 
@@ -118,30 +117,64 @@ before it runs.
   can draft one, and only **Create** schedules it.
 - The consent covers scheduled runs and **Run now** only. Turns you type in the
   thread use the thread's normal approval mode.
-- **Pause** and **Delete** stop an active run through the existing Stop and
-  cleanup path.
+- The planned **Pause** and **Delete** controls also stop an active automation
+  run through the existing Stop and cleanup path.
 
 ## Host contract
 
 The host owns automations. The desktop is a client of them, like threads.
 
-- **Storage:** durable automation records (revision, schedule, time zone,
-  target, harness settings, catch-up window, paused) and occurrence records
-  (due time, outcome: started, skipped, missed, failed). One SQLite migration
-  in the existing store.
-- **No duplicate runs:** an occurrence's identity is its automation ID, its
-  revision and its due time. It is written durably before the run is
-  admitted, so a crash or a lost reply cannot start the same occurrence twice.
-- **One admission path:** a run is admitted through the same path as a typed
-  message. It shares checkout leases, model validation, dirty-file
-  protection, the checkout queue, Stop, and request deduplication. The run
-  record names the automation revision that allowed it.
+- **Storage:** `STORE/automations.sqlite` holds definitions, their thread IDs,
+  schedule start times, occurrence claims, click IDs and receipts. The ordinary host store owns
+  the thread and its turn history.
+- **Creation:** `create_automation` takes a creation request ID and a definition.
+  It persists the definition and returns `state: "preparing"` and
+  `admission_request_id` immediately. The service requests worktree placement
+  for Git projects, including Git roots selected as directories, and in-place placement for plain folders. Directory validation runs during preparation. It checks
+  `admission_status` in the background, with one outstanding request per
+  placement. Poll `automation_status` by automation ID, or refresh the list.
+  Pending placements survive host restart. Failed placement exposes the
+  reason through status and does not enable the schedule.
+- **Runs:** the timer checks the thread settings and command policy against
+  the saved definition. A mismatch pauses the schedule. An active thread or
+  busy checkout skips the occurrence. Otherwise the host accepts the message
+  through the desktop's durable Wait operation, `submit_checkout`. The
+  occurrence receipt says `queued` when the host accepts it. If another run
+  takes the checkout during admission, the message waits with its saved
+  approval and command policy. Desktop requests continue during that wait.
+  A missing or replaced checkout pauses the schedule.
+- **Run now:** when an occurrence is due within the catch-up window, the click
+  uses that occurrence's scheduled request ID. If the host accepts it and
+  restarts before saving the automation receipt, catch-up can submit the same
+  ID safely. A click arriving during scheduled submission shares its claim.
+  Other clicks create manual claims. The host saves the click and claim in
+  one transaction before submission. A retry looks up the original click,
+  even when another occurrence has since become due. Claims and receipts
+  track progress from the schedule start time.
+  Run now returns the claim ID as `occurrence.request_id` with outcome
+  `pending` while work is outstanding. Read the final receipt with
+  `get_automation`, or repeat the same click ID.
+- **Request ordering:** with automations enabled, desktop requests and individual
+  background host requests take turns in one FIFO. A desktop edit can run
+  between the scheduler's checkout check and submission. Placement, polling
+  and run completion happen in background steps.
+- **Operations:** `list_automations` returns each automation's ID, name,
+  schedule, target path, state, next run and last result. Use `get_automation`
+  with an ID to read the full instructions and occurrence receipts.
+  `update_automation` takes the ID
+  and a full definition. `pause_automation`, `resume_automation` and
+  `delete_automation` take the ID. `run_automation_now` also requires a
+  request ID. A create request from a thread supplies `caller.thread_id`;
+  the host refuses creation from an automation's own thread. Pause and delete
+  stop scheduling. Deletion keeps the ordinary thread and its history. To
+  stop a turn already in progress, use the thread's Stop control. The current
+  host Stop request addresses the thread as a whole.
 - **No replay:** an interrupted run is shown as interrupted and is never
   rerun. The next occurrence runs on schedule.
 - **Timer:** one host timer is armed for the earliest next occurrence. It is
-  computed again after a wake, a clock change, or an edit. It adds no work to
-  host startup's critical path.
-- **Protocol:** a new `automations` capability and its operations. An older
+  computed again after a wake, a clock change, or an edit. Startup and wake
+  both allow one minute for settling.
+- **Planned desktop protocol:** a new `automations` capability and its operations. An older
   client does not see the Automations list. If it opens an automation's
   thread, it must not present scheduled turns as approved one call at a time.
   How it shows them is part of the compatibility review.
