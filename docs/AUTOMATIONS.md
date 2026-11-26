@@ -10,7 +10,7 @@ An automation is a thread that runs on a schedule. You give it instructions
 once, say where it works and when, and the host runs it while you are away.
 Results arrive the way any thread's do: an unread mark and an alert.
 
-For timer requests, see [Background requests (proposed)](HOST.md#background-requests-proposed).
+For timer requests, see [Background requests (agreed)](HOST.md#background-requests-agreed).
 
 ## What a person sees
 

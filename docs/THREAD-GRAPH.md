@@ -12,7 +12,7 @@ This is different from the [prompt tree](HOST-FIRST.md#the-prompt-tree),
 which is about retries and edits inside one thread. The graph is about links
 between threads.
 
-For background graph starts, see [Background requests (proposed)](HOST.md#background-requests-proposed).
+For background graph starts, see [Background requests (agreed)](HOST.md#background-requests-agreed).
 
 ## What a person sees
 

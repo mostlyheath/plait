@@ -91,9 +91,9 @@ Reply codes: `invalid_request`, `not_found`, `busy`, `conflict`, `model_unavaila
 `interrupted`, and, in version 3 snapshots, `turn_limit`. Never send credentials, auth paths, or raw
 provider error bodies. Errors are not accepted submissions.
 
-## Background requests (proposed)
+## Background requests (agreed)
 
-**Recommendation for [#265](https://github.com/mostlyheath/plait/issues/265): use the host’s existing local client socket (C).**
+**Agreed 2026-11-26 for [#265](https://github.com/mostlyheath/plait/issues/265): use the host’s existing local client socket (C). Not built yet.**
 The automation timer and graph reconciler currently send their reads, admissions
 and submissions through an in-process FIFO to `handle()` in the feature
 implementations. Rust never sees those exchanges. Its 20-second deadline
