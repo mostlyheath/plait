@@ -9,6 +9,7 @@ mod completion;
 mod draft;
 mod history;
 mod images;
+pub(super) use images::merge_draft_images;
 mod input;
 mod mentions;
 mod parent;
