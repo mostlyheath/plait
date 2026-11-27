@@ -324,13 +324,21 @@ pub fn write_with_op(
     op: &WriteOp,
     op_id: Option<&str>,
 ) -> Result<WriteOutcome, Error> {
+    let mut write = op.clone();
+    if let WriteOp::Discard { guard, .. } = &mut write
+        && guard.is_some()
+        && !super::release::host_info(client)?
+            .is_some_and(|info| info.capabilities.iter().any(|c| c == "guarded_discard_v1"))
+    {
+        *guard = None;
+    }
     let first: Page = client
         .send_within(
             &Request::GitWrite {
                 op_id: op_id.map(str::to_owned),
                 checkout: checkout.to_owned(),
                 identity: expected.into(),
-                write: op.clone(),
+                write,
             },
             WRITE_WAIT,
         )

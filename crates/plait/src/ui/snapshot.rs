@@ -45,6 +45,7 @@ use std::{
 #[cfg(debug_assertions)]
 mod a11y;
 mod admission;
+mod automations;
 mod branches;
 mod bubbles;
 mod cards;
@@ -669,6 +670,7 @@ fn pin_read_times(repository: &mut plait_client::state::RepositoryState, wide: b
                 rows: diff.rows.clone(),
                 widest_row: diff.widest_row,
                 hunks: diff.hunks.clone(),
+                patch_digest: diff.patch_digest.clone(),
                 truncated: diff.truncated,
                 elapsed: Duration::from_millis(elapsed_ms),
             });
@@ -2468,6 +2470,7 @@ fn walk(output: Option<&Path>) {
         reading_walk(&mut harness, &repository, suffix);
         bubbles::walk(&repository, output, suffix, width, height);
         finished_work::scenes(&repository, output, suffix, width, height);
+        automations::scenes(&repository, output, suffix, width, height);
         quote_selection::scenes(&repository, output, suffix, width, height);
         code_size::walk(&mut harness, &repository, suffix);
         interface_font::walk(&mut harness, &repository, suffix);

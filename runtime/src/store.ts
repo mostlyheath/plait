@@ -492,3 +492,6 @@ export function digest(input: unknown) { return createHash('sha256').update(JSON
 export function threadKind(store: Store, id: string): 'git' | 'folder' {
   return store.db.prepare('SELECT vcs FROM thread_vcs WHERE thread=?').get(id)?.vcs === 'folder' ? 'folder' : 'git';
 }
+export function promoteThreadToGit(store: Store, id: string): void {
+  store.db.prepare("UPDATE thread_vcs SET vcs='git' WHERE thread=? AND vcs='folder'").run(id);
+}

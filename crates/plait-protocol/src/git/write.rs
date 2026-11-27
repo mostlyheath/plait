@@ -2,6 +2,13 @@
 use crate::model::DiffMode;
 use std::path::PathBuf;
 
+/// Optional digest of the diff reviewed before discarding a hunk.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct DiscardGuard {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub digest: Option<String>,
+}
+
 /// One write. Paths are relative to the repository root, as `Change::path`
 /// reports them; a rename lists both its path and its original.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -36,12 +43,14 @@ pub enum WriteOp {
     },
     /// Throw away a file's unstaged changes, or one unstaged hunk, after
     /// saving its bytes so `Restore` can undo it. An untracked file is deleted.
-    /// `hunk` is an index and shown header, as for `Hunk`.
+    /// `hunk` is an index and the displayed hunk header.
     Discard {
         #[serde(with = "crate::wire::path")]
         path: PathBuf,
         untracked: bool,
         hunk: Option<(usize, String)>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        guard: Option<DiscardGuard>,
     },
     /// Put back a file exactly as `Discard` saved it.
     Restore(Backup),

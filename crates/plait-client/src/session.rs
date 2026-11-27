@@ -332,6 +332,7 @@ pub struct Journal {
     /// Each machine's file has its own revision gate, kept for the journal's
     /// life so switching away and back reuses the same writer.
     machines: Mutex<BTreeMap<MachineId, MachineSlot>>,
+    run_click_writer: Mutex<()>,
     /// Image references in the last durable `desktop.json`.
     durable: Mutex<Vec<String>>,
     loaded: Mutex<Option<BTreeMap<MachineId, MachineWork>>>,
@@ -475,6 +476,7 @@ impl Journal {
             queued: Mutex::new((0, saved)),
             written: Mutex::new(0),
             machines: Mutex::new(slots),
+            run_click_writer: Mutex::new(()),
             durable: Mutex::new(durable),
             loaded: Mutex::new(Some(machines)),
         };

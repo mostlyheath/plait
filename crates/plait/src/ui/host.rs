@@ -258,6 +258,8 @@ impl Plait {
             }
         }
         self.host.reconnect();
+        self.automations
+            .reset_for_reconnect(self.host.connection.epoch);
         self.sync_composer(cx);
         self.host_request(
             Request::Status {
@@ -304,6 +306,7 @@ impl Plait {
         if !self.host.connection.connected {
             return;
         }
+        self.refresh_automations(cx);
         if self.host.protocol() >= 3 {
             self.watch_all_threads(window, cx);
             return;
@@ -424,6 +427,14 @@ impl Plait {
         }
         self.navigation.menu = None;
         self.navigation.rename = None;
+        self.automations.set_confirm_delete(None);
+        if let Some(automation_id) = self
+            .automations
+            .by_thread(&id)
+            .map(|item| item.summary.id.clone())
+        {
+            self.refresh_automation_detail(automation_id, cx);
+        }
         window.focus(&self.focus, cx);
         self.workspace.reset_for_thread_selection();
         self.host.select(Some(id.clone()));

@@ -3,6 +3,7 @@ mod actions;
 mod admission;
 mod anchors;
 mod appearance;
+mod automations;
 mod branches;
 mod build_output;
 mod changes;
@@ -167,6 +168,8 @@ pub struct Plait {
     host_client: plait_client::host::Client,
     host_local: bool,
     navigation: navigation::Navigation,
+    automation_timer: Option<Task<()>>,
+    automations: plait_client::automations::AutomationsState,
     overview: Option<overview::OverviewView>,
     host_workspace: host_workspace::HostWorkspace,
     /// What a window on a machine with no projects yet shows as its project.
@@ -302,6 +305,7 @@ impl Plait {
             self.navigation.available.clear();
             self.graph.reset_for_reconnect();
             self.sync_graph_menu(cx);
+            self.automations.reset_for_machine();
             self.host_workspace = self.host_workspace.for_another_machine();
             self.switch_machine_tabs(window, cx);
             self.rebuild_projects(cx);
@@ -348,6 +352,8 @@ impl Plait {
             host_client,
             host_local: true,
             navigation: navigation::Navigation::new(),
+            automation_timer: None,
+            automations: Default::default(),
             overview: None,
             host_workspace: Default::default(),
             no_project: plait_client::model::Project {
@@ -714,6 +720,7 @@ impl Plait {
         window.focus(&self.focus, cx);
         self.fetch_turn_records(window, cx);
         self.refresh_turn_review(cx);
+        self.refresh_automations(cx);
         if !matches!(self.state.repository.snapshot(), Load::Loading) {
             self.state.repository.refresh();
             self.pump(cx);
@@ -1445,6 +1452,21 @@ impl Render for Plait {
                     && this.workspace.images.enlarged.take().is_some()
                 {
                     this.focus_composer(window, cx);
+                    cx.stop_propagation();
+                    cx.notify();
+                } else if event.keystroke.key == "escape"
+                    && event.keystroke.modifiers == Modifiers::default()
+                    && !this.settings_open
+                    && this.overlay.is_none()
+                    && this.automations.confirm_delete.is_some()
+                    && !this
+                        .navigation
+                        .rename
+                        .as_ref()
+                        .is_some_and(|(_, field)| field.read(cx).is_composing())
+                {
+                    this.automations.set_confirm_delete(None);
+                    this.navigation.invalidate_rows();
                     cx.stop_propagation();
                     cx.notify();
                 } else if event.keystroke.key == "escape"

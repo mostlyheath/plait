@@ -123,6 +123,7 @@ pub fn status(store: &Path) -> io::Result<Vec<u8>> {
 }
 
 struct Sidecar {
+    exchange_timeout: Duration,
     child: Child,
     input: ChildStdin,
     output: ChildStdout,
@@ -134,7 +135,7 @@ impl Sidecar {
         let timeout = if request["op"] == "git_write" {
             Duration::from_secs(242)
         } else {
-            Duration::from_secs(20)
+            self.exchange_timeout
         };
         let deadline = Instant::now() + timeout;
         let mut exchange = || -> io::Result<Value> {
@@ -210,12 +211,18 @@ pub fn serve(
     }
     let mut startup = crate::startup::Startup::new(&store);
     startup.phase("starting_sidecar")?;
-    let (notify_reader, notify_writer) = UnixStream::pair()?;
+    let (mut notify_reader, notify_writer) = UnixStream::pair()?;
     // Keep change notifications separate from the serialized request/reply pipe.
     if unsafe { libc::fcntl(notify_writer.as_raw_fd(), libc::F_SETFD, 0) } < 0 {
         return Err(io::Error::last_os_error());
     }
+    let automations = std::env::var_os("PLAIT_AUTOMATIONS").as_deref() == Some("1".as_ref());
+    let background =
+        automations || std::env::var_os("PLAIT_GRAPH").as_deref() == Some("1".as_ref());
     let mut command = Command::new(node);
+    if background {
+        command.env("PLAIT_BACKGROUND_SOCKET", &socket_path);
+    }
     command
         .arg("--disable-warning=ExperimentalWarning")
         .arg(runtime)
@@ -244,6 +251,7 @@ pub fn serve(
         .take()
         .ok_or_else(|| io::Error::other("sidecar stdout missing"))?;
     let sidecar = Arc::new(Mutex::new(Sidecar {
+        exchange_timeout: Duration::from_secs(20),
         child,
         input,
         output,
@@ -262,6 +270,11 @@ pub fn serve(
     startup.phase("binding_socket")?;
     let listener = UnixListener::bind(&socket_path)?;
     fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600))?;
+    // Release the recovered sidecar after its owner-only listener is ready.
+    let supported = background && ready["result"]["background_socket_v1"] == true;
+    if supported {
+        notify_reader.write_all(b"R")?;
+    }
     startup.phase("ready")?;
     let notifications = Arc::new(Notifications::default());
     let relay = Arc::clone(&notifications);
@@ -281,7 +294,7 @@ pub fn serve(
         let clients = Arc::clone(&clients);
         let notifications = Arc::clone(&notifications);
         thread::spawn(move || {
-            let _ = connection(socket, &sidecar, &notifications);
+            let _ = connection(socket, &sidecar, &notifications, automations && supported);
             clients.fetch_sub(1, Ordering::Relaxed);
         });
     }
@@ -301,10 +314,31 @@ fn send(socket: &mut UnixStream, value: &Value) -> io::Result<()> {
     timed_write(socket, &bytes, Instant::now() + Duration::from_secs(2))
 }
 
+fn dispatch(sidecar: &Mutex<Sidecar>, request: &Value) -> io::Result<Value> {
+    sidecar
+        .lock()
+        .map_err(|_| io::Error::other("sidecar failed"))?
+        .request(request)
+}
+
+fn record_click_arrival(request: &mut Value, automations: bool) -> io::Result<()> {
+    if automations && request["op"] == "run_automation_now" {
+        let received = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(io::Error::other)?;
+        request["received_at_ms"] = json!(received.as_millis() as u64);
+        if serde_json::to_vec(request)?.len() >= REQUEST_LIMIT {
+            return Err(io::Error::other("stamped request exceeds bound"));
+        }
+    }
+    Ok(())
+}
+
 fn connection(
     mut socket: UnixStream,
     sidecar: &Mutex<Sidecar>,
     notifications: &Arc<Notifications>,
+    automations: bool,
 ) -> io::Result<()> {
     local_socket::require_same_user(&socket)?;
     socket.set_read_timeout(Some(Duration::from_secs(5)))?;
@@ -315,6 +349,10 @@ fn connection(
         Instant::now() + Duration::from_secs(5),
     )
     .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).map_err(io::Error::other));
+    let request = request.and_then(|mut request| {
+        record_click_arrival(&mut request, automations)?;
+        Ok(request)
+    });
     let request = match request {
         Ok(request) => request,
         Err(_) => {
@@ -338,10 +376,7 @@ fn connection(
     } else {
         None
     };
-    let reply = sidecar
-        .lock()
-        .map_err(|_| io::Error::other("sidecar failed"))?
-        .request(&request)?;
+    let reply = dispatch(sidecar, &request)?;
     send(&mut socket, &reply)?;
     if reply["ok"] != true {
         return Ok(());
@@ -358,10 +393,7 @@ fn connection(
     if request["op"] == "watch_build_output" {
         let mut previous = reply["result"].clone();
         while subscription.wait(&socket)? {
-            let reply = sidecar
-                .lock()
-                .map_err(|_| io::Error::other("sidecar failed"))?
-                .request(&request)?;
+            let reply = dispatch(sidecar, &request)?;
             if reply["ok"] != true {
                 return send(&mut socket, &reply);
             }
@@ -377,10 +409,7 @@ fn connection(
     }
     let mut previous = reply["result"]["thread"].clone();
     while subscription.wait(&socket)? {
-        let reply = sidecar
-            .lock()
-            .map_err(|_| io::Error::other("sidecar failed"))?
-            .request(&request)?;
+        let reply = dispatch(sidecar, &request)?;
         if reply["ok"] != true {
             return send(&mut socket, &reply);
         }
@@ -403,10 +432,7 @@ fn watch_threads(
 ) -> io::Result<()> {
     let mut previous = initial["result"]["threads"].clone();
     while subscription.wait(&socket)? {
-        let reply = sidecar
-            .lock()
-            .map_err(|_| io::Error::other("sidecar failed"))?
-            .request(request)?;
+        let reply = dispatch(sidecar, request)?;
         if reply["ok"] != true {
             return send(&mut socket, &reply);
         }
@@ -432,10 +458,7 @@ fn watch_workspace(
     let mut previous = initial["result"].clone();
     let mut seq = 0u64;
     while subscription.wait(&socket)? {
-        let reply = sidecar
-            .lock()
-            .map_err(|_| io::Error::other("sidecar failed"))?
-            .request(&view)?;
+        let reply = dispatch(sidecar, &view)?;
         if reply["ok"] != true {
             return send(&mut socket, &reply);
         }
@@ -479,6 +502,61 @@ mod tests {
     use super::*;
 
     #[test]
+    fn only_enabled_run_now_overwrites_the_client_timestamp() {
+        for (op, enabled) in [
+            ("run_automation_now", false),
+            ("status", true),
+            ("run_automation_now", true),
+        ] {
+            let mut request = json!({"op": op, "received_at_ms": -1});
+            record_click_arrival(&mut request, enabled).unwrap();
+            assert_eq!(
+                request["received_at_ms"].as_u64().is_some(),
+                enabled && op == "run_automation_now"
+            );
+        }
+    }
+
+    #[test]
+    fn click_stamp_must_fit_including_the_newline() {
+        let mut request = json!({"op": "run_automation_now", "padding": ""});
+        let padding = REQUEST_LIMIT - serde_json::to_vec(&request).unwrap().len() - 1;
+        request["padding"] = json!("x".repeat(padding));
+        assert!(record_click_arrival(&mut request, true).is_err());
+    }
+
+    #[test]
+    fn background_connection_gets_a_fresh_deadline_after_waiting_for_the_pipe() {
+        let mut child = Command::new("cat")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let timeout = Duration::from_millis(150);
+        let sidecar = Mutex::new(Sidecar {
+            exchange_timeout: timeout,
+            input: child.stdin.take().unwrap(),
+            output: child.stdout.take().unwrap(),
+            child,
+        });
+        let mut foreground = sidecar.lock().unwrap();
+        let (entered, entering) = std::sync::mpsc::channel();
+        thread::scope(|scope| {
+            let background = scope.spawn(|| {
+                entered.send(()).unwrap();
+                dispatch(&sidecar, &json!({"op": "status"}))
+            });
+            entering.recv().unwrap();
+            thread::sleep(timeout * 2);
+            assert!(!background.is_finished());
+            let desktop = json!({"op": "list_threads"});
+            assert_eq!(foreground.request(&desktop).unwrap(), desktop);
+            drop(foreground);
+            assert_eq!(background.join().unwrap().unwrap(), json!({"op": "status"}));
+        });
+    }
+
+    #[test]
     fn slow_git_write_returns_and_sidecar_serves_the_next_request() {
         // Stand in for the runtime waiting on a helper beyond the ordinary deadline.
         let mut child = Command::new("sh")
@@ -489,6 +567,7 @@ mod tests {
             .spawn()
             .unwrap();
         let sidecar = Mutex::new(Sidecar {
+            exchange_timeout: Duration::from_secs(20),
             input: child.stdin.take().unwrap(),
             output: child.stdout.take().unwrap(),
             child,
