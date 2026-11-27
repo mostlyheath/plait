@@ -432,7 +432,9 @@ impl Plait {
         let purpose = overlay.purpose;
         match event {
             PaletteEvent::Dismiss { restore } => self.close_overlay(*restore, window, cx),
-            PaletteEvent::Mark(Command::Model(choice)) => self.toggle_favorite_model(choice, cx),
+            PaletteEvent::Mark(Command::Model(choice) | Command::HarnessModel(_, choice)) => {
+                self.toggle_favorite_model(choice, cx)
+            }
             PaletteEvent::Mark(_) => {}
             // The picker stays open; its rows and footer report the save.
             PaletteEvent::Aside(Command::Model(choice)) => {
