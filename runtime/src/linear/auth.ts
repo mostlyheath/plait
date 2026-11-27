@@ -9,6 +9,8 @@ import type { LinearAuthStatus, LinearIdentity } from './types.ts';
 export type StoredLinearAuth = LinearIdentity & {
   api_key: string;
   saved_at: number;
+  /** Non-secret per-save token so even same-millisecond key replacements have a distinct cache owner. */
+  credential_id?: string;
 };
 
 const FILE_NAME = 'linear-auth.json';
@@ -94,6 +96,9 @@ export class LinearAuthStore {
     if (typeof record.api_key !== 'string' || !KEY_PATTERN.test(record.api_key) || Buffer.byteLength(record.api_key) > LINEAR_KEY_MAX_BYTES) {
       fail('internal', 'Linear credential storage is invalid. Sign in again.');
     }
+    const credentialId = typeof record.credential_id === 'string' && /^[a-f0-9]{16,64}$/.test(record.credential_id)
+      ? record.credential_id
+      : undefined;
     return {
       api_key: record.api_key,
       workspace_id: boundLinearText(record.workspace_id, FIELD_LIMITS.id),
@@ -102,6 +107,7 @@ export class LinearAuthStore {
       viewer_id: boundLinearText(record.viewer_id, FIELD_LIMITS.id),
       viewer_name: boundLinearText(record.viewer_name, FIELD_LIMITS.name),
       saved_at: typeof record.saved_at === 'number' && Number.isFinite(record.saved_at) ? record.saved_at : 0,
+      ...(credentialId ? { credential_id: credentialId } : {}),
     };
   }
 

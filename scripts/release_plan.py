@@ -24,7 +24,6 @@ PROSE = ("*.md", "docs/*", "LICENSE")
 # Paths that never reach an installed app or host. Anything else ships.
 UNSHIPPED = PROSE + (
     ".github/*",
-    "experiments/*",
     "runtime/test/*",
     "scripts/acceptance/*",
     "scripts/acceptance-macos.sh",

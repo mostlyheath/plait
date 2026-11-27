@@ -29,7 +29,7 @@ import { createRegistry, Harness, ROOT_CONVERSATION_ID } from '@earendil-works/p
 import type { Conversation, ConversationRetryPolicy, ConversationWatch, Cursor, EntryQuery, EntryRecord, Submission, SubmissionDraft } from '@earendil-works/pi-durable';
 import { SqliteStorage } from '@earendil-works/pi-durable/storage/sqlite';
 import { openNodeSqliteDatabase } from '@earendil-works/pi-durable/storage/sqlite/node';
-import { PROTOCOL_VERSIONS, fail, failure, queuedView, steersRun, summaryView, THINKING_LEVELS, validate, version, view } from './protocol.ts';
+import { HostError, PROTOCOL_VERSIONS, fail, failure, queuedView, steersRun, summaryView, THINKING_LEVELS, validate, version, view } from './protocol.ts';
 import type { ApprovalMode, HarnessId, ModelChoice, Protocol, QueueMode, Request, Snapshot, InputRecord, ThinkingLevel } from './protocol.ts';
 import { Store } from './store.ts';
 import { RunnerRegistry, type RunnerEntry } from './runner/registry.ts';
@@ -185,14 +185,30 @@ export class Runtime {
     const send = (request: Record<string, unknown>) => client(
       request.op === 'create_admitted_thread' || request.op === 'admission_status' ? { ...request, poll: true } : request);
     if (process.env.PLAIT_GRAPH === '1') {
-      this.graph = new Graph(this.directory, send,
+      const graphSend = async (request: Record<string, unknown>) => {
+        if (request.op !== 'create_admitted_thread') return send(request);
+        // Poll over the socket. Admission validates the original payload locally
+        // and performs any first checkout probe after the socket reply.
+        try { await send({ op: 'admission_status', request_id: request.request_id }); }
+        catch (error) { if (!(error instanceof HostError && error.code === 'not_found')) throw error; }
+        return this.gate('graph:admission', () => this.handle({ ...request, poll: true }));
+      };
+      this.graph = new Graph(this.directory, graphSend,
         id => this.store.refreshRootIdentity(id, this.store.get(id).checkout),
         (id, request) => this.store.waiters.get(id, request), id => this.store.rootIdentity(id));
     }
     if (process.env.PLAIT_AUTOMATIONS === '1') {
       this.automations = new Automations(this.directory, send,
         (id, request) => this.store.waiters.get(id, request)?.kind === 'checkout',
-        checkout => this.admissions.info(checkout), request => this.handle({ ...request, poll: true }));
+        checkout => this.admissions.info(checkout), async request => {
+          if (request.op !== 'create_thread') return this.handle({ ...request, poll: true });
+          const { priorAdmission, ...create } = request;
+          // Replay the original payload if a prior runtime published its plan but lost the reply.
+          if (this.store.db.prepare('SELECT 1 FROM thread_admissions WHERE request_id=?').get(String(create.request_id)))
+            return this.handle({ ...priorAdmission as object, poll: true });
+          const { thread } = await this.handle(create, undefined, true) as { thread: Snapshot };
+          return { admission: { state: 'ready', thread_id: thread.id } };
+        });
       this.automations.start();
     }
     this.graph?.wake();
@@ -472,7 +488,7 @@ export class Runtime {
   private imageData(thread: string, request: string): ImageData[] {
     return this.store.images.data(thread, this.store.images.forRequest(thread, request));
   }
-  async handle(input: unknown, expectedCheckout?: FileIdentity): Promise<unknown> {
+  async handle(input: unknown, expectedCheckout?: FileIdentity, folderOnly = false): Promise<unknown> {
     const op = input && typeof input === 'object' ? (input as { op?: unknown }).op : undefined;
     if (op === 'host_info' || op === 'drain_for_update' || op === 'cancel_drain') {
       if (Array.isArray(input) || Object.keys(input as object).some(key => key !== 'op')) fail('invalid_request', 'Unknown operation or field.');
@@ -517,12 +533,12 @@ export class Runtime {
     const stored = op === 'stored_thread' && (this.graph || this.automations);
     const request = validate(stored ? { ...input as object, op: 'watch' } : input);
     const protocol = version(request);
-    const result = stored ? { thread: this.snapshot(String(request.thread_id)) } : await this.dispatch(request, protocol, expectedCheckout);
+    const result = stored ? { thread: this.snapshot(String(request.thread_id)) } : await this.dispatch(request, protocol, expectedCheckout, folderOnly);
     // Every snapshot leaves through the negotiated wire shape.
     if (result && typeof result === 'object' && 'thread' in result) return { ...result, thread: view({ ...(result.thread as Snapshot), image_input: this.imageInput(result.thread as Snapshot), records_revision: this.records.revision((result.thread as Snapshot).id) }, protocol) };
     return result;
   }
-  private async dispatch(request: ReturnType<typeof validate>, protocol: Protocol, expectedCheckout?: FileIdentity): Promise<unknown> {
+  private async dispatch(request: ReturnType<typeof validate>, protocol: Protocol, expectedCheckout?: FileIdentity, folderOnly = false): Promise<unknown> {
     switch (request.op) {
       case 'status': return { protocol_version: protocol, default_model: this.store.defaultModel(), models: this.catalog(protocol) };
       case 'set_default_model': {
@@ -547,6 +563,8 @@ export class Runtime {
       }
       case 'create_thread': {
         const { root, vcs } = await projectKind(String(request.checkout));
+        if (folderOnly && vcs !== 'folder')
+          fail('permission_denied', 'The automation folder became a Git checkout. Choose the project instead.');
         if (expectedCheckout) await checkRoot(root, expectedCheckout);
         await verifyExpectedIdentity(root, request.identity);
         const choice = { provider: String(request.provider), model_id: String(request.model_id) };
@@ -572,6 +590,8 @@ export class Runtime {
         await verifyExpectedIdentity(root, request.identity);
         // Admission captured the directory before model discovery could yield.
         if (expectedCheckout && (identity.dev !== expectedCheckout.dev || identity.ino !== expectedCheckout.ino)) fail('permission_denied', 'Checkout identity changed. Refresh before starting a thread.');
+        if (folderOnly && (await projectKind(root)).vcs !== 'folder')
+          fail('permission_denied', 'The automation folder became a Git checkout. Choose the project instead.');
         if (!expectedCheckout) this.admitWork();
         this.store.admit('create', String(request.request_id), input, result, snapshot, identity, [], vcs);
         this.changed('#');

@@ -444,7 +444,7 @@ impl Plait {
         }
         match target {
             Some((TabTarget::Graph { .. }, _)) => {
-                self.host.select(None);
+                self.deselect_thread();
                 self.draft.open = false;
                 window.focus(&self.focus, cx);
                 self.restore_graph_bookmark();
@@ -452,14 +452,14 @@ impl Plait {
                 cx.notify();
             }
             Some((TabTarget::Issues { .. }, _)) => {
-                self.host.select(None);
+                self.deselect_thread();
                 self.draft.open = false;
                 window.focus(&self.focus, cx);
                 self.restore_issues_bookmark();
                 cx.notify();
             }
             Some((TabTarget::Worktrees { .. }, _)) => {
-                self.host.select(None);
+                self.deselect_thread();
                 self.draft.open = false;
                 window.focus(&self.focus, cx);
                 self.restore_worktrees_bookmark();
@@ -479,7 +479,7 @@ impl Plait {
             }
             None => {
                 self.workspace.reset_for_thread_selection();
-                self.host.select(None);
+                self.deselect_thread();
                 self.draft.open = false;
                 self.refresh_live_list(None);
                 window.focus(&self.focus, cx);

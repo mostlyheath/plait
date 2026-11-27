@@ -105,7 +105,7 @@ enable the requested background features. Foreground requests are served even if
 
 Each operation checks socket and parent ownership and permissions, connects,
 verifies the peer UID, sends one bounded request and closes after the first
-reply. Background admission polls return the current placement state immediately. Background thread reads use stored snapshots and skip harness catalog refreshes. The client's 60-second timeout covers the
+reply. Graph starts poll the saved admission ID over the socket. The runtime performs the initial checkout probe after that socket request returns. Background admission polls return the current placement state immediately. Background thread reads use stored snapshots and skip harness catalog refreshes. The client's 60-second timeout covers the
 whole operation. The host's separate 20-second pipe deadline starts when the
 socket handler acquires the sidecar mutex. Desktop traffic can interleave
 between steps. The mutex makes no FIFO guarantee. Foreground operations call
@@ -2615,7 +2615,9 @@ owner-only host socket, which any process running as you can reach.
   local thread links remain. Switching to a key for another workspace likewise clears caches, project bindings, and full
   receipts so data from a previous workspace is never served as live. Changing
   a key in the same workspace clears caches and full receipts too, but retains
-  project bindings. Every key change retains retry tombstones.
+  project bindings. Every key change retains retry tombstones. Before using
+  cached data, the host checks its workspace and sign-in. After an interrupted
+  switch, an offline team lookup fails until the new sign-in has cached teams.
 - **Host to desktop, never:** the API key, credential file paths, raw Linear
   HTTP bodies, or raw Linear response headers. Error messages are fixed host
   text; validation errors name the field and never repeat its value.

@@ -131,7 +131,7 @@ The host owns automations. The desktop is a client of them, like threads.
 - **Creation:** `create_automation` takes a creation request ID and a definition.
   It persists the definition and returns `state: "preparing"` and
   `admission_request_id` immediately. The service requests worktree placement
-  for Git projects, including Git roots selected as directories, and in-place placement for plain folders. The automation service probes the checkout in a background step and rechecks a plain folder immediately before requesting in-place admission. It checks
+  for Git projects, including Git roots selected as directories, and in-place placement for plain folders. Plain folders use an idempotent thread creation request that checks the folder again before saving the thread. A pending folder check leaves no in-place admission plan for an older host to recover. For worktrees, the service checks
   `admission_status` in the background, with one outstanding request per
   placement. With automations enabled, the background socket operation
   `advance_automation_placement` takes the automation ID and starts or polls that saved placement.
@@ -152,6 +152,7 @@ The host owns automations. The desktop is a client of them, like threads.
   restarts before saving the automation receipt, catch-up can submit the same
   ID safely. A click delivered after the scheduled receipt was saved returns
   that receipt if the host received the click within the catch-up window in effect when the occurrence was claimed.
+  A retry of an already recorded click returns its receipt even if the original window is unknown.
   When an older store has no record of the window and the match is uncertain, Run now returns a conflict. After downgrade, a manual click overlapping a protected occurrence can return a skipped receipt identifying the scheduled claim.
   Edits preserve that receipt. If an edit overtakes a click and the host cannot
   match it to an occurrence, Run now returns a conflict.

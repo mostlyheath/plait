@@ -59,6 +59,12 @@ export class Storage {
     try { const result = fn(); this.db.exec('COMMIT'); return result; }
     catch (err) { this.db.exec('ROLLBACK'); throw err; }
   }
+  updatePageIdentity(path: string, project: string, identity: string) {
+    // The existing page-update trigger advances the revision for waiting clients.
+    this.db.prepare(`UPDATE pages SET summary=json_set(summary,'$[0]',?,'$[1]',?)
+      WHERE project=? AND (json_extract(summary,'$[0]') IS NOT ? OR json_extract(summary,'$[1]') IS NOT ?)`)
+      .run(project, identity, path, project, identity);
+  }
   revision() { return Number(this.db.prepare('SELECT revision FROM version').get()!.revision); }
   node(id: string) {
     return this.db.prepare('SELECT * FROM nodes WHERE deleted=0 AND (id=? OR thread=?)').get(id, id) as Node | undefined;

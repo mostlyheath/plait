@@ -1,10 +1,11 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { fail, HostError } from '../protocol.ts';
 import { checkout, rootIdentity } from '../safety.ts';
 import { describe } from '../images.ts';
 import type { Store } from '../store.ts';
 import { LinearAuthStore, formatAuthStatus, validateLinearKey } from './auth.ts';
 import type { StoredLinearAuth } from './auth.ts';
+import type { CacheScope } from './cache.ts';
 import { issueReference, issueSummary, matchesIssueUrl } from './identity.ts';
 import { LINEAR_IMAGE_MAX_BYTES, LinearClient } from './client.ts';
 import { LINEAR_WRITE_HISTORY_LIMIT } from './writes.ts';
@@ -187,13 +188,17 @@ export class LinearService {
         ...verified.data,
         api_key: apiKey,
         saved_at: this.now(),
+        credential_id: randomBytes(16).toString('hex'),
       };
       await this.authStore.write(saved);
       this.authGeneration++;
       this.cacheGeneration++;
       this.keyRejected = false;
       this.inFlightWrites.clear();
-      this.store.linear.clearAll({ clearProjects: previous !== null && previous.workspace_id !== saved.workspace_id });
+      this.store.linear.clearAll({
+        clearProjects: previous !== null && previous.workspace_id !== saved.workspace_id,
+        owner: { scope: cacheScope(saved), now: saved.saved_at },
+      });
       return formatAuthStatus(saved, false);
     });
   }
@@ -212,12 +217,14 @@ export class LinearService {
     });
   }
 
-  private async requireAuth(): Promise<{ auth: StoredLinearAuth; authGen: number; cacheGen: number }> {
+  private async requireAuth(): Promise<{ auth: StoredLinearAuth; scope: CacheScope; authGen: number; cacheGen: number }> {
     const authGen = this.authGeneration;
     const auth = await this.authStore.read();
     if (this.authGeneration !== authGen) throw new LinearError('not_signed_in', 'Linear sign-in changed while the request was in flight.');
     if (!auth) throw new LinearError('not_signed_in', 'Linear is not signed in. Set an API key in Settings.');
-    return { auth, authGen: this.authGeneration, cacheGen: this.cacheGeneration };
+    const scope = cacheScope(auth);
+    this.store.linear.syncCacheOwner(scope, this.now());
+    return { auth, scope, authGen: this.authGeneration, cacheGen: this.cacheGeneration };
   }
 
   private nextQuery(scope: string): number {
@@ -249,9 +256,9 @@ export class LinearService {
     partial: boolean;
     warning: string | null;
   }> {
-    const { auth, authGen, cacheGen } = await this.requireAuth();
+    const { auth, scope: owner, authGen, cacheGen } = await this.requireAuth();
     const now = this.now();
-    const cached = this.store.linear.getTeams();
+    const cached = this.store.linear.getTeams(owner);
     if (!refresh && cached && now - cached.cached_at < LINEAR_CACHE_TEAMS_TTL_MS) {
       return {
         teams: cached.teams.map(team => ({ ...team, states_complete: team.states_complete ?? null })),
@@ -274,7 +281,7 @@ export class LinearService {
       this.keyRejected = false;
       const fetchedAt = this.now();
       if (!fresh.partial && this.canPopulateCache(scope, seq, authGen, cacheGen)) {
-        this.store.linear.saveTeams(fresh.data, fetchedAt, fresh.complete);
+        this.store.linear.saveTeams(fresh.data, fetchedAt, fresh.complete, owner);
       }
       return {
         teams: fresh.data,
@@ -307,8 +314,12 @@ export class LinearService {
   async getProjectBinding(rawCheckout: string): Promise<{ checkout: string; binding: LinearProjectBinding | null }> {
     const root = await checkout(rawCheckout);
     const identity = await rootIdentity(root);
+    const authGen = this.authGeneration;
     const auth = await this.authStore.read();
     if (!auth) return { checkout: root, binding: null };
+    if (this.authGeneration === authGen) {
+      this.store.linear.syncCacheOwner(cacheScope(auth), this.now());
+    }
     const binding = this.store.linear.getProjectBinding(root, identity);
     if (binding && binding.workspace_id !== null && binding.workspace_id !== auth.workspace_id) {
       return { checkout: root, binding: null };
@@ -328,8 +339,11 @@ export class LinearService {
       this.store.linear.setProjectBinding(root, identity, null);
       return { checkout: root, binding: null };
     }
+    const authGen = this.authGeneration;
     const auth = await this.authStore.read();
-    const team = this.store.linear.getTeam(teamId);
+    const owner = auth && this.authGeneration === authGen ? cacheScope(auth) : undefined;
+    if (owner) this.store.linear.syncCacheOwner(owner, this.now());
+    const team = owner ? this.store.linear.getTeam(teamId, owner) : null;
     const binding: LinearProjectBinding = {
       workspace_id: auth?.workspace_id ?? null,
       team_id: teamId,
@@ -358,10 +372,10 @@ export class LinearService {
     partial: boolean;
     warning: string | null;
   }> {
-    const { auth, authGen, cacheGen } = await this.requireAuth();
+    const { auth, scope: owner, authGen, cacheGen } = await this.requireAuth();
     const key = pageCacheKey(params.teamId, params.filter, params.search, params.cursor ?? '');
     const now = this.now();
-    const cached = this.store.linear.getIssuesPage(key, now);
+    const cached = this.store.linear.getIssuesPage(key, now, owner);
     if (!params.refresh && cached && now - cached.cached_at < LINEAR_CACHE_ISSUES_TTL_MS) {
       return {
         issues: cached.issues,
@@ -400,6 +414,7 @@ export class LinearService {
           fresh.data.next_cursor,
           fetchedAt,
           auth.workspace_id,
+          owner.credential,
         );
       }
       return {
@@ -447,7 +462,7 @@ export class LinearService {
     partial: boolean;
     warning: string | null;
   }> {
-    const { auth, authGen, cacheGen } = await this.requireAuth();
+    const { auth, scope: owner, authGen, cacheGen } = await this.requireAuth();
     const now = this.now();
     if (params.workspaceId !== undefined && params.workspaceId !== auth.workspace_id) {
       fail('conflict', 'Linear issue belongs to another workspace.');
@@ -458,7 +473,7 @@ export class LinearService {
       }
     };
     const isFirstPage = params.commentsCursor === undefined;
-    const cached = isFirstPage ? this.store.linear.getIssueDetail(params.issueId, now) : null;
+    const cached = isFirstPage ? this.store.linear.getIssueDetail(params.issueId, now, owner) : null;
     if (cached) validateWorkspace(cached.issue);
     if (!params.refresh && cached && now - cached.cached_at < LINEAR_CACHE_DETAIL_TTL_MS) {
       return {
@@ -488,7 +503,7 @@ export class LinearService {
       const fetchedAt = this.now();
       if (isFirstPage && !fresh.partial && this.canPopulateCache(scope, seq, authGen, cacheGen)) {
         if (fresh.data.team_id) this.nextQuery(`team-issues:${fresh.data.team_id}`);
-        this.store.linear.saveIssueDetail(fresh.data, fetchedAt, auth.workspace_id);
+        this.store.linear.saveIssueDetail(fresh.data, fetchedAt, auth.workspace_id, owner.credential);
       }
       return {
         issue: fresh.data,
@@ -519,7 +534,7 @@ export class LinearService {
   }
 
   async resolveIssue(rawCheckout: string, reference: string, refresh = false) {
-    const { auth, authGen, cacheGen } = await this.requireAuth();
+    const { auth, scope: owner, authGen, cacheGen } = await this.requireAuth();
     const root = await checkout(rawCheckout);
     const identity = await rootIdentity(root);
     const binding = this.store.linear.getProjectBinding(root, identity);
@@ -545,7 +560,7 @@ export class LinearService {
       }
     };
     current();
-    const cached = this.store.linear.getIssueAlias(auth.workspace_id, binding.team_id, parsed.identifier);
+    const cached = this.store.linear.getIssueAlias(auth.workspace_id, binding.team_id, parsed.identifier, owner.credential);
     const reply = (issue: LinearIssueSummary, cachedAt: number, fromCache: boolean, stale: boolean, partial: boolean, warning: string | null) => ({
       issue, workspace_id: auth.workspace_id, cached: fromCache, stale, cached_at: cachedAt,
       cache_age_seconds: fromCache ? cacheAgeSeconds(cachedAt, this.now()) : 0, partial, warning,
@@ -565,7 +580,7 @@ export class LinearService {
       const fetchedAt = this.now();
       if (!fresh.partial && this.canPopulateCache(scope, seq, authGen, cacheGen)) {
         this.nextQuery(`team-issues:${binding.team_id}`);
-        this.store.linear.saveIssueDetail(fresh.data, fetchedAt, auth.workspace_id);
+        this.store.linear.saveIssueDetail(fresh.data, fetchedAt, auth.workspace_id, owner.credential);
       }
       this.keyRejected = false;
       return reply(issue, fetchedAt, false, false, fresh.partial, fresh.warning);
@@ -672,8 +687,9 @@ export class LinearService {
   async updateIssueState(params: { issueId: string; stateId: string; requestId: string }): Promise<WriteReceipt> {
     return this.write(params.requestId, 'linear_update_issue_state', params.issueId, params.stateId,
       async (auth, authGen) => {
-        const teamId = await this.resolveIssueTeamId(params.issueId, auth.api_key, authGen);
-        const team = await this.resolveTeamForValidation(teamId, params.stateId, authGen);
+        const owner = cacheScope(auth);
+        const teamId = await this.resolveIssueTeamId(params.issueId, auth.api_key, authGen, owner);
+        const team = await this.resolveTeamForValidation(teamId, params.stateId, authGen, owner);
         if (!team || !team.states.some(state => state.id === params.stateId)) {
           fail('invalid_request', 'Workflow state does not belong to this issue\'s team.');
         }
@@ -694,13 +710,14 @@ export class LinearService {
     const issueId = issueUuid(params.teamId, params.requestId);
     const payload = JSON.stringify([params.teamId, params.title, params.description, params.stateId]);
     return this.write(params.requestId, 'linear_create_issue', issueId, payload,
-      async (_auth, authGen) => {
-        const cached = this.store.linear.getTeams();
+      async (auth, authGen) => {
+        const owner = cacheScope(auth);
+        const cached = this.store.linear.getTeams(owner);
         const fresh = cached !== null && this.now() - cached.cached_at < LINEAR_CACHE_TEAMS_TTL_MS
           ? cached.teams.find(team => team.id === params.teamId) ?? null
           : null;
         const team = params.stateId || !fresh
-          ? await this.resolveTeamForValidation(params.teamId, params.stateId ?? '', authGen)
+          ? await this.resolveTeamForValidation(params.teamId, params.stateId ?? '', authGen, owner)
           : fresh;
         if (!team) fail('invalid_request', 'Linear team not found.');
         if (params.stateId && !team.states.some(state => state.id === params.stateId)) {
@@ -881,8 +898,8 @@ export class LinearService {
     return reply;
   }
 
-  private async resolveIssueTeamId(issueId: string, apiKey: string, authGen: number): Promise<string> {
-    const cached = this.store.linear.findIssueTeamId(issueId);
+  private async resolveIssueTeamId(issueId: string, apiKey: string, authGen: number, owner: CacheScope): Promise<string> {
+    const cached = this.store.linear.findIssueTeamId(issueId, owner);
     if (cached) return cached;
     try {
       const fetched = await this.client.getIssue(apiKey, { issueId });
@@ -897,8 +914,8 @@ export class LinearService {
     }
   }
 
-  private async resolveTeamForValidation(teamId: string, stateId: string, authGen: number): Promise<LinearTeam | null> {
-    const cached = this.store.linear.getTeams();
+  private async resolveTeamForValidation(teamId: string, stateId: string, authGen: number, owner: CacheScope): Promise<LinearTeam | null> {
+    const cached = this.store.linear.getTeams(owner);
     const fresh = cached !== null && this.now() - cached.cached_at < LINEAR_CACHE_TEAMS_TTL_MS;
     const cachedTeam = fresh ? cached.teams.find(team => team.id === teamId) ?? null : null;
     if (cachedTeam && cachedTeam.states.some(state => state.id === stateId)) {
@@ -939,11 +956,25 @@ function commentUuid(workspaceId: string, requestId: string): string {
 }
 
 /**
- * Which sign-in cached an image. The key file's save time changes with every
- * key and survives restarts; it is hashed with the workspace, never the key.
+ * Which sign-in owns the cache. Combines workspace, viewer, save time, and the
+ * non-secret per-save token (never the API key) so a restart after an
+ * interrupted account switch cannot serve the prior sign-in's cached data.
+ */
+function cacheScope(auth: StoredLinearAuth): CacheScope {
+  const credential = createHash('sha256')
+    .update(JSON.stringify(['plait-linear-cache', auth.workspace_id, auth.viewer_id, auth.saved_at, auth.credential_id ?? '']))
+    .digest('hex');
+  return { workspaceId: auth.workspace_id, credential };
+}
+
+/**
+ * Which sign-in cached an image. The key file's save time and per-save token
+ * change with every key and survive restarts; hashed without the key.
  */
 function imageCredential(auth: StoredLinearAuth): string {
-  return createHash('sha256').update(JSON.stringify(['plait-linear-images', auth.workspace_id, auth.saved_at])).digest('hex');
+  return createHash('sha256')
+    .update(JSON.stringify(['plait-linear-images', auth.workspace_id, auth.viewer_id, auth.saved_at, auth.credential_id ?? '']))
+    .digest('hex');
 }
 
 /** A new issue's id, fixed by its team and request so a retry cannot create a second one. */

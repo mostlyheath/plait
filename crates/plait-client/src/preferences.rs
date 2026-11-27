@@ -155,6 +155,8 @@ pub struct Preferences {
     pub ask_before_actions: bool,
     /// Hide the card above the composer listing the files a thread changed.
     pub hide_changed_files: bool,
+    /// Archive a thread from its shortcut without asking first.
+    pub skip_archive_confirmation: bool,
     /// Widths dragged on this desktop, in points. `None` keeps the default;
     /// the desktop fits a saved width to the window it is drawn in.
     pub sidebar_width: Option<u16>,
@@ -1349,5 +1351,19 @@ mod turns_tests {
         let preferences: Preferences = serde_json::from_str(r#"{"turns":"line"}"#).unwrap();
         assert_eq!(preferences.turns, Turns::Line);
         assert_eq!(serde_json::to_value(preferences).unwrap()["turns"], "line");
+    }
+
+    #[test]
+    fn skip_archive_confirmation_defaults_off_and_survives_older_files() {
+        assert!(!Preferences::default().skip_archive_confirmation);
+        let older: Preferences = serde_json::from_str(r#"{"hide_inspector":true}"#).unwrap();
+        assert!(!older.skip_archive_confirmation);
+        let saved = Preferences {
+            skip_archive_confirmation: true,
+            ..Preferences::default()
+        };
+        let again: Preferences =
+            serde_json::from_str(&serde_json::to_string(&saved).unwrap()).unwrap();
+        assert!(again.skip_archive_confirmation);
     }
 }
