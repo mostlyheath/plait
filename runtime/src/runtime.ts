@@ -190,7 +190,8 @@ export class Runtime {
     }
     if (process.env.PLAIT_AUTOMATIONS === '1') {
       this.automations = new Automations(this.directory, send,
-        (id, request) => this.store.waiters.get(id, request)?.kind === 'checkout');
+        (id, request) => this.store.waiters.get(id, request)?.kind === 'checkout',
+        checkout => this.admissions.info(checkout), request => this.handle({ ...request, poll: true }));
       this.automations.start();
     }
     this.graph?.wake();
