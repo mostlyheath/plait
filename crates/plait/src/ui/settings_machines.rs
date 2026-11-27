@@ -30,6 +30,12 @@ pub(super) struct MachinesUi {
     pub connecting: Option<MachineId>,
     /// What happened last, and whether it was a failure.
     pub note: Option<(String, bool)>,
+    pub failed_switch: Option<MachineId>,
+    pub cursor: Option<super::machine_picker::Choice>,
+    pub trigger_bounds: std::rc::Rc<std::cell::Cell<Option<Bounds<Pixels>>>>,
+    pub picker_scroll: gpui::ScrollHandle,
+    pub parked_creations: std::collections::HashMap<MachineId, super::admission::ParkedCreation>,
+    forget_after_switch: Option<MachineId>,
     generation: u64,
     /// The saved choice was applied once at launch.
     restored: bool,
@@ -41,6 +47,71 @@ pub(super) struct MachinesUi {
     /// Installing Plait on a machine that lacks it, while that is offered.
     pub(super) install: Option<super::machine_install::MachineInstall>,
     pub(super) update: Option<super::machine_update::MachineUpdate>,
+}
+
+// A window update may never run. Keep ownership until the current attempt claims it.
+struct ProbeResult<T: Send + 'static> {
+    value: Option<T>,
+    executor: BackgroundExecutor,
+}
+
+impl<T: Send + 'static> ProbeResult<T> {
+    fn claim(&mut self, machines: &mut MachinesUi, id: &MachineId, generation: u64) -> Option<T> {
+        if machines.finish_attempt(id, generation) {
+            self.value.take()
+        } else {
+            None
+        }
+    }
+}
+
+impl<T: Send + 'static> Drop for ProbeResult<T> {
+    fn drop(&mut self) {
+        if let Some(value) = self.value.take() {
+            self.executor.spawn(async move { drop(value) }).detach();
+        }
+    }
+}
+
+fn probe_machine(transport: Transport) -> Result<Client, plait_client::host::Error> {
+    let client = match transport {
+        Transport::Local => Client::local_or_unavailable(),
+        Transport::Ssh {
+            destination,
+            port,
+            store,
+        } => Client::over_link(ssh::connect(
+            &destination,
+            SshOptions {
+                port,
+                store,
+                ..Default::default()
+            },
+        )?),
+        Transport::Tailnet { host, port } => Client::over_link(tailnet::connect(&host, port)?),
+    };
+    // Keep the old workspace until the destination answers a negotiated status.
+    use plait_client::host::{Error, PROTOCOL_VERSION, Request, Status};
+    let status: Status = client.request(&Request::Status {
+        protocol_version: Some(PROTOCOL_VERSION),
+    })?;
+    if !(1..=PROTOCOL_VERSION).contains(&status.protocol_version) {
+        return Err(Error::Protocol(
+            "Unsupported host protocol. Update the host and desktop together.".into(),
+        ));
+    }
+    Ok(client)
+}
+
+impl MachinesUi {
+    // A retry can target the same ID as an older attempt.
+    fn finish_attempt(&mut self, id: &MachineId, generation: u64) -> bool {
+        if self.generation != generation || self.connecting.as_ref() != Some(id) {
+            return false;
+        }
+        self.connecting = None;
+        true
+    }
 }
 
 fn field(
@@ -116,7 +187,7 @@ impl Plait {
         }
     }
 
-    fn save_selected(&mut self, id: MachineId, cx: &mut Context<Self>) {
+    pub(super) fn save_selected(&mut self, id: MachineId, cx: &mut Context<Self>) {
         let mut value = self.preferences.value.clone();
         value.selected_machine = id;
         self.set_preferences(value, PreferenceGroup::Machines, cx);
@@ -133,6 +204,13 @@ impl Plait {
         self.connect_machine(id, false, window, cx);
     }
 
+    pub(super) fn cancel_machine_switch(&mut self) {
+        self.machines.generation += 1;
+        self.machines.connecting = None;
+        self.machines.forget_after_switch = None;
+        self.machines.failed_switch = None;
+    }
+
     fn connect_machine(
         &mut self,
         id: MachineId,
@@ -143,62 +221,46 @@ impl Plait {
         let Some(machine) = self.preferences.value.machines.get(&id).cloned() else {
             return;
         };
-        self.machines.generation += 1;
+        let removal = if self.machines.failed_switch.as_ref() == Some(&id) {
+            self.machines.forget_after_switch.take()
+        } else {
+            None
+        };
+        self.cancel_machine_switch();
+        self.machines.forget_after_switch = removal;
         self.machine_restore_notice = None;
         let generation = self.machines.generation;
         self.machines.confirm_remove = None;
         self.machines.install = None;
-        self.machines.update = None;
-        let transport = match machine.transport {
-            Transport::Local => {
-                self.machines.connecting = None;
-                self.machines.note = None;
-                self.save_selected(id.clone(), cx);
-                self.use_machine_client(Client::local_or_unavailable(), id, true, window, cx);
-                return;
-            }
-            remote => remote,
-        };
+        let local = machine.transport == Transport::Local;
         self.machines.connecting = Some(id.clone());
         self.machines.note = None;
         cx.notify();
         if cfg!(test) {
             return;
         }
+        let executor = cx.background_executor().clone();
         let task = cx.background_executor().spawn(async move {
-            match transport {
-                Transport::Ssh {
-                    destination,
-                    port,
-                    store,
-                } => ssh::connect(
-                    &destination,
-                    SshOptions {
-                        port,
-                        store,
-                        ..Default::default()
-                    },
-                ),
-                Transport::Tailnet { host, port } => tailnet::connect(&host, port),
-                Transport::Local => unreachable!(),
+            ProbeResult {
+                value: Some(probe_machine(machine.transport)),
+                executor,
             }
         });
         let name = machine.name.clone();
         cx.spawn_in(window, async move |this, cx| {
-            let result = task.await;
+            let mut probe = task.await;
             let _ = this.update_in(cx, |this, window, cx| {
                 // A newer choice was made while this one connected.
-                if this.machines.generation != generation {
+                let Some(result) = probe.claim(&mut this.machines, &id, generation) else {
                     return;
-                }
-                this.machines.connecting = None;
+                };
                 match result {
-                    Ok(link) => {
+                    Ok(client) => {
+                        this.machines.update = None;
                         if this.machines.note.is_none() {
                             this.machines.note = Some((format!("Using {name}."), false));
                         }
-                        this.save_selected(id.clone(), cx);
-                        this.use_machine_client(Client::over_link(link), id, false, window, cx);
+                        this.finish_machine_switch(client, id, local, window, cx);
                     }
                     Err(error) => {
                         this.machines.note =
@@ -207,11 +269,15 @@ impl Plait {
                             this.machine_restore_notice =
                                 Some(format!("Could not reach {name}. {error}"));
                         } else {
-                            this.settings_tab = super::settings::SettingsTab::Machines;
-                            this.show_settings(true, window, cx);
+                            this.machines.failed_switch = Some(id.clone());
+                            if !this.settings_open {
+                                this.open_machine_picker(window, cx);
+                            }
                         }
                         // Perhaps it answers but has no Plait yet: offer to install it.
-                        this.check_install(id.clone(), cx);
+                        if this.settings_open || restoring {
+                            this.check_install(id.clone(), cx);
+                        }
                     }
                 }
                 cx.notify();
@@ -243,7 +309,7 @@ impl Plait {
         true
     }
 
-    fn open_machine_form(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn open_machine_form(&mut self, cx: &mut Context<Self>) {
         self.machines.form = Some(MachineForm {
             name: field("Machine name", "workstation", cx),
             destination: field("SSH destination", "you@workstation", cx),
@@ -328,13 +394,53 @@ impl Plait {
         cx.notify();
     }
 
-    fn remove_machine(&mut self, id: MachineId, window: &mut Window, cx: &mut Context<Self>) {
-        // Leave a machine before forgetting it.
-        if self.selected_machine() == id {
-            self.use_machine(MachineId::default(), window, cx);
+    pub(super) fn finish_machine_switch(
+        &mut self,
+        client: Client,
+        id: MachineId,
+        local: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.save_selected(id.clone(), cx);
+        self.use_machine_client(client, id, local, window, cx);
+        if let Some(old) = self.machines.forget_after_switch.take() {
+            self.forget_machine(&old, cx);
         }
+    }
+
+    pub(super) fn remove_machine(
+        &mut self,
+        id: MachineId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Leave a machine before forgetting it.
+        if self.machines.active == id {
+            let Some(local) = self
+                .preferences
+                .value
+                .machines
+                .list()
+                .iter()
+                .find(|machine| machine.transport == Transport::Local)
+            else {
+                return;
+            };
+            self.use_machine(local.id.clone(), window, cx);
+            self.machines.forget_after_switch = Some(id);
+            return;
+        }
+        if self.machines.connecting.as_ref() == Some(&id) {
+            self.cancel_machine_switch();
+        }
+        self.forget_machine(&id, cx);
+    }
+
+    fn forget_machine(&mut self, id: &MachineId, cx: &mut Context<Self>) {
         let mut value = self.preferences.value.clone();
-        if value.machines.remove(&id).is_ok() {
+        if value.machines.remove(id).is_ok() {
+            self.machines.parked_creations.remove(id);
             self.machines.confirm_remove = None;
             self.set_preferences(value, PreferenceGroup::Machines, cx);
         }
@@ -569,7 +675,7 @@ impl Plait {
             .child(
                 tag(
                     "machines-intro",
-                    "Work on another machine through its Plait host: its projects, threads, Changes, History, and Files. Each window works with one machine; switch from the status line.",
+                    "Work on another machine through its Plait host: its projects, threads, Changes, History, and Files. Each window works with one machine; switch from the machine menu at the foot of the sidebar.",
                     colors().muted,
                 )
                 .line_height(px(18.)),
@@ -603,5 +709,69 @@ impl Plait {
     #[cfg(test)]
     pub(super) fn add_machine_for_test(&mut self, cx: &mut Context<Self>) {
         self.add_machine(cx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MachineId, MachinesUi};
+
+    #[test]
+    fn machine_picker_closed_window_drops_probe_in_background() {
+        check_unclaimed_probe(true);
+    }
+
+    #[test]
+    fn machine_picker_superseded_result_is_dropped_in_background() {
+        check_unclaimed_probe(false);
+    }
+
+    fn check_unclaimed_probe(close_window: bool) {
+        struct Probe(gpui::BackgroundExecutor, std::sync::mpsc::Sender<bool>);
+        impl Drop for Probe {
+            fn drop(&mut self) {
+                self.1.send(self.0.is_main_thread()).unwrap();
+            }
+        }
+        let mut cx = gpui::TestAppContext::single();
+        let window = cx.add_window(|_, _| gpui::EmptyView);
+        if close_window {
+            cx.update(|cx| window.update(cx, |_, w, _| w.remove_window()))
+                .unwrap();
+        }
+        let executor = &cx.background_executor;
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut result = super::ProbeResult {
+            value: Some(Probe(executor.clone(), tx)),
+            executor: executor.clone(),
+        };
+        let id = MachineId::default();
+        let mut machines = MachinesUi {
+            connecting: Some(id.clone()),
+            generation: 2,
+            ..Default::default()
+        };
+        let delivery =
+            cx.update(|cx| window.update(cx, |_, _, _| result.claim(&mut machines, &id, 1)));
+        assert_eq!(delivery.is_err(), close_window);
+        assert!(delivery.ok().flatten().is_none());
+        drop(result);
+        cx.run_until_parked();
+        assert!(!rx.try_recv().unwrap());
+    }
+
+    #[test]
+    fn stale_result_cannot_clear_a_retry_or_finish_another_switch() {
+        let target = MachineId::new("studio").unwrap();
+        let mut ui = MachinesUi {
+            connecting: Some(target.clone()),
+            generation: 2,
+            ..Default::default()
+        };
+        assert!(!ui.finish_attempt(&target, 1));
+        assert!(!ui.finish_attempt(&MachineId::default(), 2));
+        assert_eq!(ui.connecting.as_ref(), Some(&target));
+        assert!(ui.finish_attempt(&target, 2));
+        assert!(!ui.finish_attempt(&target, 2));
     }
 }

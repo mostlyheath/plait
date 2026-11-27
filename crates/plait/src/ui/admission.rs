@@ -21,6 +21,7 @@ pub(super) struct State {
     pub capabilities: Option<(u64, PathBuf, bool)>,
     pub continuation: Option<String>,
     pub pending: Option<Request>,
+    pub direct: Option<DirectCreation>,
     pub choice: bool,
     pub source: Option<String>,
     pub settings_key: Option<(u64, PathBuf)>,
@@ -28,7 +29,76 @@ pub(super) struct State {
     pub settings_busy: bool,
     pub note: Option<String>,
 }
+impl State {
+    fn clear_creation(&mut self) {
+        self.direct = None;
+        self.pending = None;
+        self.source = None;
+    }
+}
+
+#[derive(Clone)]
+pub(super) struct DirectCreation {
+    pub created: Created,
+    pub expected: Option<plait_client::ownership::CheckoutKey>,
+    pub legacy: host::Request,
+}
+
+pub(super) struct ParkedCreation {
+    direct: DirectCreation,
+    request: Request,
+    choice: bool,
+}
+
 impl Plait {
+    pub(super) fn switch_creation_machine(
+        &mut self,
+        destination: &plait_client::machines::MachineId,
+    ) {
+        let current = std::mem::take(&mut self.admission);
+        if self.host.creation.pending_create.take().is_some()
+            && let (Some(direct), Some(request)) = (current.direct, current.pending)
+        {
+            self.machines.parked_creations.insert(
+                self.machines.active.clone(),
+                ParkedCreation {
+                    direct,
+                    request,
+                    choice: current.choice,
+                },
+            );
+        }
+        self.host.creation.creating = false;
+        self.host.creation.pending_thinking = None;
+        if let Some(ParkedCreation {
+            direct,
+            request,
+            choice,
+        }) = self.machines.parked_creations.remove(destination)
+        {
+            let Request::CreateAdmittedThread {
+                harness,
+                mode,
+                thinking,
+                source_thread_id,
+                ..
+            } = &request
+            else {
+                unreachable!()
+            };
+            self.host.creation.pending_create = Some((
+                direct.created.request_id.clone(),
+                direct.created.choice.clone(),
+            ));
+            self.host.creation.pending_thinking = *thinking;
+            self.set_pending_harness(*harness, mode.clone());
+            self.admission.source = source_thread_id.clone();
+            self.admission.pending = Some(request);
+            self.admission.choice = choice;
+            self.admission.direct = Some(direct);
+        }
+    }
+
     pub(super) fn sync_admission_context(&mut self, cx: &mut Context<Self>) {
         if cfg!(test) || !self.host.connection.connected {
             return;
@@ -275,7 +345,7 @@ impl Plait {
             .child(button("continue-wait","Wait").disabled(!self.admission.queue).tooltip(move |_,cx| hover(cx,wait_detail)).aria_description(wait_detail).on_activate(cx,|this,window,cx| this.wait_in_checkout(window,cx)))
             .into_any_element())
     }
-    fn start_continuation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn start_continuation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(snapshot) = self.host.thread.snapshot.as_ref() else {
             return;
         };
@@ -313,6 +383,7 @@ impl Plait {
         &mut self,
         created: Created,
         legacy: host::Request,
+        expected: Option<plait_client::ownership::CheckoutKey>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -345,6 +416,11 @@ impl Plait {
                 })
         };
         if created.draft_id.is_none() {
+            self.admission.direct = Some(DirectCreation {
+                created: created.clone(),
+                legacy: legacy.clone(),
+                expected: expected.clone(),
+            });
             self.admission.pending = Some(request.clone());
             self.admission.choice = false;
         }
@@ -354,7 +430,6 @@ impl Plait {
             cx,
         );
         let epoch = self.host.connection.epoch;
-        let expected = self.state.checkout_key().cloned();
         let captured_expected = expected.clone();
         let journal = self.session.journal.clone();
         let polling = cx.background_executor().clone();
@@ -470,8 +545,8 @@ impl Plait {
                             _ => None,
                         };
                         let id=reply.thread.id.clone();
-                        this.admission.pending = None; this.admission.source = None;
                         this.finish_create(created, Ok(reply), window, cx);
+                        if this.host.creation.pending_create.is_none() { this.admission.clear_creation(); }
                         if let Some(policy)=policy {
                             if !this.workspace.composers.contains_key(&id) {
                                 let composer=cx.new(|cx| super::composer::Composer::new(window,cx));
@@ -482,11 +557,11 @@ impl Plait {
                     }
                     Ok((Some(receipt), None)) => {
                         let error = receipt.error.map(host::Error::Rejected).unwrap_or_else(|| host::Error::Protocol("Creation is still preparing. Retry with the same request.".into()));
-                        if matches!(&error, host::Error::Rejected(_)) { this.admission.pending = None; this.admission.source = None; }
+                        if matches!(&error, host::Error::Rejected(_)) { this.admission.clear_creation(); }
                         this.finish_create(created, Err(error), window, cx);
                     }
                     Err(error) => {
-                        if matches!(&error, host::Error::Rejected(_)) { this.admission.pending = None; this.admission.source = None; }
+                        if matches!(&error, host::Error::Rejected(_)) { this.admission.clear_creation(); }
                         this.finish_create(created, Err(error), window, cx);
                     }
                     _ => {}
@@ -519,8 +594,7 @@ impl Plait {
             return;
         }
         self.admission.choice = false;
-        self.admission.pending = None;
-        self.admission.source = None;
+        self.admission.clear_creation();
         self.host.creation.pending_create = None;
         self.draft_rejected("Cancelled. Your draft is kept.".into());
         self.sync_composer(cx);
