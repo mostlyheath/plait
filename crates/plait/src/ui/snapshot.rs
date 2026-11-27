@@ -669,6 +669,7 @@ fn pin_read_times(repository: &mut plait_client::state::RepositoryState, wide: b
                 rows: diff.rows.clone(),
                 widest_row: diff.widest_row,
                 hunks: diff.hunks.clone(),
+                patch_digest: diff.patch_digest.clone(),
                 truncated: diff.truncated,
                 elapsed: Duration::from_millis(elapsed_ms),
             });

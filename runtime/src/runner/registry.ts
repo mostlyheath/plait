@@ -18,10 +18,10 @@ function manifest(value: unknown): Manifest {
   id(v.run_id as string);
   return value as Manifest;
 }
-export function helper(fd: number, operation: string): Promise<boolean> {
+export function helper(fd: number, operation: string, signal?: AbortSignal): Promise<boolean> {
   if (!process.env.PLAIT_HOST_EXE) throw new Error('PLAIT_HOST_EXE is required');
   return new Promise((resolve, reject) => {
-    const child = spawn(process.env.PLAIT_HOST_EXE!, [operation], { stdio: ['ignore', 'ignore', 'pipe', fd] });
+    const child = spawn(process.env.PLAIT_HOST_EXE!, [operation], { stdio: ['ignore', 'ignore', 'pipe', fd], signal });
     let error = ''; child.stderr!.on('data', chunk => { error += String(chunk); });
     child.once('error', reject);
     child.once('close', code => { if (code === 0) resolve(true); else if (operation === 'runner-lock-fd' && error.includes('runner lock busy')) resolve(false); else reject(new Error(error || `${operation} failed`)); });

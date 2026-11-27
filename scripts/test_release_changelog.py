@@ -54,6 +54,14 @@ class Section(unittest.TestCase):
         root = tree({}, "# Changelog\n\n## v0.1.0-preview.82\n\n### Added\n\n- New.\n\n## v0.1.0-preview.81\n\n- Old.\n")
         self.assertEqual(changelog.section("v0.1.0-preview.82", root), "### Added\n\n- New.")
 
+    def test_note_added_after_prep_blocks_publication(self):
+        root = tree({"first.md": "Fixed\nFirst fix."})
+        tag = "v0.1.0-preview.82"
+        changelog.collect(tag, root)
+        (root / "changes/late.md").write_text("Fixed\nLate fix.")
+        with self.assertRaisesRegex(changelog.Invalid, "outstanding change notes"):
+            changelog.section(tag, root)
+
     def test_a_missing_section_fails(self):
         with self.assertRaises(changelog.Invalid):
             changelog.section("v0.1.0-preview.83", tree({}, "# Changelog\n"))

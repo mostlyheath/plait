@@ -1,4 +1,4 @@
-import { fail, queuedView } from '../protocol.ts';
+import { fail, queuedView, steersRun } from '../protocol.ts';
 import type { Approval, Snapshot } from '../protocol.ts';
 import { nameKey, type Observation } from '../mcp/tools.ts';
 import type { Records } from '../records.ts';
@@ -282,7 +282,7 @@ export class RunnerSession {
   private resendSteers(): void {
     this.steered.clear();
     for (const input of this.callbacks.store.queue(this.threadId)) {
-      if (input.queued?.mode !== 'steer') continue;
+      if (!steersRun(input, this.runId)) continue;
       this.steer(input.request_id, input.text, input.images ?? []);
     }
   }

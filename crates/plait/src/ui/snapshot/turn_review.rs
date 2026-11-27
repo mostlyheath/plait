@@ -80,6 +80,7 @@ fn fixture_diff(bytes: &[u8], truncated: bool, elapsed: Duration) -> plait_proto
         rows,
         widest_row: widest,
         hunks,
+        patch_digest: None,
         truncated,
         elapsed,
     }

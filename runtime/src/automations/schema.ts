@@ -26,10 +26,10 @@ CREATE TABLE IF NOT EXISTS automation_claims (
   occurrence INTEGER, due INTEGER NOT NULL, revision INTEGER NOT NULL,
   UNIQUE(automation_id, occurrence)
 );
-INSERT OR IGNORE INTO automation_claims
+INSERT OR IGNORE INTO automation_claims(id,automation_id,occurrence,due,revision)
   SELECT request_id, automation_id, CASE WHEN request_id = automation_id || '-' || due THEN due END, due, revision
   FROM automation_occurrences;
-INSERT OR IGNORE INTO automation_claims
+INSERT OR IGNORE INTO automation_claims(id,automation_id,occurrence,due,revision)
   SELECT c.request_id, c.automation_id, CASE WHEN c.request_id = c.automation_id || '-' || c.due THEN c.due END, c.due, a.revision
   FROM automation_clicks c JOIN automations a ON a.id=c.automation_id;
 `;

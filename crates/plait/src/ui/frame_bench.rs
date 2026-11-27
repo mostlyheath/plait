@@ -255,6 +255,7 @@ fn big_diff(count: usize) -> Arc<Diff> {
         rows,
         widest_row: widest,
         hunks,
+        patch_digest: None,
         truncated: false,
         elapsed: Duration::ZERO,
     })

@@ -141,7 +141,14 @@ fn write_unlocked(root: &Path, op: &WriteOp) -> Result<WriteOutcome> {
             path,
             untracked,
             hunk,
-        } => discard(root, path, *untracked, hunk.as_ref()),
+            guard,
+        } => discard(
+            root,
+            path,
+            *untracked,
+            hunk.as_ref(),
+            guard.as_ref().and_then(|g| g.digest.as_deref()),
+        ),
         WriteOp::Restore(backup) => restore(root, backup),
         WriteOp::CreateBranch(name) => super::branch::create(root, name).map(done),
         WriteOp::SwitchBranch(name) => super::branch::switch(root, name).map(done),
@@ -156,6 +163,7 @@ fn discard(
     path: &Path,
     untracked: bool,
     hunk: Option<&(usize, String)>,
+    reviewed_digest: Option<&str>,
 ) -> Result<WriteOutcome> {
     validate_relative(path)?;
     if hunk.is_some() && has_filter(root, path)? {
@@ -164,7 +172,7 @@ fn discard(
         );
     }
     // Save first: if this fails, nothing has been thrown away.
-    let backup = save(root, path)?;
+    let backup = save(root, path, untracked)?;
     let name = path
         .file_name()
         .unwrap_or(path.as_os_str())
@@ -187,6 +195,8 @@ fn discard(
                 "--no-textconv",
                 "--no-color",
                 "--unified=3",
+                "--ignore-submodules=dirty",
+                "--submodule=short",
                 "--",
             ]
             .into_iter()
@@ -198,6 +208,12 @@ fn discard(
                 return Err(
                     "This diff is too large to discard by hunk. Discard the whole file.".into(),
                 );
+            }
+            use sha2::{Digest, Sha256};
+            if reviewed_digest
+                .is_some_and(|digest| format!("{:x}", Sha256::digest(&diff.bytes)) != digest)
+            {
+                return Err(STALE.into());
             }
             let patch = hunk_patch(&diff.bytes, *index, header)?;
             git(
@@ -225,13 +241,18 @@ fn discard(
 
 /// Copy the file's bytes into the object store, unfiltered. A missing file or
 /// a symlink has nothing to save.
-fn save(root: &Path, path: &Path) -> Result<Option<Backup>> {
+fn save(root: &Path, path: &Path, untracked: bool) -> Result<Option<Backup>> {
     use std::{io::Read, os::unix::fs::PermissionsExt};
-    let Ok(file) = open_beneath(root, path, libc::O_RDONLY | libc::O_NONBLOCK, 0) else {
-        return Ok(None);
+    let file = match open_beneath(root, path, libc::O_RDONLY | libc::O_NONBLOCK, 0) {
+        Ok(file) => file,
+        Err(e) if untracked => return Err(format!("Cannot save a copy before discarding: {e}")),
+        Err(_) => return Ok(None),
     };
     let meta = file.metadata().map_err(|e| e.to_string())?;
     if !meta.is_file() {
+        if untracked {
+            return Err("Plait can only save and discard a regular file.".into());
+        }
         return Ok(None);
     }
     let mut bytes = Vec::new();
@@ -649,7 +670,7 @@ fn unstage(root: &Path, input: Option<Vec<u8>>) -> Result<()> {
                 let args = ["restore", "--staged", nul[0], nul[1]];
                 git(root, &args, Some(input), timeout).map(drop)
             }
-            None => git(root, &["reset", "-q"], None, timeout).map(drop),
+            None => git(root, &["reset", "-q", "HEAD", "--", "."], None, timeout).map(drop),
         };
     }
     // No HEAD to restore from: dropping index entries returns new files to untracked.

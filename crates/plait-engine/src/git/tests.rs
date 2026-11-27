@@ -1368,9 +1368,21 @@ fn hunk_patches_keep_bytes_and_match_shown_headers() {
 
 fn discard_op(path: &str, untracked: bool, hunk: Option<(usize, String)>) -> WriteOp {
     WriteOp::Discard {
+        guard: None,
         path: PathBuf::from(path),
         untracked,
         hunk,
+    }
+}
+
+fn reviewed_discard(path: &str, shown: &Diff) -> WriteOp {
+    WriteOp::Discard {
+        path: path.into(),
+        untracked: false,
+        hunk: Some((0, shown.lines[shown.hunks[0]].text.to_string())),
+        guard: Some(plait_protocol::git::write::DiscardGuard {
+            digest: shown.patch_digest.clone(),
+        }),
     }
 }
 
@@ -1407,19 +1419,15 @@ fn discarding_one_hunk_leaves_the_others() {
     repo.commit();
     repo.write("a.txt", numbered(30, &[1, 25]));
     let shown = diff(&repo.0, &tracked("a.txt"), DiffMode::Unstaged).unwrap();
-    let header = shown.lines[shown.hunks[0]].text.to_string();
-    let outcome = write(
-        &repo.0,
-        &discard_op("a.txt", false, Some((0, header.clone()))),
-    )
-    .unwrap();
+    let op = reviewed_discard("a.txt", &shown);
+    let outcome = write(&repo.0, &op).unwrap();
     assert_eq!(outcome.summary, "Discarded a hunk of a.txt");
     assert_eq!(
         fs::read_to_string(repo.0.join("a.txt")).unwrap(),
         numbered(30, &[25])
     );
     // The same hunk again no longer matches.
-    let error = write(&repo.0, &discard_op("a.txt", false, Some((0, header)))).unwrap_err();
+    let error = write(&repo.0, &op).unwrap_err();
     assert!(error.contains("changed since"), "{error}");
     write(&repo.0, &WriteOp::Restore(outcome.backup.unwrap())).unwrap();
     assert_eq!(
@@ -2248,4 +2256,72 @@ fn a_plain_folder_reads_as_plain_with_its_files_but_a_repository_never_does() {
         "a broken repository read as plain"
     );
     std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn unreadable_untracked_file_survives_delete() {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = Repo::new();
+    repo.write("private", "unique");
+    let path = repo.0.join("private");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+    // A privileged test process can still read mode-000 files.
+    if fs::File::open(&path).is_err() {
+        let error = write(&repo.0, &discard_op("private", true, None)).unwrap_err();
+        assert!(error.contains("Cannot save a copy"), "{error}");
+    }
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(fs::read(path).unwrap(), b"unique");
+}
+
+#[test]
+fn unstage_all_keeps_merge_parents() {
+    let repo = Repo::new();
+    repo.write("base", "");
+    repo.commit();
+    repo.git(&["checkout", "-b", "topic"]);
+    repo.write("topic", "");
+    repo.commit();
+    repo.git(&["checkout", "main"]);
+    repo.write("main", "");
+    repo.commit();
+    repo.git(&["merge", "--no-commit", "topic"]);
+    write(&repo.0, &WriteOp::UnstageAll).unwrap();
+    repo.git(&["diff", "--cached", "--exit-code"]);
+    repo.commit();
+    repo.git(&["rev-parse", "--verify", "HEAD^2"]);
+}
+
+#[test]
+fn discard_refuses_changed_hunk_with_same_header() {
+    let repo = Repo::new();
+    repo.write("file", "A\n");
+    repo.commit();
+    repo.write("file", "B\n");
+    let shown = diff(&repo.0, &tracked("file"), DiffMode::Unstaged).unwrap();
+    repo.write("file", "C\n");
+    assert!(
+        write(&repo.0, &reviewed_discard("file", &shown))
+            .unwrap_err()
+            .contains("changed since")
+    );
+    assert_eq!(fs::read(repo.0.join("file")).unwrap(), b"C\n");
+}
+
+#[test]
+fn discard_restores_deleted_tracked_files_and_symlinks_without_an_undo() {
+    let repo = Repo::new();
+    repo.write("file", "staged");
+    std::os::unix::fs::symlink("file", repo.0.join("link")).unwrap();
+    repo.commit();
+    for path in ["file", "link"] {
+        fs::remove_file(repo.0.join(path)).unwrap();
+        let outcome = write(&repo.0, &discard_op(path, false, None)).unwrap();
+        assert!(outcome.backup.is_none());
+    }
+    assert_eq!(fs::read(repo.0.join("file")).unwrap(), b"staged");
+    assert_eq!(
+        fs::read_link(repo.0.join("link")).unwrap(),
+        Path::new("file")
+    );
 }

@@ -34,6 +34,31 @@ async function pi(t: Parameters<typeof setup>[0], responses: Parameters<ReturnTy
 }
 const start=(root:string,id:string,harness='pi')=>({op:'create_admitted_thread',request_id:id,checkout:root,placement:'project',harness,provider:harness==='pi'?'faux':harness,model_id:harness==='pi'?'faux-1':harness==='codex'?'gpt-fake':'default',approval:'auto',...(harness==='pi'?{}:{mode:harness==='codex'?'ask':'auto'})});
 
+test('background polls and repeated starts return while placement is still preparing', async t => {
+  const { runtime, root } = await pi(t, []);
+  const admissions = runtime.admissions;
+  const original = admissions['createHere'].bind(admissions);
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  admissions['createHere'] = async (input, identity) => {
+    await gate;
+    return original(input, identity);
+  };
+  const request = start(root, 'pending');
+  const timeout = setTimeout(release, 3000);
+  try {
+    await admissions.handle(request, true);
+    for (const poll of [{ op: 'admission_status', request_id: request.request_id }, request]) {
+      const reply = await admissions.handle(poll, true) as { admission: Admission };
+      assert.equal(reply.admission.state, 'preparing');
+    }
+  } finally {
+    clearTimeout(timeout);
+    release();
+  }
+  await admitted(runtime, request.request_id);
+});
+
 test('strict admission fields refuse queue, forged identity and protocol fields',()=>{
   for(const request of [{...start('/repo','one'),placement:'queue'},{...start('/repo','one'),protocol_version:6},{...start('/repo','one'),extra:true},{op:'set_project_isolation',checkout:'/repo',identity:{dev:'01',ino:'2'},auto_worktree:true},{...start('/repo','one'),source_thread_id:'existing'},{op:'admission_info',checkout:'/repo/../other'}]) assert.throws(()=>validateAdmission(request));
 });
@@ -263,7 +288,7 @@ test('a run start waits for an in-flight placement probe instead of colliding wi
   assert.equal(h.runtime.snapshot(created.result.thread.id).status,'idle',JSON.stringify(h.runtime.snapshot(created.result.thread.id).error));
 });
 
-test('plain folder threads keep their kind and run Pi without records', async t => {
+test('plain folder threads run Pi without records and promote on the next run after Git initialization', async t => {
   const h = await pi(t, [
     fauxAssistantMessage([fauxToolCall('write', { path: 'created.txt', content: 'hello' }, { id: 'write' })], { stopReason: 'toolUse' }),
     fauxAssistantMessage('done'), fauxAssistantMessage('done'),
@@ -282,11 +307,46 @@ test('plain folder threads keep their kind and run Pi without records', async t 
     assert.equal(h.runtime.snapshot(id).status, 'idle', JSON.stringify(h.runtime.snapshot(id).error));
   };
   await run('run1'); assert.equal(await readFile(join(folder, 'created.txt'), 'utf8'), 'hello');
-  await exec('/usr/bin/git', ['init', '-q', folder]); await run('run2');
   assert.equal(h.runtime.store.db.prepare('SELECT vcs FROM thread_vcs WHERE thread=?').get(id)?.vcs, 'folder');
   assert.equal(h.runtime.store.db.prepare('SELECT count(*) AS n FROM records WHERE thread=?').get(id)?.n, 0);
   const undo = await h.runtime.reply({ protocol_version: 6, op: 'undo_turn', thread_id: id, record_id: 'missing', request_id: 'undo' });
   assert.equal(undo.error?.code, 'unsupported'); assert.equal(undo.error?.message, 'Undo needs a Git repository; this folder is not one.');
   const review: any = await h.runtime.reply({ op: 'turn_review_info', thread_id: id });
   assert.equal(review.result.features.record_diff, false);
+
+  // With a committed base, the next run promotes the thread and records the turn.
+  await exec('/usr/bin/git', ['init', '-q', folder]);
+  await commit(folder);
+  await run('run2');
+  assert.equal(h.runtime.store.db.prepare('SELECT vcs FROM thread_vcs WHERE thread=?').get(id)?.vcs, 'git');
+  const records = h.runtime.store.db.prepare('SELECT kind FROM records WHERE thread=? AND run_request=? ORDER BY kind').all(id, 'run2');
+  assert.deepEqual(records.map(row => row.kind), ['after', 'before']);
+});
+
+test('Git initialization during edit approval preserves a dirty tracked file', async t => {
+  const h = await pi(t, [
+    fauxAssistantMessage([fauxToolCall('edit', { path: 'notes.txt', old_text: 'my edit', new_text: 'overwritten' }, { id: 'edit' })], { stopReason: 'toolUse' }),
+    fauxAssistantMessage('done'),
+  ]);
+  const folder = join(h.base, 'plain');
+  const notes = join(folder, 'notes.txt');
+  await mkdir(folder);
+  await writeFile(notes, 'my edit');
+  const created: any = await h.runtime.reply({ protocol_version: 6, op: 'create_thread', checkout: folder, request_id: 'plain', provider: 'faux', model_id: 'faux-1' });
+  assert.equal(created.ok, true, JSON.stringify(created));
+  const id = created.result.thread.id;
+  const submitted = await h.runtime.reply({ protocol_version: 6, op: 'submit', thread_id: id, request_id: 'run', text: 'Edit notes.txt', approval: 'ask' });
+  assert.equal(submitted.ok, true, JSON.stringify(submitted));
+  await until(() => !!h.runtime.snapshot(id).pending_approval);
+  await exec('/usr/bin/git', ['init', '-q', folder]);
+  await writeFile(notes, 'base');
+  await commit(folder);
+  await writeFile(notes, 'my edit');
+  const approval = h.runtime.snapshot(id).pending_approval!;
+  const approved = await h.runtime.reply({ protocol_version: 6, op: 'approve', thread_id: id, approval_id: approval.id, allow: true });
+  assert.equal(approved.ok, true, JSON.stringify(approved));
+  await until(() => !h.runtime.sessions.has(id));
+  const edit = h.runtime.snapshot(id).tools.find(tool => tool.name === 'edit');
+  assert.ok(edit?.output.includes('This folder became a Git repository during the run. Send a new message to continue with Undo protection.'), JSON.stringify(edit));
+  assert.equal(await readFile(notes, 'utf8'), 'my edit');
 });

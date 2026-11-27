@@ -1,18 +1,48 @@
 import json
+import os
 from pathlib import Path
 import plistlib
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 import xml.etree.ElementTree as ET
 
 from release_macos import (
     ROOT, copy_runtime_sources, AGENT_LABEL, HOST_BASE, client_preinstall, component_manifests, distribution,
-    host_package_id, host_postinstall, host_preinstall, launch_agent, manifest, normalize_modes, payload_digest, platform_preflight, stage_font_notices,
+    host_package_id, host_postinstall, host_preinstall, launch_agent, manifest, normalize_modes, payload_digest, platform_preflight, stage_font_notices, stage_host,
 )
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_staged_host_release_uses_only_the_build_tag(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "target/release").mkdir(parents=True)
+            (root / "target/release/plait-host").touch()
+            (root / "target/HOST_THIRD_PARTY_NOTICES.txt").touch()
+            for name in ("runtime", "LICENSE", "Cargo.lock"):
+                (root / name).symlink_to(ROOT / name)
+            # Capture the environment at the first build command on either platform.
+            shell = """
+                uname() { if [[ $1 == -s ]]; then echo Darwin; else echo arm64; fi; }
+                cargo() { printenv PLAIT_RELEASE_VERSION || true; exit 0; }
+                source "$0"
+            """
+            for tag, expected in (("", None), ("v0.1.0-preview.83", "0.1.0-preview.83")):
+                with self.subTest(tag=tag):
+                    output = subprocess.check_output(
+                        ["bash", "-c", shell, str(ROOT / "scripts/build-macos.sh")],
+                        env=dict(os.environ, PLAIT_RELEASE_TAG=tag, PLAIT_RELEASE_VERSION="stale"),
+                        text=True)
+                    build_env = {"PLAIT_RELEASE_VERSION": output.strip()} if output else {}
+                    with patch.dict(os.environ, build_env, clear=True), patch("release_macos.ROOT", root), \
+                            patch("release_macos.run"), patch("release_macos.verify_macho"), \
+                            patch("release_macos.stage_node", return_value="22"):
+                        payload, _, _ = stage_host(root / (tag or "untagged"), "0.1.0", "a" * 12)
+                    component, = component_manifests(payload)
+                    self.assertEqual(json.loads(component.read_text())["release"], expected)
+
     def test_client_stages_complete_bundled_font_notices(self):
         with tempfile.TemporaryDirectory() as directory:
             resources = Path(directory)

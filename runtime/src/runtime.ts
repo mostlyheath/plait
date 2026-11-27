@@ -2,7 +2,7 @@ import { Automations } from './automations/service.ts';
 import { Graph } from './graph/host.ts';
 import { harnessLogin } from './harness-sign-in.ts';
 import { installable, installTool, managedPath } from './agent-tools.ts';
-import { threadKind } from './store.ts';
+import { promoteThreadToGit, threadKind } from './store.ts';
 import { Devices } from './devices.ts';
 import { ThreadNaming } from './thread-naming.ts';
 import { CheckoutWatcher } from './watcher.ts';
@@ -29,14 +29,14 @@ import { createRegistry, Harness, ROOT_CONVERSATION_ID } from '@earendil-works/p
 import type { Conversation, ConversationRetryPolicy, ConversationWatch, Cursor, EntryQuery, EntryRecord, Submission, SubmissionDraft } from '@earendil-works/pi-durable';
 import { SqliteStorage } from '@earendil-works/pi-durable/storage/sqlite';
 import { openNodeSqliteDatabase } from '@earendil-works/pi-durable/storage/sqlite/node';
-import { PROTOCOL_VERSIONS, fail, failure, queuedView, summaryView, THINKING_LEVELS, validate, version, view } from './protocol.ts';
+import { PROTOCOL_VERSIONS, fail, failure, queuedView, steersRun, summaryView, THINKING_LEVELS, validate, version, view } from './protocol.ts';
 import type { ApprovalMode, HarnessId, ModelChoice, Protocol, QueueMode, Request, Snapshot, InputRecord, ThinkingLevel } from './protocol.ts';
 import { Store } from './store.ts';
 import { RunnerRegistry, type RunnerEntry } from './runner/registry.ts';
 import { RunnerSession, applyRunnerReceipt } from './runner/session.ts';
 import { Records } from './records.ts';
 import { checkout, projectKind, gitCheckout, dirtyPaths, fileAction, acquireCheckout, rootIdentity, checkRoot, verifyExpectedIdentity } from './safety.ts';
-import type { CheckoutLease, FileIdentity, LeaseHandle } from './safety.ts';
+import type { CheckoutLease, FileIdentity, ProjectVcs } from './safety.ts';
 import { registry } from './tools.ts';
 import { mcpPolicy, setMcpEnabled } from './mcp/policy.ts';
 import { fingerprint, nameKey } from './mcp/tools.ts';
@@ -108,13 +108,6 @@ export class Runtime {
   worktrees: Worktrees;
   admissions: Admissions;
   private automations?: Automations;
-  private requestTail?: Promise<void>;
-
-  private enqueue<T>(work: () => Promise<T>) {
-    const result = (this.requestTail ?? Promise.resolve()).then(work);
-    this.requestTail = result.then(() => {}, () => {});
-    return result;
-  }
   capacity = new RunCapacity();
   sessions = new Map<string, Session>();
   runnerSessions = new Map<string, RunnerSession>();
@@ -170,10 +163,6 @@ export class Runtime {
       snapshot: id => this.snapshot(id),
       save: snapshot => this.save(snapshot),
     });
-    if (process.env.PLAIT_GRAPH === '1') {
-      this.graph = new Graph(directory, request => this.enqueue(() => this.handle(request)),
-        id => this.store.refreshRootIdentity(id, this.store.get(id).checkout), (id, request) => this.store.waiters.get(id, request));
-    }
     this.store.waiters.changed = () => this.changed('#');
     this.records = new Records(this.store, directory, id => this.changed(id));
     this.turnReview = new TurnReview(this.store, this.records, directory);
@@ -190,11 +179,21 @@ export class Runtime {
       made: (tree, creation) => this.workspace.madeWorktree(tree.path, tree.parent.root, tree.branch, creation, tree.identity),
       removed: folder => this.workspace.removedWorktree(folder),
     });
-    if (process.env.PLAIT_AUTOMATIONS === '1') this.automations = new Automations(directory, (request, guard) => this.enqueue(() => {
-      guard?.();
-      return this.handle(request);
-    }));
     this.admissions = new Admissions(this.store, this.worktrees, this.capacity, (input, identity) => this.handle(input, identity), root => this.active.has(root) || this.records.busy(root) || this.store.waiters.line(root).some(waiter => waiter.kind === 'checkout' || waiter.state === 'waiting'), () => this.admitWork());
+  }
+  startBackground(client: (request: Record<string, unknown>) => Promise<unknown>) {
+    const send = (request: Record<string, unknown>) => client(
+      request.op === 'create_admitted_thread' || request.op === 'admission_status' ? { ...request, poll: true } : request);
+    if (process.env.PLAIT_GRAPH === '1') {
+      this.graph = new Graph(this.directory, send,
+        id => this.store.refreshRootIdentity(id, this.store.get(id).checkout), (id, request) => this.store.waiters.get(id, request));
+    }
+    if (process.env.PLAIT_AUTOMATIONS === '1') {
+      this.automations = new Automations(this.directory, send,
+        (id, request) => this.store.waiters.get(id, request)?.kind === 'checkout');
+      this.automations.start();
+    }
+    this.graph?.wake();
   }
   /** Reconcile persisted work before accepting requests. */
   async recover(): Promise<void> {
@@ -268,8 +267,6 @@ export class Runtime {
       this.store.transaction(() => this.store.closeRecoveredRuns(snapshot));
     }
     this.records.start(liveCheckouts);
-    this.automations?.start();
-    this.graph?.wake();
   }
   private runnerEventHooks() {
     return {
@@ -482,11 +479,11 @@ export class Runtime {
         try {
           const metadata = JSON.parse(readFileSync(join(dirname(dirname(process.env.PLAIT_HOST_EXE ?? '')), 'component.json'), 'utf8'));
           if (metadata.component === 'host') {
-            release = typeof metadata.version === 'string' ? metadata.version : null;
+            release = typeof metadata.release === 'string' ? metadata.release : null;
             build_id = typeof metadata.build_id === 'string' ? metadata.build_id : null;
           }
         } catch { /* Development hosts have no packaged metadata. */ }
-        return { schema: 1, release, build_id, protocol_min: PROTOCOL_VERSIONS[0], protocol_max: PROTOCOL_VERSIONS[PROTOCOL_VERSIONS.length - 1], capabilities: ['drain_v1', 'checkout_identity_v1', 'project_fingerprint_v1'], storage_schema: 1 };
+        return { schema: 1, release, build_id, protocol_min: PROTOCOL_VERSIONS[0], protocol_max: PROTOCOL_VERSIONS[PROTOCOL_VERSIONS.length - 1], capabilities: ['drain_v1', 'checkout_identity_v1', 'project_fingerprint_v1', 'guarded_discard_v1'], storage_schema: 1 };
       }
       if (op === 'drain_for_update') {
         this.draining = true;
@@ -509,11 +506,16 @@ export class Runtime {
     if (this.workspace.handles(input)) return this.workspace.handle(input);
     if (this.linear.handles(input)) return this.linear.handle(input);
     if (this.worktrees.handles(input)) return this.worktrees.handle(input);
+    if ((this.graph || this.automations) && (op === 'admission_status' || op === 'create_admitted_thread')) {
+      const { poll, ...request } = input as Record<string, unknown>;
+      if (poll === true) return this.admissions.handle(request, true);
+    }
     if (handlesAdmission(input)) return this.admissions.handle(input);
     if (queueOperation(input)) return this.checkoutQueue(input);
-    const request = validate(input);
+    const stored = op === 'stored_thread' && (this.graph || this.automations);
+    const request = validate(stored ? { ...input as object, op: 'watch' } : input);
     const protocol = version(request);
-    const result = await this.dispatch(request, protocol, expectedCheckout);
+    const result = stored ? { thread: this.snapshot(String(request.thread_id)) } : await this.dispatch(request, protocol, expectedCheckout);
     // Every snapshot leaves through the negotiated wire shape.
     if (result && typeof result === 'object' && 'thread' in result) return { ...result, thread: view({ ...(result.thread as Snapshot), image_input: this.imageInput(result.thread as Snapshot), records_revision: this.records.revision((result.thread as Snapshot).id) }, protocol) };
     return result;
@@ -918,7 +920,8 @@ export class Runtime {
       if (!session && !runnerSession && this.active.has(snapshot.checkout)) fail('busy', 'This checkout already has an active run.');
       if (this.store.queue(id).length >= QUEUE_LIMIT) fail('busy', `This thread already has ${QUEUE_LIMIT} queued messages.`);
       this.admitWork();
-      this.notify(id, this.store.enqueue(requestId, text, result, { mode: whenBusy, approval: mode }, snapshot, images));
+      const steerRunId = whenBusy === 'steer' ? (session?.runId ?? runnerSession?.runId) : undefined;
+      this.notify(id, this.store.enqueue(requestId, text, result, { mode: whenBusy, approval: mode, steerRunId }, snapshot, images));
       if (firstMessage) this.naming.accepted(id, requestId, text);
       this.changed('#');
       if (runnerSession) {
@@ -943,13 +946,26 @@ export class Runtime {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
     return { ...(parsed as Record<string, unknown>), kind: 'test' };
   }
+  private async leasedKind(snapshot: Snapshot, lease: CheckoutLease): Promise<ProjectVcs> {
+    const current = await checkRoot(snapshot.checkout, this.store.rootIdentity(snapshot.id));
+    if (current.dev !== lease.identity.dev || current.ino !== lease.identity.ino) {
+      fail('permission_denied', 'Checkout changed while taking its lease.');
+    }
+    if (threadKind(this.store, snapshot.id) === 'git') {
+      await gitCheckout(snapshot.checkout);
+      return 'git';
+    }
+    const project = await projectKind(snapshot.checkout);
+    if (project.root !== snapshot.checkout) fail('invalid_request', 'Checkout must be an accessible Git working tree.');
+    return project.vcs;
+  }
   /** Admits one detached runner: reserves checkout, hands off lease, and commits acceptance. */
   private async startDetached(
     snapshot: Snapshot,
     requestId: string,
     mode: ApprovalMode,
     accept: () => boolean,
-    payload: Record<string, unknown> | ((root: FileIdentity) => Record<string, unknown>),
+    payload: Record<string, unknown> | ((root: FileIdentity, vcs: ProjectVcs) => Record<string, unknown>),
   ): Promise<void> {
     const id = snapshot.id;
     if (this.active.has(snapshot.checkout)) fail('busy', 'This checkout already has an active run.');
@@ -966,7 +982,8 @@ export class Runtime {
       await this.admissions.probing(snapshot.checkout);
       if (this.records.busy(snapshot.checkout)) await this.records.settled(snapshot.checkout);
       lease = await acquireCheckout(snapshot.checkout, 'writer');
-      const resolvedPayload = typeof payload === 'function' ? payload(lease.identity) : payload;
+      const vcs = await this.leasedKind(snapshot, lease);
+      const resolvedPayload = typeof payload === 'function' ? payload(lease.identity, vcs) : { ...payload, vcs };
       cleanupToken = randomUUID();
       await cleanupHelper('begin', snapshot.checkout, cleanupToken, RESTART_REASON, lease);
       this.admitWork();
@@ -984,6 +1001,7 @@ export class Runtime {
         beforeStart: () => {
           summaryChanged = this.store.transaction(() => {
             const changed = accept();
+            if (vcs === 'git') promoteThreadToGit(this.store, id);
             this.store.createRun(runId, id, requestId, String(resolvedPayload.kind ?? 'test'));
             return changed;
           });
@@ -1016,7 +1034,7 @@ export class Runtime {
       // accepted, one whose credential here depends on the login shell, so it never runs with another.
       const problem = await this.providers?.detachedRunProblem(snapshot.model.provider);
       if (problem) fail('model_unavailable', problem);
-      return this.startDetached(snapshot, requestId, mode, accept, root => {
+      return this.startDetached(snapshot, requestId, mode, accept, (root, vcs) => {
         const policy = commandPolicy(this.store, snapshot.checkout, root);
         return {
           kind: 'pi',
@@ -1024,7 +1042,7 @@ export class Runtime {
           request_id: requestId,
           text,
           checkout: snapshot.checkout,
-          vcs: threadKind(this.store, snapshot.id),
+          vcs,
           model: { provider: snapshot.model.provider, modelId: snapshot.model.model_id },
           thinking_level: snapshot.thinking_level ?? null,
           max_turns: this.maxTurns,
@@ -1042,7 +1060,7 @@ export class Runtime {
     this.active.set(snapshot.checkout, id);
     this.capacity.phases.set(id, 'preparing');
     let accepted = false;
-    let lease: LeaseHandle | undefined;
+    let lease: CheckoutLease | undefined;
     let authorization: RunAuthorization | undefined;
     let admitted: Session | undefined;
     try {
@@ -1053,6 +1071,7 @@ export class Runtime {
       await this.worktrees.builds.yieldToRun(snapshot.checkout);
       await this.admissions.probing(snapshot.checkout);
       if (!this.records.busy(snapshot.checkout)) lease = await acquireCheckout(snapshot.checkout, 'writer');
+      const vcs = lease ? await this.leasedKind(snapshot, lease) : undefined;
       const save = () => this.save(snapshot);
       let sink: TurnSink | undefined;
       const approvals = new InteractiveApproval(snapshot, save);
@@ -1062,7 +1081,7 @@ export class Runtime {
       const runId = randomUUID();
       const finish = () => this.notify(id, this.store.saveRunEvent(runId, 0, snapshot, { state: 'finished', finished: true }));
       const session: Session = {
-        runId, finish, snapshot, vcs: threadKind(this.store, id), baseline: [], protected: [], rootIdentity: this.store.rootIdentity(id), buildCache: { store: this.directory, thread: id }, owned: new Map(), inputs: [], requestId,
+        runId, finish, snapshot, vcs, baseline: [], protected: [], rootIdentity: this.store.rootIdentity(id), buildCache: { store: this.directory, thread: id }, owned: new Map(), inputs: [], requestId,
         authorization, approvals, mcpApproval: executor ?? approvals, lease, save, outputs: this.store.outputs, record: image => this.store.record(id, image), steered: new Map(),
       };
       if (executor) {
@@ -1081,6 +1100,7 @@ export class Runtime {
       snapshot.approval_mode = mode;
       this.notify(id, this.store.transaction(() => {
         const changed = accept();
+        if (vcs === 'git') promoteThreadToGit(this.store, id);
         this.store.createRun(session.runId, id, requestId, selected.kind === 'external' ? selected.id : selected.kind);
         return changed;
       }));
@@ -1099,6 +1119,11 @@ export class Runtime {
       }
     }
   }
+  private *pendingSteers(session: Session) {
+    for (const input of session.inputs) {
+      if (steersRun(input, session.runId) && !session.steered.has(input.request_id)) yield input;
+    }
+  }
   /** Offers queued steering inputs to the run that is active now, under that run's authorization. */
   private async steer(session: Session) {
     const selected = this.external.resolveHarness(session.snapshot);
@@ -1108,8 +1133,7 @@ export class Runtime {
       case 'pi': break;
     }
     if (!session.started || !session.root || session.authorization.signal.aborted) return;
-    for (const input of session.inputs) {
-      if (input.queued?.mode !== 'steer' || session.steered.has(input.request_id)) continue;
+    for (const input of this.pendingSteers(session)) {
       try {
         session.steered.set(input.request_id, await session.root.submit(
           { type: 'input', requestId: steerKey(input.request_id), content: await this.piInput(session, input.request_id, input.text), whenBusy: 'steer', whenIdle: 'reject' }, context));
@@ -1120,8 +1144,7 @@ export class Runtime {
   private async steerCodex(session: Session) {
     const run = session.external?.harness === 'codex' ? session.external.run : undefined;
     if (!session.started || !run) return;
-    for (const input of session.inputs) {
-      if (input.queued?.mode !== 'steer' || session.steered.has(input.request_id)) continue;
+    for (const input of this.pendingSteers(session)) {
       // Marked first, so a second submit during the request does not send it twice.
       session.steered.set(input.request_id, JOINED);
       if (!await run.steer(input.request_id, input.text, this.imageData(session.snapshot.id, input.request_id))) session.steered.delete(input.request_id);
@@ -1131,8 +1154,7 @@ export class Runtime {
   private steerClaude(session: Session) {
     const run = session.external?.harness === 'claude' ? session.external.run : undefined;
     if (!session.started || !run) return;
-    for (const input of session.inputs) {
-      if (input.queued?.mode !== 'steer' || session.steered.has(input.request_id)) continue;
+    for (const input of this.pendingSteers(session)) {
       if (run.steer(input.request_id, input.text, this.imageData(session.snapshot.id, input.request_id))) session.steered.set(input.request_id, JOINED);
     }
   }
@@ -1155,8 +1177,26 @@ export class Runtime {
         if (!previous || previous.kind !== 'checkout') fail('conflict','Request ID already belongs to another submission.');
         return duplicate;
       }
-      const current = this.snapshot(id);
-      this.usable(current); await this.store.refreshRootIdentity(id, current.checkout);
+      let current = this.snapshot(id);
+      this.usable(current);
+      await this.store.refreshRootIdentity(id, current.checkout);
+      if (this.graph || this.automations) current = this.snapshot(id);
+      if (request.expect) {
+        const actual: Record<string, unknown> = {
+          command_policy: commandPolicy(this.store, current.checkout, this.store.rootIdentity(id)),
+          harness: current.harness?.id ?? 'pi', mode: current.harness?.mode ?? null,
+          provider: current.model.provider, model_id: current.model.model_id,
+          thinking: current.thinking_level ?? 'off', approval: current.approval_mode ?? 'ask'
+        };
+        const { claim, ...settings } = request.expect;
+        if (claim) {
+          if (!this.automations) fail('conflict', 'Automation service is unavailable.');
+          this.automations.checkSubmission(id, claim, approval);
+        }
+        for (const [key, expected] of Object.entries(settings)) {
+          if (actual[key] !== expected) fail('queue_settings_changed', `Checkout setting ${key} changed before submission.`);
+        }
+      }
       const refs = this.store.images.refs(id,images);
       if (refs.length && this.imageInput(current) === 'no') fail('model_unavailable','This model cannot take images.');
       const result = { thread_id: id, request_id: request.request_id, accepted: true };
@@ -1280,20 +1320,24 @@ export class Runtime {
   createTurnSink(snapshot: Snapshot, phase: () => void, finish: () => void): TurnSink {
     return new InProcessSink(snapshot, this.store, head => this.save(snapshot, head), phase, finish);
   }
-  async run(session: Session, requestId: string, text: string) {
+  async run(session: Session, requestId: string, text: string): Promise<void> {
     const snapshot = session.snapshot;
+    let interruption: Snapshot['error'] = null;
     let record: string | undefined;
-    const vcs = threadKind(this.store, snapshot.id);
     try {
-      if (vcs === 'git') await gitCheckout(snapshot.checkout);
       if (this.external.resolveHarness(snapshot).kind === 'unknown') unsupportedHarness();
       if (!session.lease) {
         await this.records.settled(snapshot.checkout);
         await checkRoot(snapshot.checkout, session.rootIdentity);
         await this.worktrees.builds.yieldToRun(snapshot.checkout);
-        session.lease = await acquireCheckout(snapshot.checkout, 'writer');
+        const lease = await acquireCheckout(snapshot.checkout, 'writer');
+        session.lease = lease;
+        session.vcs = await this.leasedKind(snapshot, lease);
+        if (session.vcs === 'git') promoteThreadToGit(this.store, snapshot.id);
       }
       await this.beginCleanup(session);
+      const vcs = session.vcs;
+      if (!vcs) fail('internal', 'Run has no verified checkout kind.');
       // Before any harness starts: a run the host cannot record does not run.
       if (vcs === 'git') {
         const capture = () => this.capacity.prepare(session.rootIdentity.dev, snapshot.id, session.authorization.signal,
@@ -1305,7 +1349,11 @@ export class Runtime {
       const selected = this.external.resolveHarness(snapshot);
       switch (selected.kind) {
         case 'unknown': return unsupportedHarness();
-        case 'external': return selected.id === 'codex' ? await this.runCodex(session, requestId, text, header) : await this.runClaude(session, requestId, text, header);
+        case 'external':
+          interruption = (selected.id === 'codex'
+            ? await this.runCodex(session, requestId, text, header)
+            : await this.runClaude(session, requestId, text, header)) ?? null;
+          return;
         case 'pi': break;
       }
       const executor = session.executor!;
@@ -1350,14 +1398,18 @@ export class Runtime {
       session.sink?.flush();
       snapshot.pending_approval = null; snapshot.live_text = ''; snapshot.live_reasoning = ''; snapshot.retry = null;
       await this.gate(snapshot.id, () => this.release(session)).catch(() => session.lease?.cleanup?.track(NEVER, 'The harness did not confirm cleanup.'));
-      if (snapshot.status === 'interrupted') {
-        for (const tool of snapshot.tools) if (tool.status === 'running') tool.status = 'interrupted';
-      }
       // After every outcome, with the harness gone and the checkout still this run's.
       await this.finishCleanup(session, record).catch(() => { snapshot.error = { code: 'cleanup_uncertain', message: 'Stop unconfirmed. The host could not save cleanup confirmation. New runs and Git changes remain blocked.' }; });
       await session.lease?.close(); session.lease = undefined;
       this.active.delete(snapshot.checkout);
       this.capacity.phases.delete(snapshot.id);
+      if (interruption && snapshot.status !== 'stopped' && snapshot.status !== 'interrupted') {
+        snapshot.status = 'interrupted';
+        snapshot.error ??= interruption;
+      }
+      if (snapshot.status === 'interrupted') {
+        for (const tool of snapshot.tools) if (tool.status === 'running') tool.status = 'interrupted';
+      }
       // Idle means a following submit can acquire the checkout immediately.
       if (snapshot.status !== 'stopped' && snapshot.status !== 'interrupted') snapshot.status = snapshot.error ? 'error' : 'idle';
       if (session.sink) session.sink.emit({ type: 'finished' });
@@ -1367,7 +1419,7 @@ export class Runtime {
       this.changed('#');
       for (const root of this.store.waiters.roots()) this.drainCheckout(root);
       const selected = this.external.resolveHarness(snapshot);
-      if (vcs === 'git') switch (selected.kind) {
+      if (session.vcs === 'git') switch (selected.kind) {
         case 'unknown': break;
         case 'external': if (!snapshot.error) this.worktrees.builds.scheduleSeed(snapshot.checkout, ''); break;
         case 'pi': if (!snapshot.error) this.worktrees.builds.scheduleSeed(snapshot.checkout, session.commandPolicy === 'sandboxed' ? snapshot.id : ''); break;
@@ -1406,7 +1458,7 @@ export class Runtime {
     const turn = run.run(requestId, text, model.id, codexEffort(snapshot.thinking_level, model.efforts), this.imageData(id, requestId));
     session.started = true; this.capacity.phases.set(snapshot.id, 'running');
     await this.steer(session);
-    await turn;
+    return turn;
   }
   /** A Claude Code thread's run: one Claude Code process, in the thread's mode, with Plait's approvals. */
   private async runClaude(session: Session, requestId: string, text: string, instructions: string) {
@@ -1440,7 +1492,7 @@ export class Runtime {
     session.authorization.activate();
     const turn = run.run(requestId, text, this.imageData(id, requestId));
     session.started = true; this.capacity.phases.set(snapshot.id, 'running');
-    await turn;
+    return turn;
   }
   async close() {
     if (this.automations) await this.automations.close();
@@ -1476,9 +1528,6 @@ export class Runtime {
   }
   async reply(input: unknown) {
     try {
-      this.automations?.observeArrival(input);
-      // With either background feature on, client requests take turns with its requests.
-      if (this.automations || this.graph) return { ok: true, result: await this.enqueue(() => this.handle(input)) };
       return { ok: true, result: await this.handle(input) };
     } catch (error) { return { ok: false, error: failure(resourceError(error)) }; }
   }

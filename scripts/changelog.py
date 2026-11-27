@@ -9,7 +9,7 @@ note, in plain words for someone using Plait.
 `changelog.py collect <tag>` moves every note into a new section at the top
 of CHANGELOG.md and deletes the note files. A release-prep pull request runs
 it. `changelog.py section <tag>` prints that section for the release notes,
-and fails when it is missing, so a preview cannot ship without one.
+and fails if the section is missing or any notes still await collection.
 """
 import re
 import sys
@@ -91,6 +91,8 @@ def section(tag, root=ROOT):
     body = found.get(tag)
     if not body:
         raise Invalid(f"CHANGELOG.md has no section for {tag}; run the release-prep step first")
+    if notes(root / "changes"):
+        raise Invalid(f"add the outstanding change notes to the {tag} section before releasing")
     return body
 
 
