@@ -55,11 +55,32 @@ export class Graph {
   private projects = new Set<string>();
   private readonly sourceIdentity: (id: string) => Promise<FileIdentity>;
   private readonly receipt: (id: string, request: string) => { state: string; error: { message: string } | null } | undefined;
-  constructor(directory: string, send: Send, sourceIdentity: Graph['sourceIdentity'], receipt: Graph['receipt']) {
+  private readonly probing = new Set<string>();
+  private readonly savedIdentity: (id: string) => FileIdentity;
+  private readonly probe: (path: string) => Promise<{ project: string; identity: string }>;
+  constructor(directory: string, send: Send, sourceIdentity: Graph['sourceIdentity'], receipt: Graph['receipt'],
+    savedIdentity: (id: string) => FileIdentity,
+    probe = async (path: string) => {
+      const project = await realpath(path);
+      return { project, identity: JSON.stringify(await rootIdentity(project)) };
+    }) {
+    this.savedIdentity = savedIdentity;
+    this.probe = probe;
     this.sourceIdentity = sourceIdentity;
     this.receipt = receipt;
     this.store = new Storage(directory);
     this.send = send;
+  }
+  private async pollIdentity(path: string) {
+    // Timed-out reads keep their slots until the filesystem operation settles.
+    if (this.probing.size >= 2 || this.probing.has(path)) return null;
+    this.probing.add(path);
+    // Give a local read a short head start. A stalled drive must not hold the request queue.
+    let timer: NodeJS.Timeout | undefined;
+    const pending = new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), 40); });
+    const read = this.probe(path).catch(() => null).finally(() => this.probing.delete(path));
+    try { return await Promise.race([read, pending]); }
+    finally { clearTimeout(timer); }
   }
   handles(input: unknown): input is Request {
     return !!input && typeof input === 'object' && graphRequest((input as Request).op);
@@ -102,8 +123,8 @@ export class Graph {
     const existing = this.store.node(id);
     if (existing) return existing;
     const { thread } = await this.watch(id, send);
-    this.store.db.prepare('INSERT INTO nodes(id,project,thread,title,started,done) VALUES(?,?,?,?,1,?)')
-      .run(id, thread.checkout, id, thread.title ?? '', Number(clean(thread)));
+    this.store.db.prepare('INSERT INTO nodes(id,project,thread,title,started,done,project_identity) VALUES(?,?,?,?,1,?,?)')
+      .run(id, thread.checkout, id, thread.title ?? '', Number(clean(thread)), JSON.stringify(this.savedIdentity(id)));
     return this.store.node(id)!;
   }
   private async dependencies(input: unknown, project: string, send: Send) {
@@ -143,9 +164,9 @@ export class Graph {
       if (r.op_id !== undefined && (typeof r.op_id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(r.op_id))) fail('invalid_request', 'Invalid operation ID.');
       if (op === 'graph') {
         const named = string(r.project, 'project', 4096);
-        const project = await realpath(named).catch(() => named);
-        if (!project.startsWith('/')) fail('invalid_request', 'Expected an absolute project path.');
-        return this.view.read(this.store, project, JSON.stringify(await rootIdentity(project).catch(() => null)), r.revision, await this.list(send));
+        if (!named.startsWith('/')) fail('invalid_request', 'Expected an absolute project path.');
+        const [current, page] = await Promise.all([this.pollIdentity(named), this.list(send)]);
+        return this.view.read(this.store, named, current, r.revision, page);
       }
       if (op === 'create_draft' || op === 'fork_thread') return this.create(r, send, deadline);
       if (op === 'send_results') {
@@ -205,9 +226,9 @@ export class Graph {
     }) as Start;
     const identity = await deadline.read(() => rootIdentity(checkout));
     const projectIdentity = checkout === project ? identity : await deadline.read(() => rootIdentity(project));
+    if (parent) await deadline.read(() => this.checkSource(parent.thread!, identity));
     if (parent?.project_identity && parent.project_identity !== JSON.stringify(projectIdentity))
       fail('conflict', 'The project at this path changed');
-    if (parent) await deadline.read(() => this.checkSource(parent.thread!, identity));
     if (start.harness !== 'pi' && start.mode === undefined) {
       const { harnesses } = await send({ op: 'harnesses', protocol_version: 6 }) as { harnesses: HarnessEntry[] };
       const mode = harnesses.find(entry => entry.id === start.harness)?.default_mode;
@@ -273,12 +294,15 @@ export class Graph {
     const db = this.store.db;
     let cursor = 0;
     while (!this.closing) {
-      const rows = db.prepare(`SELECT rowid,id,thread FROM nodes WHERE project=? AND rowid>? AND deleted=0 AND started=1
-        AND EXISTS(SELECT 1 FROM edges WHERE src=nodes.id OR dst=nodes.id) ORDER BY rowid LIMIT 50`).all(project,cursor) as {rowid:number; id:string; thread:string}[];
+      const rows = db.prepare(`SELECT rowid,id,thread, (project_identity IS NULL AND settings IS NULL) AS imported FROM nodes WHERE project=? AND rowid>? AND deleted=0 AND started=1
+        AND EXISTS(SELECT 1 FROM edges WHERE src=nodes.id OR dst=nodes.id) ORDER BY rowid LIMIT 50`).all(project,cursor) as {rowid:number; id:string; thread:string; imported:number}[];
       const batch = this.batchTail.then(async () => {
         for (const n of rows) {
           try {
             const { thread: t } = await this.watch(n.thread);
+            // Older imported threads have no admission settings or captured graph identity.
+            if (n.imported)
+              db.prepare('UPDATE nodes SET project_identity=? WHERE id=?').run(JSON.stringify(this.savedIdentity(n.thread)), n.id);
             const summary = {
               id: t.id, checkout: t.checkout, title: t.title ?? '', model: t.model, status: t.status, archived: !!t.archived,
               harness: t.harness?.id ?? 'pi', pending_approval: !!t.pending_approval, created_at: t.created_at ?? 0, updated_at: t.updated_at ?? 0

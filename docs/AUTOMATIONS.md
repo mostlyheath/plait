@@ -1,6 +1,6 @@
 # Automations
 
-**The host scheduler is built behind `PLAIT_AUTOMATIONS=1`, off by default and not ready to turn on: issues labelled [`blocks-flag`](https://github.com/mostlyheath/plait/issues?q=label%3Ablocks-flag) (#266–#268) must be fixed first. The desktop controls below are planned.** The project owner agreed the product
+**The host scheduler is built behind `PLAIT_AUTOMATIONS=1`, off by default and not ready to turn on: issues labelled [`blocks-flag`](https://github.com/mostlyheath/plait/issues?q=label%3Ablocks-flag) must be resolved before rollout. The desktop controls below are planned.** The project owner agreed the product
 decisions and the host contract below. Each pull request that changes storage
 or the protocol still needs its independent review (see
 [Contributing](../CONTRIBUTING.md)).
@@ -85,6 +85,7 @@ start while the host is down or the Mac is asleep. When the host comes back:
 
 - If the latest missed run is still inside the catch-up window, it starts
   once.
+- An unsubmitted scheduled claim can start only if it is still the latest occurrence and within its saved catch-up window.
 - Every other missed run is recorded as missed. Missed runs never pile up into
   a burst.
 
@@ -130,9 +131,11 @@ The host owns automations. The desktop is a client of them, like threads.
 - **Creation:** `create_automation` takes a creation request ID and a definition.
   It persists the definition and returns `state: "preparing"` and
   `admission_request_id` immediately. The service requests worktree placement
-  for Git projects, including Git roots selected as directories, and in-place placement for plain folders. Directory validation runs during preparation. It checks
+  for Git projects, including Git roots selected as directories, and in-place placement for plain folders. The automation service probes the checkout in a background step and rechecks a plain folder immediately before requesting in-place admission. It checks
   `admission_status` in the background, with one outstanding request per
-  placement. Poll `automation_status` by automation ID, or refresh the list.
+  placement. With automations enabled, the background socket operation
+  `advance_automation_placement` takes the automation ID and starts or polls that saved placement.
+  Its reply does not wait for checkout checks or admission. Poll `automation_status` by automation ID, or refresh the list.
   Pending placements survive host restart. Failed placement exposes the
   reason through status and does not enable the schedule.
 - **Runs:** the timer checks the thread settings and command policy against
@@ -149,6 +152,7 @@ The host owns automations. The desktop is a client of them, like threads.
   restarts before saving the automation receipt, catch-up can submit the same
   ID safely. A click delivered after the scheduled receipt was saved returns
   that receipt if the host received the click within the catch-up window in effect when the occurrence was claimed.
+  When an older store has no record of the window and the match is uncertain, Run now returns a conflict. After downgrade, a manual click overlapping a protected occurrence can return a skipped receipt identifying the scheduled claim.
   Edits preserve that receipt. If an edit overtakes a click and the host cannot
   match it to an occurrence, Run now returns a conflict.
   Other clicks create manual claims. The host saves the click and claim in
