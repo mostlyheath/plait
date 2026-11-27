@@ -166,6 +166,10 @@ pub enum BookmarkRecord {
     Issues {
         selected: Option<String>,
     },
+    /// The Graph tab's selected draft node ID.
+    Graph {
+        selected: Option<String>,
+    },
     Inline {
         view: ThreadView,
         json: Box<str>,
@@ -216,7 +220,9 @@ impl BookmarkRecord {
     pub fn view(&self) -> ThreadView {
         match self {
             Self::Inline { view, .. } | Self::Stored { view, .. } => *view,
-            Self::Worktrees { .. } | Self::Issues { .. } => ThreadView::Conversation,
+            Self::Worktrees { .. } | Self::Issues { .. } | Self::Graph { .. } => {
+                ThreadView::Conversation
+            }
         }
     }
 
@@ -226,7 +232,10 @@ impl BookmarkRecord {
             Self::Inline { view, json } => {
                 decode_extended(json.as_bytes()).filter(|b| b.view == *view)
             }
-            Self::Stored { .. } | Self::Worktrees { .. } | Self::Issues { .. } => None,
+            Self::Stored { .. }
+            | Self::Worktrees { .. }
+            | Self::Issues { .. }
+            | Self::Graph { .. } => None,
         }
     }
 
@@ -236,13 +245,15 @@ impl BookmarkRecord {
                 json.len() <= INLINE_BOOKMARK_LIMIT && self.inline().is_some()
             }
             Self::Stored { blob, .. } => blob_id(blob),
-            Self::Issues { selected } => selected.as_ref().is_none_or(|id| {
-                !id.is_empty()
-                    && id.len() <= 128
-                    && id
-                        .bytes()
-                        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-            }),
+            Self::Issues { selected } | Self::Graph { selected } => {
+                selected.as_ref().is_none_or(|id| {
+                    !id.is_empty()
+                        && id.len() <= 128
+                        && id
+                            .bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+                })
+            }
             Self::Worktrees { selected, .. } => selected.as_ref().is_none_or(|p| {
                 p.is_absolute()
                     && p.as_os_str().len() <= 4096
@@ -257,7 +268,9 @@ impl BookmarkRecord {
                 Self::Inline { json, .. } => json.len(),
                 Self::Stored { blob, .. } => blob.capacity(),
                 Self::Worktrees { selected, .. } => selected.as_ref().map_or(0, |p| p.capacity()),
-                Self::Issues { selected } => selected.as_ref().map_or(0, String::capacity),
+                Self::Issues { selected } | Self::Graph { selected } => {
+                    selected.as_ref().map_or(0, String::capacity)
+                }
             }
     }
 }

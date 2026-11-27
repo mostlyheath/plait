@@ -373,6 +373,7 @@ pub mod cleanup;
 pub mod device;
 pub mod folders;
 pub mod git;
+pub mod graph;
 
 pub mod identity;
 pub mod linear;
@@ -399,10 +400,20 @@ impl Client {
         request: &R,
         wait: Duration,
     ) -> Result<T, Error> {
+        self.send_tracking_transmission(request, wait, &mut false)
+    }
+
+    fn send_tracking_transmission<R: Serialize, T: DeserializeOwned>(
+        &self,
+        request: &R,
+        wait: Duration,
+        transmitted: &mut bool,
+    ) -> Result<T, Error> {
         #[cfg(feature = "test-host")]
         if let Transport::TestReads(reply) = &self.transport {
             let request = serde_json::to_value(request)
                 .map_err(|_| Error::Protocol("Cannot encode test request.".into()))?;
+            *transmitted = true;
             return decode(reply(request).to_string().as_bytes());
         }
         let mut bytes = serde_json::to_vec(request)
@@ -410,7 +421,10 @@ impl Client {
         let result = self.send_encoded(&bytes);
         bytes.fill(0);
         std::hint::black_box(&bytes);
-        decode(&result?.next(Some(Instant::now() + wait))?)
+        let mut frames = result?;
+        // The newline completes the request frame.
+        *transmitted = true;
+        decode(&frames.next(Some(Instant::now() + wait))?)
     }
 
     fn send_encoded(&self, bytes: &[u8]) -> Result<Frames, Error> {

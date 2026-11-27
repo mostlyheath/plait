@@ -166,7 +166,11 @@ fn shortcut(action: &dyn Action, window: &Window) -> String {
 fn action_items(view: &Plait, window: &Window) -> Vec<Item> {
     ACTIONS
         .iter()
-        .filter(|action| action.place != Place::Hidden && action.id != "palette.toggle")
+        .filter(|action| {
+            action.place != Place::Hidden
+                && action.id != "palette.toggle"
+                && (action.id != "view.graph" || view.graph_supported())
+        })
         .map(|action| {
             let run = action.action();
             let hint = shortcut(run.as_ref(), window);

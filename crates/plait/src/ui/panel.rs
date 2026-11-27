@@ -18,7 +18,9 @@ impl Plait {
     }
 
     pub(super) fn panel_is_open(&self) -> bool {
-        !self.worktrees_visible() && self.tabs.model.panel().is_some_and(|p| p.open)
+        !self.worktrees_visible()
+            && !self.graph_visible()
+            && self.tabs.model.panel().is_some_and(|p| p.open)
     }
 
     pub(super) fn panel_kind(&self) -> Option<PanelKind> {

@@ -4,6 +4,8 @@
 //! snapshot; disk writes are serialized so an older save cannot replace newer work.
 
 mod blobs;
+mod graph_actions;
+pub use graph_actions::GraphAction;
 mod drafts;
 mod machines;
 use crate::host::ModelChoice;

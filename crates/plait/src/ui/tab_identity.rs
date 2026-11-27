@@ -442,7 +442,8 @@ impl Plait {
                     TabTarget::Existing { checkout, .. }
                     | TabTarget::Draft { checkout, .. }
                     | TabTarget::Worktrees { checkout }
-                    | TabTarget::Issues { checkout } => checkout,
+                    | TabTarget::Issues { checkout }
+                    | TabTarget::Graph { checkout } => checkout,
                 };
                 if checkout.host == previous {
                     checkout.host = host.clone();
@@ -491,6 +492,9 @@ impl Plait {
         self.refresh_tab_rows();
         if self.worktrees_visible() {
             self.refresh_worktrees_view(false, cx);
+        }
+        if self.graph_visible() {
+            self.sync_graph_view(cx);
         }
         cx.notify();
     }
@@ -551,7 +555,8 @@ impl Plait {
                     TabTarget::Existing { checkout, .. }
                     | TabTarget::Draft { checkout, .. }
                     | TabTarget::Worktrees { checkout }
-                    | TabTarget::Issues { checkout } => checkout,
+                    | TabTarget::Issues { checkout }
+                    | TabTarget::Graph { checkout } => checkout,
                 };
                 checkout.root = root;
                 checkout.directory = directory;

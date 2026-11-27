@@ -38,6 +38,7 @@ pub struct RestoredTabs {
 /// All inputs come from already validated services, never from the saved file.
 /// Supply a complete catalog; a watch's newest-200 subset cannot prove absence.
 pub struct RestoreContext<'a> {
+    pub graph_supported: bool,
     pub host: &'a HostKey,
     pub threads: &'a [ThreadSummary],
     pub checkouts: &'a [CheckoutKey],
@@ -58,6 +59,7 @@ impl RestoreContext<'_> {
                 .iter()
                 .any(|t| &t.id == id && t.checkout == checkout.root),
             TabTarget::Draft { .. } => self.drafts.contains(target),
+            TabTarget::Graph { .. } => self.graph_supported,
             TabTarget::Worktrees { .. } | TabTarget::Issues { .. } => true,
         }
     }
@@ -153,7 +155,8 @@ pub fn decode(bytes: &[u8], window: WindowId, context: &RestoreContext<'_>) -> R
             TabTarget::Existing { checkout, .. }
             | TabTarget::Draft { checkout, .. }
             | TabTarget::Worktrees { checkout }
-            | TabTarget::Issues { checkout } => checkout,
+            | TabTarget::Issues { checkout }
+            | TabTarget::Graph { checkout } => checkout,
         };
         if let Some(current) = context.checkouts.iter().find(|current| {
             current.host == checkout.host
@@ -234,6 +237,7 @@ mod tests {
         }
         fn context(&self) -> RestoreContext<'_> {
             RestoreContext {
+                graph_supported: true,
                 host: &self.host,
                 threads: &self.threads,
                 checkouts: &self.checkouts,
@@ -650,5 +654,46 @@ mod tests {
             )
             .is_err()
         );
+    }
+    #[test]
+    fn graph_round_trip_and_reject_a_mismatched_bookmark() {
+        let (mut w, c) = source(1);
+        let target = TabTarget::Graph {
+            checkout: checkout("/repo"),
+        };
+        let id = w.open(target.clone(), Some(2)).unwrap();
+        let bookmark = BookmarkRecord::Graph {
+            selected: Some("draft_node_1".into()),
+        };
+        w.save_bookmark(id, bookmark.clone()).unwrap();
+        let unsupported = RestoreContext {
+            graph_supported: false,
+            ..c.context()
+        };
+        let bytes = encode(&w, &c.context()).unwrap();
+        assert!(
+            decode(&bytes, WindowId(99), &unsupported)
+                .window
+                .tabs()
+                .iter()
+                .all(|t| !t.session().target().is_graph())
+        );
+        let restored = read(&value(&w, &c), &c);
+        assert_eq!(restored.status, RestoreStatus::Restored);
+        let tab = restored
+            .window
+            .get(restored.window.active().unwrap())
+            .unwrap();
+        assert_eq!(tab.session().target(), &target);
+        assert_eq!(tab.session().bookmark(), &bookmark);
+        let other = w
+            .open(
+                TabTarget::Worktrees {
+                    checkout: checkout("/repo"),
+                },
+                Some(2),
+            )
+            .unwrap();
+        assert!(w.save_bookmark(other, bookmark).is_err());
     }
 }

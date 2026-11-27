@@ -149,6 +149,7 @@ impl Plait {
                         match result {
                             Ok(live) => {
                                 let (relabel, ended) = this.worktree_summaries(&live);
+                                let graph_changed = this.graph_summaries_changed(&live);
                                 let review_changed = live.iter().any(|new| {
                                     new.checkout == this.host.creation.checkout
                                         && this
@@ -174,6 +175,9 @@ impl Plait {
                                     this.refresh_turn_review(cx);
                                 }
                                 this.worktrees_after_summaries(relabel, ended, cx);
+                                if graph_changed {
+                                    this.refresh_graph_after_summaries(cx);
+                                }
                                 this.apply_thread_activity(false, window, cx);
                                 this.reconcile_checkout_waits(window, cx);
                                 this.rebuild_projects(cx);

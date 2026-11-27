@@ -54,6 +54,7 @@ mod find;
 mod finished_work;
 mod folded_turns;
 mod git_step;
+mod graph;
 mod header;
 mod interface_font;
 mod isolation;
@@ -2240,7 +2241,7 @@ fn keys_drive_the_palette_and_picker() {
     let scratch = std::env::temp_dir().join(format!("plait-keys-ui-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&scratch);
     let repository = fixture_repository(&scratch);
-    let mut harness = Harness::new(&repository, None, 900., 600.);
+    let mut harness = Harness::with_host(&repository, None, 900., 600., None);
     harness.connect(&repository, false);
     let focused = |harness: &mut Harness| {
         harness
@@ -2256,7 +2257,7 @@ fn keys_drive_the_palette_and_picker() {
         2 + super::actions::ACTIONS
             .iter()
             .filter(|action| action.place != super::actions::Place::Hidden
-                && action.id != "palette.toggle")
+                && !matches!(action.id, "palette.toggle" | "view.graph"))
             .count()
             + 1
             + 5,
@@ -2533,6 +2534,7 @@ fn walk(output: Option<&Path>) {
         machines::walk(&repository, output, suffix, width, height);
         linear_settings::walk_project(&repository, output, suffix, width, height);
         issues::walk(&repository, output, suffix, width, height);
+        graph::walk(&repository, output, suffix, width, height);
         worktrees_view::walk(&repository, output, suffix, width, height);
     }
     let _ = std::fs::remove_dir_all(&scratch);
