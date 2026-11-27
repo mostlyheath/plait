@@ -16,7 +16,7 @@ type Definition = Pick<Start, 'harness' | 'provider' | 'model_id' | 'mode' | 'th
 };
 type Automation = { id: string; thread_id: string; definition: Definition; revision: number; state: string; pause_reason: string | null; cursor: number; missed_count: number };
 const fields: Record<string, string[]> = {
-  list_automations: [], automation_status: ['id'], get_automation: ['id'], create_automation: ['definition', 'request_id', 'caller'],
+  advance_automation_placement: ['id'], list_automations: [], automation_status: ['id'], get_automation: ['id'], create_automation: ['definition', 'request_id', 'caller'],
   update_automation: ['id', 'definition'], pause_automation: ['id'], resume_automation: ['id'],
   delete_automation: ['id'], run_automation_now: ['id', 'request_id', 'received_at_ms'],
 };
@@ -65,14 +65,40 @@ export class Automations {
   private running = false;
   private ticking?: Promise<void>;
   private readyAt = 0;
-  constructor(directory: string, send: Send, accepted: Automations['accepted'] = () => false) {
+  private steps = new Map<string, Promise<unknown>>();
+  private localAdmission?: Send;
+  private readonly probe: (checkout: string) => Promise<{ busy: boolean }>;
+  constructor(directory: string, send: Send, accepted: Automations['accepted'] = () => false,
+    probe: Automations['probe'] = checkout => send({ op: 'admission_info', checkout }) as Promise<{ busy: boolean }>,
+    localAdmission?: Send) {
+    this.localAdmission = localAdmission;
+    this.probe = probe;
     this.send = send;
     this.accepted = accepted;
     this.db = new DatabaseSync(join(directory, 'automations.sqlite'));
     this.db.exec('PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL');
-    this.db.exec(schema);
-    if (!this.db.prepare('PRAGMA table_info(automation_claims)').all().some(column => column.name === 'catch_up_ms'))
-      this.db.exec('ALTER TABLE automation_claims ADD COLUMN catch_up_ms INTEGER');
+    this.transaction(() => {
+      this.db.exec(schema);
+      if (this.db.prepare('PRAGMA table_info(automation_claims)').all().some(column => column.name === 'catch_up_ms')) {
+        this.db.exec(`INSERT OR IGNORE INTO automation_claim_windows SELECT id,catch_up_ms
+          FROM automation_claims WHERE occurrence IS NOT NULL AND catch_up_ms IS NOT NULL;
+          ALTER TABLE automation_claims DROP COLUMN catch_up_ms`);
+      }
+      this.db.exec(`INSERT OR IGNORE INTO automation_unknown_windows
+        SELECT c.id FROM automation_claims c LEFT JOIN automation_claim_windows w USING(id)
+        WHERE c.occurrence IS NOT NULL AND w.id IS NULL`);
+      // A prior timer retries every claim without a receipt, even after downgrade.
+      const unknown = this.db.prepare(`SELECT c.* FROM automation_claims c JOIN automation_unknown_windows u USING(id)
+        WHERE NOT EXISTS (SELECT 1 FROM automation_occurrences WHERE automation_id=c.automation_id AND request_id=c.id)`).all();
+      for (const claim of unknown) {
+        const a = this.get(String(claim.automation_id));
+        if (!this.reconcileAccepted(a, String(claim.id), Number(claim.due), Number(claim.revision))) {
+          this.db.prepare("INSERT INTO automation_occurrences VALUES (?,?,?,?,'missed','Unknown legacy catch-up window.')")
+            .run(a.id, claim.id, claim.revision, claim.due);
+          this.db.prepare('UPDATE automations SET missed_count=missed_count+1 WHERE id=?').run(a.id);
+        }
+      }
+    });
   }
   handles(input: unknown) { return Object.hasOwn(fields, (input as { op?: string } | null)?.op ?? ''); }
   private list() { return this.db.prepare('SELECT * FROM automations ORDER BY rowid').all().map(decode); }
@@ -90,22 +116,24 @@ export class Automations {
       error: row.error === null ? null : String(row.error),
     }));
   }
-  private progress(p: ReturnType<Automations['pending']>[number]) {
+  private progress(p: ReturnType<Automations['pending']>[number], fromHost = false) {
+    if (this.localAdmission && !fromHost) {
+      if (!p.error && !this.steps.has(p.id) && !this.placements.has(p.id)) {
+        // The socket grants a background step. Its reply never waits for Git or a lease.
+        const step = this.send({ op: 'advance_automation_placement', id: p.id })
+          .catch(error => console.error('Automation placement step:', error))
+          .finally(() => { this.steps.delete(p.id); });
+        this.steps.set(p.id, step);
+      }
+      return this.placementStatus(p);
+    }
     const request_id = 'automation-' + p.id;
     if (!p.error && !this.placements.has(p.id)) {
       const task = (async () => {
         try {
-          const request = p.submitted ? { op: 'admission_status', request_id } : placement(p.definition, request_id);
-          const target = p.definition.target;
-          if (!p.submitted && target.kind === 'directory') {
-            const location = await projectKind(target.path);
-            if (location.vcs === 'git') {
-              if (location.root !== await realpath(target.path))
-                fail('invalid_request', 'This folder is inside a Git project. Choose the project instead.');
-              Object.assign(request, { placement: 'worktree', checkout: location.root });
-            }
-          }
-          const { admission } = await this.send(request) as { admission: Admission };
+          const request = p.submitted ? { op: 'admission_status', request_id }
+            : await this.preparePlacement(p.id, p.definition, request_id);
+          const { admission } = await (this.localAdmission ?? this.send)(request) as { admission: Admission };
           if (admission.state === 'preparing') {
             this.db.prepare('UPDATE automation_placements SET submitted=1 WHERE id=?').run(p.id);
           } else if (admission.state === 'ready' && admission.thread_id) {
@@ -122,7 +150,26 @@ export class Automations {
       })().finally(() => { this.placements.delete(p.id); this.arm(); });
       this.placements.set(p.id, task);
     }
-    return { id: p.id, state: p.error ? 'failed' : 'preparing', admission_request_id: request_id, cursor: p.cursor, error: p.error };
+    return this.placementStatus(p);
+  }
+  private placementStatus(p: ReturnType<Automations['pending']>[number]) {
+    return { id: p.id, state: p.error ? 'failed' : 'preparing', admission_request_id: 'automation-' + p.id, cursor: p.cursor, error: p.error };
+  }
+  private async preparePlacement(id: string, definition: Definition, requestId: string) {
+    const request = placement(definition, requestId);
+    if (definition.target.kind === 'directory') {
+      const target = await projectKind(request.checkout);
+      if (target.vcs === 'git') {
+        if (target.root !== request.checkout)
+          fail('invalid_request', 'This folder is inside a Git project. Choose the project instead.');
+        request.placement = 'worktree';
+      } else this.db.prepare('INSERT OR IGNORE INTO automation_folder_checks VALUES (?)').run(id);
+    }
+    await this.probe(request.checkout);
+    if (this.db.prepare('SELECT 1 FROM automation_folder_checks WHERE id=?').get(id)
+      && (await projectKind(request.checkout)).vcs !== 'folder')
+      fail('permission_denied', 'The automation folder became a Git checkout. Choose the project instead.');
+    return request;
   }
   private summary(a: Automation) {
     const { name, schedule, target } = a.definition;
@@ -180,6 +227,10 @@ export class Automations {
       }
       const id = key(r.id);
       const pending = this.pending().find(p => p.id === id);
+      if (r.op === 'advance_automation_placement') {
+        if (pending) this.progress(pending, true);
+        return {};
+      }
       if (pending) {
         if (r.op === 'delete_automation' && pending.error) {
           this.transaction(() => {
@@ -228,7 +279,7 @@ export class Automations {
           const receipt = this.receipt(id, String(claim.request_id));
           if (receipt) return { occurrence: receipt };
           if ('revision' in claim && claim.revision !== a.revision) return { occurrence: { ...claim, outcome: 'pending' } };
-          this.launch(a, Number(claim.due), String(claim.request_id)).catch(error => console.error('Automation run:', error));
+          this.launch(a, Number(claim.due), String(claim.request_id), Math.max(now, Date.now())).catch(error => console.error('Automation run:', error));
           return { occurrence: { ...claim, outcome: 'pending' } };
         }
         default: fail('invalid_request', 'Unknown automation operation.');
@@ -248,19 +299,29 @@ export class Automations {
   }
   private claimClick(a: Automation, click: string, now: number) {
     const id = a.id;
-    return this.transaction(() => {
-      const saved = this.db.prepare('SELECT c.request_id,c.due,k.revision FROM automation_clicks c JOIN automation_claims k ON k.id=c.request_id WHERE c.automation_id=? AND click=?').get(id, click);
-      if (saved) return saved;
+    const claim = this.transaction(() => {
+      const saved = this.db.prepare(`SELECT c.request_id,c.due,k.revision,u.id AS unknown_window FROM automation_clicks c
+        JOIN automation_claims k ON k.id=c.request_id LEFT JOIN automation_unknown_windows u ON u.id=k.id
+        WHERE c.automation_id=? AND click=?`).get(id, click);
+      if (saved) {
+        if (a.state === 'active' && saved.request_id === id + '-' + saved.due && !this.receipt(id, String(saved.request_id)))
+          this.claimDue(a, Math.max(now, Date.now()));
+        return saved;
+      }
       const due = a.state === 'active' ? this.claimDue(a, now, true) : null;
-      const pending = due ?? this.db.prepare(`SELECT id AS request_id,due,revision FROM automation_claims
-        WHERE automation_id=? AND occurrence <= ? AND ? - occurrence <= coalesce(catch_up_ms, ?)
-        ORDER BY occurrence DESC LIMIT 1`).get(id, now, now, a.definition.catch_up_ms);
+      const pending = due ?? this.db.prepare(`SELECT c.id AS request_id,due,revision,w.catch_up_ms AS catch_up_ms FROM automation_claims c LEFT JOIN automation_claim_windows w USING(id)
+        WHERE automation_id=? AND occurrence <= ? AND (w.catch_up_ms IS NULL OR ? - occurrence <= w.catch_up_ms)
+        ORDER BY occurrence DESC LIMIT 1`).get(id, now, now);
       if (!pending && now < a.cursor && a.revision > 1)
         fail('conflict', 'Automation changed after this click was received.');
       const claim = pending ?? this.insertClaim(a, null, now, 'manual-' + createHash('sha256').update(id + '-' + click).digest('hex'));
       this.db.prepare('INSERT INTO automation_clicks VALUES (?,?,?,?)').run(id, click, claim.request_id, claim.due);
-      return claim;
+      return { request_id: claim.request_id, due: claim.due, revision: claim.revision,
+        unknown_window: pending && 'catch_up_ms' in pending && pending.catch_up_ms === null };
     });
+    // Commit the click binding before reporting the conflict. A rollback retry reads it.
+    if (claim.unknown_window) fail('conflict', 'The catch-up window for this older occurrence is unknown.');
+    return { request_id: claim.request_id, due: claim.due, revision: claim.revision };
   }
   private receipt(automation: string, id: string) {
     return this.db.prepare('SELECT * FROM automation_occurrences WHERE automation_id=? AND request_id=?').get(automation, id);
@@ -272,9 +333,18 @@ export class Automations {
       .run(a.id, id, revision, due);
     return true;
   }
-  private launch(a: Automation, due: number, id: string) {
+  private launch(a: Automation, due: number, id: string, now: number) {
     const active = this.runs.get(id);
     if (active) return active;
+    const window = this.db.prepare(`SELECT w.catch_up_ms AS ms FROM automation_claims c
+      LEFT JOIN automation_claim_windows w USING(id) WHERE c.id=? AND occurrence IS NOT NULL`).get(id);
+    if (window && (window.ms === null || now - due > Number(window.ms) || due < this.boundary(a))) {
+      this.transaction(() => {
+        this.db.prepare("INSERT INTO automation_occurrences VALUES (?,?,?,?,'missed',NULL)").run(a.id, id, a.revision, due);
+        this.db.prepare('UPDATE automations SET missed_count=missed_count+1 WHERE id=?').run(a.id);
+      });
+      return Promise.resolve(this.receipt(a.id, id));
+    }
     const task = this.run(a, due, id).finally(() => { this.runs.delete(id); });
     this.runs.set(id, task);
     return task;
@@ -286,13 +356,13 @@ export class Automations {
     try {
       const { thread } = await this.send({ op: 'stored_thread', protocol_version: 6, thread_id: a.thread_id }) as { thread: Snapshot };
       checkout = thread.checkout;
-      const { busy } = await this.send({ op: 'admission_info', checkout }).catch(async error => {
+      const { busy } = await this.probe(checkout).catch(async error => {
         if (error instanceof HostError && error.code === 'internal') {
           const missing = await lstat(thread.checkout).then(() => false, (cause: NodeJS.ErrnoException) => cause.code === 'ENOENT');
           if (missing) fail('checkout_missing', 'The automation checkout no longer exists.');
         }
         throw error;
-      }) as { busy: boolean };
+      });
       if (busy || thread.status === 'running' || thread.status === 'awaiting_approval') {
         // A retry can find its own accepted message occupying the checkout.
         const { waiters } = await this.send({ op: 'checkout_queue', thread_id: a.thread_id }) as { waiters: { request_id: string }[] };
@@ -337,7 +407,8 @@ export class Automations {
     return Math.max(a.cursor, Number(row?.latest ?? a.cursor));
   }
   private insertClaim(a: Automation, occurrence: number | null, due: number, id: string) {
-    this.db.prepare('INSERT INTO automation_claims(id,automation_id,occurrence,due,revision,catch_up_ms) VALUES (?,?,?,?,?,?)').run(id, a.id, occurrence, due, a.revision, a.definition.catch_up_ms);
+    this.db.prepare('INSERT INTO automation_claims(id,automation_id,occurrence,due,revision) VALUES (?,?,?,?,?)').run(id, a.id, occurrence, due, a.revision);
+    if (occurrence !== null) this.db.prepare('INSERT INTO automation_claim_windows VALUES (?,?)').run(id, a.definition.catch_up_ms);
     return { request_id: id, due, revision: a.revision };
   }
   private claimDue(a: Automation, now: number, forClick = false) {
@@ -363,7 +434,7 @@ export class Automations {
         if (claim.revision !== a.revision) {
           this.db.prepare("INSERT OR IGNORE INTO automation_occurrences VALUES (?,?,?,?,'skipped','Automation changed before submission.')")
             .run(a.id, claim.id, claim.revision, claim.due);
-        } else tasks.push(this.launch(a, Number(claim.due), id));
+        } else tasks.push(this.launch(a, Number(claim.due), id, now));
       }
     }
     const results = await Promise.allSettled(tasks);
@@ -396,5 +467,5 @@ export class Automations {
       this.arm();
     }, at - now).unref();
   }
-  async close() { this.running = false; clearTimeout(this.timer); await this.ticking?.catch(() => {}); await Promise.allSettled(this.runs.values()); await Promise.all(this.placements.values()); this.db.close(); }
+  async close() { this.running = false; clearTimeout(this.timer); await this.ticking?.catch(() => {}); await Promise.allSettled(this.runs.values()); await Promise.all(this.steps.values()); await Promise.all(this.placements.values()); this.db.close(); }
 }
