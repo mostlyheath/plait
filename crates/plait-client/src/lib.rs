@@ -2,6 +2,7 @@
 //!
 //! Blocking Git and host operations must run on the caller's background executor.
 
+pub mod automations;
 pub use plait_protocol::build_output;
 pub mod checkout_state;
 pub mod compose;

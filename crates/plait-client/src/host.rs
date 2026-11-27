@@ -367,6 +367,7 @@ pub use watch::{CancelWatch, Snapshots, ThreadLists, Updates};
 
 pub mod admission;
 pub mod agent;
+pub mod automations;
 pub mod build_output;
 pub mod checkout_queue;
 pub mod cleanup;

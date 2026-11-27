@@ -78,6 +78,10 @@ struct RowCacheKey {
     archived: bool,
     draft: bool,
     checkout: PathBuf,
+    automations_supported: bool,
+    automations_revision: u64,
+    automations_collapsed: bool,
+    automations_loading: bool,
 }
 
 impl Navigation {
@@ -145,6 +149,9 @@ enum RowId {
     Project(PathBuf),
     Thread(String),
     Draft,
+    AutomationsHeader,
+    Automation(String),
+    AutomationsEmpty,
 }
 
 #[derive(Default)]
@@ -173,6 +180,12 @@ pub(super) enum Row {
     Thread(usize),
     /// The new-thread draft, at the top of its project's threads.
     Draft,
+    AutomationsHeader {
+        after: bool,
+        folded: Option<usize>,
+    },
+    Automation(usize),
+    AutomationsEmpty,
 }
 
 /// One-line title that gives way to the trailing state.
@@ -293,6 +306,10 @@ impl Plait {
             archived: self.navigation.archived,
             draft: self.draft.open,
             checkout: self.host.creation.checkout.clone(),
+            automations_supported: self.automations.supported,
+            automations_revision: self.automations.revision,
+            automations_collapsed: self.automations.collapsed,
+            automations_loading: self.automations.loading,
         };
         let mut cache = self.navigation.row_cache.borrow_mut();
         if cache.key.as_ref() == Some(&key) {
@@ -337,6 +354,21 @@ impl Plait {
                 filtered.extend_from_slice(indices);
                 if open {
                     rows.extend(indices.iter().copied().map(Row::Thread));
+                }
+            }
+        }
+        if self.automations.supported {
+            let open = !self.automations.collapsed;
+            let count = self.automations.items.len();
+            rows.push(Row::AutomationsHeader {
+                after: !rows.is_empty(),
+                folded: (!open && count > 0).then_some(count),
+            });
+            if open {
+                if count == 0 && !self.automations.loading {
+                    rows.push(Row::AutomationsEmpty);
+                } else {
+                    rows.extend((0..count).map(Row::Automation));
                 }
             }
         }
@@ -745,6 +777,11 @@ impl Plait {
                             RowId::Thread(self.host.connection.threads()[index].id.clone())
                         }
                         Row::Draft => RowId::Draft,
+                        Row::AutomationsHeader { .. } => RowId::AutomationsHeader,
+                        Row::Automation(index) => {
+                            RowId::Automation(self.automations.items[index].summary.id.clone())
+                        }
+                        Row::AutomationsEmpty => RowId::AutomationsEmpty,
                     };
                     let focus = handles.get(&id).map_or_else(
                         || cx.focus_handle().tab_stop(true),
@@ -867,6 +904,16 @@ impl Plait {
                                 ),
                                 Row::Thread(index) => this.thread_card_entity(index, focus, cx),
                                 Row::Draft => this.draft_row(focus, cx),
+                                Row::AutomationsHeader { after, folded } => this
+                                    .automations_header_row(
+                                        after,
+                                        folded,
+                                        focus,
+                                        focus.is_focused(window),
+                                        cx,
+                                    ),
+                                Row::Automation(index) => this.automation_card(index, focus, cx),
+                                Row::AutomationsEmpty => this.automations_empty_row(focus),
                             }
                         }),
                     )

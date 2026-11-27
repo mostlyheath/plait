@@ -95,7 +95,7 @@ pub(super) fn path(path: &std::path::Path) -> bool {
     path.is_absolute()
         && path.as_os_str().len() <= 4096
         && path.to_str().is_some_and(|s| {
-            !s.chars().any(char::is_control)
+            !s.bytes().any(|byte| byte.is_ascii_control())
                 && !s.contains("//")
                 && !s.split('/').any(|part| part == "." || part == "..")
         })
