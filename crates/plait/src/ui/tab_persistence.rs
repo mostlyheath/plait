@@ -1,6 +1,7 @@
 //! Tab preferences are disposable; draft durability remains with the journal.
 use super::Plait;
 use gpui::*;
+use plait_client::machines::MachineId;
 use plait_client::{
     session::Journal,
     tabs::{
@@ -92,6 +93,21 @@ impl WriteGate {
         self.revision.load(Ordering::Acquire)
     }
 }
+#[derive(PartialEq, Eq)]
+pub(super) struct TabRead {
+    machine: MachineId,
+    generation: u64,
+}
+
+impl Plait {
+    pub(super) fn tab_read(&self) -> TabRead {
+        TabRead {
+            machine: self.machines.active.clone(),
+            generation: self.tabs.persistence.host_generation,
+        }
+    }
+}
+
 impl SaveRequest {
     pub(super) fn write(mut self) -> Result<(), String> {
         let _guard = self
@@ -220,7 +236,7 @@ impl Plait {
         let device = self.device_id(cx);
         let client = self.host_client();
         let local = self.host_is_local();
-        let generation = self.tabs.persistence.host_generation;
+        let request = self.tab_read();
         let task = cx.background_executor().spawn({
             let client = client.clone();
             let device = device.clone();
@@ -229,10 +245,10 @@ impl Plait {
         cx.spawn_in(window, async move |this, cx| {
             let result = task.await;
             let _ = this.update_in(cx, |this, window, cx| {
-                let state = &mut this.tabs.persistence;
-                if state.host_generation != generation {
+                if this.tab_read() != request {
                     return;
                 }
+                let state = &mut this.tabs.persistence;
                 state.host_loaded = true;
                 state.host_loading = false;
                 match result {
@@ -327,23 +343,48 @@ impl Plait {
     pub(super) fn load_tab_preferences(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.tabs.persistence.requested = true;
         self.tabs.persistence.window = Some(window.window_handle());
+        self.tabs.persistence.path = None;
+        self.tabs.persistence.writable = false;
+        self.tabs.persistence.loaded = !self.host_is_local();
+        if self.tabs.persistence.loaded {
+            return;
+        }
+        let request = self.tab_read();
         let task = cx.background_executor().spawn(async move {
             let path = storage::default_path();
-            let read = path.as_deref().map(storage::read).transpose();
+            let read = path.as_deref().map_or(Ok(None), storage::read);
             (path, read)
         });
         cx.spawn_in(window, async move |this, cx| {
             let (path, read) = task.await;
             let _ = this.update_in(cx, |this, window, cx| {
-                let state = &mut this.tabs.persistence;
-                state.loaded = true;
-                state.path = path;
-                state.writable = read.is_ok() && state.path.is_some();
-                state.bytes = read.ok().flatten().flatten();
-                this.try_restore_tabs(window, cx);
+                if this.apply_local_tab_read(request, path, read) {
+                    this.try_restore_tabs(window, cx);
+                }
             });
         })
         .detach();
+    }
+
+    pub(super) fn apply_local_tab_read(
+        &mut self,
+        request: TabRead,
+        path: Option<PathBuf>,
+        read: Result<Option<Vec<u8>>, String>,
+    ) -> bool {
+        if self.tab_read() != request {
+            return false;
+        }
+        let state = &mut self.tabs.persistence;
+        state.loaded = true;
+        state.path = path;
+        if state.target.is_none() {
+            state.writable = read.is_ok() && state.path.is_some();
+        }
+        if state.bytes.is_none() && !state.restored {
+            state.bytes = read.ok().flatten();
+        }
+        true
     }
 
     /// Only the current machine's drafts can return as tabs here.

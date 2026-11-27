@@ -182,6 +182,20 @@ fn automations_sidebar_and_thread_header_draw_cleanly() {
         }
     }
 
+    h.update(|p, _, _| {
+        p.automations.set_confirm_delete(Some("auto-failed".into()));
+        p.automations
+            .set_note("auto-failed".into(), "Delete refused".into(), true);
+        p.navigation.invalidate_rows();
+    });
+    h.draw();
+    #[cfg(debug_assertions)]
+    assert!(
+        h.draw_a11y()
+            .has_node(Role::Label, |node| node.value.as_deref()
+                == Some("Delete refused"))
+    );
+
     // Delete asks for confirmation; Escape cancels without deleting.
     h.update(|p, _, _| {
         p.automations.set_confirm_delete(Some("auto-active".into()));

@@ -573,17 +573,23 @@ fn switching_machines_puts_the_previous_tabs_away() {
     use plait_client::host::workspace::{HostIdentity, View};
     let scratch = std::env::temp_dir().join(format!("plait-machine-tabs-{}", std::process::id()));
     let repo = fixture_repository(&scratch);
-    let mut h = Harness::new(&repo, None, 900., 600.);
+    let mut h = Harness::with_host(&repo, None, 900., 600., None);
     h.connect(&repo, false);
     h.update(|p, window, cx| {
         assert!(!p.tabs.model.tabs().is_empty(), "the fixture opens a tab");
         let remote = plait_client::machines::MachineId::new("workstation").unwrap();
+        let local_read = p.tab_read();
+        let before_round_trip = p.tab_read();
         let client = p.host_client();
         p.use_machine_client(client, remote, false, window, cx);
         assert!(
             p.tabs.model.tabs().is_empty(),
             "this Mac's tabs followed the window"
         );
+        p.tabs.persistence.bytes = Some(vec![7]);
+        assert!(!p.apply_local_tab_read(local_read, Some(repo.clone()), Ok(Some(vec![1]))));
+        assert_eq!(p.tabs.persistence.bytes, Some(vec![7]));
+        assert!(p.tabs.persistence.path.is_none());
         assert!(!p.tabs.persistence.restored);
         // The new host names itself: its tabs for this device are read before any restore.
         p.host.connection.connecting = false;
@@ -614,6 +620,10 @@ fn switching_machines_puts_the_previous_tabs_away() {
             !p.tabs.persistence.restored,
             "restored before the host's tabs arrived"
         );
+        let client = p.host_client();
+        p.use_machine_client(client, Default::default(), true, window, cx);
+        assert!(!p.apply_local_tab_read(before_round_trip, Some(repo.clone()), Ok(Some(vec![1]))));
+        assert!(!p.tabs.persistence.loaded);
     });
     drop(h);
     std::fs::remove_dir_all(scratch).unwrap();

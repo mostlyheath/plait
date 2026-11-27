@@ -14,6 +14,7 @@ use crate::{
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AutomationItem {
     pub summary: Summary,
+    needs_deadline: bool,
     pub thread_id: Option<String>,
     pub pause_reason: Option<String>,
     pub error: Option<String>,
@@ -28,6 +29,7 @@ impl AutomationItem {
         let error = summary.error.clone();
         Self {
             summary,
+            needs_deadline: false,
             thread_id,
             pause_reason,
             error,
@@ -42,6 +44,9 @@ impl AutomationItem {
         self.summary.name = record.definition.name.clone();
         self.summary.schedule = record.definition.schedule.clone();
         self.summary.target_path = record.definition.target.path().to_path_buf();
+        self.needs_deadline = self.summary.state != State::Active
+            && record.state == State::Active
+            && self.summary.next_run.is_none();
         self.summary.state = record.state;
         if record.state != State::Active {
             self.summary.next_run = None;
@@ -76,6 +81,15 @@ impl AutomationItem {
             self.error = Some(error);
         }
         self.summary = summary;
+    }
+
+    fn has_receipt(&self, due: u64) -> bool {
+        let decided = |time, outcome| time == due && outcome != OccurrenceOutcome::Pending;
+        self.summary
+            .last_result
+            .as_ref()
+            .is_some_and(|r| decided(r.due, r.outcome))
+            || self.occurrences.iter().any(|r| decided(r.due, r.outcome))
     }
 
     pub fn effective_thread_id(&self) -> Option<&str> {
@@ -131,6 +145,8 @@ pub struct AutomationsState {
     pub loading: bool,
     pub refresh_queued: bool,
     preparing_polls: u32,
+    // Last advertised deadline and retry exponent for each active card.
+    deadlines: HashMap<String, (u64, u32)>,
     // Keep stamps for deleted IDs so outstanding reads cannot restore them.
     card_revisions: HashMap<String, u64>,
     refresh_revision: u64,
@@ -159,6 +175,7 @@ impl AutomationsState {
         self.epoch = epoch;
         self.supported = false;
         self.items.clear();
+        self.deadlines.clear();
         self.card_revisions.clear();
         self.refresh_queued = false;
         self.preparing_polls = 0;
@@ -210,14 +227,28 @@ impl AutomationsState {
     }
 
     pub fn next_refresh_delay(&mut self, now_ms: u64) -> Option<Duration> {
+        let previous = std::mem::take(&mut self.deadlines);
         let scheduled = self
             .items
             .iter()
             .filter(|item| item.supported() && item.summary.state == State::Active)
-            .filter_map(|item| item.summary.next_run)
-            .min()
-            // Allow the host to process the occurrence before checking again.
-            .map(|due| Duration::from_millis(due.saturating_sub(now_ms).max(1000)));
+            .filter_map(|item| {
+                let summary = &item.summary;
+                // A claim can advance the schedule before the host records its decision.
+                let pending = previous.get(&summary.id).copied().filter(|(due, _)| {
+                    (*due <= now_ms || summary.next_run.is_none()) && !item.has_receipt(*due)
+                });
+                let (due, attempt) = pending.or_else(|| summary.next_run.map(|due| (due, 0)))?;
+                let (delay, next_attempt) = if due > now_ms {
+                    (Duration::from_millis((due - now_ms).max(1000)), 0)
+                } else {
+                    (Duration::from_secs(1 << attempt), (attempt + 1).min(5))
+                };
+                self.deadlines
+                    .insert(summary.id.clone(), (due, next_attempt));
+                Some(delay)
+            })
+            .min();
         scheduled
             .into_iter()
             .chain(self.next_preparing_delay())
@@ -241,6 +272,7 @@ impl AutomationsState {
                 let mut merged = Vec::with_capacity(items.len());
                 for item in items {
                     if self.card_revision(&item.summary.id) <= self.refresh_revision {
+                        self.refresh_queued |= item.needs_deadline;
                         merged.push(item);
                     } else if let Some(current) = self.by_id(&item.summary.id) {
                         merged.push(current.clone());
@@ -323,6 +355,7 @@ impl AutomationsState {
         let id = detail.automation.id.clone();
         if let Some(existing) = self.items.iter_mut().find(|item| item.summary.id == id) {
             existing.apply_detail(detail);
+            self.refresh_queued |= existing.needs_deadline;
             self.bump();
             return true;
         }
@@ -360,6 +393,7 @@ impl AutomationsState {
 
     pub fn set_note(&mut self, id: String, message: String, is_error: bool) {
         self.note = Some((id, message, is_error));
+        self.bump();
     }
 
     pub fn clear_note(&mut self, id: &str) {
@@ -369,6 +403,7 @@ impl AutomationsState {
             .is_some_and(|(note_id, _, _)| note_id == id)
         {
             self.note = None;
+            self.bump();
         }
     }
 
@@ -735,6 +770,30 @@ mod tests {
     }
 
     #[test]
+    fn claimed_run_is_watched_until_its_receipt() {
+        let mut state = AutomationsState::default();
+        let mut summary = sample_summary("once", State::Active);
+        summary.next_run = Some(5000);
+        state.apply_summary(0, summary.clone());
+        assert_eq!(state.next_refresh_delay(0), Some(Duration::from_secs(5)));
+        summary.next_run = None;
+        state.apply_summary(0, summary.clone());
+        for seconds in [1, 2, 4, 8, 16, 32, 32] {
+            assert_eq!(
+                state.next_refresh_delay(6000),
+                Some(Duration::from_secs(seconds))
+            );
+        }
+        summary.last_result = Some(LastResult {
+            due: 5000,
+            outcome: OccurrenceOutcome::Queued,
+            detail: None,
+        });
+        state.apply_summary(0, summary);
+        assert_eq!(state.next_refresh_delay(6000), None);
+    }
+
+    #[test]
     fn preparing_polls_back_off_and_stop() {
         let mut state = AutomationsState::default();
         state.apply_summary(0, sample_summary("a", State::Preparing));
@@ -749,23 +808,8 @@ mod tests {
         assert!(state.begin_action(0, "a".into()).is_none());
     }
 
-    #[test]
-    fn state_guards_reject_stale_replies_and_preserve_details() {
-        let mut state = AutomationsState::default();
-        let gen1 = state.begin_refresh(1).unwrap();
-        assert_eq!(state.begin_refresh(1), None);
-        assert!(state.refresh_queued);
-        state.reset_for_reconnect(1);
-        let gen2 = state.begin_refresh(1).unwrap();
-        assert!(!state.apply_list(1, gen1, Ok(Some(vec![]))));
-        assert!(state.loading);
-
-        let item = AutomationItem::from_summary(sample_summary("a1", State::Paused));
-        assert!(state.apply_list(1, gen2, Ok(Some(vec![item]))));
-        assert!(state.supported);
-        assert_eq!(state.items.len(), 1);
-
-        let detail = DetailReply {
+    fn sample_detail(state: State) -> DetailReply {
+        DetailReply {
             automation: Automation {
                 id: "a1".into(),
                 thread_id: Some("thr-1".into()),
@@ -789,7 +833,7 @@ mod tests {
                     catch_up_ms: Some(43_200_000),
                 },
                 revision: Some(2),
-                state: State::Paused,
+                state,
                 pause_reason: Some("target missing".into()),
                 cursor: 1_000_000,
                 missed_count: 0,
@@ -797,8 +841,36 @@ mod tests {
                 error: None,
             },
             occurrences: Vec::new(),
-        };
-        assert!(state.apply_detail(1, detail));
+        }
+    }
+
+    #[test]
+    fn placement_activating_during_list_read_queues_a_deadline_read() {
+        let mut placed = AutomationItem::from_summary(sample_summary("a1", State::Preparing));
+        placed.apply_detail(sample_detail(State::Active));
+        let mut placement = AutomationsState::default();
+        let read = placement.begin_refresh(1).unwrap();
+        placement.apply_list(1, read, Ok(Some(vec![placed])));
+        assert!(placement.refresh_queued);
+    }
+
+    #[test]
+    fn state_guards_reject_stale_replies_and_preserve_details() {
+        let mut state = AutomationsState::default();
+        let gen1 = state.begin_refresh(1).unwrap();
+        assert_eq!(state.begin_refresh(1), None);
+        assert!(state.refresh_queued);
+        state.reset_for_reconnect(1);
+        let gen2 = state.begin_refresh(1).unwrap();
+        assert!(!state.apply_list(1, gen1, Ok(Some(vec![]))));
+        assert!(state.loading);
+
+        let item = AutomationItem::from_summary(sample_summary("a1", State::Paused));
+        assert!(state.apply_list(1, gen2, Ok(Some(vec![item]))));
+        assert!(state.supported);
+        assert_eq!(state.items.len(), 1);
+
+        assert!(state.apply_detail(1, sample_detail(State::Paused)));
         assert_eq!(
             state.by_thread("thr-1").unwrap().effective_pause_reason(),
             Some("target missing")
