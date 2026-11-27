@@ -105,7 +105,7 @@ enable the requested background features. Foreground requests are served even if
 
 Each operation checks socket and parent ownership and permissions, connects,
 verifies the peer UID, sends one bounded request and closes after the first
-reply. Background admission polls return the current placement state immediately. Background thread reads use stored snapshots and skip harness catalog refreshes. The client's 60-second timeout covers the
+reply. Graph starts poll the saved admission ID over the socket. The runtime performs the initial checkout probe after that socket request returns. Background admission polls return the current placement state immediately. Background thread reads use stored snapshots and skip harness catalog refreshes. The client's 60-second timeout covers the
 whole operation. The host's separate 20-second pipe deadline starts when the
 socket handler acquires the sidecar mutex. Desktop traffic can interleave
 between steps. The mutex makes no FIFO guarantee. Foreground operations call
