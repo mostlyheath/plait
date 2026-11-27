@@ -27,6 +27,11 @@ pub(super) struct Navigation {
     pub archived: bool,
     pub rename: Option<(String, Entity<TextField>)>,
     pub menu: Option<String>,
+    /// A thread menu takes focus on its first item when it opens, so Escape
+    /// reaches it before the message box's bindings. Escape gives focus back to
+    /// `menu_return`. The handle is made on first use.
+    pub menu_focus: Option<FocusHandle>,
+    pub menu_return: Option<FocusHandle>,
     /// The thread the archive shortcut is asking about, and the unsaved state of
     /// the card's "Remember this setting" box. The focus handle is made on first use.
     pub confirm_archive: Option<String>,
@@ -53,6 +58,8 @@ impl Navigation {
             archived: false,
             rename: None,
             menu: None,
+            menu_focus: None,
+            menu_return: None,
             confirm_archive: None,
             remember_archive: false,
             archive_focus: None,
@@ -629,11 +636,10 @@ impl Plait {
             .group("thread-card")
             .on_mouse_down(
                 MouseButton::Right,
-                cx.listener(move |this, _, _, cx| {
+                cx.listener(move |this, _, window, cx| {
                     if this.host.protocol() >= 3 {
-                        this.navigation.menu = Some(context_id.clone());
+                        this.open_thread_menu(context_id.clone(), window, cx);
                         cx.stop_propagation();
-                        cx.notify();
                     }
                 }),
             )
@@ -739,10 +745,9 @@ impl Plait {
                     .opacity(if menu_open { 1. } else { 0. })
                     .group_hover("thread-card", |s| s.opacity(1.))
                     .focus_visible(|s| focused_control(s).opacity(1.))
-                    .on_activate(cx, move |this, _, cx| {
-                        this.navigation.menu = Some(menu_id.clone());
+                    .on_activate(cx, move |this, window, cx| {
+                        this.open_thread_menu(menu_id.clone(), window, cx);
                         cx.stop_propagation();
-                        cx.notify();
                     }),
                 )
             })
@@ -1096,7 +1101,7 @@ impl Plait {
 
     /// A thread's actions, drawn over the sidebar from where this is placed.
     /// `deferred` paints it above the cards after it; `anchored` keeps it on
-    /// screen. Escape is handled at the root (`mod.rs`), an outside click here.
+    /// screen. Escape and an outside click close it here.
     fn thread_menu(&self, id: &str, cx: &mut Context<Self>) -> AnyElement {
         let Some(thread) = self
             .host
@@ -1142,13 +1147,23 @@ impl Plait {
             .shadow(floating_shadow())
             .bg(rgb(colors().raised))
             .occlude()
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                if event.keystroke.key == "escape" {
+                    this.dismiss_thread_menu(window, cx);
+                    cx.stop_propagation();
+                }
+            }))
             .on_mouse_down_out(cx.listener(|this, _, _, cx| {
                 this.navigation.menu = None;
+                this.navigation.menu_return = None;
                 cx.notify();
             }))
             .child(tag("thread-menu-title", self.thread_title(id), colors().strong).truncate())
             .child(keyed(
                 button("thread-rename", "Rename thread…")
+                    .when_some(self.navigation.menu_focus.as_ref(), |el, focus| {
+                        el.track_focus(focus)
+                    })
                     .on_activate(cx, move |this, window, cx| {
                         this.begin_rename(rename.clone(), window, cx)
                     }),
@@ -1202,6 +1217,41 @@ impl Plait {
         .into_any_element()
     }
 
+    /// Open a thread's menu with its first item focused, and remember what had
+    /// focus so Escape can return it.
+    pub(super) fn open_thread_menu(
+        &mut self,
+        id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // The Rename button tracks this handle, so it must keep its tab stop.
+        let focus = self
+            .navigation
+            .menu_focus
+            .get_or_insert_with(|| cx.focus_handle().tab_stop(true))
+            .clone();
+        // Reopening from another card keeps the focus from before the first menu.
+        if !focus.is_focused(window) {
+            self.navigation.menu_return = window.focused(cx);
+        }
+        self.navigation.menu = Some(id);
+        window.focus(&focus, cx);
+        cx.notify();
+    }
+
+    /// Escape in a thread menu: close it and give focus back.
+    fn dismiss_thread_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.navigation.menu = None;
+        let focus = self
+            .navigation
+            .menu_return
+            .take()
+            .unwrap_or_else(|| self.focus.clone());
+        window.focus(&focus, cx);
+        cx.notify();
+    }
+
     /// The archive shortcut: archive at once when asking is off or this is an
     /// unarchive, else ask in a card under the thread's card.
     pub(super) fn request_archive(
@@ -1210,6 +1260,10 @@ impl Plait {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // A row being renamed has no room for the card, and the field keeps focus.
+        if self.navigation.rename.is_some() {
+            return;
+        }
         let Some(archived) = self
             .host
             .connection

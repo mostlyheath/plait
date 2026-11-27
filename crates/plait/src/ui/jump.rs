@@ -301,7 +301,7 @@ impl Plait {
             ))
             .child(settings::setting(
                 "Archive shortcut",
-                "Whether Cmd-Option-A asks before archiving the open thread.",
+                "Whether archiving the open thread by Cmd-Option-A, menu, or palette asks first.",
                 archive_choices,
             ))
             .child(self.shortcut_editor(cx))

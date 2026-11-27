@@ -400,6 +400,13 @@ impl Plait {
         );
     }
 
+    /// Select no thread. The archive question is about the selected thread, so
+    /// it goes too; otherwise Return could archive a thread no longer shown.
+    pub(super) fn deselect_thread(&mut self) {
+        self.host.select(None);
+        self.navigation.confirm_archive = None;
+    }
+
     pub(super) fn select_host_thread_content(
         &mut self,
         id: String,

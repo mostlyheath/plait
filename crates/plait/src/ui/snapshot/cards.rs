@@ -300,11 +300,35 @@ pub(super) fn walk(h: &mut Harness, repository: &Path, suffix: &str) {
     h.keystroke("escape");
     h.update(|p, _, _| assert!(p.navigation.rename.is_none()));
 
-    // The actions menu is drawn by its card and Escape closes it.
-    h.update(|p, _, _| p.navigation.menu = Some("cards-0".into()));
+    // The actions menu is drawn by its card. A right-click leaves focus in the
+    // message box, so the menu takes it: Escape must reach the menu before the
+    // message box's own Escape, then give focus back.
+    h.update(|p, window, cx| {
+        p.focus_composer(window, cx);
+        p.open_thread_menu("cards-0".into(), window, cx);
+    });
     h.capture(&format!("cards-menu-{suffix}"));
+    h.update(|p, window, _| {
+        let focus = p.navigation.menu_focus.as_ref().unwrap();
+        assert!(focus.is_focused(window), "the menu's first item has focus");
+    });
     h.keystroke("escape");
-    h.update(|p, _, _| assert!(p.navigation.menu.is_none(), "Escape closes the menu"));
+    h.update(|p, window, cx| {
+        assert!(p.navigation.menu.is_none(), "Escape closes the menu");
+        let composer = p.visible_composer().unwrap().focus_handle(cx);
+        assert!(composer.is_focused(window), "Escape returns focus");
+        window.focus(&p.focus, cx);
+    });
+
+    // The archive shortcut waits while a thread is being renamed.
+    h.update(|p, window, cx| {
+        p.begin_rename("cards-0".into(), window, cx);
+        p.request_archive("cards-0".into(), window, cx);
+        assert!(p.navigation.confirm_archive.is_none(), "no hidden question");
+        let field = p.navigation.rename.as_ref().unwrap().1.focus_handle(cx);
+        assert!(field.is_focused(window), "the rename field keeps focus");
+        p.navigation.rename = None;
+    });
 
     // The archive shortcut asks first, in a card under the thread's card.
     h.update(|p, window, cx| {
@@ -312,22 +336,24 @@ pub(super) fn walk(h: &mut Harness, repository: &Path, suffix: &str) {
         assert_eq!(p.navigation.confirm_archive.as_deref(), Some("cards-0"));
     });
     h.capture(&format!("cards-archive-card-{suffix}"));
-    // Return belongs to the button that has focus, not to the card around it.
+    // Return belongs to the button that has focus, not to the card around it:
+    // on the box it ticks the box and the question stays.
     h.keystroke("tab");
-    h.update(|p, window, _| {
-        let focus = p.navigation.archive_focus.as_ref().unwrap();
-        assert!(
-            !focus.is_focused(window),
-            "Tab moves into the card's buttons"
-        );
-    });
-    h.keystroke("enter");
+    press_return(h);
     h.update(|p, _, _| {
+        assert!(p.navigation.remember_archive, "Return ticks the box");
         assert_eq!(
             p.navigation.confirm_archive.as_deref(),
             Some("cards-0"),
             "Return on a button inside the card must not confirm"
         );
+    });
+    // On Cancel it cancels, and saves nothing even with the box ticked.
+    h.keystroke("tab");
+    press_return(h);
+    h.update(|p, _, _| {
+        assert!(p.navigation.confirm_archive.is_none(), "Return on Cancel");
+        assert!(!p.preferences.value.skip_archive_confirmation);
     });
     // A pending card never outlives what it asked about.
     h.update(|p, window, cx| {
@@ -420,7 +446,22 @@ pub(super) fn walk(h: &mut Harness, repository: &Path, suffix: &str) {
     h.update(|p, _, _| reset(p));
     h.connect(repository, false);
     h.update(|p, _, cx| p.rebuild_projects(cx));
-    // Selecting a thread drops a pending archive card. Last, as it changes the checkout.
+    // Leaving threads for a Worktrees tab drops a pending archive card: Return
+    // must not archive a thread the window no longer shows.
+    h.update(|p, window, cx| {
+        p.host.connection.status.as_mut().unwrap().protocol_version = 4;
+        p.request_archive(THREAD.into(), window, cx);
+        assert!(p.navigation.confirm_archive.is_some());
+        p.open_worktrees(repository.into(), window, cx);
+    });
+    h.update(|p, _, _| {
+        assert!(p.host.thread.selected.is_none());
+        assert!(
+            p.navigation.confirm_archive.is_none(),
+            "a Worktrees tab drops it"
+        );
+    });
+    // So does selecting a thread. Last, as it changes the checkout.
     h.update(|p, window, cx| {
         p.host.connection.status.as_mut().unwrap().protocol_version = 4;
         let id = p.host.connection.threads()[0].id.clone();
@@ -429,6 +470,14 @@ pub(super) fn walk(h: &mut Harness, repository: &Path, suffix: &str) {
         p.select_host_thread_content(id, window, cx);
         assert!(p.navigation.confirm_archive.is_none(), "selecting drops it");
     });
+}
+
+/// Return as a person presses it: GPUI activates a button on the key's release.
+fn press_return(h: &mut Harness) {
+    h.keystroke("enter");
+    h.pointer(PlatformInput::KeyUp(KeyUpEvent {
+        keystroke: Keystroke::parse("enter").unwrap(),
+    }));
 }
 
 pub(super) fn compact(repository: &Path, output: Option<&Path>) {
