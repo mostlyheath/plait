@@ -43,6 +43,15 @@ function matchesSettings(start: Start, t: Snapshot, baseline: string | null) {
     (t.thinking_level ?? null) === (start.thinking ?? (previous ? previous.thinking : t.thinking_level ?? null)) &&
     (t.approval_mode ?? 'ask') === approval;
 }
+// An invalid explicit size may leave libuv with just one worker.
+function probeLimit() {
+  const size = process.env.UV_THREADPOOL_SIZE ?? '4';
+  if (!/^[0-9]+$/.test(size)) return 0;
+  const workers = Number(size);
+  if (workers > 1024) return 0;
+  return Math.max(0, Math.min(2, workers - 1));
+}
+
 export class Graph {
   private store: Storage;
   private view = new GraphView();
@@ -55,6 +64,8 @@ export class Graph {
   private projects = new Set<string>();
   private readonly sourceIdentity: (id: string) => Promise<FileIdentity>;
   private readonly receipt: (id: string, request: string) => { state: string; error: { message: string } | null } | undefined;
+  private readonly probeLimit = probeLimit();
+  private readonly slowPollBudget = new Map<string, number>();
   private readonly probing = new Set<string>();
   private readonly savedIdentity: (id: string) => FileIdentity;
   private readonly probe: (path: string) => Promise<{ project: string; identity: string }>;
@@ -73,12 +84,33 @@ export class Graph {
   }
   private async pollIdentity(path: string) {
     // Timed-out reads keep their slots until the filesystem operation settles.
-    if (this.probing.size >= 2 || this.probing.has(path)) return null;
+    if (this.probing.size >= this.probeLimit || this.probing.has(path)) return null;
     this.probing.add(path);
-    // Give a local read a short head start. A stalled drive must not hold the request queue.
+    const started = performance.now();
+    let timedOut = false;
     let timer: NodeJS.Timeout | undefined;
-    const pending = new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), 40); });
-    const read = this.probe(path).catch(() => null).finally(() => this.probing.delete(path));
+    const pending = new Promise<null>(resolve => {
+      timer = setTimeout(() => {
+        timedOut = true;
+        resolve(null);
+      }, this.slowPollBudget.get(path) ?? 40);
+    });
+    const read = this.probe(path).catch(() => null).then(current => {
+      this.probing.delete(path);
+      if (this.closing) return current;
+      const elapsed = performance.now() - started;
+      if (!current || elapsed < 40) this.slowPollBudget.delete(path);
+      if (timedOut && current) {
+        // Give the next check time to verify even a replaced directory. Keep
+        // the queue bounded if a previously responsive volume stalls.
+        this.slowPollBudget.delete(path);
+        if (this.slowPollBudget.size >= 128)
+          this.slowPollBudget.delete(this.slowPollBudget.keys().next().value!);
+        this.slowPollBudget.set(path, Math.min(250, Math.ceil(elapsed * 2)));
+        this.store.updatePageIdentity(path, current.project, current.identity);
+      }
+      return current;
+    });
     try { return await Promise.race([read, pending]); }
     finally { clearTimeout(timer); }
   }

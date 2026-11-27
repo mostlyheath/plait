@@ -909,7 +909,8 @@ test('team and workflow completeness survives caching and reports caps honestly'
   const cached = await h.call({ op: 'linear_list_teams' });
   assert.equal(cached.result.teams_complete, false);
   assert.equal(cached.result.teams[0].states_complete, false);
-  h.runtime.store.linear.saveTeams([{ id: 'old', key: 'OLD', name: 'Old cache', states: [] }], h.now);
+  const owner = h.runtime.store.linear.getCacheOwner() ?? undefined;
+  h.runtime.store.linear.saveTeams([{ id: 'old', key: 'OLD', name: 'Old cache', states: [] }], h.now, null, owner);
   const legacy = await h.call({ op: 'linear_list_teams' });
   assert.equal(legacy.result.teams_complete, null);
   assert.equal(legacy.result.teams[0].states_complete, null);
@@ -984,4 +985,106 @@ test('issue URL resolution accepts lowercase identifiers and rejects empty slug 
   });
   assert.equal(doubleSlash.ok, false);
   assert.equal(doubleSlash.error.code, 'invalid_request');
+});
+
+test('interrupted Linear account switch across host restart never serves the previous workspace cache (#212)', async t => {
+  const h = await setupHarness(t);
+  const { LinearAuthStore } = await import('../src/linear/auth.ts');
+
+  // 1. Sign in to workspace A and populate teams, issue pages, and issue details caches.
+  assert.equal((await h.call({ op: 'linear_set_key', key: h.fake.validKey })).ok, true);
+  const teamsA = await h.call({ op: 'linear_list_teams' });
+  assert.equal(teamsA.ok, true);
+  assert.equal(teamsA.result.cached, false);
+  assert.equal(teamsA.result.teams[0].id, 'team-pla');
+  assert.equal((await h.call({ op: 'linear_list_issues', team_id: 'team-pla', filter: 'active' })).ok, true);
+  assert.equal((await h.call({ op: 'linear_get_issue', issue_id: 'issue-142' })).ok, true);
+
+  // Confirm workspace A's teams are currently fresh in cache.
+  const cachedA = await h.call({ op: 'linear_list_teams' });
+  assert.equal(cachedA.ok, true);
+  assert.equal(cachedA.result.cached, true);
+  assert.equal(cachedA.result.teams[0].id, 'team-pla');
+
+  // 2. Simulate an interrupted switch to workspace B: credential file is replaced with B
+  //    before the SQLite cache-clear transaction commits, then the host restarts.
+  const authStore = new LinearAuthStore(h.storeDir);
+  await authStore.write({
+    api_key: h.fake.validKey,
+    workspace_id: 'org-2',
+    workspace_name: 'Workspace B',
+    workspace_url_key: 'ws-b',
+    viewer_id: 'viewer-2',
+    viewer_name: 'Blake',
+    saved_at: h.now,
+    credential_id: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+  });
+  h.fake.organization = { id: 'org-2', name: 'Workspace B', urlKey: 'ws-b' };
+  h.fake.teams = [
+    {
+      id: 'team-b',
+      key: 'WSB',
+      name: 'Workspace B Team',
+      states: [{ id: 'state-b-open', name: 'Open', type: 'unstarted', position: 0 }],
+    },
+  ];
+  h.fake.issues = [
+    {
+      ...h.fake.issues[0],
+      id: 'issue-b-1',
+      identifier: 'WSB-1',
+      title: 'Workspace B issue',
+      url: 'https://linear.app/ws-b/issue/WSB-1',
+      teamId: 'team-b',
+      stateId: 'state-b-open',
+    },
+  ];
+
+  // Restart the host without running clearAll().
+  h.runtime.store.close();
+  h.runtime.store = new Store(h.storeDir);
+  h.runtime.linear = new LinearService(h.runtime.store, h.storeDir, {
+    endpoint: h.fake.url,
+    timeoutMs: 1000,
+    now: () => h.now,
+  });
+
+  // 3. Immediately request linear_list_teams WITHOUT refresh: must NOT return workspace A's cached teams.
+  h.fake.enqueueFault((_req, res) => { res.writeHead(503); res.end(); return true; });
+  const offline = await h.call({ op: 'linear_list_teams' });
+  assert.equal(offline.ok, false);
+  assert.equal(offline.error.code, 'linear_offline');
+
+  const teamsB = await h.call({ op: 'linear_list_teams', refresh: false });
+  assert.equal(teamsB.ok, true, JSON.stringify(teamsB));
+  assert.equal(teamsB.result.cached, false);
+  assert.deepEqual(teamsB.result.teams.map((team: any) => team.id), ['team-b']);
+
+  // Workspace A's cached detail and issue pages were also cleared and are never served under B.
+  const detailA = await h.call({ op: 'linear_get_issue', issue_id: 'issue-142', refresh: false });
+  assert.equal(detailA.ok, false);
+  assert.equal(detailA.error.code, 'not_found');
+
+  // 4. Even an interrupted key replacement within the SAME workspace (same timestamp) invalidates cache.
+  assert.equal((await h.call({ op: 'linear_list_teams', refresh: false })).result.cached, true);
+  await authStore.write({
+    api_key: h.fake.validKey,
+    workspace_id: 'org-2',
+    workspace_name: 'Workspace B',
+    workspace_url_key: 'ws-b',
+    viewer_id: 'viewer-2',
+    viewer_name: 'Blake',
+    saved_at: h.now,
+    credential_id: 'cccccccccccccccccccccccccccccccc',
+  });
+  h.runtime.store.close();
+  h.runtime.store = new Store(h.storeDir);
+  h.runtime.linear = new LinearService(h.runtime.store, h.storeDir, {
+    endpoint: h.fake.url,
+    timeoutMs: 1000,
+    now: () => h.now,
+  });
+  const afterKeyReplace = await h.call({ op: 'linear_list_teams', refresh: false });
+  assert.equal(afterKeyReplace.ok, true);
+  assert.equal(afterKeyReplace.result.cached, false);
 });

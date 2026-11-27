@@ -145,8 +145,10 @@ With the graph enabled, each background host request shares the desktop
 client’s socket dispatch path. Admission, result collection, and submission take separate
 turns. To edit a draft waiting in the checkout queue, first withdraw its
 submission with `cancel_queued`. A graph poll matches cards and their dependency counts by project path, device,
-and inode. At most two path checks run at once. While both slots are busy, a check is pending, or the
-path is unavailable, the graph shows only threads listed by the desktop at that path,
+and inode. Path checks reserve one filesystem worker for other requests and use at most two.
+With a single worker, graph polls skip identity checks. A late successful check updates the cached page identity and gives
+the next poll more time to verify that path, up to 250 ms.
+Without an available slot or a confirmed identity, the graph shows only threads listed by the desktop at that path,
 with titles, links, and counts withheld. A changed identity invalidates the polling revision.
 A worktree admission
 must match the captured checkout path, device, and inode before submission.

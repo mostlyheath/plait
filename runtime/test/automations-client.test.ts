@@ -302,7 +302,7 @@ test('reply handles a desktop request directly while a background client awaits 
   const handle = runtime.handle.bind(runtime);
   runtime.handle = async input => {
     switch ((input as { op: string }).op) {
-      case 'create_admitted_thread': return { admission: { state: 'ready', thread_id: 'thread' } };
+      case 'create_thread': return { thread: { id: 'thread' } };
       case 'stored_thread': return { thread: { checkout: '/project', model: definition } };
       case 'command_policy': return { policy: 'trusted' };
       case 'admission_info': return { busy: false };
@@ -520,7 +520,10 @@ for (const known of [false, true]) test(`rollback prevents a second submission w
   }
   await c.handle('update_automation', { id: c.id, definition: { ...settings, catch_up_ms: 0 } });
   const click = () => c.handle('run_automation_now', { id: c.id, request_id: 'rollback', received_at_ms: c.due + 500 });
-  if (!known) await assert.rejects(click(), /window.*unknown/);
+  if (!known) {
+    await assert.rejects(click(), /window.*unknown/);
+    await assert.rejects(click(), /window.*unknown/);
+  }
   await c.restart((await previousRuntime('automations/service.ts')).Automations);
   if (!known) {
     const replay = await click();
@@ -623,4 +626,157 @@ test('a pending folder probe survives flag-off main recovery without publishing 
     if (old === undefined) delete process.env.PLAIT_AUTOMATIONS; else process.env.PLAIT_AUTOMATIONS = old;
     if (graph === undefined) delete process.env.PLAIT_GRAPH; else process.env.PLAIT_GRAPH = graph;
   }
+});
+
+test('a fresh click received before the hour and dispatched after it runs only the latest hour', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.UTC(2025, 0, 1, 8, 59) });
+  const c = await client(t, undefined, { ...definition, catch_up_ms: 7_200_000, target: { kind: 'project', checkout: '/project' } });
+  const next = c.due + 3_600_000;
+  t.mock.timers.setTime(next);
+  await c.handle('run_automation_now', { id: c.id, request_id: 'fresh', received_at_ms: next - 1 });
+  await c.tick(next);
+  assert.deepEqual(c.requests.filter(r => r.op === 'submit_checkout').map(r => r.request_id), [c.id + '-' + next]);
+});
+
+test('the previous timer retires an unsubmitted known claim when it claims a newer hour', async t => {
+  let offline = true;
+  const c = await client(t, r => { if (offline && r.op === 'stored_thread') throw Error('offline'); },
+    { ...definition, catch_up_ms: 7_200_000, target: { kind: 'project', checkout: '/project' } });
+  await assert.rejects(c.tick(c.due), /offline/);
+  await c.restart((await previousRuntime('automations/service.ts')).Automations);
+  offline = false;
+  const next = c.due + 3_600_000;
+  await c.tick(next);
+  assert.deepEqual(c.requests.filter(r => r.op === 'submit_checkout').map(r => r.request_id), [c.id + '-' + next]);
+});
+
+test('a longer edited window still permits a fresh manual turn after rollback', async t => {
+  const settings = { ...definition, catch_up_ms: 100, target: { kind: 'project', checkout: '/project' } };
+  const c = await client(t, undefined, settings);
+  await c.tick(c.due);
+  await c.handle('update_automation', { id: c.id, definition: { ...settings, catch_up_ms: 1000 } });
+  await c.restart((await previousRuntime('automations/service.ts')).Automations);
+  const { occurrence } = await c.handle('run_automation_now', { id: c.id, request_id: 'fresh', received_at_ms: c.due + 101 });
+  await c.tick(c.due + 101);
+  assert.match(occurrence.request_id, /^manual-/);
+  assert.deepEqual(c.requests.filter(r => r.op === 'submit_checkout').map(r => r.request_id), [c.id + '-' + c.due, occurrence.request_id]);
+});
+
+test('an upgraded legacy click replays its saved receipt with an unknown window', async t => {
+  const c = await client(t, undefined, { ...definition, target: { kind: 'project', checkout: '/project' } });
+  await c.tick(c.due);
+  const click = () => c.handle('run_automation_now', { id: c.id, request_id: 'legacy', received_at_ms: c.due });
+  const receipt = await click();
+  const db = new DatabaseSync(join(c.dir, 'automations.sqlite'));
+  db.exec('DELETE FROM automation_claim_windows');
+  db.close();
+  await c.restart();
+  assert.deepEqual(await click(), receipt);
+  assert.equal(c.requests.filter(r => r.op === 'submit_checkout').length, 1);
+});
+
+test('Git initialized after the placement preflight leaves no recoverable in-place plan', async t => {
+  const folder = directory(t);
+  const runtime = new Runtime(directory(t), createModels(), new Set());
+  const old = process.env.PLAIT_AUTOMATIONS;
+  process.env.PLAIT_AUTOMATIONS = '1';
+  try {
+    const handle = runtime.handle.bind(runtime);
+    let changed = false;
+    runtime.handle = async (input, ...args) => {
+      if (['create_thread', 'create_admitted_thread'].includes((input as { op: string }).op) && !changed) {
+        changed = true;
+        await exec('/usr/bin/git', ['init', '-q', folder]);
+      }
+      return handle(input, ...args);
+    };
+    runtime.startBackground(request => runtime.handle(request));
+    const { automation } = await runtime.handle({ op: 'create_automation', request_id: 'late-git',
+      definition: { ...definition, target: { kind: 'directory', path: folder } } }) as any;
+    await Promise.all(runtime['automations']!['placements'].values());
+    assert.equal(changed, true);
+    const status = await runtime.handle({ op: 'automation_status', id: automation.id }) as any;
+    assert.match(status.automation.error, /became a Git checkout/);
+    for (const table of ['threads', 'thread_admissions'])
+      assert.equal(runtime.store.db.prepare('SELECT count(*) AS n FROM ' + table).get()?.n, 0);
+  } finally {
+    await runtime.close();
+    if (old === undefined) delete process.env.PLAIT_AUTOMATIONS; else process.env.PLAIT_AUTOMATIONS = old;
+  }
+});
+
+test('acknowledged directory creation is protected before the first background step', async t => {
+  const store = directory(t), folder = directory(t);
+  const service = new Automations(store, async request => {
+    assert.equal(request.op, 'advance_automation_placement');
+  }, undefined, undefined, async () => assert.fail('placement step was never granted'));
+  const { automation } = await service.handle({ op: 'create_automation', request_id: 'folder',
+    definition: { ...definition, target: { kind: 'directory', path: folder } } }) as any;
+  await service.close();
+  const requests: unknown[] = [];
+  const Old = (await previousRuntime('automations/service.ts')).Automations;
+  const old = new Old(store, async (request: unknown) => { requests.push(request); });
+  try {
+    const status = await old.handle({ op: 'automation_status', id: automation.id });
+    assert.equal(status.automation.state, 'failed');
+  } finally { await old.close(); }
+  assert.deepEqual(requests, []);
+});
+
+test('rollback reconciles a lost accepted reply before retiring the earlier hour', async t => {
+  const c = await client(t, r => {
+    if (r.op === 'submit_checkout' && r.request_id === c.id + '-' + c.due) {
+      c.accepted.add(String(r.request_id));
+      throw Error('lost accepted reply');
+    }
+  });
+  await assert.rejects(c.tick(c.due), /lost accepted reply/);
+  await c.restart((await previousRuntime('automations/service.ts')).Automations);
+  const next = c.due + 3_600_000;
+  await c.tick(next);
+  const { occurrences, automation } = await c.handle('get_automation', { id: c.id });
+  assert.deepEqual(occurrences.map((r: any) => [r.request_id, r.outcome, r.revision]),
+    [next, c.due].map(due => [c.id + '-' + due, 'queued', 1]));
+  assert.equal(automation.missed_count, 0);
+  assert.deepEqual(c.requests.filter(r => r.op === 'submit_checkout').map(r => r.request_id),
+    [c.due, next].map(due => c.id + '-' + due));
+});
+
+test('rollback binds overlapping saved windows to the latest matching hour', async t => {
+  const settings = { ...definition, catch_up_ms: 7_200_000, target: { kind: 'project', checkout: '/project' } };
+  const c = await client(t, undefined, settings);
+  await c.tick(c.due);
+  const next = c.due + 3_600_000;
+  const edit = (window: number) => c.handle('update_automation', { id: c.id, definition: { ...settings, catch_up_ms: window } });
+  await edit(60_000);
+  await c.tick(next);
+  await edit(5_400_000);
+  await c.restart((await previousRuntime('automations/service.ts')).Automations);
+  for (const [offset, due] of [[10, next], [60_001, c.due]]) {
+    const click = () => c.handle('run_automation_now', { id: c.id, request_id: 'fresh-' + offset, received_at_ms: next + offset });
+    const first = await click();
+    assert.equal(first.occurrence.detail, 'Scheduled occurrence already claimed: ' + c.id + '-' + due);
+    assert.equal((await click()).occurrence.request_id, c.id + '-' + due);
+  }
+  assert.equal(c.requests.filter(r => r.op === 'submit_checkout').length, 2);
+});
+
+test('fresh clicks and rollback redirects seek the saved window boundary', async t => {
+  const c = await client(t);
+  await c.tick(c.due);
+  const prepare = t.mock.method(DatabaseSync.prototype, 'prepare');
+  await c.handle('run_automation_now', { id: c.id, request_id: 'fresh', received_at_ms: c.due + 1 });
+  const lookup = prepare.mock.calls.map(call => String(call.arguments[0])).find(sql => sql.includes('FROM automation_click_ranges'));
+  prepare.mock.restore();
+  assert.ok(lookup);
+  const db = new DatabaseSync(join(c.dir, 'automations.sqlite'));
+  try {
+    const plan = db.prepare('EXPLAIN QUERY PLAN ' + lookup).all(c.id, c.due);
+    assert.ok(plan.some(row => /SEARCH automation_click_ranges .*automation_id=.*start</.test(String(row.detail))));
+    assert.ok(plan.every(row => !/SCAN|TEMP B-TREE/.test(String(row.detail))));
+    const program = db.prepare('EXPLAIN INSERT INTO automation_clicks VALUES (?,?,?,?)').all(c.id, 'rollback', 'manual-click', c.due);
+    const trigger = program.slice(program.findIndex(row => row.p4 === '-- TRIGGER automation_rollback_click'));
+    assert.ok(trigger.some(row => row.opcode === 'SeekLE'));
+    assert.ok(!trigger.some(row => ['Sort', 'SorterOpen', 'OpenAutoindex'].includes(String(row.opcode))));
+  } finally { db.close(); }
 });

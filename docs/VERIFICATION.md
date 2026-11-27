@@ -44,13 +44,8 @@ Runtime tests cover scripted host and agent behavior, approvals, cancellation,
 recovery, dirty-file protection, records and undo, queues, worktrees, and
 bounded output. macOS sandbox tests exercise real containment; Linux tests
 cover trusted execution and refusal of sandboxed commands, not containment.
-The credential-free Pi recovery probe runs separately:
-
-```sh
-cd experiments/pi-durable
-npm ci --ignore-scripts
-npm test
-```
+The runtime suite checks Pi streaming, file edits, SQLite reopen, and SIGKILL recovery with a scripted model.
+Live Pi checks are manual.
 
 ## Scenes and native checks
 
@@ -104,7 +99,7 @@ publication. See [Releasing](RELEASING.md).
 ## CI
 
 The Linux job runs the headless checks. The macOS check runs the workspace
-and sandbox gate, Pi recovery probe, and release-script tests, as a Rust job
+and sandbox gate, Pi recovery tests, and release-script tests, as a Rust job
 and a runtime job side by side; the required `check` passes only when both
 did. On `main` it reuses a pull request's passing result for the same tree
 (see [Releasing](RELEASING.md)). Release jobs

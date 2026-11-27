@@ -173,11 +173,6 @@ jobs:
       - name: Check installed runtime layout on a fresh main check
         if: github.event_name == 'push'
         run: python3 scripts/check_test_temp.py node scripts/installed-layout-check.mjs
-      - name: Check runtime recovery without credentials
-        working-directory: experiments/pi-durable
-        run: |
-          npm ci --ignore-scripts
-          npm test
 
   # The required check. It keeps the name branch protection asks for and
   # passes only when both halves passed, there was nothing to test, or the
