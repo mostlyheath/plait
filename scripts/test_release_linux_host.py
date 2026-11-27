@@ -93,6 +93,9 @@ class LinuxHostTest(unittest.TestCase):
                     reported = json.dumps({"revision": revision, "release": expected})
                     with patch("package_linux_host.ROOT", root), patch("package_linux_host.run"), \
                             patch("package_linux_host.check_elf"), patch("package_linux_host.stage_node", return_value="22"), \
+                            patch("package_linux_host.generate_reports"), patch("package_linux_host.prune_runtime"), \
+                            patch("package_linux_host.check_host_binaries"), \
+                            patch("package_linux_host.host_notices", return_value="notices"), \
                             patch("package_linux_host.subprocess.check_output", side_effect=[revision, "", reported]), \
                             patch.dict("os.environ", {"PLAIT_RELEASE_VERSION": "stale"}):
                         package("x86_64", out, None, False, tag)
