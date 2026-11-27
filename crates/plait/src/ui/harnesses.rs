@@ -8,17 +8,20 @@
 use super::{
     Plait,
     commands::Command,
-    model_picker::{model_key, model_label},
+    model_picker::{favorites, model_key, model_label},
     palette::Item,
     settings,
     text_field::TextField,
     theme::*,
 };
 use gpui::{prelude::*, *};
-use plait_client::host::{
-    self, Model, ModelChoice, Snapshot,
-    harness::{Harness, HarnessId, HarnessState, Harnesses, Request, ThreadHarness},
-    providers,
+use plait_client::{
+    host::{
+        self, Model, ModelChoice, Snapshot,
+        harness::{Harness, HarnessId, HarnessState, Harnesses, Request, ThreadHarness},
+        providers,
+    },
+    preferences::Preferences,
 };
 use std::{sync::Arc, time::Duration};
 
@@ -241,30 +244,31 @@ impl HarnessesView {
     }
 }
 
-/// One model of a harness other than Pi as a picker row. Favorites and the host's
-/// default model are Pi's, so these rows have neither.
-fn model_item(row: &HarnessRow, model: &Model) -> Item {
+/// One model of a harness other than Pi as a picker row, with its favorite star.
+/// The host's default model is Pi's, so these rows have no default.
+fn model_item(row: &HarnessRow, model: &Model, section: &str, preferences: &Preferences) -> Item {
     let choice = model.choice();
-    let item = Item::new(
+    Item::new(
         model_key(model),
         model.name.clone(),
         Command::HarnessModel(row.id, choice.clone()),
     )
     .detail(model_label(&choice))
-    .section(row.name.clone())
-    .enabled(model.authenticated);
-    if model.authenticated {
-        item
-    } else {
-        item.badge("Not signed in", colors().amber)
-    }
+    .section(section.to_owned())
+    .marked(preferences.is_favorite(&choice))
 }
 
-/// Rows a harness thread's own model menu lists: that harness's models only.
-pub(super) fn thread_items(row: &HarnessRow) -> Vec<Item> {
-    row.models
-        .iter()
-        .map(|model| model_item(row, model))
+/// Rows a harness thread's own model menu lists: that harness's signed-in
+/// models only, its favorites first.
+pub(super) fn thread_items(row: &HarnessRow, preferences: &Preferences) -> Vec<Item> {
+    favorites(&row.models, preferences)
+        .map(|model| model_item(row, model, "Favorites", preferences))
+        .chain(
+            row.models
+                .iter()
+                .filter(|model| model.authenticated)
+                .map(|model| model_item(row, model, &row.name, preferences)),
+        )
         .collect()
 }
 
@@ -1328,8 +1332,8 @@ impl Plait {
 mod tests {
     // Named imports: a glob would bring in GPUI's own `test` attribute.
     use super::{
-        Command, HarnessId, Harnesses, HarnessesView, ThreadHarness, harness_items, mode_line,
-        setup_items, thread_items,
+        Command, HarnessId, Harnesses, HarnessesView, ModelChoice, Preferences, ThreadHarness,
+        harness_items, mode_line, setup_items, thread_items,
     };
 
     fn sample() -> Harnesses {
@@ -1423,8 +1427,50 @@ mod tests {
             )]
         );
         // A Codex thread's menu lists only Codex models.
-        assert_eq!(thread_items(&view.rows[1]).len(), 2);
-        assert!(thread_items(&view.rows[0]).is_empty());
+        assert!(thread_items(&view.rows[0], &Preferences::default()).is_empty());
+    }
+
+    #[test]
+    fn a_harness_menu_lists_signed_in_models_with_favorites_first() {
+        let view = HarnessesView::new(sample());
+        let codex = &view.rows[1];
+        let listed = |preferences: &Preferences| {
+            thread_items(codex, preferences)
+                .iter()
+                .map(|item| {
+                    (
+                        item.section.to_string(),
+                        item.detail.to_string(),
+                        item.marked,
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        // Model `b` is not signed in, so it is not listed.
+        assert_eq!(
+            listed(&Preferences::default()),
+            vec![("Codex".into(), "codex/a".into(), Some(false))]
+        );
+        let mut preferences = Preferences::default();
+        for model_id in ["a", "b"] {
+            preferences.toggle_favorite(&ModelChoice {
+                provider: "codex".into(),
+                model_id: model_id.into(),
+            });
+        }
+        assert_eq!(
+            listed(&preferences),
+            vec![
+                ("Favorites".into(), "codex/a".into(), Some(true)),
+                ("Codex".into(), "codex/a".into(), Some(true)),
+            ]
+        );
+        let items = thread_items(codex, &preferences);
+        assert_eq!(items[0].key, items[1].key);
+        assert!(matches!(
+            &items[0].command,
+            Command::HarnessModel(HarnessId::Codex, choice) if choice.model_id == "a"
+        ));
     }
 
     /// Pi and Claude Code as the host lists them, Claude Code in `state`.
@@ -1536,7 +1582,7 @@ mod tests {
         let claude = &view.rows[1];
         assert!(claude.ready && !claude.setup && claude.startable() && claude.has_path());
         assert_eq!(claude.default_detail.as_ref(), "Decides itself.");
-        assert_eq!(thread_items(claude).len(), 1);
+        assert_eq!(thread_items(claude, &Preferences::default()).len(), 1);
         // A ready harness is chosen for the draft, and needs no setup row.
         let items = harness_items(&view.rows, HarnessId::Pi);
         assert!(matches!(

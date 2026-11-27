@@ -313,7 +313,7 @@ fn status() -> Status {
             model("google", "gemini-3-pro", "Gemini 3 Pro", false),
         ]
         .into_iter()
-        // Enough catalog for the picker to scroll: providers that are not signed in.
+        // Providers that are not signed in. The picker scene signs them in to scroll.
         .chain((0..36).map(|index| {
             model(
                 &format!("sample-provider-{}", index / 6 + 1),
@@ -2337,7 +2337,11 @@ fn keys_drive_the_palette_and_picker() {
 
     // Cmd-Shift-N asks for a model. Tab stays inside the overlay.
     press(&mut harness, "cmd-shift-n");
-    assert_eq!(shown(&mut harness).len(), 42, "the whole catalog is listed");
+    assert_eq!(
+        shown(&mut harness).len(),
+        5,
+        "only signed-in models are listed"
+    );
     let field = focused(&mut harness);
     press(&mut harness, "tab");
     assert!(focused(&mut harness) == field);
@@ -3300,8 +3304,9 @@ fn palette_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
     });
 }
 
-/// The model picker: favorites, recents, and provider groups; a search that
-/// mixes signed-in and signed-out models; the signed-out groups; no matches.
+/// The model picker: favorites, recents, and provider groups; a ranked search;
+/// no matches; enough signed-in providers to scroll. A favorite whose provider
+/// is not signed in is not listed.
 fn picker_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
     harness.connect(repository, false);
     harness.update(|plait, window, cx| {
@@ -3316,6 +3321,10 @@ fn picker_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
             provider: "openai-codex".into(),
             model_id: "gpt-6-astra".into(),
         });
+        let status = plait.host.connection.status.as_mut().unwrap();
+        for model in &mut status.models {
+            model.authenticated |= model.provider.starts_with("sample-provider-");
+        }
         plait.open_model_picker(ModelPurpose::NewThread, window, cx);
     });
     harness.capture(&format!("model-picker-{suffix}"));
@@ -3342,6 +3351,7 @@ fn picker_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
     harness.update(|plait, window, cx| {
         plait.close_overlay(true, window, cx);
         plait.preferences.value = Default::default();
+        plait.host.connection.status = Some(status());
     });
 }
 

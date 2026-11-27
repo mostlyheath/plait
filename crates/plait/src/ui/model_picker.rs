@@ -1,7 +1,8 @@
 //! The model picker: the host's catalog as palette items, and what a choice does.
 //!
-//! The picker shows availability the host reported. Favorites and recently
-//! used models are desktop preferences: identifiers only, never credentials.
+//! The picker lists only models the host reports as signed in; Settings →
+//! Providers lists the rest. Favorites and recently used models are desktop
+//! preferences: identifiers only, never credentials.
 
 use super::{
     Plait,
@@ -60,6 +61,25 @@ fn find<'a>(models: &'a [Model], key: &ModelKey) -> Option<&'a Model> {
         .find(|model| model.provider == key.provider && model.model_id == key.model_id)
 }
 
+/// Signed-in models from `keys`, in the order they are kept.
+fn signed_in<'a>(
+    models: &'a [Model],
+    keys: &'a [ModelKey],
+) -> impl Iterator<Item = &'a Model> + 'a {
+    keys.iter()
+        .filter_map(|key| find(models, key))
+        .filter(|model| model.authenticated)
+}
+
+/// Signed-in favorites, in the order they were starred. Every harness's picker
+/// starts with these; each lists only the ones in its own catalog.
+pub(super) fn favorites<'a>(
+    models: &'a [Model],
+    preferences: &'a Preferences,
+) -> impl Iterator<Item = &'a Model> + 'a {
+    signed_in(models, &preferences.favorite_models)
+}
+
 /// Signed-in models in the order a person reaches for them: favorites, then
 /// recently used, then the rest of the catalog. Each appears once.
 pub(super) fn usable_models<'a>(models: &'a [Model], preferences: &Preferences) -> Vec<&'a Model> {
@@ -76,20 +96,15 @@ pub(super) fn usable_models<'a>(models: &'a [Model], preferences: &Preferences) 
         .collect()
 }
 
-/// Picker rows before a search: Favorites, Recent, each signed-in provider,
-/// then each provider that is not signed in. A favorite is also listed under
-/// its provider, so the catalog stays complete.
+/// Picker rows before a search: Favorites, Recent, then each signed-in
+/// provider. A favorite is also listed under its provider, so each provider's
+/// group stays complete.
 pub(super) fn picker_items(
     models: &[Model],
     preferences: &Preferences,
     default: Option<&ModelChoice>,
 ) -> Vec<Item> {
-    let favorites = preferences
-        .favorite_models
-        .iter()
-        .map(|key| (key.provider.as_str(), key.model_id.as_str()))
-        .collect::<HashSet<_>>();
-    let item = |model: &Model, section: String| {
+    let item = |model: &Model, section: &str| {
         let choice = model.choice();
         let item = Item::new(
             model_key(model),
@@ -97,50 +112,32 @@ pub(super) fn picker_items(
             Command::Model(choice.clone()),
         )
         .detail(model_label(&choice))
-        .section(section)
-        .enabled(model.authenticated)
-        .marked(favorites.contains(&(model.provider.as_str(), model.model_id.as_str())));
-        if !model.authenticated {
-            item.badge("Not signed in", colors().amber)
-        } else if default == Some(&choice) {
+        .section(section.to_owned())
+        .marked(preferences.is_favorite(&choice));
+        if default == Some(&choice) {
             item.badge("Default", colors().mint)
         } else {
-            // One step from any usable row; the default row carries the marker instead.
+            // One step from any row; the default row carries the marker instead.
             item.aside("Set default")
         }
     };
-    let remembered = |keys: &[ModelKey], section: &str| {
-        keys.iter()
-            .filter_map(|key| find(models, key))
-            .map(|model| item(model, section.into()))
-            .collect::<Vec<_>>()
-    };
-    let mut items = remembered(&preferences.favorite_models, "Favorites");
-    items.extend(remembered(&preferences.recent_models, "Recent"));
+    let mut items = favorites(models, preferences)
+        .map(|model| item(model, "Favorites"))
+        .collect::<Vec<_>>();
+    items.extend(signed_in(models, &preferences.recent_models).map(|model| item(model, "Recent")));
 
-    // Providers keep the catalog's order; signed-in groups come first.
-    let mut groups: Vec<((&str, bool), Vec<&Model>)> = Vec::new();
+    // Providers keep the catalog's order.
+    let mut groups: Vec<(&str, Vec<&Model>)> = Vec::new();
     let mut positions = HashMap::new();
-    for model in models {
-        let group = (model.provider.as_str(), model.authenticated);
-        let position = *positions.entry(group).or_insert_with(|| {
-            groups.push((group, Vec::new()));
+    for model in models.iter().filter(|model| model.authenticated) {
+        let position = *positions.entry(model.provider.as_str()).or_insert_with(|| {
+            groups.push((model.provider.as_str(), Vec::new()));
             groups.len() - 1
         });
         groups[position].1.push(model);
     }
-    groups.sort_by_key(|((_, authenticated), _)| !authenticated);
-    for ((provider, authenticated), members) in groups {
-        let section = if authenticated {
-            provider.to_owned()
-        } else {
-            format!("{provider} · not signed in")
-        };
-        items.extend(
-            members
-                .into_iter()
-                .map(|model| item(model, section.clone())),
-        );
+    for (provider, members) in groups {
+        items.extend(members.into_iter().map(|model| item(model, provider)));
     }
     items
 }
@@ -171,7 +168,7 @@ impl Plait {
         if harness != HarnessId::Pi {
             return self
                 .harness_row(harness)
-                .map(super::harnesses::thread_items)
+                .map(|row| super::harnesses::thread_items(row, &self.preferences.value))
                 .unwrap_or_default();
         }
         picker_items(
@@ -295,8 +292,7 @@ impl Plait {
     }
 
     fn picker_note(&self, purpose: Option<ModelPurpose>) -> Option<SharedString> {
-        let status = self
-            .host
+        self.host
             .connection
             .status
             .as_ref()
@@ -304,18 +300,18 @@ impl Plait {
         if self.picker_harness(purpose) != HarnessId::Pi {
             return Some("Threads stay in the harness they started in.".into());
         }
-        if !status.models.iter().any(|model| model.authenticated) {
-            return Some("No model is signed in. Sign in to a provider on the host.".into());
-        }
         self.default_model_state().map(|(state, _)| state.into())
     }
 
     /// Why the picker has nothing to list. Only real host state is described.
-    fn picker_empty(&self) -> &'static str {
+    fn picker_empty(&self, purpose: ModelPurpose) -> &'static str {
         if self.host.connection.connecting {
             "Connecting to the local host…"
         } else if !self.host.connection.connected {
             "Not connected to the local host, so there is no model catalog. Reconnect from Settings (⌘,)."
+        } else if self.picker_harness(Some(purpose)) == HarnessId::Pi {
+            // The picker lists signed-in models only, so an empty Pi list means none is.
+            "No model is signed in. Open Settings (⌘,) → Providers to sign in."
         } else {
             "The host returned no models. Settings (⌘,) links to the setup guide."
         }
@@ -399,7 +395,7 @@ impl Plait {
         let options = Options {
             name: name.into(),
             placeholder: placeholder.into(),
-            empty: self.picker_empty().into(),
+            empty: self.picker_empty(purpose).into(),
             initial: default.map(Into::into),
             mark: Some("Favorite".into()),
             aside: Some("Set default".into()),
@@ -653,7 +649,7 @@ mod tests {
     }
 
     #[test]
-    fn the_catalog_is_grouped_by_provider_with_signed_in_providers_first() {
+    fn only_signed_in_models_are_listed_grouped_by_provider() {
         let items = picker_items(&catalog(), &Preferences::default(), None);
         assert_eq!(
             listed(&items),
@@ -661,64 +657,62 @@ mod tests {
                 pair("openai", "openai/luna"),
                 pair("openai", "openai/sol"),
                 pair("router", "router/vendor/opus"),
-                pair("google · not signed in", "google/gemini"),
-                pair("google · not signed in", "google/flash"),
-                pair("router · not signed in", "router/vendor/preview"),
             ]
         );
         assert_eq!(items[0].title.as_ref(), "LUNA");
+        assert!(items.iter().all(|item| item.enabled));
     }
 
     #[test]
-    fn models_that_are_not_signed_in_are_listed_marked_and_not_selectable() {
+    fn the_default_is_badged_and_a_signed_out_default_is_not_listed() {
         let default = choice("openai", "sol");
         let items = picker_items(&catalog(), &Preferences::default(), Some(&default));
-        let state = |detail: &str| {
+        let badge = |detail: &str| {
             let item = items
                 .iter()
                 .find(|item| item.detail.as_ref() == detail)
                 .unwrap();
-            let badge = item.badge.as_ref().map(|(text, _)| text.to_string());
-            (item.enabled, badge)
+            item.badge.as_ref().map(|(text, _)| text.to_string())
         };
-        assert_eq!(state("openai/luna"), (true, None));
-        assert_eq!(state("openai/sol"), (true, Some("Default".into())));
-        assert_eq!(
-            state("google/gemini"),
-            (false, Some("Not signed in".into()))
-        );
-        // Nothing is hidden: every model in the catalog has a row.
-        assert_eq!(items.len(), catalog().len());
-        // A default that is no longer signed in says so, not "Default".
+        assert_eq!(badge("openai/luna"), None);
+        assert_eq!(badge("openai/sol"), Some("Default".into()));
         let stale = choice("google", "flash");
         let items = picker_items(&catalog(), &Preferences::default(), Some(&stale));
-        let flash = items.last().unwrap();
-        assert_eq!(flash.badge.as_ref().unwrap().0.as_ref(), "Not signed in");
+        assert!(
+            items
+                .iter()
+                .all(|item| item.detail.as_ref() != "google/flash")
+        );
+        assert!(items.iter().all(|item| item.badge.is_none()));
     }
 
     #[test]
     fn favorites_and_recents_lead_and_stay_listed_under_their_provider() {
         let mut preferences = Preferences::default();
         preferences.toggle_favorite(&choice("router", "vendor/opus"));
+        // Not signed in: kept, and shown again once its provider signs in.
         preferences.toggle_favorite(&choice("google", "gemini"));
         // No longer in the catalog: remembered, but not shown.
         preferences.toggle_favorite(&choice("gone", "model"));
+        preferences.toggle_favorite(&choice("openai", "luna"));
         preferences.record_recent(&choice("openai", "sol"));
+        preferences.record_recent(&choice("google", "flash"));
         preferences.record_recent(&choice("gone", "model"));
         let items = picker_items(&catalog(), &preferences, None);
         assert_eq!(
-            listed(&items)[..4],
-            [
+            listed(&items),
+            vec![
                 pair("Favorites", "router/vendor/opus"),
-                pair("Favorites", "google/gemini"),
+                pair("Favorites", "openai/luna"),
                 pair("Recent", "openai/sol"),
                 pair("openai", "openai/luna"),
+                pair("openai", "openai/sol"),
+                pair("router", "router/vendor/opus"),
             ]
         );
-        assert_eq!(items.len(), catalog().len() + 3);
-        // The toggle shows the same state in every section a model appears in.
+        // The star shows the same state in every section a model appears in.
         for item in &items {
-            let favorite = ["router/vendor/opus", "google/gemini"].contains(&item.detail.as_ref());
+            let favorite = ["router/vendor/opus", "openai/luna"].contains(&item.detail.as_ref());
             assert_eq!(item.marked, Some(favorite), "{}", item.detail);
         }
         // One model has one key wherever it is listed, so a search shows it once.
@@ -729,8 +723,11 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(opus.len(), 2);
         assert_eq!(opus[0], opus[1]);
-        // A favorite that is not signed in stays unusable in Favorites too.
-        assert!(!items[1].enabled);
+
+        let mut signed_in = catalog();
+        signed_in[3].authenticated = true;
+        let items = picker_items(&signed_in, &preferences, None);
+        assert_eq!(listed(&items)[1], pair("Favorites", "google/gemini"));
     }
 
     #[test]
