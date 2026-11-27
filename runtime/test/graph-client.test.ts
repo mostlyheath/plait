@@ -648,7 +648,7 @@ test('admission waiting for preparation leaves the graph request pipe available'
 });
 
 test('graph admissions from different projects share one local probe slot', async t => {
-  const dir = await mkdtemp(join(tmpdir(), 'graph-probes-'));
+  const dir = await realpath(await fixtureDirectory(join(tmpdir(), 'graph-probes-')));
   const host = new Runtime(dir, createModels(), new Set());
   const old = process.env.PLAIT_GRAPH;
   process.env.PLAIT_GRAPH = '1';
