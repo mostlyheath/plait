@@ -27,6 +27,18 @@ pub(super) struct Navigation {
     pub archived: bool,
     pub rename: Option<(String, Entity<TextField>)>,
     pub menu: Option<String>,
+    /// A thread menu takes focus on its first item when it opens, so Escape
+    /// reaches it before the message box's bindings. Escape gives focus back to
+    /// `menu_return`. The handle is made on first use.
+    pub menu_focus: Option<FocusHandle>,
+    menu_panel: Option<FocusHandle>,
+    popover_blur: Option<Subscription>,
+    pub menu_return: Option<FocusHandle>,
+    /// The thread the archive shortcut is asking about, and the unsaved state of
+    /// the card's "Remember this setting" box. The focus handle is made on first use.
+    pub confirm_archive: Option<String>,
+    pub remember_archive: bool,
+    pub archive_focus: Option<FocusHandle>,
     pub managing: Option<ThreadManagement>,
     management_generation: u64,
     pub error: Option<String>,
@@ -48,6 +60,13 @@ impl Navigation {
             archived: false,
             rename: None,
             menu: None,
+            menu_focus: None,
+            menu_panel: None,
+            popover_blur: None,
+            menu_return: None,
+            confirm_archive: None,
+            remember_archive: false,
+            archive_focus: None,
             managing: None,
             management_generation: 0,
             error: None,
@@ -584,6 +603,9 @@ impl Plait {
         let menu_id = id.to_owned();
         let context_id = menu_id.clone();
         let id = menu_id.clone();
+        let popover_id = menu_id.clone();
+        let menu_open = self.navigation.menu.as_deref() == Some(menu_id.as_str());
+        let confirming = self.navigation.confirm_archive.as_deref() == Some(menu_id.as_str());
         let card = nav::Card::new(
             thread,
             self.lists(),
@@ -616,13 +638,11 @@ impl Plait {
             .pb(px(2.))
             .relative()
             .group("thread-card")
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener(move |this, _, _, cx| {
-                    if this.host.protocol() >= 3 {
-                        this.navigation.menu = Some(context_id.clone());
-                        cx.stop_propagation();
-                        cx.notify();
+            .capture_any_mouse_down(
+                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                    if event.button == MouseButton::Right && this.host.protocol() >= 3 {
+                        this.open_thread_menu(context_id.clone(), window, cx);
+                        window.prevent_default();
                     }
                 }),
             )
@@ -725,14 +745,33 @@ impl Plait {
                     .top(px(5.))
                     .right(px(4.))
                     .size(px(20.))
-                    .opacity(0.)
+                    .opacity(if menu_open { 1. } else { 0. })
                     .group_hover("thread-card", |s| s.opacity(1.))
                     .focus_visible(|s| focused_control(s).opacity(1.))
-                    .on_activate(cx, move |this, _, cx| {
-                        this.navigation.menu = Some(menu_id.clone());
+                    .on_activate(cx, move |this, window, cx| {
+                        this.open_thread_menu(menu_id.clone(), window, cx);
                         cx.stop_propagation();
-                        cx.notify();
                     }),
+                )
+            })
+            // Zero-width anchors at the button's edge: the popover opens under the
+            // button, right edges aligned, and moves if the window has no room.
+            .when(menu_open, |el| {
+                el.child(
+                    div()
+                        .absolute()
+                        .top(px(27.))
+                        .right(px(4.))
+                        .child(self.thread_menu(&popover_id, cx)),
+                )
+            })
+            .when(confirming, |el| {
+                el.child(
+                    div()
+                        .absolute()
+                        .top(px(27.))
+                        .right(px(4.))
+                        .child(self.archive_card(cx)),
                 )
             })
             .into_any_element()
@@ -986,7 +1025,8 @@ impl Plait {
             .shadow(floating_shadow())
             .bg(rgb(colors().raised));
         // The machine menu opens above its control in the foot.
-        if id == "machines" {
+        // Thread menus are drawn by their card (`thread_menu`).
+        if id == "machines" || !id.starts_with("project:") {
             return div().into_any_element();
         }
         if let Some(path) = id.strip_prefix("project:") {
@@ -1016,66 +1056,6 @@ impl Plait {
                     this.navigation.menu = None; cx.notify();
                 }))
                 .child(tag("project-menu-note", "Removing a project keeps its host threads.", colors().subtle));
-        } else if let Some(thread) = self
-            .host
-            .connection
-            .threads()
-            .iter()
-            .find(|thread| thread.id == *id)
-        {
-            let rename = id.clone();
-            let archive = id.clone();
-            let archived = thread.archived == Some(true);
-            let worktrees = thread.checkout.clone();
-            let tree = self.lists().worktree(&thread.checkout);
-            let branch = tree.map(|tree| tree.branch.clone());
-            let remove = thread.checkout.clone();
-            panel = panel
-                .child(tag("thread-menu-title", self.thread_title(id), colors().strong).truncate())
-                .child(
-                    button("thread-rename", "Rename thread…")
-                        .on_activate(cx, move |this, window, cx| {
-                            this.begin_rename(rename.clone(), window, cx)
-                        }),
-                )
-                .child(
-                    button(
-                        "thread-archive",
-                        if archived {
-                            "Unarchive thread"
-                        } else {
-                            "Archive thread"
-                        },
-                    )
-                    .on_activate(cx, move |this, window, cx| {
-                        this.archive_thread(archive.clone(), !archived, window, cx)
-                    }),
-                )
-                .when_some(branch, |el, branch| {
-                    el.child(
-                        tag(
-                            "thread-menu-worktree",
-                            format!("Worktree on {branch}"),
-                            colors().subtle,
-                        )
-                        .truncate(),
-                    )
-                    .child(
-                        button("thread-worktrees", "Worktrees").on_activate(
-                            cx,
-                            move |this, window, cx| {
-                                this.open_worktrees(worktrees.clone(), window, cx)
-                            },
-                        ),
-                    )
-                    .child(
-                        button("thread-remove-worktree", "Remove worktree…")
-                            .disabled(self.worktree_busy)
-                            .on_activate(cx, move |this, window, cx| {
-                                this.remove_worktree(remove.clone(), window, cx)
-                            }),
-                    )
-                });
         }
         panel
             .child(
@@ -1087,10 +1067,9 @@ impl Plait {
             .into_any_element()
     }
 
-    pub(super) fn begin_rename(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
-        if self.host.protocol() < 3 || !self.host.connection.connected {
-            return;
-        }
+    /// Show a thread's card: open the sidebar, unfold its project, include
+    /// archived threads if it is one, and scroll it into view.
+    fn reveal_thread(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         if !self.sidebar {
             self.toggle_sidebar(window, cx);
         }
@@ -1113,6 +1092,365 @@ impl Plait {
             }
         }
         self.navigation.invalidate_rows();
+        let rows = self.navigation_rows(cx);
+        let items = self.tree_items(&rows, cx);
+        if let Some(index) = items
+            .iter()
+            .position(|(item, _)| matches!(item, RowId::Thread(thread) if thread == id))
+        {
+            self.reveal_tree_item(index);
+        }
+    }
+
+    /// A thread's actions, drawn over the sidebar from where this is placed.
+    /// `deferred` paints it above the cards after it; `anchored` keeps it on
+    /// screen. Escape and an outside click close it here.
+    fn thread_menu(&self, id: &str, cx: &mut Context<Self>) -> AnyElement {
+        let Some(thread) = self
+            .host
+            .connection
+            .threads()
+            .iter()
+            .find(|thread| thread.id == id)
+        else {
+            return div().into_any_element();
+        };
+        let owner = id.to_owned();
+        let rename = id.to_owned();
+        let archive = id.to_owned();
+        let archived = thread.archived == Some(true);
+        let worktrees = thread.checkout.clone();
+        let branch = self
+            .lists()
+            .worktree(&thread.checkout)
+            .map(|tree| tree.branch.clone());
+        let remove = thread.checkout.clone();
+        let open_thread = self.host.thread.selected.as_deref() == Some(id);
+        // A button with its shortcut at the right edge, when it has one.
+        let keyed = |button: Control, action: &str, hint_id: &'static str| {
+            let keys = self.shortcut_label(action);
+            div()
+                .relative()
+                .child(button)
+                .when(open_thread && !keys.is_empty(), |el| {
+                    el.child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .right_2()
+                            .h(px(ROW_HEIGHT))
+                            .flex()
+                            .items_center()
+                            .child(tag(hint_id, keys, colors().subtle)),
+                    )
+                })
+        };
+        let panel = column()
+            .w(px(240.))
+            .p_2()
+            .gap_2()
+            .border_1()
+            .border_color(rgb(colors().edge))
+            .rounded(px(SURFACE_CORNER))
+            .shadow(floating_shadow())
+            .bg(rgb(colors().raised))
+            .occlude()
+            .when_some(self.navigation.menu_panel.as_ref(), |el, focus| {
+                el.track_focus(focus)
+            })
+            .when(!open_thread, |el| {
+                el.on_action(|_: &super::RenameThread, _, cx| cx.stop_propagation())
+                    .on_action(|_: &super::ArchiveThread, _, cx| cx.stop_propagation())
+            })
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                if event.keystroke.key == "escape" {
+                    this.dismiss_thread_menu(window, cx);
+                    cx.stop_propagation();
+                }
+            }))
+            .on_mouse_down_out(cx.listener(move |this, _, _, cx| {
+                if this.navigation.menu.as_ref() == Some(&owner) {
+                    this.navigation.menu = None;
+                    this.navigation.menu_return = None;
+                    cx.notify();
+                }
+            }))
+            .child(tag("thread-menu-title", self.thread_title(id), colors().strong).truncate())
+            .child(keyed(
+                button("thread-rename", "Rename thread…")
+                    .when_some(self.navigation.menu_focus.as_ref(), |el, focus| {
+                        el.track_focus(focus)
+                    })
+                    .on_activate(cx, move |this, window, cx| {
+                        this.begin_rename(rename.clone(), window, cx)
+                    }),
+                "thread.rename",
+                "thread-rename-keys",
+            ))
+            .child(keyed(
+                button(
+                    "thread-archive",
+                    if archived {
+                        "Unarchive thread"
+                    } else {
+                        "Archive thread"
+                    },
+                )
+                .on_activate(cx, move |this, window, cx| {
+                    this.archive_thread(archive.clone(), !archived, window, cx)
+                }),
+                "thread.archive",
+                "thread-archive-keys",
+            ))
+            .when_some(branch, |el, branch| {
+                el.child(
+                    tag(
+                        "thread-menu-worktree",
+                        format!("Worktree on {branch}"),
+                        colors().subtle,
+                    )
+                    .truncate(),
+                )
+                .child(
+                    button("thread-worktrees", "Worktrees")
+                        .on_activate(cx, move |this, window, cx| {
+                            this.open_worktrees(worktrees.clone(), window, cx)
+                        }),
+                )
+                .child(
+                    button("thread-remove-worktree", "Remove worktree…")
+                        .disabled(self.worktree_busy)
+                        .on_activate(cx, move |this, window, cx| {
+                            this.remove_worktree(remove.clone(), window, cx)
+                        }),
+                )
+            });
+        deferred(
+            anchored()
+                .anchor(Anchor::TopRight)
+                .snap_to_window_with_margin(px(8.))
+                .child(panel),
+        )
+        .into_any_element()
+    }
+
+    /// Switching between popovers keeps the return target from before the first one.
+    fn save_popover_return_focus(&mut self, window: &Window, cx: &Context<Self>) {
+        let inside_popover = [
+            self.navigation.menu_panel.as_ref(),
+            self.navigation.archive_focus.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        .any(|panel| panel.contains_focused(window, cx));
+        if !inside_popover {
+            self.navigation.menu_return = window.focused(cx);
+        }
+    }
+
+    pub(super) fn open_thread_menu(
+        &mut self,
+        id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.save_popover_return_focus(window, cx);
+        // The Rename button tracks this handle, so it must keep its tab stop.
+        let focus = self
+            .navigation
+            .menu_focus
+            .get_or_insert_with(|| cx.focus_handle().tab_stop(true))
+            .clone();
+        let panel = self
+            .navigation
+            .menu_panel
+            .get_or_insert_with(|| cx.focus_handle());
+        self.navigation.confirm_archive = None;
+        let owner = id.clone();
+        self.navigation.popover_blur =
+            Some(cx.on_focus_out(panel, window, move |this, _, _, cx| {
+                if this.navigation.menu.as_ref() == Some(&owner) {
+                    this.navigation.menu = None;
+                    this.navigation.menu_return = None;
+                    cx.notify();
+                }
+            }));
+        self.navigation.menu = Some(id);
+        window.focus(&focus, cx);
+        cx.notify();
+    }
+
+    /// Escape in a thread menu: close it and give focus back.
+    fn dismiss_thread_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.navigation.menu = None;
+        let focus = self
+            .navigation
+            .menu_return
+            .take()
+            .unwrap_or_else(|| self.focus.clone());
+        window.focus(&focus, cx);
+        cx.notify();
+    }
+
+    /// The archive shortcut: archive at once when asking is off or this is an
+    /// unarchive, else ask in a card under the thread's card.
+    pub(super) fn request_archive(
+        &mut self,
+        id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // A row being renamed has no room for the card, and the field keeps focus.
+        if self.navigation.rename.is_some() {
+            return;
+        }
+        let Some(archived) = self
+            .host
+            .connection
+            .threads()
+            .iter()
+            .find(|thread| thread.id == id)
+            .map(|thread| thread.archived == Some(true))
+        else {
+            return;
+        };
+        if !needs_archive_question(archived, self.preferences.value.skip_archive_confirmation) {
+            self.archive_thread(id, !archived, window, cx);
+            return;
+        }
+        if self.host.protocol() < 3 || !self.host.connection.connected {
+            return;
+        }
+        self.save_popover_return_focus(window, cx);
+        self.reveal_thread(&id, window, cx);
+        self.navigation.menu = None;
+        self.navigation.confirm_archive = Some(id);
+        self.navigation.remember_archive = false;
+        let focus = self
+            .navigation
+            .archive_focus
+            .get_or_insert_with(|| cx.focus_handle())
+            .clone();
+        self.navigation.popover_blur = Some(cx.on_focus_out(&focus, window, |this, _, _, cx| {
+            if this.navigation.confirm_archive.take().is_some() {
+                cx.notify();
+            }
+        }));
+        window.focus(&focus, cx);
+        cx.notify();
+    }
+
+    pub(super) fn cancel_archive(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.navigation.confirm_archive.take().is_some() {
+            window.focus(&self.focus, cx);
+            cx.notify();
+        }
+    }
+
+    /// Archive the thread the card asks about; a ticked box saves the choice.
+    pub(super) fn confirm_archive_now(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(id) = self.navigation.confirm_archive.take() else {
+            return;
+        };
+        if self.navigation.remember_archive {
+            let mut value = self.preferences.value.clone();
+            value.skip_archive_confirmation = true;
+            self.set_preferences(value, super::jump::PreferenceGroup::Keyboard, cx);
+        }
+        window.focus(&self.focus, cx);
+        self.archive_thread(id, true, window, cx);
+        cx.notify();
+    }
+
+    /// "Archive this thread?", drawn from where it is placed like `thread_menu`.
+    /// Return archives, Escape or a click outside cancels.
+    fn archive_card(&self, cx: &mut Context<Self>) -> AnyElement {
+        let remember = self.navigation.remember_archive;
+        let panel = column()
+            .w(px(240.))
+            .p_2()
+            .gap_2()
+            .border_1()
+            .border_color(rgb(colors().edge))
+            .rounded(px(SURFACE_CORNER))
+            .shadow(floating_shadow())
+            .bg(rgb(colors().raised))
+            .occlude()
+            .when_some(self.navigation.archive_focus.as_ref(), |el, focus| {
+                el.track_focus(focus)
+            })
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                match event.keystroke.key.as_str() {
+                    // Return on a focused button inside the card is that button's.
+                    "enter"
+                        if this
+                            .navigation
+                            .archive_focus
+                            .as_ref()
+                            .is_some_and(|focus| focus.is_focused(window)) =>
+                    {
+                        this.confirm_archive_now(window, cx)
+                    }
+                    "escape" => this.cancel_archive(window, cx),
+                    _ => return,
+                }
+                cx.stop_propagation();
+            }))
+            .on_mouse_down_out(cx.listener(|this, _, window, cx| this.cancel_archive(window, cx)))
+            .child(tag(
+                "archive-card-title",
+                "Archive this thread?",
+                colors().strong,
+            ))
+            .child(
+                button(
+                    "archive-remember",
+                    if remember {
+                        "☑  Remember this setting"
+                    } else {
+                        "☐  Remember this setting"
+                    },
+                )
+                .role(Role::CheckBox)
+                .aria_toggled(if remember {
+                    Toggled::True
+                } else {
+                    Toggled::False
+                })
+                .on_activate(cx, |this, _, cx| {
+                    this.navigation.remember_archive = !this.navigation.remember_archive;
+                    cx.notify();
+                }),
+            )
+            .child(
+                row()
+                    .gap_2()
+                    .child(
+                        button("archive-cancel", "Cancel")
+                            .on_activate(cx, |this, window, cx| this.cancel_archive(window, cx)),
+                    )
+                    .child(
+                        toned_button("archive-confirm", "Archive", Tone::Primary)
+                            .on_activate(cx, |this, window, cx| {
+                                this.confirm_archive_now(window, cx)
+                            }),
+                    ),
+            );
+        deferred(
+            anchored()
+                .anchor(Anchor::TopRight)
+                .snap_to_window_with_margin(px(8.))
+                .child(panel),
+        )
+        .into_any_element()
+    }
+
+    pub(super) fn begin_rename(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        if self.host.protocol() < 3 || !self.host.connection.connected {
+            return;
+        }
+        self.reveal_thread(&id, window, cx);
+        self.navigation.confirm_archive = None;
         let title = self.rename_text(&id);
         let field = cx.new(|cx| {
             let mut field = TextField::new("Thread name", "Name this thread", cx);
@@ -1120,15 +1458,7 @@ impl Plait {
             field
         });
         window.focus(&field.focus_handle(cx), cx);
-        self.navigation.rename = Some((id.clone(), field));
-        let rows = self.navigation_rows(cx);
-        let items = self.tree_items(&rows, cx);
-        if let Some(index) = items
-            .iter()
-            .position(|(item, _)| matches!(item, RowId::Thread(thread) if thread == &id))
-        {
-            self.reveal_tree_item(index);
-        }
+        self.navigation.rename = Some((id, field));
         self.navigation.menu = None;
         self.navigation.error = None;
         cx.notify();
@@ -1528,5 +1858,23 @@ impl Plait {
                     .w(px(super::panels::HANDLE))
                     .child(self.resize_handle(super::panels::Panel::Sidebar, cx)),
             )
+    }
+}
+
+/// Only archiving, with no remembered answer, needs a question.
+fn needs_archive_question(archived: bool, skip: bool) -> bool {
+    !archived && !skip
+}
+
+#[cfg(test)]
+mod archive_question_tests {
+    use super::needs_archive_question;
+
+    #[test]
+    fn only_archiving_without_a_saved_choice_asks() {
+        assert!(needs_archive_question(false, false));
+        assert!(!needs_archive_question(false, true), "remembered choice");
+        assert!(!needs_archive_question(true, false), "unarchiving is safe");
+        assert!(!needs_archive_question(true, true));
     }
 }

@@ -212,6 +212,43 @@ fn assert_menu_actions(h: &mut Harness, labels: &[&str]) {
     }
 }
 
+#[cfg(debug_assertions)]
+fn assert_thread_shortcut_hints(h: &mut Harness, visible: bool) {
+    let frame = h.draw_a11y();
+    for id in ["thread-rename-keys", "thread-archive-keys"] {
+        assert_eq!(
+            frame.nodes.iter().any(|node| node.path.contains(id)
+                && node.bounds.size.width > px(0.)
+                && node.bounds.size.height > px(0.)),
+            visible,
+            "{id} visibility"
+        );
+    }
+}
+
+fn tab_out_then_escape(h: &mut Harness) {
+    h.draw();
+    let popover_open =
+        |p: &Plait| p.navigation.menu.is_some() || p.navigation.confirm_archive.is_some();
+    h.update(|p, _, _| assert!(popover_open(p)));
+    let mut open = true;
+    for _ in 0..8 {
+        h.keystroke("tab");
+        h.draw();
+        h.update(|p, _, _| open = popover_open(p));
+        if !open {
+            break;
+        }
+    }
+    assert!(!open, "Tab closes the popover when focus leaves");
+    h.keystroke("escape");
+    h.update(|p, _, cx| {
+        let composer = p.visible_composer().unwrap().read(cx);
+        assert!(composer.can_stop());
+        assert!(composer.hint().contains("Esc twice stops"));
+    });
+}
+
 pub(super) fn walk(h: &mut Harness, repository: &Path, suffix: &str) {
     states(h, repository);
     capture_both(h, &format!("cards-states-{suffix}"));
@@ -300,6 +337,157 @@ pub(super) fn walk(h: &mut Harness, repository: &Path, suffix: &str) {
     h.keystroke("escape");
     h.update(|p, _, _| assert!(p.navigation.rename.is_none()));
 
+    h.update(|p, window, cx| {
+        window.activate_window();
+        p.focus_composer(window, cx);
+    });
+    h.draw();
+    let row = item(h, 1);
+    click(h, row.center(), MouseButton::Right);
+    h.capture(&format!("cards-menu-{suffix}"));
+    h.update(|p, window, _| {
+        let focus = p.navigation.menu_focus.as_ref().unwrap();
+        assert!(focus.is_focused(window), "the menu's first item has focus");
+    });
+    h.update(|p, _, _| {
+        assert_eq!(p.navigation.menu.as_deref(), Some("cards-0"));
+        assert_eq!(p.host.thread.selected.as_deref(), Some(THREAD));
+        p.preferences.value.skip_archive_confirmation = true;
+    });
+    #[cfg(debug_assertions)]
+    assert_thread_shortcut_hints(h, false);
+    h.keystroke("cmd-alt-r");
+    h.keystroke("cmd-alt-a");
+    h.update(|p, _, _| {
+        assert!(p.navigation.rename.is_none());
+        assert!(p.navigation.managing.is_none());
+        assert!(p.navigation.error.is_none());
+        assert!(p.navigation.confirm_archive.is_none());
+        p.preferences.value.skip_archive_confirmation = false;
+        assert_eq!(p.navigation.menu.as_deref(), Some("cards-0"));
+    });
+    h.keystroke("escape");
+    h.update(|p, window, cx| {
+        assert!(p.navigation.menu.is_none(), "Escape closes the menu");
+        let composer = p.visible_composer().unwrap().focus_handle(cx);
+        assert!(composer.is_focused(window), "Escape returns focus");
+        window.focus(&p.focus, cx);
+    });
+
+    // Switch from the second row to the uncovered row above its popover.
+    for from_confirmation in [false, true] {
+        h.update(|p, window, cx| p.focus_composer(window, cx));
+        if from_confirmation {
+            h.update(|p, window, cx| p.request_archive("cards-1".into(), window, cx));
+        } else {
+            let second = item(h, 2);
+            click(h, second.center(), MouseButton::Right);
+        }
+        h.draw();
+        h.update(|p, window, _| {
+            if from_confirmation {
+                assert_eq!(p.navigation.confirm_archive.as_deref(), Some("cards-1"));
+                assert!(
+                    p.navigation
+                        .archive_focus
+                        .as_ref()
+                        .unwrap()
+                        .is_focused(window)
+                );
+            } else {
+                assert_eq!(p.navigation.menu.as_deref(), Some("cards-1"));
+            }
+        });
+        let first = item(h, 1);
+        click(h, first.center(), MouseButton::Right);
+        h.draw();
+        h.update(|p, window, _| {
+            assert!(p.navigation.confirm_archive.is_none());
+            assert_eq!(p.navigation.menu.as_deref(), Some("cards-0"));
+            assert!(p.navigation.menu_focus.as_ref().unwrap().is_focused(window));
+        });
+        h.keystroke("escape");
+        h.update(|p, window, cx| {
+            assert!(p.navigation.menu.is_none());
+            assert!(
+                p.visible_composer()
+                    .unwrap()
+                    .focus_handle(cx)
+                    .is_focused(window)
+            );
+            window.focus(&p.focus, cx);
+        });
+    }
+
+    click(h, row.center(), MouseButton::Right);
+    tab_out_then_escape(h);
+
+    // The archive shortcut waits while a thread is being renamed.
+    h.update(|p, window, cx| {
+        p.begin_rename("cards-0".into(), window, cx);
+        p.request_archive("cards-0".into(), window, cx);
+        assert!(p.navigation.confirm_archive.is_none(), "no hidden question");
+        let field = p.navigation.rename.as_ref().unwrap().1.focus_handle(cx);
+        assert!(field.is_focused(window), "the rename field keeps focus");
+        p.navigation.rename = None;
+    });
+
+    // The archive shortcut asks first, in a card under the thread's card.
+    h.update(|p, window, cx| {
+        p.request_archive("cards-0".into(), window, cx);
+        assert_eq!(p.navigation.confirm_archive.as_deref(), Some("cards-0"));
+    });
+    h.capture(&format!("cards-archive-card-{suffix}"));
+    // Return belongs to the button that has focus, not to the card around it:
+    // on the box it ticks the box and the question stays.
+    h.keystroke("tab");
+    press_return(h);
+    h.update(|p, _, _| {
+        assert!(p.navigation.remember_archive, "Return ticks the box");
+        assert_eq!(
+            p.navigation.confirm_archive.as_deref(),
+            Some("cards-0"),
+            "Return on a button inside the card must not confirm"
+        );
+    });
+    // On Cancel it cancels, and saves nothing even with the box ticked.
+    h.keystroke("tab");
+    press_return(h);
+    h.update(|p, _, _| {
+        assert!(p.navigation.confirm_archive.is_none(), "Return on Cancel");
+        assert!(!p.preferences.value.skip_archive_confirmation);
+    });
+    // A pending card never outlives what it asked about.
+    h.update(|p, window, cx| {
+        p.request_archive("cards-0".into(), window, cx);
+        assert_eq!(p.navigation.confirm_archive.as_deref(), Some("cards-0"));
+        p.begin_rename("cards-0".into(), window, cx);
+        assert!(p.navigation.confirm_archive.is_none(), "rename drops it");
+        p.navigation.rename = None;
+        p.request_archive("cards-0".into(), window, cx);
+    });
+    h.draw();
+    tab_out_then_escape(h);
+    h.update(|p, window, cx| {
+        p.request_archive("cards-0".into(), window, cx);
+        p.navigation.remember_archive = true;
+        p.cancel_archive(window, cx);
+        assert!(p.navigation.confirm_archive.is_none());
+        assert!(
+            !p.preferences.value.skip_archive_confirmation,
+            "cancelling saves nothing, even with the box ticked"
+        );
+        p.request_archive("cards-0".into(), window, cx);
+        p.navigation.remember_archive = true;
+        p.confirm_archive_now(window, cx);
+        assert!(p.navigation.confirm_archive.is_none());
+        assert!(p.preferences.value.skip_archive_confirmation);
+        // Back to asking, so the rest of the scene is unchanged.
+        let mut value = p.preferences.value.clone();
+        value.skip_archive_confirmation = false;
+        p.set_preferences(value, crate::ui::jump::PreferenceGroup::Keyboard, cx);
+    });
+
     h.update(|p, _, _| {
         p.host.connection.threads_mut()[1].archived = Some(true);
         p.navigation.archived = true;
@@ -356,6 +544,69 @@ pub(super) fn walk(h: &mut Harness, repository: &Path, suffix: &str) {
     h.update(|p, _, _| reset(p));
     h.connect(repository, false);
     h.update(|p, _, cx| p.rebuild_projects(cx));
+    let mut active = None;
+    h.update(|p, _, cx| {
+        p.host.connection.status.as_mut().unwrap().protocol_version = 4;
+        active = p.tabs.model.active();
+        assert!(p.open_thread_tab("thr_0c44a9d1".into(), repository.into(), cx));
+        p.tabs.model.activate(active.unwrap()).unwrap();
+    });
+    h.draw();
+    h.keystroke("cmd-shift-\\");
+    h.draw();
+    h.update(|p, _, _| {
+        assert!(p.tabs.list_open);
+        assert_eq!(p.tabs.rows.len(), 2);
+    });
+    let open_row = item(h, 1);
+    click(h, open_row.center(), MouseButton::Right);
+    h.draw();
+    h.update(|p, window, _| {
+        assert!(!p.tabs.list_open);
+        assert_eq!(p.navigation.menu.as_deref(), Some(THREAD));
+        assert!(p.navigation.menu_focus.as_ref().unwrap().is_focused(window));
+    });
+    #[cfg(debug_assertions)]
+    assert_thread_shortcut_hints(h, true);
+    h.keystroke("down");
+    press_return(h);
+    h.update(|p, _, _| {
+        assert_eq!(p.tabs.model.active(), active);
+        assert_eq!(p.navigation.rename.as_ref().unwrap().0, THREAD);
+    });
+    h.keystroke("escape");
+    // Leaving threads for a Worktrees tab drops a pending archive card: Return
+    // must not archive a thread the window no longer shows.
+    h.update(|p, window, cx| {
+        p.host.connection.status.as_mut().unwrap().protocol_version = 4;
+        p.request_archive(THREAD.into(), window, cx);
+        assert!(p.navigation.confirm_archive.is_some());
+        p.open_worktrees(repository.into(), window, cx);
+    });
+    h.update(|p, _, _| {
+        assert!(p.host.thread.selected.is_none());
+        assert!(
+            p.navigation.confirm_archive.is_none(),
+            "a Worktrees tab drops it"
+        );
+    });
+    // So does selecting a thread. Last, as it changes the checkout.
+    h.update(|p, window, cx| {
+        p.host.connection.status.as_mut().unwrap().protocol_version = 4;
+        let id = p.host.connection.threads()[0].id.clone();
+        p.request_archive(id.clone(), window, cx);
+        assert!(p.navigation.confirm_archive.is_some());
+        p.select_host_thread_content(id, window, cx);
+        assert!(p.navigation.confirm_archive.is_none(), "selecting drops it");
+    });
+}
+
+/// Return as a person presses it: GPUI activates a button on the key's release.
+fn press_return(h: &mut Harness) {
+    h.keystroke("enter");
+    h.pointer(PlatformInput::KeyUp(KeyUpEvent {
+        keystroke: Keystroke::parse("enter").unwrap(),
+    }));
 }
 
 pub(super) fn compact(repository: &Path, output: Option<&Path>) {

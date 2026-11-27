@@ -42,6 +42,8 @@ This table matches `ACTIONS` in `crates/plait/src/ui/actions.rs` (checked by aut
 | Cmd-Option-Up | Previous Thread | `thread.previous` |
 | Option-Down | Next Changed File | `git.next_file` |
 | Option-Up | Previous Changed File | `git.previous_file` |
+| Cmd-Option-R | Rename Thread… | `thread.rename` |
+| Cmd-Option-A | Archive or Unarchive Thread | `thread.archive` |
 | Cmd-Option-U | Undo Last Turn | `thread.undo_last_turn` |
 | Cmd-Option-period | Deny Once | `approval.deny_once` |
 | Cmd-Option-Y | Allow Once | `approval.allow_once` |

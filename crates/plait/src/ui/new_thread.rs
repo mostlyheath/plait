@@ -100,6 +100,7 @@ impl Plait {
         // A saved selection arriving later must not replace the draft.
         self.session.restore_thread = None;
         self.navigation.menu = None;
+        self.navigation.confirm_archive = None;
         self.navigation.rename = None;
         self.draft.open = true;
         if self.draft.composer.is_none() {

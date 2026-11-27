@@ -1481,19 +1481,8 @@ impl Render for Plait {
                 }
             }))
             .on_action(cx.listener(|this, _: &ArchiveThread, window, cx| {
-                if let Some(thread) = this
-                    .host
-                    .connection
-                    .threads()
-                    .iter()
-                    .find(|thread| Some(&thread.id) == this.host.thread.selected.as_ref())
-                {
-                    this.archive_thread(
-                        thread.id.clone(),
-                        thread.archived != Some(true),
-                        window,
-                        cx,
-                    );
+                if let Some(id) = this.host.thread.selected.clone() {
+                    this.request_archive(id, window, cx);
                 }
             }))
             .on_action(cx.listener(|this, _: &ToggleArchived, _, cx| {
@@ -1519,7 +1508,14 @@ impl Render for Plait {
                 this.toggle_command_palette(window, cx)
             }))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                if this.outline_key(&event.keystroke.key, cx) {
+                // `|`, not `||`: Escape closes both when both are open.
+                if event.keystroke.key == "escape"
+                    && (this.navigation.menu.take().is_some()
+                        | this.navigation.confirm_archive.take().is_some())
+                {
+                    cx.stop_propagation();
+                    cx.notify();
+                } else if this.outline_key(&event.keystroke.key, cx) {
                     cx.stop_propagation();
                 } else if event.keystroke.key == "escape"
                     && this.workspace.images.enlarged.take().is_some()

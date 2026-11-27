@@ -455,7 +455,7 @@ impl Plait {
         self.tabs.lifecycle.hydrate_generation += 1;
         self.workspace.cancelled.store(true, Ordering::Release);
         self.workspace.host_watch = None;
-        self.host.select(None);
+        self.deselect_thread();
         let field = self.workspace.commit_message.clone();
         field.update(cx, |f, cx| f.restore_text("", cx));
         // Configuration acknowledgements are keyed operations, not view payload.
