@@ -29,7 +29,7 @@ class ReleaseTests(unittest.TestCase):
                 cargo() { printenv PLAIT_RELEASE_VERSION || true; exit 0; }
                 source "$0"
             """
-            for tag, expected in (("", None), ("v0.1.0-preview.83", "0.1.0-preview.83")):
+            for tag, expected in (("", None), ("v0.1.0-preview.83", "0.1.0-preview.83"), ("v0.1.0", "0.1.0")):
                 with self.subTest(tag=tag):
                     output = subprocess.check_output(
                         ["bash", "-c", shell, str(ROOT / "scripts/build-macos.sh")],

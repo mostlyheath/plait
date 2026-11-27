@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import sys
@@ -20,11 +21,41 @@ class NextPreview(unittest.TestCase):
             self.assertEqual(plan.cargo_version(path), "0.1.0")
 
     def test_release_prep_runs_without_tomllib(self):
-        command = ("import runpy, sys; sys.modules['tomllib'] = None; "
-                   "sys.argv = sys.argv[1:]; runpy.run_path(sys.argv[0], run_name='__main__')")
+        command = ("import sys; sys.modules['tomllib'] = None; "
+                   "import release_plan; release_plan.git = lambda *args: ''; "
+                   "sys.exit(release_plan.main(['main']))")
         result = subprocess.check_output(
-            [sys.executable, "-c", command, "scripts/release_plan.py", "main"], cwd=plan.ROOT, text=True)
-        self.assertRegex(result, r"(?m)^tag=v[0-9.]+-preview\.[1-9][0-9]*$")
+            [sys.executable, "-c", command], cwd=plan.ROOT / "scripts", text=True)
+        self.assertRegex(result, r"(?m)^tag=v[0-9.]+-preview\.1$")
+
+    def test_final_requires_latest_successful_main_push_at_dispatch_sha(self):
+        workflow = (plan.ROOT / ".github/workflows/macos.yml").read_text()
+        step = workflow.split("      - name: Require the latest main check", 1)[1].split("\n      #", 1)[0]
+        script = textwrap.dedent(step.split("        run: |\n", 1)[1])
+        for sha, conclusion, allowed in [
+            ("current", "success", True), ("old", "success", False),
+            ("current", "failure", False), ("current", None, False),
+        ]:
+            with self.subTest(sha=sha, conclusion=conclusion):
+                feed = json.dumps({"workflow_runs": [{"head_sha": sha, "conclusion": conclusion}]})
+                result = subprocess.run(
+                    ["bash", "-eo", "pipefail", "-c", 'gh() { echo "$FEED"; }\n' + script],
+                    env=dict(os.environ, GITHUB_SHA="current", FEED=feed), capture_output=True)
+                self.assertEqual(result.returncode == 0, allowed)
+
+    def test_publish_marks_only_previews_as_prereleases(self):
+        workflow = (plan.ROOT / ".github/workflows/macos.yml").read_text()
+        script = textwrap.dedent(workflow.split("          # The tag is created with the release", 1)[1].split("\n", 1)[1])
+        # Exercise the actual publish arguments without accessing GitHub.
+        mocks = 'git() { [[ $1 == fetch ]]; }\ngh() { echo "$@"; }\n'
+        for tag, preview in [("v0.1.0", False), ("v0.1.0-preview.1", True)]:
+            with self.subTest(tag=tag):
+                output = subprocess.check_output(
+                    ["bash", "-e", "-c", mocks + script], text=True,
+                    env=dict(os.environ, RELEASE_TAG=tag, GITHUB_SHA="checked"))
+                create = output.splitlines()[0].split()
+                self.assertEqual(create[:5], ["release", "create", tag, "--target", "checked"])
+                self.assertEqual("--prerelease" in create, preview)
 
     def test_workflow_propagates_planner_failure(self):
         workflow = (plan.ROOT / ".github/workflows/macos.yml").read_text()
@@ -88,6 +119,16 @@ class Merged(unittest.TestCase):
         code, result = self.run_plan("merged", "0" * 40)
         self.assertEqual(code, 0)
         self.assertEqual(result, {"test": "true", "release": "false"})
+
+    def test_final_promotes_unchanged_preview_and_refuses_existing_tag(self):
+        with patch.object(plan, "cargo_version", return_value="0.1.0"), \
+             patch.object(plan, "git", return_value="v0.1.0-preview.10"), \
+             patch.object(plan, "changed", return_value=[]):
+            self.assertEqual(self.run_plan("main")[1]["release"], "false")
+            code, result = self.run_plan("main", "--final")
+            self.assertEqual((code, result["release"], result["tag"]), (0, "true", "v0.1.0"))
+            with patch.object(plan, "git", return_value="v0.1.0"):
+                self.assertNotEqual(self.run_plan("main", "--final")[0], 0)
 
     def test_a_missing_argument_is_refused(self):
         import contextlib

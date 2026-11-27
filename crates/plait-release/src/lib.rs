@@ -263,6 +263,19 @@ mod feed_tests {
     }
 
     #[test]
+    fn final_outranks_even_the_largest_preview_in_the_feed() {
+        let signed = serde_json::json!([{"name": MANIFEST}, {"name": SIGNATURE}]);
+        let feed = serde_json::json!([
+            {"tag_name": "v0.1.0", "draft": false, "prerelease": false, "assets": signed},
+            {"tag_name": format!("v0.1.0-preview.{}", u64::MAX), "draft": false, "prerelease": true, "assets": signed},
+        ]);
+        let best = newest(&serde_json::to_vec(&feed).unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(best.tag, "v0.1.0");
+    }
+
+    #[test]
     fn feed_picks_the_newest_signed_release_including_previews() {
         let signed = serde_json::json!([{"name": MANIFEST}, {"name": SIGNATURE}]);
         let feed = serde_json::json!([
