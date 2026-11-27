@@ -33,7 +33,8 @@ def fallback_notices(root, diagnostics, inventory):
             text = (root / "LICENSE").read_text()
         else:
             record = by_crate.get(crate)
-            if not record or license_id != "MIT":
+            # A record names its license when it is not MIT; the pinned text must match the logged license.
+            if not record or record.get("license", "MIT") != license_id:
                 raise ValueError(f"Supply a checksum-pinned {license_id} notice for {crate}")
             data = (directory / record["file"]).read_bytes()
             if not data.strip() or hashlib.sha256(data).hexdigest() != record["sha256"]:

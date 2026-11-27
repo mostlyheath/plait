@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import { test, type TestContext } from 'node:test';
 import { existsSync, mkdirSync, symlinkSync, mkdtempSync, renameSync, rmSync } from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { fauxProvider, fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux';
 import { setTimeout as delay } from 'node:timers/promises';
-import { setup } from './support/safety.ts';
+import { exec, setup } from './support/safety.ts';
+import { previousRuntime } from './support/previous-runtime.ts';
 import { Automations } from '../src/automations/service.ts';
 import { HostError } from '../src/protocol.ts';
 import { Runtime } from '../src/runtime.ts';
@@ -46,10 +48,10 @@ async function client(t: TestContext, respond: (r: Record<string, unknown>) => u
   await Promise.all(service['placements'].values());
   const due = (Math.floor(automation.cursor / 3600000) + 1) * 3600000;
   return {
-    accepted, checkSubmission: (request: Record<string, unknown>) => service.checkSubmission(String(request.thread_id),
+    dir, accepted, checkSubmission: (request: Record<string, unknown>) => service.checkSubmission(String(request.thread_id),
       (request.expect as { claim: { id: string; revision: number } }).claim, String(request.approval)),
     requests, due, created: automation, id: automation.id, start: () => service.start(), tick: (now: number) => service.tick(now), handle,
-    restart: async () => { await service.close(); service = new Automations(dir, send, hasReceipt); }
+    restart: async (Service = Automations) => { await service.close(); service = new Service(dir, send, hasReceipt); }
   };
 }
 test('lost submit reply retries the same host key after restart and catch-up runs once', async t => {
@@ -100,7 +102,7 @@ test('policy drift pauses before submit, recursion is refused, deletion retains 
   await c.handle('delete_automation', { id: c.id });
   await c.restart(); await c.tick(c.due + 3600000);
   assert.deepEqual(await c.handle('list_automations'), { automations: [] });
-  assert.deepEqual(c.requests.map(r => r.op), ['create_admitted_thread', 'stored_thread', 'admission_info', 'command_policy']);
+  assert.deepEqual(c.requests.map(r => r.op), ['admission_info', 'create_admitted_thread', 'stored_thread', 'admission_info', 'command_policy']);
 });
 test('the startup settling delay counts against the catch-up window', async t => {
   t.mock.timers.enable({apis: ['Date','setTimeout'], now: Date.UTC(2025, 0, 1, 9, 59)});
@@ -152,6 +154,7 @@ test('real Runtime gates routing and storage on the flag', async t => {
     const runtime = new Runtime(dir, createModels(), new Set());
     try {
       await assert.rejects(runtime.handle({ op: 'list_automations' }), /Unknown operation/);
+      await assert.rejects(runtime.handle({ op: 'admission_info', checkout: dir, poll_id: 'scheduled' }), /admission field/);
       assert.ok(!existsSync(join(dir, 'automations.sqlite')));
     } finally { await runtime.close(); }
     process.env.PLAIT_AUTOMATIONS = '1';
@@ -260,9 +263,9 @@ test('pending admission survives restart and slow status never holds a request',
 
 test('Git project gets a worktree and directory gets in-place admission', async t => {
   const folder = await client(t);
-  assert.equal(folder.requests[0].placement, 'wait');
+  assert.equal(folder.requests.find(r => r.op === 'create_admitted_thread')?.placement, 'wait');
   const project = await client(t, undefined, { ...definition, target: { kind: 'project', checkout: '/repo' } });
-  assert.equal(project.requests[0].placement, 'worktree');
+  assert.equal(project.requests.find(r => r.op === 'create_admitted_thread')?.placement, 'worktree');
 });
 
 test('list returns only card fields while get returns the saved instructions', async t => {
@@ -294,6 +297,7 @@ test('reply handles a desktop request directly while a background client awaits 
   const entered = new Promise<void>(resolve => { begin = resolve; });
   const lease = new Promise<void>(resolve => { release = resolve; });
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.UTC(2025, 0, 1, 8, 59) });
+  runtime.admissions.info = async () => ({ busy: false }) as Awaited<ReturnType<typeof runtime.admissions.info>>;
   const handle = runtime.handle.bind(runtime);
   runtime.handle = async input => {
     switch ((input as { op: string }).op) {
@@ -402,14 +406,14 @@ test('retrying an old manual claim leaves the next due occurrence available', as
   assert.deepEqual(occurrences.map((r: any) => r.request_id), [c.id + '-' + c.due, first.occurrence.request_id]);
 });
 
-test('a click delivered after the scheduler saves its receipt joins that occurrence', async t => {
+test('a click received on the last millisecond joins the saved occurrence even after dispatch is delayed', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: Date.UTC(2025, 0, 1, 8, 50) });
   const c = await client(t, undefined, { ...definition, target: { kind: 'project', checkout: '/project' }, catch_up_ms: 1000 });
   t.mock.timers.setTime(c.due);
   await c.tick(c.due);
   t.mock.timers.setTime(c.due + 21_200);
   await c.handle('update_automation', { id: c.id, definition: { ...definition, target: { kind: 'project', checkout: '/project' }, name: 'Renamed', catch_up_ms: 0 } });
-  const { occurrence } = await c.handle('run_automation_now', { id: c.id, request_id: 'delayed-click', received_at_ms: c.due + 200 });
+  const { occurrence } = await c.handle('run_automation_now', { id: c.id, request_id: 'delayed-click', received_at_ms: c.due + 1000 });
   assert.equal(occurrence.outcome, 'queued');
   assert.equal(occurrence.request_id, c.id + '-' + c.due);
   assert.equal(c.requests.filter(r => r.op === 'submit_checkout').length, 1);
@@ -429,7 +433,7 @@ test('a timed-out original cannot enqueue after its retry skips and approval cha
   let original: Record<string, unknown> | undefined;
   runtime.startBackground(async request => {
     if (request.op === 'submit_checkout') { original = request; throw Error('timed out'); }
-    if (original && request.op === 'admission_info') return { busy: true };
+
     return runtime.handle(request);
   });
   const settings = { ...definition, approval: 'auto', target: { kind: 'directory', path: directory(t) } };
@@ -442,10 +446,12 @@ test('a timed-out original cannot enqueue after its retry skips and approval cha
     active = await status();
   }
   assert.equal(active.state, 'active', active.error);
+  const getInfo = runtime.admissions.info.bind(runtime.admissions);
   const due = active.next_run;
   await assert.rejects(service.tick(due), /timed out/);
   assert.ok(original);
   assert.equal((await runtime.reply({ ...original, approval: 'ask' })).error?.code, 'conflict');
+  runtime.admissions.info = async checkout => ({ ...await getInfo(checkout), busy: true });
   await service.tick(due);
   const saved = await service.handle({ op: 'get_automation', id: automation.id }) as any;
   assert.equal(saved.occurrences[0].outcome, 'skipped');
@@ -453,4 +459,167 @@ test('a timed-out original cannot enqueue after its retry skips and approval cha
   await service.handle({ op: 'update_automation', id: automation.id, definition: { ...saved.automation.definition, approval: 'ask' } });
   assert.equal((await runtime.reply(original)).error?.code, 'conflict');
   assert.equal(runtime.store.waiters.get(String(original.thread_id), String(original.request_id)), undefined);
+});
+
+for (const window of [600_000, 7_200_000]) test(`restart runs only the current hour with a ${window} ms window`, async t => {
+  let offline = true;
+  const c = await client(t, r => {
+    if (offline && r.op === 'stored_thread') throw Error('offline');
+  }, { ...definition, catch_up_ms: window, target: { kind: 'project', checkout: '/project' } });
+  await assert.rejects(c.tick(c.due), /offline/);
+  await c.restart();
+  offline = false;
+  const hour = 3_600_000;
+  await c.tick(c.due + hour + 300_000);
+  await c.tick(c.due + hour + 300_001);
+  assert.deepEqual(c.requests.filter(r => r.op === 'submit_checkout').map(r => r.request_id), [c.id + '-' + (c.due + hour)]);
+  const { occurrences, automation } = await c.handle('get_automation', { id: c.id });
+  assert.deepEqual(occurrences.map((r: any) => r.outcome), ['queued', 'missed']);
+  assert.equal(automation.missed_count, 1);
+});
+
+test('a saved scheduled click retried before the timer only launches the newer hour', async t => {
+  let offline = true;
+  const c = await client(t, r => {
+    if (offline && r.op === 'stored_thread') throw Error('offline');
+  }, { ...definition, catch_up_ms: 7_200_000, target: { kind: 'project', checkout: '/project' } });
+  const click = (now: number) => c.handle('run_automation_now', { id: c.id, request_id: 'retry', received_at_ms: now });
+  await click(c.due);
+  await c.restart();
+  offline = false;
+  const later = c.due + 3_900_000;
+  await click(later);
+  await c.tick(later);
+  assert.deepEqual(c.requests.filter(r => r.op === 'submit_checkout').map(r => r.request_id),
+    [c.id + '-' + (c.due + 3_600_000)]);
+});
+
+test('six-column migration saves the window and permits five-value startup inserts', async t => {
+  const c = await client(t, undefined, { ...definition, catch_up_ms: 1000 });
+  await c.tick(c.due);
+  const db = new DatabaseSync(join(c.dir, 'automations.sqlite'));
+  try {
+    db.exec('ALTER TABLE automation_claims ADD COLUMN catch_up_ms INTEGER; UPDATE automation_claims SET catch_up_ms=1000; DROP TABLE automation_claim_windows');
+    await c.restart();
+    assert.equal(db.prepare('PRAGMA table_info(automation_claims)').all().length, 5);
+    assert.equal(db.prepare('SELECT catch_up_ms FROM automation_claim_windows WHERE id=?').get(c.id + '-' + c.due)?.catch_up_ms, 1000);
+    db.exec((await previousRuntime('automations/schema-five.ts')).schema);
+  } finally { db.close(); }
+});
+
+for (const known of [false, true]) test(`rollback prevents a second submission with a ${known ? 'known' : 'missing'} window`, async t => {
+  const settings = { ...definition, target: { kind: 'project', checkout: '/project' }, catch_up_ms: 1000 };
+  const c = await client(t, undefined, settings);
+  await c.tick(c.due);
+  if (!known) {
+    const db = new DatabaseSync(join(c.dir, 'automations.sqlite'));
+    db.exec('DELETE FROM automation_claim_windows');
+    db.close();
+    await c.restart();
+  }
+  await c.handle('update_automation', { id: c.id, definition: { ...settings, catch_up_ms: 0 } });
+  const click = () => c.handle('run_automation_now', { id: c.id, request_id: 'rollback', received_at_ms: c.due + 500 });
+  if (!known) await assert.rejects(click(), /window.*unknown/);
+  await c.restart((await previousRuntime('automations/service.ts')).Automations);
+  if (!known) {
+    const replay = await click();
+    assert.equal(replay.occurrence.request_id, c.id + '-' + c.due);
+    assert.equal(replay.occurrence.outcome, 'queued');
+  }
+  const fresh = await c.handle('run_automation_now', { id: c.id, request_id: 'after-rollback', received_at_ms: c.due + 500 });
+  assert.equal(fresh.occurrence.outcome, 'skipped');
+  assert.ok(fresh.occurrence.detail.includes(c.id + '-' + c.due));
+  const repeated = await c.handle('run_automation_now', { id: c.id, request_id: 'after-rollback', received_at_ms: c.due + 501 });
+  assert.equal(repeated.occurrence.request_id, c.id + '-' + c.due);
+  assert.equal(repeated.occurrence.outcome, 'queued');
+  await c.tick(c.due + 501);
+  assert.equal(c.requests.filter(r => r.op === 'submit_checkout').length, 1);
+});
+
+test('rollback recovery reads a definitive receipt for a legacy claim without a window', async t => {
+  const c = await client(t, r => { if (r.op === 'stored_thread') throw Error('offline'); });
+  await assert.rejects(c.tick(c.due), /offline/);
+  const db = new DatabaseSync(join(c.dir, 'automations.sqlite'));
+  try {
+    db.exec('DELETE FROM automation_claim_windows');
+    await c.restart();
+    await c.restart((await previousRuntime('automations/service.ts')).Automations);
+    await c.tick(c.due + 500);
+    const { occurrences } = await c.handle('get_automation', { id: c.id });
+    assert.deepEqual(occurrences.map((r: any) => r.outcome), ['missed']);
+    assert.equal(c.requests.filter(r => r.op === 'submit_checkout').length, 0);
+  } finally { db.close(); }
+});
+
+test('a scheduled checkout check can stay busy while status is served', async t => {
+  let begin!: () => void, release!: (info: { busy: boolean }) => void;
+  const entered = new Promise<void>(resolve => begin = resolve);
+  const gate = new Promise<{ busy: boolean }>(resolve => release = resolve);
+  let held = false;
+  const c = await client(t, r => {
+    if (held && r.op === 'admission_info') { begin(); return gate; }
+  });
+  held = true;
+  const tick = c.tick(c.due);
+  try {
+    await entered;
+    assert.equal((await c.handle('automation_status', { id: c.id })).automation.state, 'active');
+    assert.ok(!c.requests.some(r => r.op === 'submit_checkout'));
+  } finally { release({ busy: true }); await tick; }
+  assert.equal((await c.handle('get_automation', { id: c.id })).occurrences[0].outcome, 'skipped');
+});
+
+test('a pending folder probe survives flag-off main recovery without publishing a plan', async t => {
+  const folder = directory(t), store = directory(t);
+  const models = createModels();
+  const runtime = new Runtime(store, models, new Set());
+  const old = process.env.PLAIT_AUTOMATIONS, graph = process.env.PLAIT_GRAPH;
+  delete process.env.PLAIT_GRAPH;
+  process.env.PLAIT_AUTOMATIONS = '1';
+  let release!: () => void, begin!: () => void;
+  const held = new Promise<void>(resolve => release = resolve);
+  const checking = new Promise<void>(resolve => begin = resolve);
+  let starts = 0;
+  runtime.admissions.info = async () => {
+    begin();
+    await held;
+    return { busy: false } as Awaited<ReturnType<typeof runtime.admissions.info>>;
+  };
+  runtime.startBackground(async request => {
+    if (request.op === 'create_admitted_thread') starts++;
+    return runtime.handle(request);
+  });
+  try {
+    const { automation } = await runtime.handle({ op: 'create_automation', request_id: 'folder-race',
+      definition: { ...definition, target: { kind: 'directory', path: folder } } }) as any;
+    await checking;
+    assert.equal((await runtime.handle({ op: 'automation_status', id: automation.id }) as any).automation.state, 'preparing');
+    delete process.env.PLAIT_AUTOMATIONS;
+    const disabled = new Runtime(store, models, new Set());
+    try {
+      disabled.startBackground(async () => assert.fail('disabled background request'));
+      await disabled.recover();
+      await disabled.admissions.close();
+      const { Admissions } = await previousRuntime('admission.ts');
+      let effects = 0;
+      const recordEffect = () => { effects++; throw Error('Unexpected placement'); };
+      const recovered = new Admissions(disabled.store, { handle: recordEffect }, {}, recordEffect, () => false);
+      await recovered.close();
+      assert.equal(effects, 0);
+      for (const table of ['thread_admissions', 'threads'])
+        assert.equal(disabled.store.db.prepare('SELECT count(*) AS n FROM ' + table).get()?.n, 0);
+      assert.equal(disabled.store.db.prepare("SELECT name FROM sqlite_master WHERE name='automation_admission_probes'").get(), undefined);
+    } finally { await disabled.close(); }
+    await exec('/usr/bin/git', ['init', '-q', folder]);
+    release();
+    await Promise.all(runtime['automations']!['placements'].values());
+    const status = await runtime.handle({ op: 'automation_status', id: automation.id }) as any;
+    assert.match(status.automation.error, /became a Git checkout/);
+    assert.equal(starts, 0);
+  } finally {
+    release();
+    await runtime.close();
+    if (old === undefined) delete process.env.PLAIT_AUTOMATIONS; else process.env.PLAIT_AUTOMATIONS = old;
+    if (graph === undefined) delete process.env.PLAIT_GRAPH; else process.env.PLAIT_GRAPH = graph;
+  }
 });
