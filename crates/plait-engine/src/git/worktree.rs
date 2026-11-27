@@ -759,20 +759,83 @@ pub fn remove_managed_with_output(
     Ok(record)
 }
 
+// Charge the original tag and pathname against the inventory budget. Stage
+// metadata is needed only to recognize gitlinks and can be dropped as we read.
+fn hidden_entries(pipe: impl std::io::Read) -> std::io::Result<super::Output> {
+    use std::io::{BufRead, BufReader, Read};
+    let mut reader = BufReader::new(pipe);
+    let mut entry = Vec::new();
+    let mut bytes = Vec::new();
+    let mut remaining = super::STATUS_LIMIT;
+    loop {
+        entry.clear();
+        let count = reader
+            .by_ref()
+            .take((remaining + 100) as u64)
+            .read_until(0, &mut entry)?;
+        if count == 0 {
+            break;
+        }
+        let invalid = || std::io::Error::other("Invalid or oversized Git index entry.");
+        let [tag, b' ', staged @ .., 0] = &entry[..] else {
+            return Err(invalid());
+        };
+        let tab = staged
+            .iter()
+            .position(|byte| *byte == b'\t')
+            .ok_or_else(invalid)?;
+        let name = &staged[tab + 1..];
+        remaining = remaining.checked_sub(name.len() + 3).ok_or_else(invalid)?;
+        let gitlink = staged.starts_with(b"160000 ");
+        if gitlink || tag.is_ascii_lowercase() || *tag == b'S' {
+            bytes.extend_from_slice(&[*tag, if gitlink { b'G' } else { b'F' }]);
+            bytes.extend_from_slice(name);
+            bytes.push(0);
+        }
+    }
+    Ok(super::Output {
+        bytes,
+        truncated: false,
+    })
+}
+
 /// Status cannot see an edit behind an assume-unchanged or skip-worktree bit,
 /// but `git worktree remove` deletes it with the folder.
 fn refuse_hidden_edits(path: &Path) -> Result<()> {
-    let listing = read_worktree(path, &["ls-files", "-v", "-z"])?;
+    let mut command = super::read_command(path)?;
+    let raw = super::run_with_reader(
+        command.args(["ls-files", "-v", "--stage", "-z"]),
+        None,
+        super::TIMEOUT,
+        None,
+        hidden_entries,
+    )?;
+    if !raw.status.success() {
+        return Err(raw.failure());
+    }
+    let listing = raw.out.bytes;
     for entry in listing.split(|b| *b == 0).filter(|entry| !entry.is_empty()) {
-        let [tag, b' ', name @ ..] = entry else {
-            return Err("Git listed an index entry Plait cannot read. Nothing was removed.".into());
+        let [tag, kind, name @ ..] = entry else {
+            return Err("Invalid Git index entry.".into());
         };
+        use std::os::unix::ffi::OsStrExt;
+        let file = path.join(std::ffi::OsStr::from_bytes(name));
+        if *kind == b'G' {
+            // Status skipped the submodule's contents. Only an absent or empty
+            // directory can be removed without inspecting its own checkout.
+            let empty = match fs::symlink_metadata(&file) {
+                Ok(meta) => {
+                    meta.is_dir()
+                        && fs::read_dir(&file).is_ok_and(|mut entries| entries.next().is_none())
+                }
+                Err(error) => error.kind() == std::io::ErrorKind::NotFound,
+            };
+            if !empty {
+                return Err("This worktree contains a submodule. Inspect and remove the worktree manually to preserve its files.".into());
+            }
+        }
         // A sparse checkout's skipped files are absent; a present one may be edited.
-        let present = || {
-            use std::os::unix::ffi::OsStrExt;
-            fs::symlink_metadata(path.join(std::ffi::OsStr::from_bytes(name))).is_ok()
-        };
-        if tag.is_ascii_lowercase() || (*tag == b'S' && present()) {
+        if tag.is_ascii_lowercase() || (*tag == b'S' && fs::symlink_metadata(file).is_ok()) {
             return Err("This worktree has tracked files Git is told not to check (assume-unchanged or skip-worktree), so their edits cannot be seen. Clear those flags and commit or discard the edits before removing the worktree.".into());
         }
     }
@@ -890,6 +953,51 @@ mod managed_tests {
         if let Ok(base) = worktree_base(&tree.parent.main) {
             let _ = fs::remove_dir_all(base);
         }
+    }
+    #[test]
+    fn large_clean_index_fits_the_path_budget() {
+        use std::io::{Cursor, Read};
+        let row = b"H 100644 0123456789012345678901234567890123456789 0\t0123456789\0";
+        let input = Cursor::new(row.repeat(150_000)).chain(Cursor::new(b"S 100644 1234 0\tlast\0"));
+        assert_eq!(hidden_entries(input).unwrap().bytes, b"SFlast\0");
+    }
+    #[test]
+    fn inventory_preserves_uninspected_submodules() {
+        let repo = repository();
+        let sub = repository();
+        repo.git(&[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            sub.0.to_str().unwrap(),
+            "nested",
+        ]);
+        repo.git(&["commit", "-qm", "submodule"]);
+        let marker = repo.0.join(".git/filter-ran");
+        repo.git(&[
+            "-C",
+            "nested",
+            "config",
+            "filter.observe.clean",
+            "touch ../.git/filter-ran && cat",
+        ]);
+        repo.git(&[
+            "-C",
+            "nested",
+            "config",
+            "core.attributesFile",
+            sub.0.join("attributes").to_str().unwrap(),
+        ]);
+        fs::write(sub.0.join("attributes"), "file filter=observe\n").unwrap();
+        fs::write(repo.0.join("nested/file"), "local changes").unwrap();
+        let facts = inventory::preservation_with_output(&repo.0, &repo.0, true, &[]).unwrap();
+        assert_eq!(facts.changed, Some(0));
+        assert!(!marker.exists());
+        assert!(!facts.can_keep_local);
+        assert!(facts.refusal.unwrap().contains("submodule"));
+        repo.git(&["-C", "nested", "hash-object", "--path=file", "file"]);
+        assert!(marker.exists(), "the fixture's clean filter is observable");
     }
     #[test]
     fn unborn_repository_and_forged_parent_have_no_effects() {

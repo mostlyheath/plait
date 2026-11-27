@@ -262,3 +262,18 @@ for (const kind of ['command', 'mcp'] as const) test(`${kind} approval escapes l
   assert.equal(effect.arguments.command, text);
   f.approvals.answer(f.snapshot.pending_approval!.id, true); await pending;
 });
+
+test('a large dirty edit can be saved and approved within the legacy frame', async () => {
+  const { boundSnapshot } = await import('../src/transcript.ts');
+  const f = fixture(boundSnapshot);
+  const paths = Array.from({ length: 6000 }, (_, i) => i + '雪"'.repeat(40));
+  const pending = f.approvals.ask({ id: 'many', tool_id: 'edit', kind: 'edit', summary: 'Edit files',
+    details: '', risk: 'Review these edits.', dirty_paths: paths }, new AbortController().signal);
+  const shown = f.saved[0].pending_approval!;
+  assert.ok(Buffer.byteLength(JSON.stringify(shown.dirty_paths)) <= 32 * 1024);
+  assert.ok(shown.dirty_paths.length > 0);
+  assert.match(shown.risk, /of 6000/);
+  assert.equal(paths.length, 6000);
+  f.approvals.answer('many', true);
+  assert.equal(await pending, true);
+});

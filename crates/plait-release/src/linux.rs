@@ -95,8 +95,11 @@ fn run(command: &mut Command) -> Result<(), Error> {
     }
     Ok(())
 }
-fn idle(home: &Path) -> Result<(), Error> {
-    let count = super::install::active_runs(&home.join(".local/share/plait"))?;
+fn idle(home: &Path, host: &Path) -> Result<(), Error> {
+    let count = super::install::active_runs_with_node(
+        &home.join(".local/share/plait"),
+        &host.with_file_name("node"),
+    )?;
     if count > 0 {
         return Err(Error::Busy(count));
     }
@@ -267,7 +270,7 @@ fn prune_selected(name: &str, keep: &str) -> bool {
 }
 
 pub fn apply(home: &Path, old: &Path, release: &HostRelease) -> Result<PathBuf, Error> {
-    idle(home)?;
+    idle(home, old)?;
     let base = home.join(".local/share/plait-host");
     fs::create_dir_all(&base)?;
     let temp = base.join(format!(".update.{}", unique()));
@@ -276,7 +279,7 @@ pub fn apply(home: &Path, old: &Path, release: &HostRelease) -> Result<PathBuf, 
         let archive = temp.join("host.tar.gz");
         download(release, &archive)?;
         let new = stage(home, release, &archive)?;
-        idle(home)?;
+        idle(home, old)?;
         let selected = units(home);
         let socket = home.join(".local/share/plait/host.sock");
         activate(&new, old, &selected, Path::new("systemctl"), || {
@@ -367,6 +370,20 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
+    fn bundled_node_reads_active_threads_without_sqlite_cli() {
+        let root = scratch();
+        let store = root.join(".local/share/plait");
+        fs::create_dir_all(&store).unwrap();
+        let node = root.join("node");
+        install_script(&node, "#!/bin/sh\nexec node \"$@\"\n");
+        run(Command::new(&node).args(["-e", r#"const db = new (require('node:sqlite').DatabaseSync)(process.argv[1]); db.exec(`CREATE TABLE threads(snapshot TEXT); INSERT INTO threads VALUES ('{"status":"awaiting_approval"}');`);"#]).arg(store.join("host.sqlite"))).unwrap();
+        assert!(matches!(
+            idle(&root, &root.join("plait-host")),
+            Err(Error::Busy(1))
+        ));
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     fn decisions_and_pruning() {
         let root = scratch();
         let archive = fixture(&root, true);
@@ -425,6 +442,22 @@ mod tests {
             .unwrap();
         assert!(copied.success());
         fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    #[test]
+    fn listener_switch_uses_the_installed_hosts_legacy_command() {
+        let root = scratch();
+        let host = root.join("host");
+        install_script(
+            &host,
+            "#!/bin/sh\ntest \"$*\" = 'install-service --tailnet'\n",
+        );
+        switch(
+            &host,
+            &[("plait-host-tailnet.service", true)],
+            Path::new("true"),
+        )
+        .unwrap();
+        fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn activation_rolls_back_after_failed_start() {

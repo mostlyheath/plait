@@ -44,7 +44,7 @@ export type CodexRunContext = {
   /** Ends the run: Stop, a host shutdown, or the run finishing. */
   signal: AbortSignal;
   /** Checkout paths that had changes when the run started, shown on edit approvals. */
-  dirty: ReadonlySet<string>;
+  dirty: ReadonlySet<string> | undefined;
   inputs(): InputRecord[];
   /** Records that a Plait request became this transcript entry. */
   place(requestId: string, entry: number): void;
@@ -219,10 +219,11 @@ export class CodexRun {
       return refusal;
     }
     this.flush();
-    const dirty = approval.paths.map(path => this.inCheckout(path)).filter((path): path is string => !!path && this.context.dirty.has(path));
+    const dirty = approval.paths.map(path => this.inCheckout(path)).filter((path): path is string => !!path && this.context.dirty?.has(path) === true);
     const allowed = await this.context.approvals.ask({
       id: randomUUID(), tool_id: typeof params?.itemId === 'string' ? params.itemId : '', kind: approval.kind,
-      summary: approval.summary, details: approval.details, dirty_paths: dirty, risk: approval.risk,
+      summary: approval.summary, details: approval.details, dirty_paths: dirty, risk: approval.kind === 'edit' && !this.context.dirty
+          ? `Plait could not check for pre-existing changes. ${approval.risk}` : approval.risk,
     }, this.context.signal).catch(() => false);
     return approvalReply(method, allowed);
   }

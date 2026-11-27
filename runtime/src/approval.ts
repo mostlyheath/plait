@@ -43,6 +43,16 @@ export class InteractiveApproval implements AuthorizationPolicy {
    */
   async ask(approval: Approval, signal: AbortSignal): Promise<boolean> {
     approval = { ...approval, details: escapeDisplay(approval.details), summary: escapeDisplay(approval.summary) };
+    // Paths include JSON quoting and UTF-8 bytes in the legacy snapshot frame.
+    let bytes = 2;
+    for (const [index, path] of approval.dirty_paths.entries()) {
+      bytes += Buffer.byteLength(JSON.stringify(path)) + (index ? 1 : 0);
+      if (bytes > 32 * 1024) {
+        approval.risk += ` Showing ${index} of ${approval.dirty_paths.length} pre-existing dirty paths.`;
+        approval.dirty_paths = approval.dirty_paths.slice(0, index);
+        break;
+      }
+    }
     if (signal.aborted) fail('permission_denied', 'Tool permission denied or revoked.');
     if (this.pending) fail('busy', 'Another tool is awaiting approval.');
     const allowed = await new Promise<boolean>((resolve, reject) => {

@@ -17,6 +17,12 @@ pub struct Sync {
     pub upstream: Option<String>,
 }
 
+impl Sync {
+    pub fn can_push(&self) -> bool {
+        self.op == Some(WriteOp::Push) && self.blocker.is_none()
+    }
+}
+
 /// Counts come from the status read; nothing here runs Git.
 pub fn sync(named: bool, tracking: Option<&Tracking>) -> Sync {
     let publish = |label: String| Sync {
@@ -121,6 +127,7 @@ mod tests {
         assert_eq!(ahead.label, "2 to push");
         assert_eq!((ahead.op, ahead.blocker), (Some(WriteOp::Push), None));
         let behind = sync(true, Some(&up(0, 3, false)));
+        assert!(!behind.can_push());
         assert_eq!((behind.op, behind.blocker), (Some(WriteOp::Pull), None));
         let diverged = sync(true, Some(&up(1, 3, false)));
         assert_eq!(diverged.label, "1 to push, 3 to pull");

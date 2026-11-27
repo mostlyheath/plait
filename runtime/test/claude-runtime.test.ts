@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { mkdir, readFile, rm } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { gzipSync } from 'node:zlib';
@@ -260,6 +260,17 @@ test('Stop ends a running turn as stopped and cancels what waits behind it', asy
   // Nothing runs after Stop.
   await new Promise(resolve => setTimeout(resolve, 100));
   assert.equal(h.runtime.sessions.has(thread.id), false);
+});
+
+test('Claude edit approval warns about the pre-existing file', async t => {
+  const h = await host(t, 'edit');
+  await writeFile(join(h.root, 'a.txt'), 'mine');
+  const thread = await h.create('ask');
+  await h.call({ op: 'submit', thread_id: thread.id, request_id: 'r1', text: 'Edit', approval: 'ask' });
+  const asked = await h.until(thread.id, snapshot => !!snapshot.pending_approval);
+  assert.deepEqual(asked.pending_approval!.dirty_paths, ['a.txt']);
+  await h.call({ op: 'approve', thread_id: thread.id, approval_id: asked.pending_approval!.id, allow: false });
+  await h.idle(thread.id);
 });
 
 test('an edit in Accept edits runs without asking and lists the file as changed', async t => {
