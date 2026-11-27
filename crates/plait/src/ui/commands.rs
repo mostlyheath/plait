@@ -19,6 +19,7 @@ use std::{collections::HashMap, time::Instant};
 pub(super) enum Command {
     /// An application action, dispatched as its menu item or shortcut would be.
     Action(Box<dyn Action>),
+    SwitchMachine(plait_client::machines::MachineId),
     OpenThread(String),
     ReviewAll,
     ReviewRecord(plait_client::review::recorded::Target),
@@ -79,6 +80,7 @@ pub(super) enum Command {
 impl Clone for Command {
     fn clone(&self) -> Self {
         match self {
+            Self::SwitchMachine(id) => Self::SwitchMachine(id.clone()),
             Self::Action(action) => Self::Action(action.boxed_clone()),
             Self::OpenThread(id) => Self::OpenThread(id.clone()),
             Self::ReviewAll => Self::ReviewAll,
@@ -175,6 +177,7 @@ fn action_items(view: &Plait, window: &Window) -> Vec<Item> {
             let run = action.action();
             let hint = shortcut(run.as_ref(), window);
             let refusal = match action.id {
+                "machine.reconnect" if !view.machine_offline() => Some("Available when offline."),
                 "file.check_links"
                     if !view.workspace.file_viewer.rendered()
                         || view.selected_view() != super::Workspace::Files =>
@@ -295,8 +298,23 @@ impl Plait {
     }
 
     /// Everything the command palette lists, in the order shown before typing.
-    fn command_items(&self, window: &Window, cx: &App) -> Vec<Item> {
+    pub(super) fn command_items(&self, window: &Window, cx: &App) -> Vec<Item> {
         let mut items = self.thread_items(cx);
+        for (i, machine) in self.preferences.value.machines.list().iter().enumerate() {
+            items.push(
+                Item::new(
+                    format!("machine:{}", machine.id.as_str()),
+                    format!("Switch to {}", machine.name),
+                    Command::SwitchMachine(machine.id.clone()),
+                )
+                .section("Machines")
+                .detail(super::machine_picker::address(&machine.transport))
+                .hint(shortcut(
+                    &super::machine_picker::MachineNumber(i + 1),
+                    window,
+                )),
+            );
+        }
         let mut preferences = self.lists().clone();
         preferences.hidden.clear();
         for project in plait_client::navigation::projects(
@@ -347,6 +365,7 @@ impl Plait {
         if open {
             return;
         }
+        self.navigation.menu = None;
         let items = self.command_items(window, cx);
         let options = Options {
             name: "Command palette".into(),
@@ -374,7 +393,10 @@ impl Plait {
             palette.update(cx, |palette, _| palette.anchor = Some(anchor));
         }
         let restore = window.focused(cx);
-        let events = cx.subscribe_in(&palette, window, Self::on_palette_event);
+        let origin = self.machines.active.clone();
+        let events = cx.subscribe_in(&palette, window, move |this, palette, event, window, cx| {
+            this.on_palette_event(&origin, palette, event, window, cx);
+        });
         window.focus(&palette.focus_handle(cx), cx);
         self.overlay = Some(Overlay {
             palette,
@@ -416,6 +438,7 @@ impl Plait {
 
     fn on_palette_event(
         &mut self,
+        origin: &plait_client::machines::MachineId,
         palette: &Entity<Palette>,
         event: &PaletteEvent,
         window: &mut Window,
@@ -425,7 +448,7 @@ impl Plait {
         let Some(overlay) = self
             .overlay
             .as_ref()
-            .filter(|open| open.palette == *palette)
+            .filter(|open| open.palette == *palette && origin == &self.machines.active)
         else {
             return;
         };
@@ -447,19 +470,24 @@ impl Plait {
             PaletteEvent::Run(command) => {
                 // Restore focus first, so an action runs where the user was.
                 self.close_overlay(true, window, cx);
-                self.run_command(command.clone(), purpose, window, cx);
+                self.run_command(origin, command.clone(), purpose, window, cx);
             }
         }
     }
 
     pub(super) fn run_command(
         &mut self,
+        origin: &plait_client::machines::MachineId,
         command: Command,
         purpose: Option<ModelPurpose>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if origin != &self.machines.active {
+            return;
+        }
         match command {
+            Command::SwitchMachine(id) => self.pick_machine(id, window, cx),
             Command::Action(action) => window.dispatch_action(action, cx),
             Command::SignIn(provider) => {
                 self.show_settings(true, window, cx);

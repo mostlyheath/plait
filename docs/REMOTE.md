@@ -95,8 +95,8 @@ work on Linux; worktree build-output cloning is macOS-only.
 ## Connect over SSH
 
 In **Settings → Machines**, add a name and an SSH destination. Open a remote
-project by browsing that machine's folders. The status line names and
-switches machines; the window title names the remote machine.
+project by browsing that machine's folders. To switch machines, open the machine menu at the foot
+of the sidebar. The window title names the connected remote machine.
 
 The client runs `ssh -T` in batch mode and starts `plait-host bridge` as the
 remote user, from PATH or `~/.local/bin`. The bridge connects to the host's owner-only socket; `--store PATH`

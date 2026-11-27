@@ -301,7 +301,13 @@ impl Plait {
         pending.choice = false;
         self.draft.error = None;
         self.capture_session(cx);
-        self.create_with_admission(created, legacy, window, cx);
+        self.create_with_admission(
+            created,
+            legacy,
+            self.state.checkout_key().cloned(),
+            window,
+            cx,
+        );
         self.sync_composer(cx);
         cx.notify();
     }

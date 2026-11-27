@@ -165,7 +165,21 @@ impl Plait {
         let mut category = "";
         let mut count = 0;
         for (index, shortcut) in actions::shortcuts().into_iter().enumerate() {
-            if !shortcut.matches(keymap, query) {
+            let mut title = shortcut.title().to_owned();
+            if let Some(number) = shortcut.actions[0]
+                .id
+                .strip_prefix("machine_jump.")
+                .and_then(|n| n.parse::<usize>().ok())
+            {
+                if let Some(machine) = self.preferences.value.machines.list().get(number - 1) {
+                    title = format!("Switch to {} (machine {number})", machine.name);
+                } else if number > 9 && !shortcut.changed(keymap) {
+                    continue;
+                }
+            }
+            if !shortcut.matches(keymap, query)
+                && !title.to_lowercase().contains(&query.to_lowercase())
+            {
                 continue;
             }
             count += 1;
@@ -205,7 +219,7 @@ impl Plait {
                         column()
                             .flex_1()
                             .min_w_0()
-                            .child(div().text_size(px(12.)).child(shortcut.title()))
+                            .child(div().text_size(px(12.)).child(title.clone()))
                             .when(changed, |el| {
                                 el.child(tag(
                                     ("shortcut-customized", index),
@@ -224,18 +238,14 @@ impl Plait {
                                 Tone::Filled
                             },
                         )
-                        .aria_label(format!(
-                            "{}: {}. Record shortcut",
-                            shortcut.title(),
-                            binding.spoken()
-                        ))
+                        .aria_label(format!("{}: {}. Record shortcut", title, binding.spoken()))
                         .on_activate(cx, move |this, window, cx| {
                             this.record_shortcut(index, window, cx)
                         }),
                     )
                     .child(
                         button(("clear-shortcut", index), "Clear")
-                            .aria_label(format!("Clear {} shortcut", shortcut.title()))
+                            .aria_label(format!("Clear {title} shortcut"))
                             .disabled(required)
                             .when(!required, |el| {
                                 el.on_activate(cx, move |this, _, cx| {
@@ -251,7 +261,7 @@ impl Plait {
                     )
                     .child(
                         button(("reset-shortcut", index), "Reset")
-                            .aria_label(format!("Reset {} shortcut", shortcut.title()))
+                            .aria_label(format!("Reset {title} shortcut"))
                             .disabled(!changed)
                             .when(changed, |el| {
                                 el.on_activate(cx, move |this, _, cx| {
