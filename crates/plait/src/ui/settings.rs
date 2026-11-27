@@ -219,7 +219,7 @@ impl Plait {
                                     cx,
                                     |_, _, cx| {
                                         cx.open_url(
-                                            "https://github.com/heath0xFF/plait/blob/main/docs/GUIDE.md",
+                                            "https://github.com/mostlyheath/plait/blob/main/docs/GUIDE.md",
                                         );
                                     },
                                 ),

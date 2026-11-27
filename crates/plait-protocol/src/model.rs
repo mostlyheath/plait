@@ -122,6 +122,9 @@ pub struct Diff {
     /// Indexes into `lines` of each `@@` hunk header, in order, so a row
     /// finds its hunk by binary search instead of scanning.
     pub hunks: Vec<usize>,
+    /// SHA-256 of the raw patch, used to validate a hunk discard after confirmation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch_digest: Option<String>,
     pub truncated: bool,
     pub elapsed: Duration,
 }
@@ -167,6 +170,7 @@ impl Diff {
             rows: vec![crate::patch::PatchRow::Line(0)],
             widest_row: 0,
             hunks: Vec::new(),
+            patch_digest: None,
             truncated: false,
             elapsed,
         }

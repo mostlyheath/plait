@@ -1,7 +1,7 @@
 import { defineTool, createRegistry, defineExtension } from '@earendil-works/pi-durable';
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
 import type { Context } from '@earendil-works/chord/context';
-import { fileAction, safePath, dirtyPaths, ignoredPaths, pathKey, sameImage } from './safety.ts';
+import { fileAction, projectKind, safePath, dirtyPaths, ignoredPaths, pathKey, sameImage } from './safety.ts';
 import { command } from './command.ts';
 import { trustedCommand } from './command/trusted.ts';
 import { TRUSTED_COMMAND_DESCRIPTION } from './command/policy.ts';
@@ -112,6 +112,11 @@ export function registry(state: ToolState) {
           text = outputTail(text) + reference;
         }
         else {
+          if (state.vcs === 'folder') {
+            const kind = await projectKind(state.snapshot.checkout);
+            if (kind.vcs === 'git') fail('permission_denied', 'This folder became a Git repository during the run. Send a new message to continue with Undo protection.');
+            state.authorization.check(signal);
+          }
           const result = await fileAction(state.snapshot.checkout, name, args.path,
             name === 'edit' ? { expected: args.old_text, content: args.new_text, expected_image: expectedImage, protected: state.protected } : { content: args.content, protected: state.protected }, state.lease?.fd, state.rootIdentity, state.lease?.lifecycleFd);
           state.record(result.postimage);

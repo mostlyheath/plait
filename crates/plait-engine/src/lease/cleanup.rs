@@ -261,6 +261,7 @@ mod tests {
             },
             WriteOp::CreateBranch("blocked".into()),
             WriteOp::Discard {
+                guard: None,
                 path: "a.txt".into(),
                 untracked: true,
                 hunk: None,

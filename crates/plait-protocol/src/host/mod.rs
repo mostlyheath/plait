@@ -2,6 +2,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 pub mod agent;
+pub mod automations;
 pub mod checkout_queue;
 pub mod folders;
 pub mod git;

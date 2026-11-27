@@ -278,3 +278,30 @@ test('an acknowledged Codex turn refusal releases the checkout without quarantin
   const lease = await acquireCheckout(h.root, 'exclusive');
   await lease.close();
 });
+
+test('a Codex interruption counts toward drain until cleanup finishes and holds the follow-up', async t => {
+  const h = await host(t, 'interrupt-ignored');
+  const { id } = await h.create();
+  assert.ok((await h.call({ op: 'submit', thread_id: id, request_id: 'first', text: 'Wait', approval: 'auto' })).ok);
+  await h.until(id, snapshot => snapshot.tools.length > 0);
+  assert.ok((await h.call({ op: 'submit', thread_id: id, request_id: 'next', text: 'Continue', when_busy: 'follow_up' })).ok);
+  let entered!: () => void, resume!: () => void;
+  const reached = new Promise<void>(resolve => { entered = resolve; });
+  const gate = new Promise<void>(resolve => { resume = resolve; });
+  const records = h.runtime.records;
+  const after = records.after.bind(records);
+  records.after = async (...args) => { entered(); await gate; return after(...args); };
+  const waiter = () => h.runtime.store.waiters.line(h.root).find(item => item.request_id === 'next');
+  const shared = await h.runtime.codex.acquire();
+  try { await shared.server.request('fake/finish', {}); }
+  finally { shared.release(); }
+  try {
+    await reached;
+    assert.deepEqual(await h.runtime.handle({ op: 'drain_for_update' }), { draining: true, active_runs: 1 });
+    assert.equal(h.runtime.snapshot(id).status, 'running');
+    assert.equal(waiter()?.state, 'waiting');
+  } finally { resume(); }
+  assert.equal((await h.idle(id)).status, 'interrupted');
+  assert.deepEqual(await h.runtime.handle({ op: 'drain_for_update' }), { draining: true, active_runs: 0 });
+  assert.equal(waiter()?.state, 'held');
+});

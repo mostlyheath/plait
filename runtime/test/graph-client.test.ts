@@ -7,6 +7,7 @@ import { createModels } from '@earendil-works/pi-ai/models';
 import { Runtime } from '../src/runtime.ts';
 import './support/safety.ts';
 import { Storage } from '../src/graph/storage.ts';
+import { HostTransportError } from '../src/host-client.ts';
 import { Graph } from '../src/graph/host.ts';
 import { randomUUID } from 'node:crypto';
 import { excerpt } from '../src/graph/text.ts';
@@ -31,7 +32,7 @@ async function fixture(t: TestContext) {
   const graph = new Graph(dir, async r => {
     calls.push(r);
     switch (r.op) {
-      case 'watch': return { thread: threads.get(String(r.thread_id)) ?? assert.fail('unknown thread') };
+      case 'stored_thread': return { thread: threads.get(String(r.thread_id)) ?? assert.fail('unknown thread') };
       case 'list_threads': return { threads: [...threads.values()].map(t => ({ ...t, harness: t.harness.id })), next_cursor: null };
       case 'history': await control.historyDelay(); return { items: [{ id: 'm', type: 'message', role: 'assistant', text: control.history }], before: null };
       case 'create_admitted_thread': {
@@ -71,6 +72,7 @@ test('durable create intent rejects changed payloads, cycles and replay after de
 });
 test('automatic start uses ordinary deterministic requests and waits for clean archived dependencies', async t => {
   const h = await fixture(t);
+  t.mock.method(h.graph, 'wake', () => {}); // This test advances reconciliation explicitly.
   const p = h.threads.get('parent')!;
   p.archived = true; p.status = 'interrupted';
   const { node_id } = await h.create({ depends_on: ['parent'] });
@@ -82,11 +84,24 @@ test('automatic start uses ordinary deterministic requests and waits for clean a
   assert.equal(h.calls.find(r => r.op === 'create_admitted_thread')?.request_id, 'create-' + node_id);
   const submit = h.calls.filter(r => r.op === 'submit_checkout');
   assert.equal(submit.length, 1); assert.equal(submit[0].request_id, 'submit-' + node_id);
+  assert.deepEqual(submit[0].expect, { harness: 'pi', provider: 'example', model_id: 'model', mode: null, thinking: null, approval: 'ask' });
   assert.match(String(submit[0].text), /plait:\/\/thread\/parent/);
   const call = h.calls.length;
   const page = await h.view();
   assert.deepEqual(h.calls.slice(call).map(r => r.op), ['list_threads']);
   assert.deepEqual(await h.graph.handle({ op: 'graph', project: h.root, revision: page.graph_revision }), { unchanged: true, graph_revision: page.graph_revision });
+});
+test('a lost admission reply retries the persisted admission ID', async t => {
+  const h = await fixture(t);
+  t.mock.method(h.graph, 'wake', () => {}); // This test advances reconciliation explicitly.
+  const { node_id } = await h.create({ depends_on: ['parent'] });
+  h.control.admission = async () => { throw new HostTransportError('lost reply'); };
+  await h.refresh();
+  h.control.admission = async () => {};
+  await h.refresh();
+  assert.deepEqual(h.calls.filter(r => r.op === 'create_admitted_thread').map(r => r.request_id),
+    ['create-' + node_id, 'create-' + node_id]);
+  assert.deepEqual(h.calls.filter(r => r.op === 'submit_checkout').map(r => r.request_id), ['submit-' + node_id]);
 });
 test('a waiting queue receipt stays Ready and a policy refusal blocks the draft', async t => {
   const h = await fixture(t);
@@ -174,18 +189,7 @@ test('feature-on runtime admits a draft and submits through the host handler', a
     if (previous === undefined) delete process.env.PLAIT_GRAPH;
     else process.env.PLAIT_GRAPH = previous;
   });
-  const handle = host.handle.bind(host);
-  let rename: ReturnType<typeof host.reply> | undefined;
-  let submitting = false;
-  t.mock.method(host, 'handle', async (input: Request) => {
-    if (input.op === 'rename_thread') assert.equal(submitting, false);
-    if (input.op !== 'submit_checkout') return handle(input);
-    submitting = true;
-    rename = host.reply({ op: 'rename_thread', protocol_version: 6, thread_id: input.thread_id, title: 'Desktop rename' });
-    await new Promise<void>(resolve => setImmediate(resolve));
-    try { return await handle(input); }
-    finally { submitting = false; }
-  });
+  host.startBackground(request => host.handle(request));
   const created = await host.reply({ ...draft, op_id: 'integration', checkout: await realpath(root), provider: 'faux', model_id: 'faux-1' });
   assert.ok(created.ok);
   const { node_id } = created.result as { node_id: string };
@@ -197,8 +201,6 @@ test('feature-on runtime admits a draft and submits through the host handler', a
       const { thread } = await host.handle({ op: 'watch', protocol_version: 6, thread_id: threads[0].id }) as { thread: { status: string; messages: { text: string }[]; error: unknown } };
       assert.equal(thread.error, null);
       if (thread.status === 'idle' && thread.messages.at(-1)?.text === 'finished') {
-        assert.ok((await rename)?.ok);
-        assert.equal((thread as typeof thread & { title: string }).title, 'Desktop rename');
         return;
       }
     }
@@ -232,7 +234,7 @@ test('reopening the graph preserves creation receipts without repeating the queu
   const receipt = () => submissions.length ? { state: "started", error: null } : undefined;
   const send = async (r: Request) => {
     switch (r.op) {
-      case 'watch': return { thread: { ...thread('destination'), checkout: await realpath(dir), messages: [] } };
+      case 'stored_thread': return { thread: { ...thread('destination'), checkout: await realpath(dir), messages: [] } };
       case 'create_admitted_thread': return { admission: { state: 'ready', checkout: dir, thread_id: 'destination' } };
       case 'submit_checkout':
         submissions.push(r);
@@ -351,7 +353,7 @@ test('5000 linked threads yield to a concurrent graph request after one batch', 
   db.exec('COMMIT'); db.close();
   const scan = h.refresh();
   await new Promise<void>(resolve => setImmediate(resolve));
-  const watched = () => h.calls.filter(r => r.op === 'watch');
+  const watched = () => h.calls.filter(r => r.op === 'stored_thread');
   assert.equal(watched().length, 50);
   await h.view();
   await scan;

@@ -1,7 +1,7 @@
 # ADEMark readiness and performance
 
 **Plait has no published ADEMark result, adapter, or verified ranking.**
-[Issue #15](https://github.com/heath0xFF/plait/issues/15) tracks baseline work.
+[Issue #15](https://github.com/mostlyheath/plait/issues/15) tracks baseline work.
 Performance goals are in the [roadmap](ROADMAP.md#performance-goals); current
 functional evidence is in [Verification](VERIFICATION.md).
 
@@ -68,7 +68,7 @@ or end-to-end latency. Headless Linux renders are layout evidence only.
 
 ## Baseline procedure
 
-1. Pin a [published build](https://github.com/heath0xFF/plait/releases), its client
+1. Pin a [published build](https://github.com/mostlyheath/plait/releases), its client
    and active host IDs, checksums, dependencies, OS, and display settings.
 2. Prove replay requests reach only the intended endpoint. Do not assume Pi
    honors another client's environment variables. Restarting the desktop does

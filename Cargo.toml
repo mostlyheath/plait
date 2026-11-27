@@ -7,7 +7,7 @@ resolver = "3"
 edition = "2024"
 rust-version = "1.98"
 license = "MIT"
-repository = "https://github.com/heath0xFF/plait"
+repository = "https://github.com/mostlyheath/plait"
 
 [workspace.dependencies]
 gpui = { git = "https://github.com/zed-industries/zed", rev = "596dfdcf32d85d4d8d17a8887b4d0979ec7c5e14", default-features = false }

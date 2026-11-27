@@ -318,3 +318,16 @@ test('a Claude Code thread refuses to run once the SDK is gone, at once when a c
   const refused = await submit(h, thread.id, 'r2', 'Hello again');
   assert.equal(refused.error?.code, 'model_unavailable');
 });
+
+for (const reason of ['aborted_tools', 'aborted_streaming']) {
+  test(`Claude Code reporting ${reason} holds the queued follow-up`, async t => {
+    const h = await host(t, reason);
+    const { id } = await h.create('ask');
+    assert.ok((await submit(h, id, 'first', 'Start')).ok);
+    const asked = await h.until(id, snapshot => !!snapshot.pending_approval);
+    assert.ok((await submit(h, id, 'next', 'Continue', { when_busy: 'follow_up' })).ok);
+    assert.ok((await h.call({ op: 'approve', thread_id: id, approval_id: asked.pending_approval!.id, allow: true })).ok);
+    assert.equal((await h.idle(id)).status, 'interrupted');
+    assert.equal(h.runtime.store.waiters.line(h.root).find(waiter => waiter.request_id === 'next')?.state, 'held');
+  });
+}

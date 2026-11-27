@@ -36,13 +36,17 @@ export function forwardChanges(source: ChangeSource, output: Writable): () => vo
   };
 }
 
-export function notificationChannel(source: ChangeSource): () => void {
+export function notificationChannel(source: ChangeSource, ready?: () => void): () => void {
   const value = process.env.PLAIT_NOTIFY_FD;
   if (value === undefined) return () => {};
   if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value)) || Number(value) < 3) {
     throw new Error('Invalid notification descriptor');
   }
-  const output = new Socket({ fd: Number(value), readable: false, writable: true });
+  const output = new Socket({ fd: Number(value), readable: !!ready, writable: true });
+  if (ready) output.once('data', (data: Buffer) => {
+    if (data.equals(Buffer.from('R'))) ready();
+    else process.stdin.destroy(new Error('Invalid host readiness signal'));
+  });
   // A broken notification channel must not leave connected clients silently stale.
   output.on('error', error => process.stdin.destroy(error));
   const stop = forwardChanges(source, output);

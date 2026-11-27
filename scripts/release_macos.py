@@ -228,7 +228,7 @@ def stage_host(work, version, revision):
     normalize_modes(host)
     metadata = manifest("host", version, revision)
     runtime_package = json.loads((runtime / "package.json").read_text())
-    metadata.update(node_version=node_version, runtime_sdk_version=runtime_package["dependencies"]["@earendil-works/pi-coding-agent"], payload_sha256=payload_digest(host))
+    metadata.update(release=os.environ.get("PLAIT_RELEASE_VERSION"), node_version=node_version, runtime_sdk_version=runtime_package["dependencies"]["@earendil-works/pi-coding-agent"], payload_sha256=payload_digest(host))
     metadata["build_id"] = f"{version}-{metadata['payload_sha256'][:20]}"
     write_json(host / "component.json", metadata)
     payload = work / "host-root"
@@ -353,6 +353,9 @@ def build_installers(bundle, client_version, host_version, revision, work, stage
         for path in manifests:
             item = json.loads(path.read_text())
             if item["component"] == "host":
+                tag = os.environ.get("PLAIT_RELEASE_TAG")
+                if item["release"] != (tag[1:] if tag else None):
+                    raise ValueError(f"Packaged host release does not match build tag: {component.name}")
                 verify_macho(path.parent / "bin/plait-host")
                 verify_macho(path.parent / "bin/node")
             else:

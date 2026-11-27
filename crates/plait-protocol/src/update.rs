@@ -3,7 +3,7 @@ use ed25519_dalek::{Signature, VerifyingKey};
 use serde::Deserialize;
 use std::{cmp::Ordering, collections::BTreeMap, fmt, io};
 
-pub const REPOSITORY: &str = "heath0xFF/plait";
+pub const REPOSITORY: &str = "mostlyheath/plait";
 pub const MANIFEST: &str = "update.json";
 pub const SIGNATURE: &str = "update.json.sig";
 /// Release signing key. Its private half is the `PLAIT_UPDATE_SIGNING_KEY`

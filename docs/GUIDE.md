@@ -4,13 +4,13 @@ Plait is a native Mac app (Apple Silicon, macOS 15 or later) for working with co
 
 ## Install and updates
 
-Download the **DMG** from [GitHub Releases](https://github.com/heath0xFF/plait/releases), open it, and drag **Plait** into **Applications**. Open Plait from Applications; on first launch it sets up its local host automatically. You need Git and a model provider account. No Xcode, Rust, or separate Node installation is required; the host bundles pinned Node **26.12.0** and its runtime.
+Download the **DMG** from [GitHub Releases](https://github.com/mostlyheath/plait/releases), open it, and drag **Plait** into **Applications**. Open Plait from Applications; on first launch it sets up its local host automatically. You need Git and a model provider account. No Xcode, Rust, or separate Node installation is required; the host bundles pinned Node **26.12.0** and its runtime.
 
 For a command-line install or update (run as your normal user, never under `sudo`):
 
 ```sh
 curl --proto '=https' -fsSL \
-  https://raw.githubusercontent.com/heath0xFF/plait/main/scripts/install.sh |
+  https://raw.githubusercontent.com/mostlyheath/plait/main/scripts/install.sh |
   bash -s -- --allow-unsigned
 ```
 
