@@ -19,6 +19,8 @@ pub struct Document {
     pub metadata_rows: Vec<Range<usize>>,
     pub text: String,
     pub ranges: Vec<Range<usize>>,
+    // (block, projected byte, original source byte) at Markdown line boundaries.
+    source_positions: Vec<(usize, usize, usize)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -78,7 +80,51 @@ impl Document {
             | Options::ENABLE_TABLES
             | Options::ENABLE_STRIKETHROUGH
             | Options::ENABLE_FOOTNOTES;
-        for event in Parser::new_ext(body, options) {
+        let body_offset = source.len() - body.len();
+        for (event, range) in Parser::new_ext(body, options).into_offset_iter() {
+            let block = projection.blocks.len();
+            let byte = projection.current.text.len();
+            if matches!(
+                event,
+                Event::Text(_)
+                    | Event::Code(_)
+                    | Event::Html(_)
+                    | Event::InlineHtml(_)
+                    | Event::Rule
+                    | Event::TaskListMarker(_)
+            ) || (matches!(event, Event::End(TagEnd::Image | TagEnd::Link))
+                && projection
+                    .links
+                    .last()
+                    .is_some_and(|(_, start)| *start == byte))
+            {
+                doc.source_positions
+                    .push((block, byte, body_offset + range.start));
+                if let Event::Code(ref code) = event {
+                    let raw = &body[range.clone()];
+                    inline_code_lines(raw, code, |projected, source| {
+                        doc.source_positions.push((
+                            block,
+                            byte + projected,
+                            body_offset + range.start + source,
+                        ));
+                    });
+                }
+                if let Event::Text(text) | Event::Html(text) | Event::InlineHtml(text) = &event {
+                    for ((i, _), (source, _)) in text
+                        .match_indices('\n')
+                        .zip(body[range.clone()].match_indices('\n'))
+                    {
+                        if i + 1 < text.len() {
+                            doc.source_positions.push((
+                                block,
+                                byte + i + 1,
+                                body_offset + range.start + source + 1,
+                            ));
+                        }
+                    }
+                }
+            }
             match event {
                 Event::FootnoteReference(label) => projection.text(&format!("[{label}]"), false),
                 Event::Start(Tag::FootnoteDefinition(label)) => {
@@ -107,6 +153,17 @@ impl Document {
                         bytes,
                         table_row: Some(n),
                     });
+                }
+            } else if matches!(block.kind, Kind::Code(_)) {
+                let mut start = 0;
+                for line in block.text.split('\n') {
+                    let end = start + line.len();
+                    doc.rows.push(Row {
+                        block: i,
+                        bytes: start..end,
+                        table_row: None,
+                    });
+                    start = end + 1;
                 }
             } else {
                 fragments(&block.text, |bytes| {
@@ -191,17 +248,77 @@ impl Document {
         issues
     }
 
+    pub fn source_byte(&self, block: usize, byte: usize) -> usize {
+        let end = self
+            .source_positions
+            .partition_point(|&(b, i, _)| (b, i) <= (block, byte));
+        self.source_positions
+            .get(end.saturating_sub(1))
+            .filter(|&&(b, _, _)| b == block)
+            .or_else(|| self.source_positions.get(end))
+            .map_or(0, |&(_, _, source)| source)
+    }
+
     pub fn row_at(&self, block: usize, byte: usize) -> usize {
         self.rows
-            .partition_point(|row| {
-                row.block < block
-                    || (row.block == block && row.bytes.end <= byte && !row.bytes.is_empty())
-            })
-            .min(self.rows.len().saturating_sub(1))
+            .partition_point(|row| (row.block, row.bytes.start) <= (block, byte))
+            .saturating_sub(1)
     }
     pub fn heading(&self, id: &str) -> Option<usize> {
         self.anchors.get(id).copied()
     }
+}
+
+// Code spans fold line endings to spaces and can lose one padding space at each end.
+fn inline_code_lines(raw: &str, code: &str, mut add: impl FnMut(usize, usize)) {
+    if !raw.contains('\n') {
+        return;
+    }
+    let ticks = raw.bytes().take_while(|&b| b == b'`').count();
+    let inner = &raw[ticks..raw.len() - ticks];
+    let first_line = inner.split(['\r', '\n']).next().unwrap_or_default();
+    let padded = if first_line.bytes().any(|b| b != b' ') {
+        // A closing delimiter on its own container line can also trim padding.
+        first_line.starts_with(' ') && !code.starts_with(first_line)
+    } else {
+        inner.starts_with([' ', '\r', '\n'])
+            && inner.ends_with([' ', '\r', '\n'])
+            && code.bytes().any(|b| b != b' ')
+    };
+    let mut projected = 0;
+    let mut source = ticks;
+    for (index, line) in inner.split_inclusive(['\r', '\n']).enumerate() {
+        let Some(mut content) = line.strip_suffix(['\r', '\n']) else {
+            break;
+        };
+        if index == 0 && padded {
+            content = content.strip_prefix(' ').unwrap_or(content);
+        }
+        // Continuation lines may start with a list or blockquote prefix which
+        // the parser omitted. Match the remaining suffix against its projection.
+        while index > 0 && !code.as_bytes()[projected..].starts_with(content.as_bytes()) {
+            let Some(c) = content.chars().next() else {
+                break;
+            };
+            content = &content[c.len_utf8()..];
+        }
+        let folded_space = !(index == 0 && padded && inner.starts_with(['\r', '\n']));
+        projected = (projected + content.len() + usize::from(folded_space)).min(code.len());
+        source += line.len();
+        add(projected, source);
+    }
+}
+
+/// Byte ranges within one fenced line, measured independently by the renderer.
+pub fn code_fragments(text: &str, line: Range<usize>) -> impl Iterator<Item = Range<usize>> + '_ {
+    std::iter::successors(
+        Some(line.start..text.floor_char_boundary((line.start + 4096).min(line.end))),
+        move |previous| {
+            let start = previous.end;
+            (start < line.end)
+                .then(|| start..text.floor_char_boundary((start + 4096).min(line.end)))
+        },
+    )
 }
 
 /// Bound the amount of native text shaping in a single visible item.
@@ -297,6 +414,64 @@ mod tests {
                 "../outside — outside this project"
             ]
         );
+    }
+
+    #[test]
+    fn code_rows_preserve_long_lines_and_source_positions() {
+        let line = "界".repeat(5000);
+        let source = format!("---\nk: v\n---\n# Title\n\n```\n{line}\nnext\n```");
+        let doc = Document::parse(&source);
+        let rows = &doc.rows[1..];
+        assert_eq!(rows.len(), 2);
+        let block = &doc.blocks[1].text;
+        let pieces: Vec<_> = code_fragments(block, rows[0].bytes.clone())
+            .map(|range| &block[range])
+            .collect();
+        assert!(pieces.iter().all(|piece| piece.len() <= 4096));
+        assert_eq!(pieces.concat(), line);
+        assert_eq!(doc.row_at(1, 4097), 1);
+        assert_eq!(&block[rows[1].bytes.clone()], "next");
+        assert_eq!(
+            doc.source_byte(1, block.find("next").unwrap()),
+            source.find("next").unwrap()
+        );
+        assert_eq!(source[doc.source_byte(0, 0)..].chars().next(), Some('T'));
+    }
+
+    #[test]
+    fn multiline_inline_code_maps_find_to_the_second_source_line() {
+        let source = "`first\nsecond needle`";
+        let doc = Document::parse(source);
+        let hit = doc.find("needle", false).pop().unwrap();
+        assert_eq!(
+            doc.source_byte(0, hit.start),
+            source.find("second").unwrap()
+        );
+    }
+
+    #[test]
+    fn multiline_inline_html_maps_find_to_the_second_source_line() {
+        let source = "Intro <!-- first\nneedle -->";
+        let doc = Document::parse(source);
+        let hit = doc.find("needle", false).pop().unwrap();
+        assert_eq!(
+            doc.source_byte(0, hit.start),
+            source.find("needle").unwrap()
+        );
+    }
+
+    #[test]
+    fn empty_labels_map_find_matches_to_their_source_line() {
+        for label in ["![](diagram.png)", "[](diagram.png)"] {
+            let source = format!("# Title\n\nintro\n\n{label}");
+            let doc = Document::parse(&source);
+            let hit = doc.find("diagram.png", false).pop().unwrap();
+            let block = crate::file_view::line_of(&doc.ranges, hit.start);
+            assert_eq!(
+                doc.source_byte(block, hit.start - doc.ranges[block].start),
+                source.find(label).unwrap()
+            );
+        }
     }
 
     #[test]

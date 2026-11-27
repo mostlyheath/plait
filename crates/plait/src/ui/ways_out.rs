@@ -46,6 +46,7 @@ pub(super) struct Target {
     /// As the checkout names it, for hover text.
     pub display: String,
     pub absolute: PathBuf,
+    checkout: PathBuf,
     /// One-based.
     pub line: usize,
 }
@@ -97,9 +98,11 @@ impl Plait {
                     {
                         return None;
                     }
+                    let checkout = &self.workspace.turn_review.target.as_ref()?.checkout;
                     Some(Target {
                         display: file.display_path.clone(),
-                        absolute: self.file_root().join(&file.path),
+                        absolute: checkout.join(&file.path),
+                        checkout: checkout.clone(),
                         line: self
                             .workspace
                             .turn_review
@@ -141,7 +144,34 @@ impl Plait {
             .open
             .then(|| viewer.find.matches.get(viewer.find.current))
             .flatten();
+        let rendered_byte = viewer
+            .document()
+            .filter(|_| viewer.rendered())
+            .and_then(|doc| {
+                if let Some(hit) = found {
+                    if hit.start >= doc.text.len() {
+                        // Metadata is shown without its opening delimiter.
+                        let start = text?.text.find('\n')? + 1;
+                        return Some(start + hit.start - doc.text.len());
+                    }
+                    let block = doc.ranges.partition_point(|range| range.end <= hit.start);
+                    let range = doc.ranges.get(block)?;
+                    return Some(doc.source_byte(block, hit.start.saturating_sub(range.start)));
+                }
+                let top = viewer.doc.list.as_ref()?.logical_scroll_top();
+                let row = doc.rows.get(top.item_ix)?;
+                let byte = viewer
+                    .doc
+                    .top_text
+                    .get()
+                    .filter(|(index, _)| *index == top.item_ix && top.offset_in_item > px(0.))
+                    .map_or(row.bytes.start, |(_, byte)| byte);
+                Some(doc.source_byte(row.block, byte))
+            });
         let index = match (found, text) {
+            (_, Some(text)) if let Some(byte) = rendered_byte => {
+                file_view::line_of(&text.lines, byte)
+            }
             (Some(found), Some(text)) => file_view::line_of(&text.lines, found.start),
             _ => viewer.reveal.unwrap_or_else(|| top_line(&viewer.scroll)),
         };
@@ -149,6 +179,7 @@ impl Plait {
         Some(Target {
             display: path.to_string_lossy().into_owned(),
             absolute: viewer.root.join(path),
+            checkout: viewer.root.clone(),
             line: index.min(count - 1) + 1,
         })
     }
@@ -176,6 +207,7 @@ impl Plait {
         Some(Target {
             display: change.display_path(),
             absolute: snapshot.root.join(&change.path),
+            checkout: snapshot.root.clone(),
             line: line.unwrap_or(1),
         })
     }
@@ -218,9 +250,21 @@ impl Plait {
             &self.preferences.value.open_files_with,
             &target.absolute,
             target.line,
-            &self.file_root(),
+            &target.checkout,
         );
-        self.hand_off(launch, cx);
+        let backend = self.repository_backend();
+        let key = self.state.checkout_key().cloned();
+        let check = move || {
+            let relative = target
+                .absolute
+                .strip_prefix(&target.checkout)
+                .map_err(|_| "The file is outside the displayed checkout.".to_owned())?;
+            backend
+                .file_stamp(&target.checkout, key.as_ref(), relative)
+                .map(|_| ())
+                .map_err(|error| format!("Cannot open {} in the editor: {error}", target.display))
+        };
+        self.hand_off_file(launch, check, cx);
     }
 
     pub(super) fn show_in_finder(&mut self, cx: &mut Context<Self>) {
@@ -244,6 +288,15 @@ impl Plait {
     }
 
     pub(super) fn hand_off(&mut self, launch: Result<Launch, String>, cx: &mut Context<Self>) {
+        self.hand_off_file(launch, || Ok(()), cx);
+    }
+
+    fn hand_off_file(
+        &mut self,
+        launch: Result<Launch, String>,
+        check: impl FnOnce() -> Result<(), String> + Send + 'static,
+        cx: &mut Context<Self>,
+    ) {
         if !self.host_is_local() {
             return self.way_out_failed(super::REMOTE_UNAVAILABLE.into(), cx);
         }
@@ -253,7 +306,7 @@ impl Plait {
                 if self.notice.is_some() && self.notice == self.ways_out.failure.take() {
                     self.notice = None;
                 }
-                self.start_process(launch, cx);
+                self.start_process(launch, check, cx);
                 cx.notify();
             }
             Err(error) => self.way_out_failed(error, cx),
@@ -267,17 +320,31 @@ impl Plait {
     }
 
     #[cfg(test)]
-    fn start_process(&mut self, launch: Launch, _: &mut Context<Self>) {
+    fn start_process(
+        &mut self,
+        launch: Launch,
+        check: impl FnOnce() -> Result<(), String> + Send + 'static,
+        cx: &mut Context<Self>,
+    ) {
+        if let Err(error) = check() {
+            return self.way_out_failed(error, cx);
+        }
         self.ways_out.started.push(launch);
     }
 
     /// Start the command off the UI thread and report only an early failure.
     #[cfg(not(test))]
-    fn start_process(&mut self, launch: Launch, cx: &mut Context<Self>) {
+    fn start_process(
+        &mut self,
+        launch: Launch,
+        check: impl FnOnce() -> Result<(), String> + Send + 'static,
+        cx: &mut Context<Self>,
+    ) {
         let executor = cx.background_executor().clone();
-        let task = cx
-            .background_executor()
-            .spawn(async move { watch(launch, executor).await });
+        let task = cx.background_executor().spawn(async move {
+            check()?;
+            watch(launch, executor).await
+        });
         cx.spawn(async move |this, cx| {
             if let Err(sentence) = task.await {
                 let _ = this.update(cx, |this, cx| this.way_out_failed(sentence, cx));
