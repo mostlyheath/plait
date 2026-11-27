@@ -156,8 +156,15 @@ fn editor_opens_the_document_in_its_checkout() {
         let verify = |p: &mut Plait, cx: &mut Context<Plait>| {
             p.open_in_editor(cx);
             let launch = p.ways_out.started.pop().unwrap();
-            assert_eq!(Path::new(&launch.args[0]), file);
-            assert_eq!(Path::new(&launch.args[1]), checkout);
+            // Compare resolved paths: on macOS the temporary folder is reached through /var.
+            assert_eq!(
+                Path::new(&launch.args[0]).canonicalize().unwrap(),
+                file.canonicalize().unwrap()
+            );
+            assert_eq!(
+                Path::new(&launch.args[1]).canonicalize().unwrap(),
+                checkout.canonicalize().unwrap()
+            );
             assert!(file.is_file());
         };
         h.update(|p, _, cx| {
