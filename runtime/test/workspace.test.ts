@@ -1,7 +1,8 @@
+import { fixtureDirectory } from './support/temp.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
+import { mkdir, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { HostError } from '../src/protocol.ts';
@@ -11,7 +12,7 @@ import { Workspace, validateWorkspace } from '../src/workspace.ts';
 const code = (expected: string) => (error: unknown) => error instanceof HostError && error.code === expected;
 
 async function setup(t: { after: (fn: () => unknown) => void }) {
-  const root = await realpath(await mkdtemp(join(tmpdir(), 'plait-workspace-')));
+  const root = await realpath(await fixtureDirectory(join(tmpdir(), 'plait-workspace-')));
   t.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(join(root, 'store'));
   const store = new Store(join(root, 'store'));

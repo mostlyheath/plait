@@ -183,8 +183,8 @@ mod tests {
     #[cfg(all(feature = "test-host", feature = "local-host"))]
     #[test]
     fn disconnected_first_attempt_releases_but_retry_preserves_the_original_action() {
-        let directory =
-            std::env::temp_dir().join(format!("plait-draft-retry-{}", std::process::id()));
+        let directory = plait_test_support::temp_dir()
+            .join(format!("plait-draft-retry-{}", std::process::id()));
         let machine = MachineId::default();
         let host = HostKey {
             id: "host".into(),
@@ -242,8 +242,8 @@ mod tests {
 
     #[test]
     fn delete_retry_follows_a_renamed_project() {
-        let directory =
-            std::env::temp_dir().join(format!("plait-graph-rename-{}", std::process::id()));
+        let directory = plait_test_support::temp_dir()
+            .join(format!("plait-graph-rename-{}", std::process::id()));
         let (journal, _) = Journal::open(&directory, "/store".into()).unwrap();
         let machine = MachineId::default();
         let host = HostKey {
@@ -294,8 +294,8 @@ mod tests {
 
     #[test]
     fn reservations_survive_session_rewrites_and_reject_stale_reads() {
-        let directory =
-            std::env::temp_dir().join(format!("plait-graph-actions-{}", std::process::id()));
+        let directory = plait_test_support::temp_dir()
+            .join(format!("plait-graph-actions-{}", std::process::id()));
         let machine = MachineId::default();
         let other = MachineId::new("remote").unwrap();
         let host = HostKey {

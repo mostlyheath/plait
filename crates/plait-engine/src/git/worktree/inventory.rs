@@ -394,7 +394,7 @@ mod tests {
             .map(|dir| dir.join("git"))
             .find(|git| git.is_file())
             .unwrap();
-        let dir = std::env::temp_dir().join(format!(
+        let dir = plait_test_support::temp_dir().join(format!(
             "plait-git-count-{}-{}",
             std::process::id(),
             test.rsplit("::").next().unwrap()

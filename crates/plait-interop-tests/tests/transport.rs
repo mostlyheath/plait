@@ -21,7 +21,8 @@ use std::{
 #[test]
 fn link_and_bridge_carry_requests_and_end_watches() {
     use plait_client::remote::link::{Link, Settings};
-    let dir = std::env::temp_dir().join(format!("plait-link-bridge-{}", std::process::id()));
+    let dir = plait_test_support::socket_temp_dir()
+        .join(format!("plait-link-bridge-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir(&dir).unwrap();
     fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
@@ -101,7 +102,8 @@ fn link_and_bridge_carry_requests_and_end_watches() {
 }
 #[test]
 fn loopback_handler_accepts_and_refuses() {
-    let root = std::env::temp_dir().join(format!("plait-tailnet-client-{}", std::process::id()));
+    let root = plait_test_support::socket_temp_dir()
+        .join(format!("plait-tailnet-client-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir(&root).unwrap();
     // The bridge reaches only an owner-only store, as a real one is.

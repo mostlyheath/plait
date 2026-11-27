@@ -1,6 +1,7 @@
+import { fixtureDirectory } from './support/temp.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createModels } from '@earendil-works/pi-ai/models';
@@ -12,7 +13,7 @@ import type { ToolState } from '../src/tools.ts';
 import { exec } from './support/safety.ts';
 
 test('project kind requires no Git entry in any ancestor', async t => {
-  const base = await realpath(await mkdtemp(join(tmpdir(), 'plait-plain-')));
+  const base = await realpath(await fixtureDirectory(join(tmpdir(), 'plait-plain-')));
   t.after(() => rm(base, { recursive: true, force: true }));
   const plain = join(base, 'plain'); await mkdir(plain);
   assert.deepEqual(await projectKind(plain), { root: plain, vcs: 'folder' });
@@ -31,14 +32,14 @@ test('project kind requires no Git entry in any ancestor', async t => {
 });
 
 test('a missing project folder is reported as missing, not inaccessible', async t => {
-  const base = await realpath(await mkdtemp(join(tmpdir(), 'plait-missing-')));
+  const base = await realpath(await fixtureDirectory(join(tmpdir(), 'plait-missing-')));
   t.after(() => rm(base, { recursive: true, force: true }));
   await assert.rejects(projectKind(join(base, 'gone')), (error: any) => error.code === 'checkout_missing' && /no longer exists/.test(error.message));
 });
 
 for (const deferred of [false, true]) test(
   `Git initialized before ${deferred ? 'deferred' : 'immediate'} lease acquisition protects dirty files and records the turn`, { timeout: 20000 }, async t => {
-  const base = await realpath(await mkdtemp(join(tmpdir(), 'plait-plain-git-')));
+  const base = await realpath(await fixtureDirectory(join(tmpdir(), 'plait-plain-git-')));
   const plain = join(base, 'plain');
   const store = join(base, 'store');
   await mkdir(plain);
@@ -113,7 +114,7 @@ for (const deferred of [false, true]) test(
 for (const replacement of [false, true]) test(replacement
   ? 'a replacement Git directory cannot promote the saved folder thread'
   : 'a plain-folder thread whose ancestor becomes a Git repo refuses submission', { timeout: 20000 }, async t => {
-  const base = await realpath(await mkdtemp(join(tmpdir(), 'plait-plain-ancestor-')));
+  const base = await realpath(await fixtureDirectory(join(tmpdir(), 'plait-plain-ancestor-')));
   const sub = join(base, 'sub');
   const store = join(base, 'store');
   await mkdir(sub);

@@ -1,6 +1,7 @@
+import { fixtureDirectory } from './support/temp.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdir, mkdtemp, rename, rm } from 'node:fs/promises';
+import { mkdir, rename, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
@@ -15,10 +16,10 @@ const pause=()=>new Promise(resolve=>setTimeout(resolve,20));
 async function until(done:()=>boolean) {const end=Date.now()+30000;while(!done()){assert.ok(Date.now()<end,'Queue did not settle');await pause();}}
 class FakeRuntime extends Runtime {override async resources(){return {skills:[],templates:[],problems:[],mcpServers:[],mcpEntries:new Map()};}}
 async function fixture(t:Parameters<typeof setup>[0]) {
- const {root,base}=await setup(t);const directory=await mkdtemp(join(tmpdir(),'plait-queue-host-'));
+ const {root,base}=await setup(t);const directory=await fixtureDirectory(join(tmpdir(),'plait-queue-host-'));
  // Lock and cleanup records are named by a folder's device and inode and are never removed, and Linux hands a removed
  // folder's inode to the next one. Each test keeps its own, so it cannot inherit a hold an earlier test left on purpose.
- const leases=await mkdtemp(join(tmpdir(),'plait-leases-'));process.env.PLAIT_LEASE_DIR=leases;const models=createModels();const faux=fauxProvider({tokensPerSecond:1e8});models.setProvider(faux.provider);
+ const leases=await fixtureDirectory(join(tmpdir(),'plait-leases-'));process.env.PLAIT_LEASE_DIR=leases;const models=createModels();const faux=fauxProvider({tokensPerSecond:1e8});models.setProvider(faux.provider);
  let runtime=new FakeRuntime(directory,models,new Set(['faux']));
  // A closing runtime can still write a record, so its directory is outside the folder the test removes first and goes last.
  t.after(async()=>{await runtime.close();await rm(directory,{recursive:true,force:true});await rm(leases,{recursive:true,force:true,maxRetries:5,retryDelay:50});});

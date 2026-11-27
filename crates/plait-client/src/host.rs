@@ -509,7 +509,8 @@ mod tests {
     #[test]
     fn client_round_trip_checks_socket_ownership_and_permissions() {
         use std::os::unix::{fs::PermissionsExt, net::UnixListener};
-        let directory = std::env::temp_dir().join(format!("plait-client-{}", std::process::id()));
+        let directory = plait_test_support::socket_temp_dir()
+            .join(format!("plait-client-{}", std::process::id()));
         std::fs::create_dir(&directory).unwrap();
         std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();
         let path = directory.join("host.sock");
@@ -552,7 +553,8 @@ mod tests {
         PathBuf,
     ) {
         use std::os::unix::{fs::PermissionsExt, net::UnixListener};
-        let directory = std::env::temp_dir().join(format!("plait-{name}-{}", std::process::id()));
+        let directory = plait_test_support::socket_temp_dir()
+            .join(format!("plait-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&directory);
         std::fs::create_dir(&directory).unwrap();
         std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();

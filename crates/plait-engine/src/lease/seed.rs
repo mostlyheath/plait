@@ -183,7 +183,7 @@ mod tests {
     };
     static NEXT: AtomicU64 = AtomicU64::new(0);
     fn fixture() -> (PathBuf, PathBuf, PathBuf, DirIdentity) {
-        let base = std::env::temp_dir().join(format!(
+        let base = plait_test_support::temp_dir().join(format!(
             "plait-seed-priority-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)

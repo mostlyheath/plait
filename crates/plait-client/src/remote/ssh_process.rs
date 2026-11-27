@@ -228,7 +228,8 @@ mod tests {
     #[test]
     fn the_bridge_falls_back_to_the_installed_host() {
         use std::os::unix::{ffi::OsStrExt, fs::PermissionsExt};
-        let home = std::env::temp_dir().join(format!("plait-bridge-home-{}", std::process::id()));
+        let home = plait_test_support::temp_dir()
+            .join(format!("plait-bridge-home-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(home.join(".local/bin")).unwrap();
         let fake = home.join(".local/bin/plait-host");

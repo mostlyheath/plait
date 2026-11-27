@@ -1,8 +1,9 @@
+import { fixtureDirectory, socketTempRoot } from './support/temp.ts';
 import { confirmStopped } from './support/host.ts';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { connect } from 'node:net';
-import { mkdtemp, readFile, writeFile, rm, stat, realpath, symlink } from 'node:fs/promises';
+import { readFile, writeFile, rm, stat, realpath, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
@@ -10,7 +11,7 @@ import type { Snapshot } from '../src/protocol.ts';
 import { exec, binary, fixture, delay, childPids, until, request, raw, setup } from './support/host.ts';
 
 test('start is independent, status is usable, and repeated start does not replace the daemon', { timeout: 15000 }, async t => {
-  const store = await mkdtemp(join('/tmp', 'plait-start-'));
+  const store = await fixtureDirectory(join(socketTempRoot, 'plait-start-'));
   let pid: number | undefined;
   t.after(async () => { if (pid) process.kill(pid, 'SIGKILL'); await delay(300); await rm(store, { recursive: true, force: true }); });
   await exec(binary, ['start', '--store', store, '--runtime', fixture], { env: { ...process.env, PLAIT_TEST_SCENARIO: 'answer' } });
@@ -44,7 +45,7 @@ test('watch streams replacement snapshots and disconnect does not own the run', 
 });
 
 for (const scenario of ['oversize', 'stall']) test(`sidecar ${scenario} is bounded without an unresponsive host`, { timeout: 30000 }, async t => {
-  const store = await realpath(await mkdtemp(join(tmpdir(), 'plait-protocol-')));
+  const store = await realpath(await fixtureDirectory(join(tmpdir(), 'plait-protocol-')));
   const host = spawn(binary, ['run', '--store', store, '--runtime', resolve('test/stdio-fixture.ts')], { stdio: 'ignore', env: { ...process.env, PLAIT_TEST_SCENARIO: scenario } });
   t.after(async () => { host.kill('SIGKILL'); await delay(100); await rm(store, { recursive: true, force: true }); });
   await until(() => stat(join(store, 'host.sock')), value => value.isSocket());

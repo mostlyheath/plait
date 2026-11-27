@@ -1,13 +1,14 @@
+import { fixtureDirectorySync } from './support/temp.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { ExternalEntries, transcriptPath, type Entry } from '../src/external/entries.ts';
 
 function withDirectory(run: (directory: string) => void) {
-  const directory = mkdtempSync(join(tmpdir(), 'plait-entries-'));
+  const directory = fixtureDirectorySync(join(tmpdir(), 'plait-entries-'));
   try { run(directory); } finally { rmSync(directory, { recursive: true, force: true }); }
 }
 

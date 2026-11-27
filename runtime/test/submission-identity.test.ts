@@ -1,6 +1,7 @@
+import { fixtureDirectory } from './support/temp.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, realpath, rm } from 'node:fs/promises';
+import { realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { validate } from '../src/protocol.ts';
@@ -9,7 +10,7 @@ import { rootIdentity, verifyExpectedIdentity } from '../src/safety.ts';
 
 test('submission identities are validated and replacement folders are refused', async () => {
   // macOS's temp directory is reached through a symlink; a checkout root is canonical.
-  const root = await realpath(await mkdtemp(join(tmpdir(), 'plait-submit-identity-')));
+  const root = await realpath(await fixtureDirectory(join(tmpdir(), 'plait-submit-identity-')));
   try {
     const identity = await rootIdentity(root);
     const submit = { op: 'submit', thread_id: 't', request_id: 'r', text: 'hello', identity };

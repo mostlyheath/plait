@@ -21,7 +21,7 @@ pub(super) struct Repo(pub(super) PathBuf);
 impl Repo {
     pub(super) fn new() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
-        let path = std::env::temp_dir().join(format!(
+        let path = plait_test_support::temp_dir().join(format!(
             "plait-test-{}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
@@ -30,6 +30,9 @@ impl Repo {
                 .as_nanos(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
+        Self::at(path)
+    }
+    pub(super) fn at(path: PathBuf) -> Self {
         fs::create_dir(&path).unwrap();
         let repo = Self(path);
         repo.git(&["init", "-b", "main"]);
@@ -2183,6 +2186,10 @@ fn a_killed_worktree_removal_keeps_the_lease_until_git_exits() {
         ])
         .env("PATH", path)
         .env(
+            "PLAIT_LEASE_DIR",
+            crate::lease::default_lease_dir().unwrap(),
+        )
+        .env(
             "PLAIT_TEST_KILLED_REMOVAL",
             format!("{}\n{}", repo.0.display(), tree.path.display()),
         )
@@ -2223,7 +2230,7 @@ fn a_killed_worktree_removal_keeps_the_lease_until_git_exits() {
 
 #[test]
 fn a_plain_folder_reads_as_plain_with_its_files_but_a_repository_never_does() {
-    let root = std::env::temp_dir().join(format!("plait-plain-{}", std::process::id()));
+    let root = plait_test_support::temp_dir().join(format!("plait-plain-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(root.join("notes/deep")).unwrap();
     std::fs::create_dir_all(root.join(".hidden")).unwrap();

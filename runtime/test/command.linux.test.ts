@@ -1,6 +1,7 @@
+import { fixtureDirectory } from './support/temp.ts';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -10,7 +11,7 @@ import { commandPolicy } from '../src/command/policy.ts';
 import { rootIdentity } from '../src/safety.ts';
 
 test('Linux denies sandboxed commands in runtime and direct guardian entry points', async t => {
-  const root = await mkdtemp(join(tmpdir(), 'plait-linux-denial-'));
+  const root = await fixtureDirectory(join(tmpdir(), 'plait-linux-denial-'));
   t.after(async () => { await rm(root, { recursive: true, force: true }); });
   const identity = await rootIdentity(root);
   const saved = JSON.stringify({ policy: 'sandboxed', root: identity });

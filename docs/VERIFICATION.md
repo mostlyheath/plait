@@ -158,10 +158,12 @@ that the application's frame or latency goals are met.
   folded turns, and the former split layout) was released without inspection in the native app.
   Its scenes were rendered and looked at on Linux only. See
   [#130](https://github.com/mostlyheath/plait/issues/130).
-- Some tests depend on timing and fail now and then on unrelated changes; one
-  such failure left a test fixture running and hung a release build. Passing
-  runs are not yet evidence that these tests are sound. See
-  [#128](https://github.com/mostlyheath/plait/issues/128).
+- CI compares the entries named `plait-*` in the system temporary directories
+  before and after the Rust, runtime and installed-runtime checks. A difference
+  fails the check and names the affected paths.
+- The macOS runtime check repeats the Codex device sign-in and automatic graph
+  admission regressions ten times, along with the check that the flood fixture
+  exits when its client disconnects. See [#128](https://github.com/mostlyheath/plait/issues/128).
 - The installed-runtime suite runs only in a release build, so a break that
   only it catches is found when releasing, not at merge. Runtime tests that
   depend on macOS paths are not caught by Linux runs.

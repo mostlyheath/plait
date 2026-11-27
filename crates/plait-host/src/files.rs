@@ -356,7 +356,7 @@ mod tests {
     fn range(bytes: &[u8], request: Value) -> io::Result<Value> {
         // Parallel tests can observe the same clock tick on CI runners.
         static NEXT: AtomicU64 = AtomicU64::new(0);
-        let path = std::env::temp_dir().join(format!(
+        let path = plait_test_support::temp_dir().join(format!(
             "plait-range-{}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()

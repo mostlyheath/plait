@@ -1,6 +1,7 @@
+import { fixtureDirectory } from './support/temp.ts';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -10,7 +11,7 @@ import { CheckoutWatcher } from '../src/watcher.ts';
 import { Workspace } from '../src/workspace.ts';
 
 test('workspace watches changes, filters Git objects, and stops hidden projects and forgotten worktrees', async t => {
-  const root = await realpath(await mkdtemp(join(tmpdir(), 'plait-watch-')));
+  const root = await realpath(await fixtureDirectory(join(tmpdir(), 'plait-watch-')));
   const repo = join(root, 'repo');
   execFileSync('git', ['init', '-q', repo]);
   await mkdir(join(root, 'store'));
@@ -45,7 +46,7 @@ test('workspace watches changes, filters Git objects, and stops hidden projects 
 });
 
 test('at most 64 folders are watched, dropping the oldest', async t => {
-  const root = await mkdtemp(join(tmpdir(), 'plait-watch-limit-'));
+  const root = await fixtureDirectory(join(tmpdir(), 'plait-watch-limit-'));
   const watcher = new CheckoutWatcher(() => {});
   t.after(async () => { watcher.close(); await rm(root, { recursive: true, force: true }); });
   const folders = Array.from({ length: 65 }, (_, i) => join(root, String(i)));
@@ -59,7 +60,7 @@ test('at most 64 folders are watched, dropping the oldest', async t => {
 });
 
 test('a busy folder is announced at most once a second, and its last change always is', async t => {
-  const root = await mkdtemp(join(tmpdir(), 'plait-watch-rate-'));
+  const root = await fixtureDirectory(join(tmpdir(), 'plait-watch-rate-'));
   let notifications = 0;
   const watcher = new CheckoutWatcher(() => { notifications++; });
   t.after(async () => { watcher.close(); await rm(root, { recursive: true, force: true }); });
@@ -75,7 +76,7 @@ test('a busy folder is announced at most once a second, and its last change alwa
 });
 
 test('working files and Git ref changes are classified separately', async t => {
-  const root = await mkdtemp(join(tmpdir(), 'plait-watch-refs-'));
+  const root = await fixtureDirectory(join(tmpdir(), 'plait-watch-refs-'));
   await mkdir(join(root, '.git'));
   const events: boolean[] = [];
   const watcher = new CheckoutWatcher((_folder, refs) => { events.push(refs === true); });

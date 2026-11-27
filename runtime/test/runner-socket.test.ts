@@ -1,5 +1,6 @@
+import { fixtureDirectory } from './support/temp.ts';
 import { strict as assert } from 'node:assert';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -11,7 +12,7 @@ import { RunnerClient, RunnerServer } from '../src/runner/socket.ts';
 import type { RunnerMessage, Command } from '../src/runner/protocol.ts';
 
 test('attach replays later events and delivers commands', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'plait-socket-'));
+  const root = await fixtureDirectory(join(tmpdir(), 'plait-socket-'));
   const messages: RunnerMessage[] = []; const commands: Command[] = [];
   const server = new RunnerServer(join(root, 'run.sock'), () => ({ type: 'attached', state: 'running', seq: 2, snapshot: {}, pending_approval: null, head: null, before_record_id: null }), command => commands.push(command));
   try {
@@ -23,7 +24,7 @@ test('attach replays later events and delivers commands', async () => {
 });
 
 test('server closes a connection that sends an oversized frame', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'plait-socket-'));
+  const root = await fixtureDirectory(join(tmpdir(), 'plait-socket-'));
   const server = new RunnerServer(join(root, 'run.sock'), () => ({ type: 'attached', state: 'running', seq: 0, snapshot: {}, pending_approval: null, head: null, before_record_id: null }), () => assert.fail('oversized command delivered'));
   try {
     await server.listen();
@@ -37,7 +38,7 @@ test('server closes a connection that sends an oversized frame', async () => {
 });
 
 test('second attach replaces first client, ignores stale acks, and replays remaining events', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'plait-socket-'));
+  const root = await fixtureDirectory(join(tmpdir(), 'plait-socket-'));
   const sock = join(root, 'run.sock');
   const commands: Command[] = [];
   const server = new RunnerServer(sock, () => ({ type: 'attached', state: 'running', seq: 2, snapshot: {}, pending_approval: null, head: null, before_record_id: null }), command => commands.push(command));

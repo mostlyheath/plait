@@ -1,5 +1,6 @@
+import { fixtureDirectory } from './support/temp.ts';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
+import { mkdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -10,22 +11,22 @@ import { Runtime } from '../src/runtime.ts';
 import { FakeLinearServer } from './support/linear-server.ts';
 
 async function setup(t: test.TestContext) {
-  const dir = await mkdtemp(join(tmpdir(), 'plait-linear-writes-'));
+  const dir = await fixtureDirectory(join(tmpdir(), 'plait-linear-writes-'));
   const storeDir = join(dir, 'store');
   await mkdir(storeDir, { recursive: true, mode: 0o700 });
   const fake = new FakeLinearServer();
+  let runtime: Runtime;
+  t.after(async () => {
+    try { await runtime?.close(); }
+    finally { await fake.close(); await rm(dir, { recursive: true, force: true }); }
+  });
   const endpoint = await fake.start();
   let now = 1_763_500_000_000;
-  let runtime = new Runtime(storeDir, createModels(), new Set());
+  runtime = new Runtime(storeDir, createModels(), new Set());
   const attach = (target: Runtime) => {
     target.linear = new LinearService(target.store, storeDir, { endpoint, timeoutMs: 1000, now: () => now });
   };
   attach(runtime);
-  t.after(async () => {
-    await runtime.close();
-    await fake.close();
-    await rm(dir, { recursive: true, force: true });
-  });
   const transcript: string[] = [];
   const call = async (input: unknown): Promise<any> => {
     const reply = await runtime.reply(input);

@@ -1,6 +1,7 @@
+import { fixtureDirectory } from './support/temp.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ConversationView } from '@earendil-works/pi-durable';
@@ -17,7 +18,7 @@ import { FAKE_CODEX, fakeEnv } from './support/fake-codex-env.ts';
 
 /** A minimal stand-in for the runtime's adapter loop: route by thread, answer approvals, persist entries. */
 async function session(scenario: string, decide: (approval: CodexApproval) => boolean) {
-  const directory = await mkdtemp(join(tmpdir(), 'plait-codex-e2e-'));
+  const directory = await fixtureDirectory(join(tmpdir(), 'plait-codex-e2e-'));
   const log = join(directory, 'frames.jsonl');
   const server = await AppServer.start(FAKE_CODEX, { env: fakeEnv({ FAKE_CODEX_SCENARIO: scenario, FAKE_CODEX_LOG: log }), requestTimeoutMs: 5000 });
   const { thread } = await server.request<ThreadStartResponse>('thread/start', { cwd: '/work', approvalPolicy: 'on-request', sandbox: 'read-only' });

@@ -1,6 +1,7 @@
+import { fixtureDirectory } from './support/temp.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Folders } from '../src/folders.ts';
@@ -9,7 +10,7 @@ import { HostError } from '../src/protocol.ts';
 const error = (code: string, message: string) => (e: unknown) => e instanceof HostError && e.code === code && e.message === message;
 
 test('browse folders and validate requests', async t => {
-  const root = await realpath(await mkdtemp(join(tmpdir(), 'plait-folders-')));
+  const root = await realpath(await fixtureDirectory(join(tmpdir(), 'plait-folders-')));
   t.after(() => rm(root, { recursive: true, force: true }));
   const folders = new Folders(root);
   await Promise.all(['beta', 'Alpha', '.hidden', 'worktree'].map(name => mkdir(join(root, name))));
@@ -38,7 +39,7 @@ test('browse folders and validate requests', async t => {
 });
 
 test('limits listings to 1000 folders', async t => {
-  const root = await realpath(await mkdtemp(join(tmpdir(), 'plait-folders-limit-')));
+  const root = await realpath(await fixtureDirectory(join(tmpdir(), 'plait-folders-limit-')));
   t.after(() => rm(root, { recursive: true, force: true }));
   await Promise.all(Array.from({ length: 1001 }, (_, i) => mkdir(join(root, `folder-${String(i).padStart(4, '0')}`))));
   const listing = await new Folders(root).handle({ op: 'browse_folder' });

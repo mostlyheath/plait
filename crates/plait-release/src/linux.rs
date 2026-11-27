@@ -310,7 +310,7 @@ pub fn apply(home: &Path, old: &Path, release: &HostRelease) -> Result<PathBuf, 
 mod tests {
     use super::*;
     fn scratch() -> PathBuf {
-        let path = std::env::temp_dir().join(format!("plait-linux-update-{}", unique()));
+        let path = plait_test_support::temp_dir().join(format!("plait-linux-update-{}", unique()));
         fs::create_dir_all(&path).unwrap();
         path
     }

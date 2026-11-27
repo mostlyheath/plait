@@ -1,6 +1,7 @@
+import { fixtureDirectorySync } from './support/temp.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { once } from '../src/operations.ts';
@@ -8,7 +9,7 @@ import { HostError, fail } from '../src/protocol.ts';
 import { Store } from '../src/store.ts';
 
 test('operation IDs replay outcomes, refusals and expire on insertion', async t => {
-  const dir = mkdtempSync(join(tmpdir(), 'plait-ops-'));
+  const dir = fixtureDirectorySync(join(tmpdir(), 'plait-ops-'));
   const store = new Store(dir);
   t.after(() => { store.db.close(); rmSync(dir, { recursive: true, force: true }); });
   let calls = 0; let time = 0;

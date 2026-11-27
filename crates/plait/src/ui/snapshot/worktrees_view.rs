@@ -172,7 +172,7 @@ fn scenes() {
     if !isolated("worktrees_view::scenes") {
         return;
     }
-    let scratch = PathBuf::from("/tmp/plait-worktree-scenes");
+    let scratch = std::env::temp_dir().join("plait-worktree-scenes");
     let _ = std::fs::remove_dir_all(&scratch);
     let repo = fixture_repository(&scratch);
     let out = std::env::var_os("PLAIT_SNAPSHOT_DIR").map(PathBuf::from);

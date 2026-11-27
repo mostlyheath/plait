@@ -124,7 +124,7 @@ impl Scratch {
     fn new() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         isolate_leases();
-        let path = std::env::temp_dir().join(format!(
+        let path = plait_test_support::temp_dir().join(format!(
             "plait-host-records-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
@@ -139,8 +139,7 @@ impl Scratch {
 fn isolate_leases() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
-        let uid = unsafe { libc::geteuid() };
-        let directory = std::env::temp_dir().join(format!("plait-host-test-leases-{uid}"));
+        let directory = plait_test_support::lease_dir();
         // SAFETY: set once, before any test here takes a lease (each makes a Scratch
         // first), and the standard library orders its own environment reads after it.
         unsafe { std::env::set_var("PLAIT_LEASE_DIR", directory) };

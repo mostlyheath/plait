@@ -1,6 +1,7 @@
+import { fixtureDirectory } from './support/temp.ts';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -12,7 +13,7 @@ import { delay, exec, request, setup, until } from './support/host.ts';
 // Trusted commands receive the account's login environment. Every host in this
 // file starts with a disposable HOME, so nothing reads or writes the real one,
 // and the developer's SSH agent stays out of the commands' environment.
-const home = await realpath(await mkdtemp(join(tmpdir(), 'plait-trusted-home-')));
+const home = await realpath(await fixtureDirectory(join(tmpdir(), 'plait-trusted-home-')));
 process.env.HOME = home;
 delete process.env.SSH_AUTH_SOCK;
 after(async () => { await rm(home, { recursive: true, force: true }); });

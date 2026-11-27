@@ -387,7 +387,8 @@ mod tests {
 
     #[test]
     fn summary_plain_folder_does_not_spawn_git() {
-        let path = std::env::temp_dir().join(format!("plait-summary-{}", std::process::id()));
+        let path =
+            plait_test_support::temp_dir().join(format!("plait-summary-{}", std::process::id()));
         std::fs::create_dir_all(&path).unwrap();
         crate::git::SPAWNED.with(|n| n.set(0));
         assert_eq!(checkout_summary(&path, true).unwrap().vcs, Vcs::Folder);

@@ -383,7 +383,8 @@ mod tests {
     use super::*;
 
     fn scratch(name: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!("plait-update-{name}{}", unique("")));
+        let path =
+            plait_test_support::temp_dir().join(format!("plait-update-{name}{}", unique("")));
         fs::create_dir_all(&path).unwrap();
         path
     }
@@ -489,7 +490,7 @@ mod runner_lock_tests {
 
     #[test]
     fn active_runs_waits_for_a_live_runner_after_interruption() {
-        let root = std::env::temp_dir().join(unique("runner-lock-test"));
+        let root = plait_test_support::temp_dir().join(unique("runner-lock-test"));
         fs::create_dir_all(root.join("runners")).unwrap();
         run(Command::new("/usr/bin/sqlite3").arg(root.join("host.sqlite")).arg(
             "CREATE TABLE threads (id TEXT, snapshot TEXT); INSERT INTO threads VALUES ('a', '{\"status\":\"interrupted\"}');",

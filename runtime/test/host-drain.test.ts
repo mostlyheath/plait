@@ -1,13 +1,14 @@
+import { fixtureDirectory } from './support/temp.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { Runtime } from '../src/runtime.ts';
 
 test('host release operations are versionless and drain admission', async t => {
-  const directory = await mkdtemp(join(tmpdir(), 'plait-drain-'));
+  const directory = await fixtureDirectory(join(tmpdir(), 'plait-drain-'));
   const runtime = new Runtime(directory, createModels(), new Set());
   t.after(async () => { await runtime.close(); await rm(directory, { recursive: true, force: true }); });
   assert.deepEqual(await runtime.handle({ op: 'host_info' }), { schema: 1, release: null, build_id: null, protocol_min: 1, protocol_max: 7, capabilities: ['drain_v1', 'checkout_identity_v1', 'project_fingerprint_v1', 'guarded_discard_v1'], storage_schema: 1 });
@@ -30,8 +31,8 @@ test('drain lets a running run finish and holds the checkout queue until cancell
   const { setup } = await import('./support/safety.ts');
   const { fauxProvider, fauxAssistantMessage } = await import('@earendil-works/pi-ai/providers/faux');
   const { root } = await setup(t);
-  const directory = await mkdtemp(join(tmpdir(), 'plait-drain-run-'));
-  const leases = await mkdtemp(join(tmpdir(), 'plait-drain-leases-'));
+  const directory = await fixtureDirectory(join(tmpdir(), 'plait-drain-run-'));
+  const leases = await fixtureDirectory(join(tmpdir(), 'plait-drain-leases-'));
   process.env.PLAIT_LEASE_DIR = leases;
   const models = createModels(); const faux = fauxProvider({ tokensPerSecond: 1e8 }); models.setProvider(faux.provider);
   const runtime = new Runtime(directory, models, new Set(['faux']));

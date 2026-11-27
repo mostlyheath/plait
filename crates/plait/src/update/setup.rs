@@ -422,7 +422,8 @@ mod tests {
 
     #[test]
     fn installed_program_requires_the_release_files() {
-        let root = std::env::temp_dir().join(format!("plait-setup-{}", std::process::id()));
+        let root =
+            plait_test_support::temp_dir().join(format!("plait-setup-{}", std::process::id()));
         let layout = Layout::for_user(&root);
         fs::create_dir_all(&layout.host_base).unwrap();
         fs::write(
@@ -440,7 +441,8 @@ mod tests {
 
     #[test]
     fn setup_refuses_to_write_through_symbolic_links() {
-        let root = std::env::temp_dir().join(format!("plait-setup-link-{}", std::process::id()));
+        let root =
+            plait_test_support::temp_dir().join(format!("plait-setup-link-{}", std::process::id()));
         let layout = Layout::for_user(&root);
         fs::create_dir_all(layout.host_base.parent().unwrap()).unwrap();
         fs::create_dir_all(root.join("elsewhere")).unwrap();

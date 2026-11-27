@@ -1,7 +1,8 @@
+import { fixtureDirectory, socketTempRoot } from './support/temp.ts';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { acquireCheckout } from '../src/safety.ts';
@@ -63,7 +64,7 @@ test('a permissive fixture policy cannot bypass dirty paths, path checks, or com
  * it; the host's stderr is kept so a failed start says why.
  */
 async function secondHost(t: { after: (fn: () => Promise<void>) => void }, own: (child: ChildProcess) => void) {
-  const store = await realpath(await mkdtemp('/tmp/plait-store-'));
+  const store = await realpath(await fixtureDirectory(join(socketTempRoot, 'plait-store-')));
   t.after(async () => { await rm(store, { recursive: true, force: true }); });
   const child = spawn(binary, ['run', '--store', store, '--runtime', fixture], {
     stdio: ['ignore', 'ignore', 'pipe'],

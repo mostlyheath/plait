@@ -120,17 +120,14 @@ fn isolated(test: &str) -> bool {
         return true;
     }
     // Unix sockets have a short pathname limit, including the temporary home.
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    static NEXT_HOME: AtomicUsize = AtomicUsize::new(0);
-    let seq = NEXT_HOME.fetch_add(1, Ordering::Relaxed);
-    let home = std::env::temp_dir().join(format!("plait-scene-{}-{seq}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&home);
-    std::fs::create_dir_all(&home).expect("scratch home");
+    let scratch = plait_test_support::socket_directory();
+    let home = scratch.path().canonicalize().expect("canonical scene home");
     // libtest names omit the crate: `ui::snapshot::<test>`.
     let module = module_path!().split_once("::").expect("module path").1;
     let output = Command::new(std::env::current_exe().expect("test binary"))
         .args(["--exact", &format!("{module}::{test}")])
         .args(["--include-ignored", "--test-threads=1", "--nocapture"])
+        .env("TMPDIR", &home)
         .env(SCENE_HOME, &home)
         .env("HOME", &home)
         .env("PLAIT_HOST_STORE", home.join("host"))
@@ -140,7 +137,7 @@ fn isolated(test: &str) -> bool {
         .env_remove("XDG_CONFIG_HOME")
         .output()
         .expect("re-run the test binary");
-    let _ = std::fs::remove_dir_all(&home);
+    scratch.close().expect("remove scene fixtures");
     let stdout = String::from_utf8_lossy(&output.stdout);
     // A filter that matched nothing also exits successfully.
     assert!(
@@ -149,6 +146,17 @@ fn isolated(test: &str) -> bool {
         String::from_utf8_lossy(&output.stderr)
     );
     false
+}
+
+#[core::prelude::v1::test]
+fn scene_temporary_files_belong_to_the_parent_fixture() {
+    if !isolated("scene_temporary_files_belong_to_the_parent_fixture") {
+        return;
+    }
+    let home = PathBuf::from(std::env::var_os(SCENE_HOME).unwrap());
+    assert!(std::env::temp_dir().starts_with(&home));
+    // The parent must remove this even if a scene never reaches its own teardown.
+    std::fs::create_dir(std::env::temp_dir().join("plait-unfinished-scene")).unwrap();
 }
 
 /// Reads the one request on a connection a scripted host just accepted, or
@@ -176,7 +184,8 @@ fn a_scripted_host_outlives_a_client_that_left() {
     use std::io::Write;
     use std::os::unix::net::{UnixListener, UnixStream};
     // Unix sockets have a short pathname limit.
-    let path = std::env::temp_dir().join(format!("plait-scripted-{}.sock", std::process::id()));
+    let path = plait_test_support::socket_temp_dir()
+        .join(format!("plait-scripted-{}.sock", std::process::id()));
     let _ = std::fs::remove_file(&path);
     let listener = UnixListener::bind(&path).unwrap();
     // Gone without a request, gone after one, and still waiting for a reply.
@@ -682,6 +691,9 @@ fn pin_read_times(repository: &mut plait_client::state::RepositoryState, wide: b
 }
 
 fn pin_scene_values(plait: &mut Plait, wide: bool, name: &str) {
+    if let Some(project) = &mut plait.settings_project {
+        project.scene_checkout_label = Some("/workspace/plait");
+    }
     pin_read_times(&mut plait.state.repository, wide);
     let total = |message: Option<&Arc<plait_client::markdown::Message>>| {
         message.map_or(0, |message| plait_client::reveal::total(&message.blocks))
@@ -917,6 +929,14 @@ impl Harness {
             self.draw();
             return;
         };
+        let output = output.join(format!("{name}.png"));
+        self.draw_export(name);
+        let handle = self.window.into();
+        let image = self.cx.capture_screenshot(handle).expect("screenshot");
+        image.save(output).expect("write snapshot");
+    }
+
+    fn draw_export(&mut self, name: &str) {
         let handle = self.window.into();
         self.cx
             .update_window(handle, |view, window, cx| {
@@ -935,10 +955,6 @@ impl Harness {
                 window.draw(cx).clear(cx);
             })
             .expect("draw scene");
-        let image = self.cx.capture_screenshot(handle).expect("screenshot");
-        image
-            .save(output.join(format!("{name}.png")))
-            .expect("write snapshot");
     }
 
     /// Present a connected host without a socket. Labeled sample data only.
@@ -1367,6 +1383,9 @@ fn desktop_recovery_does_not_rebind_saved_work_or_clear_a_newer_revision() {
 /// Opening a real file, finding in it, noticing changes on disk, and quick open.
 #[core::prelude::v1::test]
 fn files_tab_reads_finds_and_reloads_a_real_file() {
+    if !isolated("files_tab_reads_finds_and_reloads_a_real_file") {
+        return;
+    }
     use plait_client::file_view::Contents;
     let scratch = std::env::temp_dir().join(format!("plait-files-ui-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&scratch);
@@ -2128,6 +2147,9 @@ fn changed_files_count_with_git_hide_on_request_and_open_in_changes() {
 
 #[core::prelude::v1::test]
 fn streaming_text_flows_in_over_display_frames_and_catches_up() {
+    if !isolated("streaming_text_flows_in_over_display_frames_and_catches_up") {
+        return;
+    }
     let scratch = std::env::temp_dir().join(format!("plait-reveal-ui-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&scratch);
     let repository = fixture_repository(&scratch);
@@ -2197,6 +2219,9 @@ fn first_added(plait: &Plait) -> usize {
 
 #[core::prelude::v1::test]
 fn asking_about_picked_lines_quotes_them_into_the_thread_composer() {
+    if !isolated("asking_about_picked_lines_quotes_them_into_the_thread_composer") {
+        return;
+    }
     let scratch = std::env::temp_dir().join(format!("plait-ask-ui-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&scratch);
     let repository = fixture_repository(&scratch);
@@ -2368,8 +2393,7 @@ fn keys_drive_the_palette_and_picker() {
 
 /// Every view at the default size and at the minimum window size.
 fn walk(output: Option<&Path>) {
-    // Renders share one fixture path so it reads the same in every PNG. Another
-    // render process would delete it mid-walk, so wait for that one to finish.
+    // Serialize exports that use the same scratch directory.
     let _render_lock = output.map(|_| {
         let lock = std::fs::File::create(std::env::temp_dir().join("plait-snapshot-render.lock"))
             .expect("render lock file");
@@ -5420,6 +5444,30 @@ fn project_switching_keeps_each_draft_and_rejects_the_old_watch() {
     });
     drop(harness);
     std::fs::remove_dir_all(scratch).unwrap();
+}
+
+#[cfg(debug_assertions)]
+#[core::prelude::v1::test]
+fn exported_project_settings_shows_a_stable_checkout() {
+    if !isolated("exported_project_settings_shows_a_stable_checkout") {
+        return;
+    }
+    let render = |root: &str| {
+        let repository = std::env::temp_dir().join(root).join("plait");
+        let mut harness = Harness::with_host(&repository, None, 900., 600., None);
+        harness.connect(&repository, false);
+        harness.update(|plait, window, cx| plait.show_project_settings(window, cx));
+        let (_, frame) = super::a11y::collect(|| harness.draw_export("project-settings-narrow"));
+        let checkout = frame
+            .nodes
+            .into_iter()
+            .find(|node| node.path.contains("project-settings-checkout"))
+            .expect("displayed checkout");
+        checkout.value.or(checkout.label).expect("checkout text")
+    };
+    let first = render("first");
+    assert_eq!(first, render("second"));
+    assert_eq!(first, "/workspace/plait");
 }
 
 /// Project Settings… targets a project without switching the thread behind it.

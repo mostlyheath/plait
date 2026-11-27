@@ -1,6 +1,7 @@
+import { fixtureDirectory, socketTempRoot } from './support/temp.ts';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, mkdir, writeFile, readFile, realpath, rm, symlink, chmod, stat, readdir } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, realpath, rm, symlink, chmod, stat, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { createServer } from 'node:http';
@@ -126,7 +127,7 @@ test('scratch Git and child signals work without checkout writes or external sig
 
 test('Unix IPC stays in scratch and cannot connect to host or sibling cache sockets', { timeout: 15000 }, async t => {
   const { root } = await setup(t);
-  const store = await realpath(await mkdtemp('/tmp/p-ipc-'));
+  const store = await realpath(await fixtureDirectory(join(socketTempRoot, 'p-ipc-')));
   t.after(async () => { await rm(store, { recursive: true, force: true }); });
   const cache = { store, thread: randomUUID() };
   const sibling = await prepareBuildCache({ store, thread: randomUUID() });

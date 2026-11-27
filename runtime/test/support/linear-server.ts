@@ -1,3 +1,4 @@
+import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { gzipSync } from 'node:zlib';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
@@ -140,7 +141,8 @@ export class FakeLinearServer {
   }
 
   async start(): Promise<string> {
-    await new Promise<void>(resolve => this.server.listen(0, '127.0.0.1', resolve));
+    this.server.listen(0, '127.0.0.1');
+    await once(this.server, 'listening');
     const port = (this.server.address() as AddressInfo).port;
     this.url = `http://127.0.0.1:${port}/graphql`;
     return this.url;

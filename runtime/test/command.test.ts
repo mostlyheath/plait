@@ -1,6 +1,7 @@
+import { fixtureDirectory } from './support/temp.ts';
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
-import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
+import { writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,7 +12,7 @@ import { runGuardian, COMMAND_TIMEOUT_MS } from '../src/command/supervisor.ts';
 const quote = (text: string) => `'${text.replaceAll("'", "'\\''")}'`;
 
 async function setup(t: { after: (fn: () => Promise<void>) => void }) {
-  const root = await mkdtemp(join(tmpdir(), 'plait-guardian-'));
+  const root = await fixtureDirectory(join(tmpdir(), 'plait-guardian-'));
   const helper = join(root, 'helper');
   const fixture = fileURLToPath(new URL('./support/guardian.mjs', import.meta.url));
   await writeFile(helper, `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(fixture)} "$@"\n`, { mode: 0o700 });

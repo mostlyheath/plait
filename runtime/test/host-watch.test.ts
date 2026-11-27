@@ -1,8 +1,9 @@
+import { fixtureDirectory, socketTempRoot } from './support/temp.ts';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, realpath, rm } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { realpath, rm } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import type { TestContext } from 'node:test';
 import { binary, childPids, delay, request, setup, until } from './support/host.ts';
@@ -10,7 +11,7 @@ import { watch } from './support/watch.ts';
 
 type FixtureSnapshot = { id: string; revision: number };
 async function transport(t: TestContext) {
-  const store = await realpath(await mkdtemp('/tmp/plait-notifications-'));
+  const store = await realpath(await fixtureDirectory(join(socketTempRoot, 'plait-notifications-')));
   const host = spawn(binary, ['run', '--store', store, '--runtime', resolve('test/transport-fixture.ts')], { stdio: 'ignore' });
   t.after(async () => {
     if (host.exitCode === null && host.signalCode === null) {

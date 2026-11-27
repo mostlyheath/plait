@@ -1,5 +1,6 @@
+import { fixtureDirectory } from './support/temp.ts';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -10,7 +11,7 @@ import { Runtime } from '../src/runtime.ts';
 import { applyRunnerReceipt } from '../src/runner/session.ts';
 
 test('terminal receipt outcomes appear on every v7 fragment and survive replay', async t => {
-  const dir = await mkdtemp(join(tmpdir(), 'plait-outcome-'));
+  const dir = await fixtureDirectory(join(tmpdir(), 'plait-outcome-'));
   const runtime = new Runtime(dir, createModels(), new Set());
   const store = runtime.store;
   t.after(async () => { await runtime.close(); await rm(dir, { recursive: true, force: true }); });

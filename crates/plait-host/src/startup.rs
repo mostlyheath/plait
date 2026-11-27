@@ -83,7 +83,8 @@ mod tests {
 
     #[test]
     fn phases_are_private_bounded_and_never_include_raw_errors() {
-        let root = std::env::temp_dir().join(format!("plait-startup-{}", std::process::id()));
+        let root =
+            plait_test_support::temp_dir().join(format!("plait-startup-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
         let mut startup = Startup::new(&root);
         startup.phase("starting_sidecar").unwrap();

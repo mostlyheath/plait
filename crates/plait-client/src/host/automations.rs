@@ -185,8 +185,8 @@ mod tests {
         std::thread::JoinHandle<Vec<serde_json::Value>>,
         PathBuf,
     ) {
-        let directory =
-            std::env::temp_dir().join(format!("plait-auto-{name}-{}", std::process::id()));
+        let directory = plait_test_support::socket_temp_dir()
+            .join(format!("plait-auto-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&directory);
         std::fs::create_dir(&directory).unwrap();
         std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();

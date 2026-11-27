@@ -28,3 +28,6 @@ local-host = []
 ssh = []
 # Scene tests route repository reads to an in-process test host; never enabled in release builds.
 test-host = ["local-host"]
+
+[dev-dependencies]
+plait-test-support = { path = "../plait-test-support" }

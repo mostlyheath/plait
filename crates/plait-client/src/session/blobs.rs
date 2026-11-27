@@ -152,8 +152,8 @@ mod tests {
     use super::*;
     #[test]
     fn records_are_bounded_private_and_refuse_symlinks() {
-        let directory =
-            std::env::temp_dir().join(format!("plait-tab-records-{}", std::process::id()));
+        let directory = plait_test_support::temp_dir()
+            .join(format!("plait-tab-records-{}", std::process::id()));
         let _ = fs::remove_dir_all(&directory);
         let (journal, _) = Journal::open(&directory, "/host".into()).unwrap();
         journal.write_record("editor", &vec!["kept"], 1024).unwrap();

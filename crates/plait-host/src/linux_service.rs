@@ -284,7 +284,8 @@ mod tests {
 
     #[test]
     fn a_linked_home_is_fine_but_a_linked_unit_is_refused() {
-        let root = std::env::temp_dir().join(format!("plait-unit-links-{}", std::process::id()));
+        let root =
+            plait_test_support::temp_dir().join(format!("plait-unit-links-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(root.join("real/.config/systemd/user")).unwrap();
         std::os::unix::fs::symlink(root.join("real"), root.join("home")).unwrap();

@@ -1,6 +1,7 @@
+import { fixtureDirectory } from './support/temp.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { codexAccount, codexModels, compareVersions, findCodex, judgeVersion, parseVersionOutput } from '../src/codex/install.ts';
@@ -62,8 +63,8 @@ test('findCodex checks the version of an explicit path', async () => {
 });
 
 test('findCodex searches the given PATH', async () => {
-  const empty = await mkdtemp(join(tmpdir(), 'plait-codex-empty-'));
-  const bin = await mkdtemp(join(tmpdir(), 'plait-codex-bin-'));
+  const empty = await fixtureDirectory(join(tmpdir(), 'plait-codex-empty-'));
+  const bin = await fixtureDirectory(join(tmpdir(), 'plait-codex-bin-'));
   try {
     const missing = await findCodex({ env: { ...fakeEnv(), PATH: `${empty}:relative/dir` } });
     assert.equal(missing.state, 'not_installed');

@@ -1,5 +1,6 @@
+import { fixtureDirectory } from './support/temp.ts';
 import assert from 'node:assert/strict';
-import { mkdtemp, realpath, rm } from 'node:fs/promises';
+import { realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
@@ -7,7 +8,7 @@ import { trustedCommand } from '../src/command/trusted.ts';
 import { rootIdentity } from '../src/safety.ts';
 
  test('Linux runs trusted commands and Stop kills their process group', { timeout: 15000 }, async t => {
-  const root = await realpath(await mkdtemp(join(tmpdir(), 'plait-linux-trusted-')));
+  const root = await realpath(await fixtureDirectory(join(tmpdir(), 'plait-linux-trusted-')));
   const previous = process.env.PLAIT_HOST_EXE;
   process.env.PLAIT_HOST_EXE = resolve('../target/debug/plait-host');
   t.after(async () => { if (previous === undefined) delete process.env.PLAIT_HOST_EXE; else process.env.PLAIT_HOST_EXE = previous; await rm(root, { recursive: true, force: true }); });

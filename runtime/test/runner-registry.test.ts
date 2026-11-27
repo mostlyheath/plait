@@ -1,5 +1,6 @@
+import { fixtureDirectory } from './support/temp.ts';
 import { strict as assert } from 'node:assert';
-import { mkdtemp, rm, stat, symlink } from 'node:fs/promises';
+import { rm, stat, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -9,7 +10,7 @@ import './support/safety.ts';
 import { RunnerRegistry } from '../src/runner/registry.ts';
 
 test('registry reports dead and finished runs and keeps private permissions', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'plait-runners-'));
+  const root = await fixtureDirectory(join(tmpdir(), 'plait-runners-'));
   try {
     const registry = new RunnerRegistry(root);
     const manifest = { run_id: 'one', thread_id: 'thread', request_id: 'request', checkout: '/checkout', harness: 'pi', build_id: 'build' };
@@ -23,13 +24,13 @@ test('registry reports dead and finished runs and keeps private permissions', as
 });
 
 test('registry refuses a symlink directory', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'plait-runners-'));
+  const root = await fixtureDirectory(join(tmpdir(), 'plait-runners-'));
   try { await symlink(root, join(root, 'runners')); await assert.rejects(new RunnerRegistry(root).prepare()); }
   finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test('registry detects a lock held by another process', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'plait-runners-live-'));
+  const root = await fixtureDirectory(join(tmpdir(), 'plait-runners-live-'));
   const registry = new RunnerRegistry(root);
   const manifest = { run_id: 'live', thread_id: 'thread', request_id: 'request', checkout: '/checkout', harness: 'pi', build_id: 'build' };
   let child: ReturnType<typeof spawn> | undefined;

@@ -21,7 +21,8 @@ impl Drop for Host {
 
 #[test]
 fn client_reads_file_and_observes_changed_stamp_through_host() {
-    let base = std::env::temp_dir().join(format!("plait-interop-file-{}", std::process::id()));
+    let base = plait_test_support::socket_temp_dir()
+        .join(format!("plait-interop-file-{}", std::process::id()));
     let _ = fs::remove_dir_all(&base);
     let repo = base.join("repo");
     let store = base.join("store");

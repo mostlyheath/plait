@@ -1,7 +1,8 @@
+import { fixtureDirectory, socketTempRoot } from './support/temp.ts';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
-import { cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { connect } from 'node:net';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
@@ -12,7 +13,7 @@ import type { Snapshot } from '../src/protocol.ts';
 
 // This is real Plait source and real Cargo execution, but a scripted model, not a live account.
 test('production runtime edits Plait source, runs Cargo, reconnects and resumes without replay', { timeout: 240000 }, async t => {
-  const base = await realpath(await mkdtemp('/tmp/plait-dogfood-'));
+  const base = await realpath(await fixtureDirectory(join(socketTempRoot, 'plait-dogfood-')));
   const repo = join(base, 'repo'); const store = join(base, 'store'); const agent = join(base, 'pi');
   const source = resolve(import.meta.dirname, '../..');
   const path = 'crates/plait-client/src/session.rs';

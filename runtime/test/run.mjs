@@ -1,4 +1,6 @@
-import { readdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { mkdtempSync, readdirSync, realpathSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
@@ -27,6 +29,21 @@ console.log(platform === 'macos'
 const environment = { ...process.env };
 delete environment.NODE_TEST_CONTEXT;
 const progress = environment.PLAIT_ACTIVE_TESTS ? ['--import', './test/support/active-test.mjs'] : [];
-const result = spawnSync(process.execPath, ['--test', '--test-concurrency=2', ...progress, ...tests], { stdio: 'inherit', cwd: fileURLToPath(new URL('..', import.meta.url)), env: environment });
-if (result.error) console.error(result.error.message);
-process.exit(result.status ?? 1);
+// The parent can still clean up if a worker crashes before Node runs its hooks.
+const scratch = mkdtempSync(join(platform === 'macos' ? '/tmp' : tmpdir(), 'plait-t-'));
+try {
+  // Checkout identities require canonical paths even when the system temp directory is a symlink.
+  environment.TMPDIR = realpathSync(scratch);
+  const result = spawnSync(process.execPath, ['--test', '--test-concurrency=2', ...progress, ...tests], {
+    stdio: 'inherit', cwd: fileURLToPath(new URL('..', import.meta.url)), env: environment,
+  });
+  if (result.error) console.error(result.error.message);
+  process.exitCode = result.status ?? 1;
+  const leftovers = readdirSync(scratch).filter(name => name.startsWith('plait-'));
+  if (leftovers.length) {
+    console.error('Runtime tests left temporary entries:', leftovers.join(', '));
+    process.exitCode = 1;
+  }
+} finally {
+  rmSync(scratch, { recursive: true, force: true, maxRetries: 10 });
+}

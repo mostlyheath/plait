@@ -1,7 +1,8 @@
+import { fixtureDirectory } from './support/temp.ts';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdtemp, mkdir, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -15,6 +16,10 @@ import { checkEndpoint, readEndpoints, renderEndpoints, writeEndpoints } from '.
 // directory. The home and agent directory are redirected before Pi is loaded, and any
 // request that is not to this machine fails the test instead of leaving it.
 const sandbox = await realpath(await mkdtemp(join(tmpdir(), 'plait-pi-providers-')));
+test.after(async () => {
+  try { assert(!existsSync(process.env.PI_CODING_AGENT_DIR!)); }
+  finally { await rm(sandbox, { recursive: true, force: true }); }
+});
 process.env.HOME = sandbox;
 process.env.PI_CODING_AGENT_DIR = join(sandbox, 'unused-default-agent');
 process.env.PI_OFFLINE = '1';
@@ -28,11 +33,7 @@ globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters
 }) as typeof fetch;
 const { Providers } = await import('../src/providers.ts');
 const { piProviders } = await import('../src/pi-providers.ts');
-test.after(async () => {
-  // Pi's default agent directory was redirected and must not have been used at all.
-  assert(!existsSync(process.env.PI_CODING_AGENT_DIR!));
-  await rm(sandbox, { recursive: true, force: true });
-});
+
 
 const KEY = 'sk-or-KEY_ONE_DO_NOT_LEAK';
 const NEXT_KEY = 'sk-or-KEY_TWO_DO_NOT_LEAK';
@@ -41,7 +42,7 @@ type Provider = { provider: ProviderView };
 type List = { providers: ProviderView[] };
 
 async function host(t: TestContext, seed?: (agent: string) => Promise<void>, login?: () => Promise<Record<string, string> | undefined>) {
-  const agent = await mkdtemp(join(sandbox, 'agent-'));
+  const agent = await fixtureDirectory(join(sandbox, 'agent-'));
   await seed?.(agent);
   const source = piProviders(agent, login);
   const registry = await source.load();
@@ -373,7 +374,7 @@ test('models.json key templates resolve from the login shell, and no child proce
 });
 
 test('a detached run is refused when the host\'s credential needs the login shell', async t => {
-  const agent = await mkdtemp(join(sandbox, 'agent-'));
+  const agent = await fixtureDirectory(join(sandbox, 'agent-'));
   await writeFile(join(agent, 'models.json'), JSON.stringify({ providers: {
     shell: { baseUrl: 'http://127.0.0.1:9/v1', api: 'openai-completions', apiKey: '$RUN_KEY', models: [{ id: 'a' }] },
     header: { baseUrl: 'http://127.0.0.1:9/v1', api: 'openai-completions', apiKey: 'literal', headers: { 'x-team': '$RUN_TEAM' }, models: [{ id: 'a' }] },

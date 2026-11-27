@@ -1,6 +1,7 @@
+import { fixtureDirectorySync } from './support/temp.ts';
 import assert from 'node:assert/strict';
 import { test, type TestContext } from 'node:test';
-import { existsSync, mkdirSync, symlinkSync, mkdtempSync, renameSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync, symlinkSync, renameSync, rmSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,7 +20,7 @@ const definition = {
   schedule: { kind: 'hourly', minute: 0, timeZone: 'UTC' }
 };
 function directory(t: TestContext) {
-  const dir = mkdtempSync(join(tmpdir(), 'automations-'));
+  const dir = realpathSync(fixtureDirectorySync(join(tmpdir(), 'automations-')));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   return dir;
 }

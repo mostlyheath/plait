@@ -1,8 +1,9 @@
+import { fixtureDirectory, socketTempRoot } from './support/temp.ts';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { connect } from 'node:net';
-import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
@@ -114,7 +115,7 @@ test('provider operations cross the socket, and a pending sign-in is cleaned up 
 test('the production sidecar serves provider operations from a disposable Pi directory', { timeout: 60000 }, async t => {
   // src/main.ts with Pi's real registry. HOME and Pi's agent directory point into a temporary
   // directory, catalogs stay offline, and no operation here contacts a provider.
-  const base = await realpath(await mkdtemp('/tmp/plait-pi-host-'));
+  const base = await realpath(await fixtureDirectory(join(socketTempRoot, 'plait-pi-host-')));
   const store = join(base, 'store'); const agent = join(base, 'agent');
   await mkdir(store);
   const environment = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/_API_KEY$|_TOKEN$/.test(name)));

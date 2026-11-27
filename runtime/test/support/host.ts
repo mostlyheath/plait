@@ -1,10 +1,11 @@
+import { fixtureDirectory, socketTempRoot } from './temp.ts';
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { connect } from 'node:net';
 import { DatabaseSync } from 'node:sqlite';
 import { rootIdentity } from '../../src/safety.ts';
-import { mkdtemp, readFile, writeFile, rm, stat, realpath, symlink } from 'node:fs/promises';
+import { readFile, writeFile, rm, stat, realpath, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -51,7 +52,12 @@ export function raw(store: string, input: string): Promise<Reply> {
   });
 }
 export async function setup(t: { after: (fn: () => Promise<void>) => void }, scenario = 'answer', storeAlias = false, sandboxed = true, extraEnv: NodeJS.ProcessEnv = {}) {
-  const base = await realpath(await mkdtemp(join(storeAlias ? '/tmp' : tmpdir(), 'plait-host-test-')));
+  const base = await realpath(await fixtureDirectory(join(storeAlias ? socketTempRoot : tmpdir(), 'plait-host-test-')));
+  const children: ChildProcess[] = [];
+  t.after(async () => {
+    for (const child of children) if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    await delay(400); await rm(base, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+  });
   const repo = join(base, 'repo'); const store = join(storeAlias ? base.replace('/private/tmp/', '/tmp/') : base, 'store');
   await exec('/bin/mkdir', ['-p', repo, store]);
   await exec('/usr/bin/git', ['init', '-q', repo]);
@@ -59,7 +65,6 @@ export async function setup(t: { after: (fn: () => Promise<void>) => void }, sce
   await writeFile(join(repo, 'AGENTS.md'), 'Keep the original dirty paths.\n');
   await exec('/usr/bin/git', ['-C', repo, 'add', '.']);
   await exec('/usr/bin/git', ['-C', repo, '-c', 'user.name=Test', '-c', 'user.email=test@invalid', 'commit', '-qm', 'fixture']);
-  const children: ChildProcess[] = [];
   const start = async (mode = scenario) => {
     const deadline = Date.now() + 15000;
     for (;;) {
@@ -79,10 +84,6 @@ export async function setup(t: { after: (fn: () => Promise<void>) => void }, sce
       await delay(100);
     }
   };
-  t.after(async () => {
-    for (const child of children) if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
-    await delay(400); await rm(base, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
-  });
   const host = await start();
   // Most suites test the sandbox, which is now opt-in; trusted suites switch per test.
   if (sandboxed && process.platform === 'linux') {

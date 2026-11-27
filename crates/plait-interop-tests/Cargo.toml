@@ -19,3 +19,6 @@ sha2 = "=0.10.9"
 [[bin]]
 name = "plait-host"
 path = "../plait-host/src/main.rs"
+
+[dev-dependencies]
+plait-test-support = { path = "../plait-test-support" }

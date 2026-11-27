@@ -557,7 +557,8 @@ mod tests {
         ) {
             return;
         }
-        let root = std::env::temp_dir().join(format!("plait-many-journal-{}", std::process::id()));
+        let root = plait_test_support::temp_dir()
+            .join(format!("plait-many-journal-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let (journal, mut session) = super::super::Journal::open(&root, "/host".into()).unwrap();
         for n in 0..300 {
@@ -637,7 +638,8 @@ mod tests {
         ) {
             return;
         }
-        let root = std::env::temp_dir().join(format!("plait-downgrade-{}", std::process::id()));
+        let root =
+            plait_test_support::temp_dir().join(format!("plait-downgrade-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let (journal, mut session) = super::super::Journal::open(&root, "/host".into()).unwrap();
         // The first tab owns the legacy field and is empty; its siblings have work.
@@ -737,8 +739,8 @@ mod tests {
         ) {
             return;
         }
-        let root =
-            std::env::temp_dir().join(format!("plait-downgrade-send-{}", std::process::id()));
+        let root = plait_test_support::temp_dir()
+            .join(format!("plait-downgrade-send-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let (journal, mut session) = super::super::Journal::open(&root, "/host".into()).unwrap();
         session.set_draft_tab("owner".into(), tab("Owner text"));

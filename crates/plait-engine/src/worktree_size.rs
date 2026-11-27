@@ -312,7 +312,8 @@ mod tests {
     use super::*;
     #[test]
     fn approved_nested_custom_directories_count_as_build_output() {
-        let root = std::env::temp_dir().join(format!("plait-custom-size-{}", std::process::id()));
+        let root = plait_test_support::temp_dir()
+            .join(format!("plait-custom-size-{}", std::process::id()));
         fs::create_dir_all(root.join("runtime/artifacts")).unwrap();
         fs::write(root.join("runtime/artifacts/library"), [0u8; 19]).unwrap();
         fs::write(root.join("runtime/source"), [0u8; 7]).unwrap();
@@ -330,7 +331,8 @@ mod tests {
     }
     #[test]
     fn sizes_bound_entries_deadline_links_and_cache_without_claiming_reclaimed_space() {
-        let root = std::env::temp_dir().join(format!("plait-size-{}", std::process::id()));
+        let root =
+            plait_test_support::temp_dir().join(format!("plait-size-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(root.join("target")).unwrap();
         fs::write(root.join("source"), vec![0; 100]).unwrap();
@@ -396,7 +398,8 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
     fn scratch(name: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!("plait-size-{name}-{}", std::process::id()));
+        let path = plait_test_support::temp_dir()
+            .join(format!("plait-size-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&path);
         fs::create_dir_all(&path).unwrap();
         path.canonicalize().unwrap()

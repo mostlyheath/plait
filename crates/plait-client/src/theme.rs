@@ -702,7 +702,8 @@ mod tests {
 
     #[test]
     fn the_folder_reads_schemes_and_reports_bad_files() {
-        let dir = std::env::temp_dir().join(format!("plait-themes-{}", std::process::id()));
+        let dir =
+            plait_test_support::temp_dir().join(format!("plait-themes-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("good.yaml"), BUNDLED[6]).unwrap();
         std::fs::write(dir.join("bad.yml"), "name: Broken").unwrap();

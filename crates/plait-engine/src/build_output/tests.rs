@@ -6,7 +6,7 @@ static NEXT: AtomicU64 = AtomicU64::new(0);
 struct Tree(PathBuf);
 impl Tree {
     fn new() -> Self {
-        let root = std::env::temp_dir().join(format!(
+        let root = plait_test_support::temp_dir().join(format!(
             "plait-clone-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
@@ -115,7 +115,7 @@ fn unsupported_space_and_cancellation_have_no_copy_fallback() {
 #[cfg(target_os = "macos")]
 #[test]
 fn clones_are_independent_keep_bin_links_and_skip_escaping_links_and_sockets() {
-    let tree = Tree::new();
+    let tree = Tree(plait_test_support::socket_temp_dir().join("tree"));
     let src = tree.dir("src");
     let dst = tree.dir("dst");
     fs::create_dir_all(tree.0.join("src/node_modules/.bin")).unwrap();
