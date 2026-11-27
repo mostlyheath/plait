@@ -1168,7 +1168,7 @@ impl Plait {
                         }
                         window.focus(&this.workspace.commit_message.focus_handle(cx), cx);
                     } else {
-                        this.push(cx);
+                        this.sync_branch(cx);
                     }
                 }),
         )

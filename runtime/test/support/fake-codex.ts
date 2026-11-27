@@ -72,7 +72,7 @@ const command = (status: string, extra: object = {}) => ({
 });
 const edit = (status: string) => ({
   type: 'fileChange', id: 'edit-1', status,
-  changes: [{ path: '/work/a.txt', kind: { type: 'update', move_path: null }, diff: '@@ -1 +1 @@\n-old\n+new\n' }],
+  changes: [{ path: join(process.env.FAKE_CODEX_EDIT_ROOT ?? '/work', 'a.txt'), kind: { type: 'update', move_path: null }, diff: '@@ -1 +1 @@\n-old\n+new\n' }],
 });
 const item = (method: string, turnId: string, value: object) => notify(method, { item: value, threadId, turnId, startedAtMs: 1, completedAtMs: 2 });
 const user = (turnId: string, text: string, clientId: string | null, id: string) => {
