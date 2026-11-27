@@ -178,10 +178,19 @@ pub fn host_release(platform: &str) -> Result<HostRelease, Error> {
         .map_err(|_| invalid(format!("the newest release has no host for {platform} yet")))?;
     let signature = fetch(&asset_url(&candidate.tag, &format!("{name}.sig")), 1024)?;
     let manifest = verify_component(&bytes, &signature, &public_key()?, Component::Host)?;
-    host_release_from(&manifest, platform)
+    host_release_from(&manifest, &candidate.tag, platform)
 }
 
-fn host_release_from(manifest: &ComponentManifest, platform: &str) -> Result<HostRelease, Error> {
+fn host_release_from(
+    manifest: &ComponentManifest,
+    selected_tag: &str,
+    platform: &str,
+) -> Result<HostRelease, Error> {
+    if manifest.tag != selected_tag {
+        return Err(invalid(
+            "release tag does not match its signed host manifest",
+        ));
+    }
     let artifact = manifest
         .artifacts
         .get(platform)
@@ -224,6 +233,35 @@ fn fetch(url: &str, limit: u64) -> Result<Vec<u8>, Error> {
 #[cfg(test)]
 mod feed_tests {
     use super::*;
+
+    #[test]
+    fn release_assets_use_the_canonical_repository() {
+        assert_eq!(
+            asset_url("v0.1.0", MANIFEST),
+            "https://github.com/mostlyheath/plait/releases/download/v0.1.0/update.json"
+        );
+    }
+
+    #[test]
+    fn host_manifest_must_match_the_selected_tag() {
+        let manifest = serde_json::from_value(serde_json::json!({
+            "schema_version": 2, "component": "host", "version": "0.1.0-preview.83",
+            "tag": "v0.1.0-preview.83", "revision": "0123456789ab",
+            "protocol": {"min": 1, "max": 7}, "capabilities": [], "storage_schema": 1,
+            "build_id": "0.1.0-0123456789abcdef0123",
+            "artifacts": {"linux-arm64": {
+                "name": "Plait-Host-0.1.0-0123456789ab-linux-arm64.tar.gz",
+                "sha256": "a".repeat(64), "size": 123
+            }}
+        }))
+        .unwrap();
+        assert!(host_release_from(&manifest, &manifest.tag, "linux-arm64").is_ok());
+        assert!(
+            matches!(host_release_from(&manifest, "v0.1.0", "linux-arm64"),
+            Err(Error::Invalid(message)) if message.contains("tag"))
+        );
+    }
+
     #[test]
     fn feed_picks_the_newest_signed_release_including_previews() {
         let signed = serde_json::json!([{"name": MANIFEST}, {"name": SIGNATURE}]);

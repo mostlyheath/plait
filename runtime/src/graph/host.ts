@@ -1,3 +1,4 @@
+import { HostTransportError } from '../host-client.ts';
 import { realpath } from 'node:fs/promises';
 import { randomUUID, createHash } from 'node:crypto';
 import type { HarnessEntry } from '../harness.ts';
@@ -91,7 +92,7 @@ export class Graph {
   }
   async close() { this.closing = true; clearTimeout(this.timer); await Promise.allSettled(this.scans.values()); await this.tail; this.store.db.close(); }
   private watch(thread_id: string, send = this.send) {
-    return send({ op: 'watch', thread_id, protocol_version: 6 }) as Promise<{ thread: Snapshot }>;
+    return send({ op: 'stored_thread', thread_id, protocol_version: 6 }) as Promise<{ thread: Snapshot }>;
   }
   private list(send: Send) {
     return send({ op: 'list_threads', archived: true, limit: 200, protocol_version: 6 }) as Promise<{ threads: Summary[]; next_cursor: string | null }>;
@@ -320,6 +321,7 @@ export class Graph {
         if (!claimed) { this.wake(project); return; }
         try { await this.start(n, deps); }
         catch (error) {
+          if (error instanceof HostTransportError) { this.wake(project, 1000); return; }
           db.prepare('UPDATE nodes SET reason=? WHERE id=?').run(failure(error).message, n.id);
         } finally { this.starting.delete(n.id); }
       }
@@ -386,7 +388,10 @@ export class Graph {
     if (this.closing) return;
     if (!n.submission) db.prepare('UPDATE nodes SET submission=? WHERE id=?').run(text, n.id);
     const identity = destination.checkout === start.checkout ? current : await this.sourceIdentity(thread);
-    await this.send({ op: 'submit_checkout', identity, thread_id: thread, request_id: request, text, approval: start.approval });
+    await this.send({ op: 'submit_checkout', identity, thread_id: thread, request_id: request, text, approval: start.approval,
+      expect: { harness: start.harness, provider: start.provider, model_id: start.model_id,
+        mode: destination.harness?.mode ?? null, thinking: destination.thinking_level ?? null, approval: destination.approval_mode ?? 'ask' }
+    });
     this.wake(n.project);
   }
 }

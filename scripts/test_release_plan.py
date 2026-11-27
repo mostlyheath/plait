@@ -1,9 +1,41 @@
+import os
+import subprocess
+import sys
+import textwrap
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 import release_plan as plan
 
 
 class NextPreview(unittest.TestCase):
+    def test_package_version_allows_toml_spacing(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "Cargo.toml"
+            (path.parent / "src").mkdir()
+            (path.parent / "src/lib.rs").touch()
+            path.write_text("[workspace]\n[package]\nname = 'fixture'\nversion  = '0.1.0'\n")
+            self.assertEqual(plan.cargo_version(path), "0.1.0")
+
+    def test_release_prep_runs_without_tomllib(self):
+        command = ("import runpy, sys; sys.modules['tomllib'] = None; "
+                   "sys.argv = sys.argv[1:]; runpy.run_path(sys.argv[0], run_name='__main__')")
+        result = subprocess.check_output(
+            [sys.executable, "-c", command, "scripts/release_plan.py", "main"], cwd=plan.ROOT, text=True)
+        self.assertRegex(result, r"(?m)^tag=v[0-9.]+-preview\.[1-9][0-9]*$")
+
+    def test_workflow_propagates_planner_failure(self):
+        workflow = (plan.ROOT / ".github/workflows/macos.yml").read_text()
+        step = workflow.split("      - id: decide\n", 1)[1].split("\n      #", 1)[0]
+        script = textwrap.dedent(step.split("        run: |\n", 1)[1])
+        with TemporaryDirectory() as directory:
+            env = dict(os.environ, GITHUB_EVENT_NAME="workflow_dispatch", RELEASE="true",
+                       GITHUB_REF="refs/heads/main", GITHUB_OUTPUT=str(Path(directory) / "outputs"))
+            result = subprocess.run(["bash", "-e", "-c", "python3() { return 17; }\n" + script], env=env)
+            self.assertEqual(result.returncode, 17)
+
     def test_counts_past_every_tag_including_ones_that_never_published(self):
         tags = ["v0.1.0-preview.9", "v0.1.0-preview.21", "v0.1.0-preview.23", "v0.1.0-preview.10"]
         self.assertEqual(plan.last_tag("0.1.0", tags), "v0.1.0-preview.23")
@@ -47,6 +79,10 @@ class Merged(unittest.TestCase):
         code, result = self.run_plan("merged", "HEAD")
         self.assertEqual(code, 0)
         self.assertEqual(result, {"test": "true", "release": "false"})
+
+    def test_prose_push_that_replaces_pending_code_check_tests_main(self):
+        with patch.object(plan, "changed", return_value=["CHANGELOG.md"]):
+            self.assertEqual(self.run_plan("merged", "before")[1]["test"], "true")
 
     def test_an_unknown_previous_commit_is_tested(self):
         code, result = self.run_plan("merged", "0" * 40)

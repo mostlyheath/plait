@@ -829,6 +829,9 @@ impl AssetSource for Assets {
             "eye" => {
                 r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><g fill="none" stroke="black" stroke-width="1.4" stroke-linejoin="round"><path d="M1.8 8S4.1 4 8 4s6.2 4 6.2 4-2.3 4-6.2 4S1.8 8 1.8 8Z"/><circle cx="8" cy="8" r="1.8"/></g></svg>"#
             }
+            "clock" => {
+                r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><g fill="none" stroke="black" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3l2.2 1.4"/></g></svg>"#
+            }
             "folder" => include_str!("../../../../assets/branding/icons/plait-projects.svg"),
             "machine" => include_str!("../../../../assets/branding/icons/plait-machines.svg"),
             "thread" => include_str!("../../../../assets/branding/icons/plait-threads.svg"),
@@ -988,6 +991,7 @@ mod tests {
             "bell-off",
             "up",
             "eye",
+            "clock",
             "harness-claude",
             "harness-openai",
             "harness-pi",

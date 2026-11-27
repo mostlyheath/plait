@@ -182,6 +182,7 @@ fn every_write_survives_the_wire() {
             header: "@@ -1 +1 @@".into(),
         },
         WriteOp::Discard {
+            guard: None,
             path: odd.clone(),
             untracked: false,
             hunk: Some((0, "@@ -1 +1 @@".into())),

@@ -129,6 +129,7 @@ impl Plait {
                     this.verify_tab_identity(window, cx);
                     this.try_restore_tabs(window, cx);
                     this.restore_thread_selection(window, cx);
+                    this.open_pending_automation_thread(window, cx);
                     true
                 })
                 .unwrap_or(false);
@@ -140,6 +141,7 @@ impl Plait {
                     .detach();
                 return;
             }
+            let mut previous_live_ids = HashSet::new();
             while let Some(result) = lists.next().await {
                 let keep = this
                     .update_in(cx, |this, window, cx| {
@@ -149,6 +151,27 @@ impl Plait {
                         match result {
                             Ok(live) => {
                                 let (relabel, ended) = this.worktree_summaries(&live);
+                                let live_ids: HashSet<_> =
+                                    live.iter().map(|thread| thread.id.clone()).collect();
+                                let automation_removed = previous_live_ids
+                                    .difference(&live_ids)
+                                    .any(|id| this.automations.by_thread(id).is_some());
+                                previous_live_ids = live_ids;
+                                let automation_changed = this.automations.supported
+                                    && (automation_removed
+                                        || live.iter().any(|thread| {
+                                            this.automations.by_thread(&thread.id).is_some()
+                                                && this
+                                                    .host
+                                                    .connection
+                                                    .threads()
+                                                    .iter()
+                                                    .find(|old| old.id == thread.id)
+                                                    .is_none_or(|old| {
+                                                        thread.updated_at >= old.updated_at
+                                                            && old != thread
+                                                    })
+                                        }));
                                 let review_changed = live.iter().any(|new| {
                                     new.checkout == this.host.creation.checkout
                                         && this
@@ -177,6 +200,10 @@ impl Plait {
                                 this.apply_thread_activity(false, window, cx);
                                 this.reconcile_checkout_waits(window, cx);
                                 this.rebuild_projects(cx);
+                                this.open_pending_automation_thread(window, cx);
+                                if automation_changed {
+                                    this.refresh_automations(cx);
+                                }
                                 this.capture_session(cx);
                                 cx.notify();
                                 true

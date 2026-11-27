@@ -4,9 +4,9 @@ import { COMMAND_LIMIT, EVENT_LIMIT, encodeFrame, EventBuffer, FrameDecoder, par
 import { helper } from './registry.ts';
 
 // Node does not expose peer credentials; the host checks the connected descriptor.
-async function verify(socket: Socket): Promise<void> {
+export async function verifyPeer(socket: Socket, signal?: AbortSignal): Promise<void> {
   const fd = (socket as Socket & { _handle?: { fd?: number } })._handle?.fd;
-  if (fd === undefined || !await helper(fd, 'runner-peer-fd')) throw new Error('runner peer check failed');
+  if (fd === undefined || !await helper(fd, 'runner-peer-fd', signal)) throw new Error('socket peer check failed');
 }
 export class RunnerServer {
   private server?: Server;
@@ -26,7 +26,7 @@ export class RunnerServer {
   }
   private async accept(socket: Socket): Promise<void> {
     try {
-      await verify(socket); this.sockets.add(socket);
+      await verifyPeer(socket); this.sockets.add(socket);
       let attached = false; const decoder = new FrameDecoder(COMMAND_LIMIT, parseCommand);
       socket.on('data', (data: Buffer) => { try { for (const message of decoder.push(data)) {
         if (!attached) {
@@ -64,7 +64,7 @@ export class RunnerClient {
     const stat = await lstat(path); const parent = await lstat(path.substring(0, path.lastIndexOf('/')) || '/');
     if (!stat.isSocket() || stat.uid !== process.getuid?.() || (stat.mode & 0o077) !== 0 || !parent.isDirectory() || parent.uid !== process.getuid?.() || (parent.mode & 0o077) !== 0) throw new Error('invalid runner socket');
     const socket = createConnection(path); socket.pause();
-    try { await new Promise<void>((resolve, reject) => { socket.once('connect', resolve); socket.once('error', reject); }); await verify(socket);
+    try { await new Promise<void>((resolve, reject) => { socket.once('connect', resolve); socket.once('error', reject); }); await verifyPeer(socket);
       const decoder = new FrameDecoder(EVENT_LIMIT, parseRunnerMessage); socket.on('data', (data: Buffer) => { try { for (const message of decoder.push(data)) receive(message); } catch { socket.destroy(); } }); socket.on('error', () => {}); socket.on('close', onClose);
       socket.write(encodeFrame({ type: 'attach', protocol: 1, last_seq: lastSeq }, COMMAND_LIMIT)); socket.resume(); return new RunnerClient(socket);
     } catch (error) { socket.destroy(); throw error; }

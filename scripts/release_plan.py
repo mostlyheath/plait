@@ -4,12 +4,13 @@
 A change is tested on its pull request and again when it reaches main. A
 merge releases nothing: a person starts a release by hand. `pull-request
 <base>` says whether the request needs the tests at all; `merged <before>`
-says the same for a push to main; `main`, used by a release, says whether main
+requests tests for every push to main; `main`, used by a release, says whether main
 holds code that ships and has not been released, and which preview it would be.
 
 Prints `key=value` lines for `$GITHUB_OUTPUT`.
 """
 import fnmatch
+import json
 import re
 import subprocess
 import sys
@@ -84,9 +85,15 @@ def changed(since):
         return None
 
 
-def cargo_version():
-    manifest = (ROOT / "crates/plait/Cargo.toml").read_text()
-    return re.search(r'^version = "([^"]+)"', manifest, re.MULTILINE)[1]
+def cargo_version(path=ROOT / "crates/plait/Cargo.toml"):
+    # Resolve once: Cargo echoes the spelling it was given, and macOS reaches
+    # temporary folders through /var, a link to /private/var.
+    path = Path(path).resolve()
+    output = subprocess.check_output([
+        "cargo", "metadata", "--no-deps", "--format-version", "1", "--manifest-path", str(path),
+    ], text=True)
+    return next(package["version"] for package in json.loads(output)["packages"]
+                if Path(package["manifest_path"]).resolve() == path)
 
 
 def main(argv):
@@ -95,7 +102,8 @@ def main(argv):
         print("release=false")
         return 0
     if argv[:1] == ["merged"] and len(argv) == 2:
-        print(f"test={str(needs_tests(changed(argv[1]))).lower()}")
+        # This push can replace a pending check of an earlier code merge.
+        print("test=true")
         print("release=false")
         return 0
     if argv == ["main"]:
