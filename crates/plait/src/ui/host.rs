@@ -11,6 +11,7 @@ use plait_client::{
 use serde::de::DeserializeOwned;
 
 /// What a creation request was sent with, to check its reply against.
+#[derive(Clone)]
 pub(super) struct Created {
     pub(super) draft_id: Option<String>,
     pub(super) request_id: String,
@@ -881,36 +882,40 @@ impl Plait {
                 Some(thinking.unwrap_or_else(|| self.preferences.value.default_thinking()));
             self.set_pending_harness(harness, mode);
         }
-        let (id, choice) = self.host.creation.pending_create.clone().unwrap();
-        let thinking = self.host.creation.pending_thinking;
-        let harness = self.pending_harness();
-        let protocol = self.host.protocol();
+        let pending = self.host.creation.pending_create.as_ref().unwrap();
+        let mut direct = if let Some(direct) = self.admission.direct.as_ref()
+            && direct.created.request_id == pending.0
+        {
+            direct.clone()
+        } else {
+            let (id, choice) = pending.clone();
+            let harness = self.pending_harness();
+            let legacy = Request::create_thread(
+                self.host.creation.checkout.clone(),
+                &choice,
+                id.clone(),
+                self.host.creation.pending_thinking,
+                harness,
+                self.host.protocol(),
+            )
+            .with_mode(self.pending_mode());
+            super::admission::DirectCreation {
+                created: Created {
+                    draft_id: None,
+                    request_id: id,
+                    choice,
+                    harness,
+                    selection_epoch: self.host.thread.watch_epoch,
+                    checkout: self.state.checkout_key().map(|key| key.root.clone()),
+                },
+                legacy,
+                expected: self.state.checkout_key().cloned(),
+            }
+        };
+        direct.created.selection_epoch = self.host.thread.watch_epoch;
         self.host.creation.creating = true;
         self.host.connection.error = None;
-        let selection_epoch = self.host.thread.watch_epoch;
-        let checkout = self.state.checkout_key().map(|key| key.root.clone());
-        let request = Request::create_thread(
-            self.host.creation.checkout.clone(),
-            &choice,
-            id.clone(),
-            thinking,
-            harness,
-            protocol,
-        )
-        .with_mode(self.pending_mode());
-        self.create_with_admission(
-            Created {
-                draft_id: None,
-                request_id: id,
-                choice,
-                harness,
-                selection_epoch,
-                checkout,
-            },
-            request,
-            window,
-            cx,
-        );
+        self.create_with_admission(direct.created, direct.legacy, direct.expected, window, cx);
         self.sync_composer(cx);
         cx.notify();
     }
