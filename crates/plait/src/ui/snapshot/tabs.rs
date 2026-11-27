@@ -543,6 +543,7 @@ pub(super) fn restore_preferences() {
         .update(&mut h.cx, |p, _, _| p.host.connection.threads().to_vec())
         .unwrap();
     let context = persistence::RestoreContext {
+        graph_supported: false,
         host: &host,
         threads: &summaries,
         checkouts: &checkouts,

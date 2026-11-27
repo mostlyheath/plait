@@ -72,6 +72,10 @@ pub enum TabTarget {
     Issues {
         checkout: CheckoutKey,
     },
+    /// The project's thread graph. Older builds drop this tab kind on restore.
+    Graph {
+        checkout: CheckoutKey,
+    },
 }
 impl TabTarget {
     pub fn checkout(&self) -> &CheckoutKey {
@@ -79,7 +83,8 @@ impl TabTarget {
             Self::Existing { checkout, .. }
             | Self::Draft { checkout, .. }
             | Self::Worktrees { checkout }
-            | Self::Issues { checkout } => checkout,
+            | Self::Issues { checkout }
+            | Self::Graph { checkout } => checkout,
         }
     }
     pub fn thread_key(&self) -> Option<ThreadKey> {
@@ -88,7 +93,10 @@ impl TabTarget {
                 host: checkout.host.clone(),
                 id: id.clone(),
             }),
-            Self::Draft { .. } | Self::Worktrees { .. } | Self::Issues { .. } => None,
+            Self::Draft { .. }
+            | Self::Worktrees { .. }
+            | Self::Issues { .. }
+            | Self::Graph { .. } => None,
         }
     }
     pub fn is_worktrees(&self) -> bool {
@@ -97,9 +105,12 @@ impl TabTarget {
     pub fn is_issues(&self) -> bool {
         matches!(self, Self::Issues { .. })
     }
+    pub fn is_graph(&self) -> bool {
+        matches!(self, Self::Graph { .. })
+    }
     /// A project-level tab rather than a thread or draft.
     pub fn is_project_view(&self) -> bool {
-        self.is_worktrees() || self.is_issues()
+        self.is_worktrees() || self.is_issues() || self.is_graph()
     }
     pub fn is_draft(&self) -> bool {
         matches!(self, Self::Draft { .. })
@@ -127,7 +138,8 @@ impl TabTarget {
                 },
             ) => a == b && ac == bc,
             (Self::Worktrees { checkout: a }, Self::Worktrees { checkout: b })
-            | (Self::Issues { checkout: a }, Self::Issues { checkout: b }) => {
+            | (Self::Issues { checkout: a }, Self::Issues { checkout: b })
+            | (Self::Graph { checkout: a }, Self::Graph { checkout: b }) => {
                 a.host == b.host && a.root == b.root
             }
             _ => false,
@@ -139,6 +151,7 @@ impl TabTarget {
             Self::Existing { id, .. } | Self::Draft { id, .. } => id.as_str(),
             Self::Worktrees { .. } => "worktrees",
             Self::Issues { .. } => "issues",
+            Self::Graph { .. } => "graph",
         };
         identifier(id)
             && identifier(&checkout.host.id)
@@ -152,7 +165,7 @@ impl TabTarget {
         let checkout = self.checkout();
         let id = match self {
             Self::Existing { id, .. } | Self::Draft { id, .. } => id.capacity(),
-            Self::Worktrees { .. } | Self::Issues { .. } => 0,
+            Self::Worktrees { .. } | Self::Issues { .. } | Self::Graph { .. } => 0,
         };
         id + checkout.host.id.capacity() + checkout.host.store.capacity() + checkout.root.capacity()
     }
@@ -398,7 +411,8 @@ impl WindowTabs {
                 TabTarget::Existing { checkout, .. }
                 | TabTarget::Draft { checkout, .. }
                 | TabTarget::Worktrees { checkout }
-                | TabTarget::Issues { checkout } => checkout,
+                | TabTarget::Issues { checkout }
+                | TabTarget::Graph { checkout } => checkout,
             };
             if &checkout.host == previous && checkout.directory.is_none() {
                 checkout.host = host.clone();
@@ -460,7 +474,8 @@ impl WindowTabs {
                 TabTarget::Existing { checkout, .. }
                 | TabTarget::Draft { checkout, .. }
                 | TabTarget::Worktrees { checkout }
-                | TabTarget::Issues { checkout } => checkout,
+                | TabTarget::Issues { checkout }
+                | TabTarget::Graph { checkout } => checkout,
             };
             if checkout.host == key.host && checkout.root == key.root {
                 *checkout = key.clone();
@@ -1008,6 +1023,7 @@ fn validate_record(target: &TabTarget, bookmark: &BookmarkRecord) -> Result<(), 
     if !bookmark.valid()
         || (matches!(bookmark, BookmarkRecord::Worktrees { .. }) && !target.is_worktrees())
         || (matches!(bookmark, BookmarkRecord::Issues { .. }) && !target.is_issues())
+        || (matches!(bookmark, BookmarkRecord::Graph { .. }) && !target.is_graph())
     {
         return Err(TabError::InvalidBookmark);
     }

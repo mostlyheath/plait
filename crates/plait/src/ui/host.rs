@@ -237,6 +237,8 @@ impl Plait {
             return;
         }
         self.workspace.reset_for_reconnect();
+        self.graph.reset_for_reconnect();
+        self.sync_graph_menu(cx);
         self.navigation.watch = None;
         self.navigation.generation += 1;
         self.navigation.loading = false;

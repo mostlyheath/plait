@@ -118,6 +118,7 @@ pub(super) const ACTIONS: &[AppAction] = &[
     entry("palette.toggle", "Command Palette…", "View", Some("cmd-k"), Item, || Box::new(CommandPalette)),
     entry("view.toggle_sidebar", "Toggle Sidebar", "View", Some("cmd-b"), Group, || Box::new(ToggleSidebar)),
     entry("view.overview", "Every Thread", "View", Some("cmd-shift-e"), Item, || Box::new(ToggleOverview)),
+    entry("view.graph", "Graph", "View", None, Place::Palette, || Box::new(super::graph_view::Graph)),
     entry("view.toggle_work", "Fill Panel", "View", Some("cmd-\\"), Item, || Box::new(FillPanel)),
     entry("pane.next", "Focus Next Pane", "View", Some("cmd-alt-right"), Item, || Box::new(FocusNextPane)),
     entry("pane.previous", "Focus Previous Pane", "View", Some("cmd-alt-left"), Item, || Box::new(FocusPreviousPane)),
@@ -264,13 +265,22 @@ fn winning_bindings(overrides: &KeyOverrides) -> Vec<bool> {
     wins
 }
 
+/// Whether the connected host reported graph support and `View → Graph` should show.
+struct GraphMenuEnabled(bool);
+
+impl Global for GraphMenuEnabled {}
+
 /// The menu bar: one menu per category, in table order.
+#[cfg(test)]
 fn menus() -> Vec<Menu> {
+    menus_with_graph(false)
+}
+
+fn menus_with_graph(include_graph: bool) -> Vec<Menu> {
     let mut menus: Vec<(&str, Vec<MenuItem>)> = Vec::new();
-    for action in ACTIONS
-        .iter()
-        .filter(|action| matches!(action.place, Item | Group))
-    {
+    for action in ACTIONS.iter().filter(|action| {
+        matches!(action.place, Item | Group) || (include_graph && action.id == "view.graph")
+    }) {
         if menus
             .last()
             .is_none_or(|(name, _)| *name != action.category)
@@ -297,6 +307,12 @@ fn menus() -> Vec<Menu> {
         .collect()
 }
 
+/// Shows or hides `View → Graph` in the native menu bar based on host support.
+pub(super) fn set_graph_menu(cx: &mut App, enabled: bool) {
+    cx.set_global(GraphMenuEnabled(enabled));
+    cx.set_menus(menus_with_graph(enabled));
+}
+
 /// Bind all keys and build the menus. Call again with a new keymap to rebind:
 /// the previous bindings are cleared first, and the menus pick up the new keys.
 pub(super) fn install(cx: &mut App, overrides: &KeyOverrides) {
@@ -318,7 +334,8 @@ pub(super) fn install(cx: &mut App, overrides: &KeyOverrides) {
     palette::bind_keys(cx);
     selection::bind_keys(cx);
     bind(cx, overrides);
-    cx.set_menus(menus());
+    let include_graph = cx.try_global::<GraphMenuEnabled>().is_some_and(|g| g.0);
+    cx.set_menus(menus_with_graph(include_graph));
 }
 
 /// The keys the composer and text fields bind for themselves, read from their
