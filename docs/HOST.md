@@ -2615,7 +2615,9 @@ owner-only host socket, which any process running as you can reach.
   local thread links remain. Switching to a key for another workspace likewise clears caches, project bindings, and full
   receipts so data from a previous workspace is never served as live. Changing
   a key in the same workspace clears caches and full receipts too, but retains
-  project bindings. Every key change retains retry tombstones.
+  project bindings. Every key change retains retry tombstones. Before using
+  cached data, the host checks its workspace and sign-in. After an interrupted
+  switch, an offline team lookup fails until the new sign-in has cached teams.
 - **Host to desktop, never:** the API key, credential file paths, raw Linear
   HTTP bodies, or raw Linear response headers. Error messages are fixed host
   text; validation errors name the field and never repeat its value.
