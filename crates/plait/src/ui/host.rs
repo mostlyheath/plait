@@ -400,6 +400,13 @@ impl Plait {
         );
     }
 
+    /// Select no thread. The archive question is about the selected thread, so
+    /// it goes too; otherwise Return could archive a thread no longer shown.
+    pub(super) fn deselect_thread(&mut self) {
+        self.host.select(None);
+        self.navigation.confirm_archive = None;
+    }
+
     pub(super) fn select_host_thread_content(
         &mut self,
         id: String,
@@ -426,6 +433,7 @@ impl Plait {
             self.change_checkout(checkout, window, cx);
         }
         self.navigation.menu = None;
+        self.navigation.confirm_archive = None;
         self.navigation.rename = None;
         self.automations.set_confirm_delete(None);
         if let Some(automation_id) = self
