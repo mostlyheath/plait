@@ -31,6 +31,8 @@ pub(super) struct Navigation {
     /// reaches it before the message box's bindings. Escape gives focus back to
     /// `menu_return`. The handle is made on first use.
     pub menu_focus: Option<FocusHandle>,
+    menu_panel: Option<FocusHandle>,
+    popover_blur: Option<Subscription>,
     pub menu_return: Option<FocusHandle>,
     /// The thread the archive shortcut is asking about, and the unsaved state of
     /// the card's "Remember this setting" box. The focus handle is made on first use.
@@ -59,6 +61,8 @@ impl Navigation {
             rename: None,
             menu: None,
             menu_focus: None,
+            menu_panel: None,
+            popover_blur: None,
             menu_return: None,
             confirm_archive: None,
             remember_archive: false,
@@ -634,12 +638,11 @@ impl Plait {
             .pb(px(2.))
             .relative()
             .group("thread-card")
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener(move |this, _, window, cx| {
-                    if this.host.protocol() >= 3 {
+            .capture_any_mouse_down(
+                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                    if event.button == MouseButton::Right && this.host.protocol() >= 3 {
                         this.open_thread_menu(context_id.clone(), window, cx);
-                        cx.stop_propagation();
+                        window.prevent_default();
                     }
                 }),
             )
@@ -1112,6 +1115,7 @@ impl Plait {
         else {
             return div().into_any_element();
         };
+        let owner = id.to_owned();
         let rename = id.to_owned();
         let archive = id.to_owned();
         let archived = thread.archived == Some(true);
@@ -1121,21 +1125,25 @@ impl Plait {
             .worktree(&thread.checkout)
             .map(|tree| tree.branch.clone());
         let remove = thread.checkout.clone();
+        let open_thread = self.host.thread.selected.as_deref() == Some(id);
         // A button with its shortcut at the right edge, when it has one.
         let keyed = |button: Control, action: &str, hint_id: &'static str| {
             let keys = self.shortcut_label(action);
-            div().relative().child(button).when(!keys.is_empty(), |el| {
-                el.child(
-                    div()
-                        .absolute()
-                        .top_0()
-                        .right_2()
-                        .h(px(ROW_HEIGHT))
-                        .flex()
-                        .items_center()
-                        .child(tag(hint_id, keys, colors().subtle)),
-                )
-            })
+            div()
+                .relative()
+                .child(button)
+                .when(open_thread && !keys.is_empty(), |el| {
+                    el.child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .right_2()
+                            .h(px(ROW_HEIGHT))
+                            .flex()
+                            .items_center()
+                            .child(tag(hint_id, keys, colors().subtle)),
+                    )
+                })
         };
         let panel = column()
             .w(px(240.))
@@ -1147,16 +1155,25 @@ impl Plait {
             .shadow(floating_shadow())
             .bg(rgb(colors().raised))
             .occlude()
+            .when_some(self.navigation.menu_panel.as_ref(), |el, focus| {
+                el.track_focus(focus)
+            })
+            .when(!open_thread, |el| {
+                el.on_action(|_: &super::RenameThread, _, cx| cx.stop_propagation())
+                    .on_action(|_: &super::ArchiveThread, _, cx| cx.stop_propagation())
+            })
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 if event.keystroke.key == "escape" {
                     this.dismiss_thread_menu(window, cx);
                     cx.stop_propagation();
                 }
             }))
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                this.navigation.menu = None;
-                this.navigation.menu_return = None;
-                cx.notify();
+            .on_mouse_down_out(cx.listener(move |this, _, _, cx| {
+                if this.navigation.menu.as_ref() == Some(&owner) {
+                    this.navigation.menu = None;
+                    this.navigation.menu_return = None;
+                    cx.notify();
+                }
             }))
             .child(tag("thread-menu-title", self.thread_title(id), colors().strong).truncate())
             .child(keyed(
@@ -1217,24 +1234,47 @@ impl Plait {
         .into_any_element()
     }
 
-    /// Open a thread's menu with its first item focused, and remember what had
-    /// focus so Escape can return it.
+    /// Switching between popovers keeps the return target from before the first one.
+    fn save_popover_return_focus(&mut self, window: &Window, cx: &Context<Self>) {
+        let inside_popover = [
+            self.navigation.menu_panel.as_ref(),
+            self.navigation.archive_focus.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        .any(|panel| panel.contains_focused(window, cx));
+        if !inside_popover {
+            self.navigation.menu_return = window.focused(cx);
+        }
+    }
+
     pub(super) fn open_thread_menu(
         &mut self,
         id: String,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.save_popover_return_focus(window, cx);
         // The Rename button tracks this handle, so it must keep its tab stop.
         let focus = self
             .navigation
             .menu_focus
             .get_or_insert_with(|| cx.focus_handle().tab_stop(true))
             .clone();
-        // Reopening from another card keeps the focus from before the first menu.
-        if !focus.is_focused(window) {
-            self.navigation.menu_return = window.focused(cx);
-        }
+        let panel = self
+            .navigation
+            .menu_panel
+            .get_or_insert_with(|| cx.focus_handle());
+        self.navigation.confirm_archive = None;
+        let owner = id.clone();
+        self.navigation.popover_blur =
+            Some(cx.on_focus_out(panel, window, move |this, _, _, cx| {
+                if this.navigation.menu.as_ref() == Some(&owner) {
+                    this.navigation.menu = None;
+                    this.navigation.menu_return = None;
+                    cx.notify();
+                }
+            }));
         self.navigation.menu = Some(id);
         window.focus(&focus, cx);
         cx.notify();
@@ -1281,6 +1321,7 @@ impl Plait {
         if self.host.protocol() < 3 || !self.host.connection.connected {
             return;
         }
+        self.save_popover_return_focus(window, cx);
         self.reveal_thread(&id, window, cx);
         self.navigation.menu = None;
         self.navigation.confirm_archive = Some(id);
@@ -1290,6 +1331,11 @@ impl Plait {
             .archive_focus
             .get_or_insert_with(|| cx.focus_handle())
             .clone();
+        self.navigation.popover_blur = Some(cx.on_focus_out(&focus, window, |this, _, _, cx| {
+            if this.navigation.confirm_archive.take().is_some() {
+                cx.notify();
+            }
+        }));
         window.focus(&focus, cx);
         cx.notify();
     }
