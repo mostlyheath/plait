@@ -38,6 +38,7 @@ class ReleaseTests(unittest.TestCase):
                     build_env = {"PLAIT_RELEASE_VERSION": output.strip()} if output else {}
                     with patch.dict(os.environ, build_env, clear=True), patch("release_macos.ROOT", root), \
                             patch("release_macos.run"), patch("release_macos.verify_macho"), \
+                            patch("release_macos.host_notices", return_value="notices"), \
                             patch("release_macos.stage_node", return_value="22"):
                         payload, _, _ = stage_host(root / (tag or "untagged"), "0.1.0", "a" * 12)
                     component, = component_manifests(payload)
