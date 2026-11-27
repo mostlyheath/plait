@@ -1,0 +1,2 @@
+Fixed
+Rendered Markdown reflows as the Files panel resizes. Long fenced code lines lay out a bounded number of visible fragments per frame and scroll horizontally, and Find brings matching code into view. Editor opens the visible or selected source line in the displayed checkout, including for multiline inline HTML, multiline inline code and unlabeled links and images, and reports when the path is missing or crosses a symlink.

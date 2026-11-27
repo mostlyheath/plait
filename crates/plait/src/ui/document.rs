@@ -12,14 +12,16 @@ use plait_client::{
     file_view::Contents,
     markdown::{
         Block, Kind,
-        document::{Document, target},
+        document::{Document, code_fragments, target},
         restyle,
     },
 };
 use std::{
+    cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
     ops::Range,
     path::PathBuf,
+    rc::Rc,
     sync::Arc,
 };
 
@@ -27,10 +29,14 @@ use std::{
 pub(super) struct DocumentView {
     pub source: bool,
     pub list: Option<ListState>,
+    pub top_text: Rc<Cell<Option<(usize, usize)>>>,
     pub outline: bool,
     outline_cursor: usize,
     outline_scroll: UniformListScrollHandle,
     table_scroll: HashMap<usize, ScrollHandle>,
+    pub(super) code_scroll: HashMap<usize, ScrollHandle>,
+    pub(super) code_widths: HashMap<usize, Rc<RefCell<HashMap<usize, Pixels>>>>,
+    pub(super) code_reveal: Rc<Cell<Option<(usize, usize, usize)>>>,
     pub metadata: bool,
     pub metadata_scroll: UniformListScrollHandle,
     pub anchor: Option<String>,
@@ -63,6 +69,10 @@ impl FileViewer {
         let Some(doc) = self.document().cloned() else {
             return;
         };
+        self.doc.code_scroll.clear();
+        self.doc.code_widths.clear();
+        self.doc.code_reveal = Rc::default();
+        self.doc.top_text = Rc::default();
         self.doc.table_scroll = doc
             .blocks
             .iter()
@@ -542,6 +552,7 @@ impl Plait {
                 );
             }
         }
+        // ListState caches measured row heights and invalidates them on width changes.
         let state = viewer
             .doc
             .list
@@ -559,16 +570,26 @@ impl Plait {
         .into_any_element()
     }
 
-    fn document_block(&self, doc: &Document, index: usize, cx: &mut Context<Self>) -> AnyElement {
+    fn document_block(
+        &mut self,
+        doc: &Document,
+        index: usize,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let fragment = &doc.rows[index];
         let block_index = fragment.block;
         let block = &doc.blocks[block_index];
         let offset = doc.ranges[block_index].start;
-        let text =
-            |range, cx: &mut Context<Self>| self.document_span(block, range, index, offset, cx);
+        let mut first_span = None;
+        let mut text = |range: Range<usize>, cx: &mut Context<Self>| {
+            let start = range.start;
+            let (element, layout) = self.document_span(block, range, index, offset, cx);
+            first_span.get_or_insert((start, layout));
+            element
+        };
         let mut line = column()
             .w_full()
-            .max_w(px(540.))
+            .whitespace_normal()
             .px_4()
             .py_1()
             .min_w_0()
@@ -620,6 +641,11 @@ impl Plait {
                         .child(cells),
                 );
             }
+            Kind::Code(_) => {
+                return self
+                    .document_code_line(doc, index, line, cx)
+                    .into_any_element();
+            }
             Kind::List { depth, marker }
                 if fragment.bytes.start == 0
                     && matches!(block.text.get(..*marker), Some("☑ " | "☐ ")) =>
@@ -642,9 +668,12 @@ impl Plait {
                             .child("✓")
                     });
                 line = line.pl(px(16. + *depth as f32 * 20.)).child(
-                    row()
-                        .child(mark)
-                        .child(text(*marker..fragment.bytes.end, cx)),
+                    row().child(mark).child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .child(text(*marker..fragment.bytes.end, cx)),
+                    ),
                 );
             }
             kind => {
@@ -653,7 +682,6 @@ impl Plait {
                         .pt_3()
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_size(px(if *level == 1 { 20. } else { 16. })),
-                    Kind::Code(_) => line.font_family(mono()).bg(rgb(colors().panel)),
                     Kind::Quote => line
                         .border_l_2()
                         .border_color(rgb(colors().edge))
@@ -663,6 +691,22 @@ impl Plait {
                 }
                 .child(text(fragment.bytes.clone(), cx));
             }
+        }
+        if let Some((start, layout)) = first_span {
+            let top_text = self.workspace.file_viewer.doc.top_text.clone();
+            line = line.on_children_prepainted(move |_, window, _| {
+                let bounds = layout.bounds();
+                let top = window.content_mask().bounds.top();
+                if bounds.top() <= top {
+                    let position = point(bounds.left(), top + px(0.5));
+                    let byte = layout
+                        .index_for_position(position)
+                        .unwrap_or_else(|end| end);
+                    top_text.set(Some((index, start + byte)));
+                } else if top_text.get().is_some_and(|(row, _)| row == index) {
+                    top_text.set(None);
+                }
+            });
         }
         if fragment.bytes.start != 0 {
             return line.into_any_element();
@@ -683,6 +727,151 @@ impl Plait {
             }
         }
         line.into_any_element()
+    }
+
+    fn document_code_line(
+        &mut self,
+        doc: &Document,
+        index: usize,
+        mut line: Div,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let fragment = &doc.rows[index];
+        let block = &doc.blocks[fragment.block];
+        let offset = doc.ranges[fragment.block].start;
+        let scroll = self
+            .workspace
+            .file_viewer
+            .doc
+            .code_scroll
+            .entry(index)
+            .or_default()
+            .clone();
+        let pending = self.workspace.file_viewer.doc.code_reveal.clone();
+        let hit = pending.get().filter(|(row, _, _)| *row == index);
+        let mut endpoints = Vec::new();
+        let mut viewport = div()
+            .id(("document-code", index))
+            .w_full()
+            .flex()
+            .overflow_x_scroll()
+            .track_scroll(&scroll);
+        let widths = self
+            .workspace
+            .file_viewer
+            .doc
+            .code_widths
+            .entry(index)
+            .or_default()
+            .clone();
+        let text = cx.text_system();
+        let advance = text
+            .ch_advance(text.resolve_font(&font(mono())), px(TYPE_BODY_SIZE))
+            .unwrap_or(px(TYPE_BODY_SIZE * 0.6));
+        let left = -scroll.offset().x;
+        let viewport_width = scroll.bounds().size.width;
+        let right = left + viewport_width;
+        let mut x = px(0.);
+        let mut spacer = px(0.);
+        let mut seek = None;
+        const MAX_FRAGMENTS: usize = 8;
+        let mut measured = Vec::new();
+        for range in code_fragments(&block.text, fragment.bytes.clone()) {
+            let width = widths
+                .borrow()
+                .get(&range.start)
+                .copied()
+                .unwrap_or(advance * range.len() as f32);
+            let start_x = x;
+            x += width;
+            let target = hit.is_some_and(|(_, start, _)| range.contains(&start));
+            // Skip measured zero-width fragments by byte range. Reserve a slot
+            // for a Find target even when several fragments share its x position.
+            let reserve = usize::from(hit.is_some_and(|(_, start, _)| range.end <= start));
+            if x < left - px(64.)
+                || start_x > right + px(64.)
+                || measured.len() >= MAX_FRAGMENTS - reserve
+                || (width == px(0.) && !target && !range.is_empty())
+            {
+                spacer += width;
+                if target {
+                    seek = Some(start_x);
+                }
+                continue;
+            }
+            if spacer > px(0.) {
+                viewport = viewport.child(div().flex_shrink_0().w(spacer));
+                spacer = px(0.);
+            }
+            let (element, layout) = self.document_span(block, range.clone(), index, offset, cx);
+            measured.push((range.start, layout.clone(), width));
+            if let Some((_, start, end)) = hit
+                && start < range.end
+                && end > range.start
+            {
+                endpoints.push((
+                    layout,
+                    start.max(range.start) - range.start,
+                    end.min(range.end) - range.start,
+                ));
+            }
+            viewport = viewport.child(div().flex_shrink_0().whitespace_nowrap().child(element));
+        }
+        if spacer > px(0.) {
+            viewport = viewport.child(div().flex_shrink_0().w(spacer));
+        }
+        line = line
+            .py_0()
+            .min_h(px(TYPE_BODY_LINE))
+            .font_family(mono())
+            .bg(rgb(colors().panel))
+            .child(viewport);
+        let line_end = fragment.bytes.end;
+        line.on_children_prepainted(move |_, window, _| {
+            if scroll.bounds().size.width != viewport_width || -scroll.offset().x != left {
+                window.request_animation_frame();
+            }
+            let mut widths = widths.borrow_mut();
+            for (start, layout, estimate) in &measured {
+                let actual = layout.bounds().size.width;
+                if actual != *estimate {
+                    widths.insert(*start, actual);
+                    window.request_animation_frame();
+                }
+            }
+            if pending.get() != hit {
+                return;
+            }
+            if let Some(x) = seek {
+                scroll.set_offset(point(-x, scroll.offset().y));
+                window.request_animation_frame();
+                return;
+            }
+            let (Some(first), Some(last)) = (endpoints.first(), endpoints.last()) else {
+                return;
+            };
+            let (Some(left), Some(right)) = (
+                first.0.position_for_index(first.1),
+                last.0.position_for_index(last.2),
+            ) else {
+                return;
+            };
+            let bounds = scroll.bounds();
+            let offset = scroll.offset();
+            let right_delta = if hit.is_some_and(|(_, _, end)| end == line_end) {
+                -scroll.max_offset().x - offset.x
+            } else {
+                bounds.right() - right.x
+            };
+            let delta = right_delta.min(px(0.)).max(bounds.left() - left.x);
+            let next = (offset.x + delta).clamp(-scroll.max_offset().x, px(0.));
+            if next == offset.x {
+                pending.set(None);
+            } else {
+                scroll.set_offset(point(next, offset.y));
+                window.request_animation_frame();
+            }
+        })
     }
 
     fn document_hits(
@@ -714,7 +903,7 @@ impl Plait {
         index: usize,
         offset: usize,
         cx: &mut Context<Self>,
-    ) -> AnyElement {
+    ) -> (AnyElement, TextLayout) {
         let spans = local_spans(block, &range);
         let runs: Vec<_> = spans
             .iter()
@@ -735,7 +924,8 @@ impl Plait {
             );
         let tips = links.clone();
         let entity = cx.weak_entity();
-        super::a11y::linked_text(
+        let layout = value.layout().clone();
+        let element = super::a11y::linked_text(
             SharedString::from(format!("document-{index}-{}", range.start)),
             value,
             |element| {
@@ -753,6 +943,7 @@ impl Plait {
                     )
             },
         )
-        .into_any_element()
+        .into_any_element();
+        (element, layout)
     }
 }

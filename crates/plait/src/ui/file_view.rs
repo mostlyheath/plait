@@ -229,6 +229,9 @@ impl Plait {
     }
     /// The root quick-open paths are relative to: the repository's top level.
     pub(super) fn file_root(&self) -> PathBuf {
+        if let Some(key) = self.state.checkout_key() {
+            return key.root.clone();
+        }
         self.state.repository.snapshot().ready().map_or_else(
             || self.state.repository.path().to_path_buf(),
             |s| s.root.clone(),
@@ -661,8 +664,15 @@ impl Plait {
                     return;
                 }
                 let block = file_view::line_of(&doc.ranges, found.start);
+                let base = doc.ranges[block].start;
+                let row = doc.row_at(block, found.start.saturating_sub(base));
+                viewer.doc.code_reveal.set(Some((
+                    row,
+                    found.start.saturating_sub(base),
+                    found.end.saturating_sub(base),
+                )));
                 list.scroll_to(ListOffset {
-                    item_ix: doc.row_at(block, found.start.saturating_sub(doc.ranges[block].start)),
+                    item_ix: row,
                     offset_in_item: px(0.),
                 });
                 self.load_document_images(cx);

@@ -355,9 +355,16 @@ impl Plait {
 
     fn install_view_locations(&mut self, bookmark: ThreadBookmark, cx: &mut Context<Self>) {
         self.restore_find_bookmark(FindIn::Conversation, &bookmark.conversation.find, cx);
+        let root = self.file_root();
+        let path = bookmark.files.path.as_ref().map(Into::into);
+        let viewer = &mut self.workspace.file_viewer;
+        if viewer.root != root || viewer.path != path {
+            // Retire the old bytes and pending reads before installing a new location.
+            viewer.clear_checkout();
+            viewer.path = path;
+            viewer.root = root;
+        }
         self.restore_find_bookmark(FindIn::File, &bookmark.files.find, cx);
-        self.workspace.file_viewer.path = bookmark.files.path.as_ref().map(Into::into);
-        self.workspace.file_viewer.root = self.file_root();
         self.workspace.file_viewer.reveal = Some(bookmark.files.line as usize);
         self.workspace.changed_patch = Default::default();
         self.workspace.restore_pending = [true; 4];
