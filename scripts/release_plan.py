@@ -4,8 +4,9 @@
 A change is tested on its pull request and again when it reaches main. A
 merge releases nothing: a person starts a release by hand. `pull-request
 <base>` says whether the request needs the tests at all; `merged <before>`
-requests tests for every push to main; `main`, used by a release, says whether main
-holds code that ships and has not been released, and which preview it would be.
+requests tests for every push to main. `main` plans the next preview when
+main holds unreleased code that ships. `main --final` plans the plain Cargo
+version, including when the last preview already contains the shipping code.
 
 Prints `key=value` lines for `$GITHUB_OUTPUT`.
 """
@@ -105,17 +106,22 @@ def main(argv):
         print("test=true")
         print("release=false")
         return 0
-    if argv == ["main"]:
+    if argv in (["main"], ["main", "--final"]):
         version = cargo_version()
         tags = git("tag", "--list").splitlines()
         previous = last_tag(version, tags)
-        release = ships(changed(previous)) if previous else True
+        final_tag = f"v{version}"
+        if final_tag in tags:
+            print(f"{final_tag} already exists; bump the Cargo version before releasing again.", file=sys.stderr)
+            return 1
+        final = "--final" in argv
+        release = final or previous is None or ships(changed(previous))
         print("test=false")
         print(f"release={str(release).lower()}")
-        print(f"tag={next_tag(version, tags)}")
+        print(f"tag={final_tag if final else next_tag(version, tags)}")
         print(f"previous={previous or ''}")
         return 0
-    print("Usage: release_plan.py pull-request <base> | merged <before> | main", file=sys.stderr)
+    print("Usage: release_plan.py pull-request <base> | merged <before> | main [--final]", file=sys.stderr)
     return 2
 
 

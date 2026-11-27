@@ -11,6 +11,11 @@ on:
         type: boolean
         default: false
 
+      final:
+        description: Build main and publish the final Cargo version
+        type: boolean
+        default: false
+
 permissions:
   contents: read
 
@@ -20,7 +25,7 @@ permissions:
 # that arrives while it waits cannot take its place. Pull requests cancel
 # superseded runs.
 concurrency:
-  group: macos-${{ github.ref }}${{ inputs.release && '-release' || '' }}
+  group: macos-${{ github.ref }}${{ (inputs.release || inputs.final) && '-release' || '' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -54,7 +59,8 @@ jobs:
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
           BEFORE: ${{ github.event.before }}
-          RELEASE: ${{ inputs.release }}
+          RELEASE: ${{ inputs.release || inputs.final }}
+          FINAL: ${{ inputs.final }}
         run: |
           if [[ $GITHUB_EVENT_NAME == workflow_dispatch && $RELEASE == true && $GITHUB_REF != refs/heads/main ]]; then
             echo '::error::A release is made from main.'
@@ -66,14 +72,26 @@ jobs:
             # A run started by hand releases main when asked to, and otherwise
             # tests the branch it was started on.
             *)
-              if [[ $RELEASE == true ]]; then
+              if [[ $FINAL == true ]]; then
+                python3 scripts/release_plan.py main --final
+              elif [[ $RELEASE == true ]]; then
                 python3 scripts/release_plan.py main
               else
                 printf 'test=true\nrelease=false\n'
               fi
               ;;
           esac >> "$GITHUB_OUTPUT"
-      # A preview ships with its changelog: refuse a release whose tag has no
+      # Only the push check tests the merged tree (or verifies exact-tree reuse).
+      - name: Require the latest main check for a final release
+        if: inputs.final
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          gh api 'repos/{owner}/{repo}/actions/workflows/macos.yml/runs?branch=main&event=push&per_page=1' |
+            jq -e --arg sha "$GITHUB_SHA" '.workflow_runs[0] | .head_sha == $sha and .conclusion == "success"'
+      # A release ships with its changelog: refuse a release whose tag has no
       # section, before anything is built.
       - name: Require release notes
         if: steps.decide.outputs.release == 'true'
@@ -463,7 +481,7 @@ jobs:
             target/debug/examples/update-key sign "$key" "$manifest"
             target/debug/examples/update-key verify "$manifest"
           done
-      - name: Publish an immutable preview
+      - name: Publish an immutable release
         run: |
           # What changed comes first; GitHub appends its list of pull requests.
           { echo "## What's new"; echo; python3 scripts/changelog.py section "$RELEASE_TAG"; echo; } > notes.md
@@ -472,7 +490,7 @@ jobs:
             'Download the DMG, open it, and drag **Plait** into **Applications**, then open it from there.' \
             'On first launch Plait sets up its local server for your user account. No Xcode, Rust, Node, or Terminal command is needed.' \
             '' \
-            '**Unsigned local preview. Not notarized. Do not disable Gatekeeper.**' \
+            '**Ad-hoc signed build. Not notarized. Do not disable Gatekeeper.**' \
             'Apple Silicon; macOS 15+ declared, tested on macOS 26.' \
             '' \
             'The host includes Node and the runtime. Model credentials and project build tools are not included.' \
@@ -487,8 +505,18 @@ jobs:
             'Linux hosts (x86_64, arm64): Plait-Host-*-linux-*.tar.gz, each with its own signed update-host-linux-*.json. See docs/REMOTE.md.' \
             'See docs/GUIDE.md, docs/REMOTE.md, and docs/VERIFICATION.md at this tag for setup and limits.' >> notes.md
           # The tag is created with the release, on the commit this run built.
-          gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" --prerelease --draft \
-            --title "Plait $RELEASE_TAG — local preview" --notes-file notes.md --generate-notes \
+          flags=()
+          if [[ $RELEASE_TAG == *-preview.* ]]; then
+            flags+=(--prerelease)
+          else
+            git fetch --tags origin
+            if git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
+              echo "::error::$RELEASE_TAG already exists."
+              exit 1
+            fi
+          fi
+          gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" "${flags[@]}" --draft \
+            --title "Plait $RELEASE_TAG" --notes-file notes.md --generate-notes \
             release/*.dmg release/*.pkg release/*.zip release/*.tar.gz release/*.sha256 \
             release/update*.json release/update*.json.sig \
             release/install.sh release/release.json release/Plait-Release-*.json release/installed-client*.png

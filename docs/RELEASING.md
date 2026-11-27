@@ -3,7 +3,7 @@
 Installed per-user apps and headless hosts update from GitHub Releases. A
 merge to `main` releases nothing. A release is made when a person starts one:
 GitHub builds `main` as it stands, signs the update manifest, and publishes
-the next preview. Nobody tags by hand.
+the selected preview or final release. Nobody tags by hand.
 
 ## How a change reaches a release
 
@@ -59,9 +59,26 @@ the next preview. Nobody tags by hand.
    starting a release, whether it ran the tests or reused a pull request's
    result: the release run does not repeat those tests.
 
-A release run on a `main` that changed only docs, tests or CI since the last
+A preview run on a `main` that changed only docs, tests or CI since the last
 preview publishes nothing; `scripts/release_plan.py` holds the list of paths
 that never reach an installed app.
+
+## Publishing v0.1.0
+
+In the release-prep pull request, run `python3 scripts/release_plan.py main --final`
+and `python3 scripts/changelog.py collect v0.1.0`. Review the collected section
+and merge it. Once the latest **macOS build** push check on that exact main
+commit succeeds, select **Build main and publish the final Cargo version** or run
+
+```sh
+gh workflow run "macOS build" --ref main -f final=true
+```
+
+The final can promote the last preview even when only release notes changed.
+Publication requires the matching changelog section, no outstanding notes,
+and an unused final tag. GitHub publishes a regular release with the same
+signed update manifests. Preview users are offered the final on their next
+update check. Bump the Cargo version before planning another preview.
 
 ## Preview numbers
 
@@ -118,7 +135,7 @@ the in-app update replaces both.
 
 ### What a release publishes
 
-- Every release keeps one tag counter, `v<version>-preview.N`. The `plait` and
+- Previews share one tag counter, `v<version>-preview.N`, followed by `v<version>` for the final. The `plait` and
   `plait-host` Cargo versions stay equal until 0.2.
 - Two new signed manifests use the same release key, `schema_version: 2`:
   - `update-client.json` names `component: "client"`, the client archive,
@@ -262,7 +279,7 @@ manifest signatures cover update verification only; standalone artifact
 checksums detect corruption rather than publisher identity.
 
 Workflow runs upload `plait-macos-arm64-…` artifacts (14-day retention) before
-the publish job creates the immutable GitHub prerelease. Per-user installs place
+the publish job creates the immutable GitHub release. Per-user installs place
 immutable host releases under `~/Library/Application Support/Plait/Host/releases/<build-id>/`
 (with `installed.json` and `~/Library/LaunchAgents/dev.plait.host.plist`);
 legacy system-wide packages use `/Library/Application Support/Plait/Host/` and
