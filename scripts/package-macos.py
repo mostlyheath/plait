@@ -39,7 +39,10 @@ def verify_bundle(bundle):
     assert info["CFBundleIconFile"] == "Plait.icns"
     assert (bundle / "Contents/Resources/Plait.icns").read_bytes()[:4] == b"icns"
     notices = (bundle / "Contents/Resources/THIRD_PARTY_NOTICES.txt").read_text()
-    assert "gpui" in notices and "Apache License" in notices, "Dependency notices are missing"
+    for credit in ("gpui", "Apache License", "Node.js " + host["node_version"],
+                   "@earendil-works/pi-coding-agent " + host["runtime_sdk_version"],
+                   "IBM Plex Sans", "tinted-theming/schemes", "Stillwater", "Lobe Icons"):
+        assert credit in notices, f"Missing bundled notice: {credit}"
     subprocess.run(["plutil", "-lint", str(bundle / "Contents/Info.plist")], check=True)
     subprocess.run(["codesign", "--verify", "--deep", "--strict", str(bundle)], check=True)
 
@@ -71,7 +74,6 @@ def main():
         shutil.copy2(ROOT / "LICENSE", resources / "LICENSE")
         shutil.copy2(ROOT / "Cargo.lock", resources / "Cargo.lock")
         shutil.copy2(ROOT / "scripts/update-installed-macos.sh", resources / "install-user.sh")
-        shutil.copy2(ROOT / "target/THIRD_PARTY_NOTICES.txt", resources / "THIRD_PARTY_NOTICES.txt")
         stage_font_notices(resources)
         iconset = work / "Plait.iconset"
         iconset.mkdir()

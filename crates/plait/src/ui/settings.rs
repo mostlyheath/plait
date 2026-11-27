@@ -529,7 +529,36 @@ impl Plait {
                     ))
                     .child(tag("about-host-protocol", host, colors().subtle)),
             )
+            .child(
+                button("third-party-notices", "Third-party notices")
+                    .on_activate(cx, |this, window, cx| this.open_notices(window, cx)),
+            )
             .child(self.update_controls(cx))
+    }
+
+    fn open_notices(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let task = cx.background_executor().spawn(async {
+            crate::update::setup::running_bundle()
+                .map(|bundle| bundle.join("Contents/Resources/THIRD_PARTY_NOTICES.txt"))
+                .filter(|file| file.is_file())
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let path = task.await;
+            let _ = this.update_in(cx, |_, window, cx| {
+                if let Some(path) = path {
+                    cx.open_with_system(&path);
+                } else {
+                    let _answer = window.prompt(
+                        PromptLevel::Info,
+                        "Third-party notices are available in the packaged app.",
+                        None,
+                        &["OK"],
+                        cx,
+                    );
+                }
+            });
+        })
+        .detach();
     }
 
     fn view_settings(&self, cx: &mut Context<Self>) -> impl IntoElement {

@@ -13,6 +13,9 @@ import tarfile
 import urllib.request
 import xml.etree.ElementTree as ET
 
+from runtime_payload import check_host_binaries, prune_runtime
+from third_party_notices import app_notices, host_notices
+
 ROOT = Path(__file__).resolve().parent.parent
 HOST_BASE = Path("/Library/Application Support/Plait/Host")
 AGENT_PATH = Path("/Library/LaunchAgents/dev.plait.host.plist")
@@ -217,9 +220,11 @@ def stage_host(work, version, revision):
         shutil.copy2(ROOT / "runtime" / name, runtime / name)
     environment = {**os.environ, "NPM_CONFIG_USERCONFIG": "/dev/null"}
     run("npm", "ci", "--omit=dev", "--ignore-scripts", cwd=runtime, env=environment)
+    prune_runtime(runtime, "darwin", "arm64")
     shutil.copy2(ROOT / "LICENSE", host / "LICENSE")
     shutil.copy2(ROOT / "Cargo.lock", host / "Cargo.lock")
-    shutil.copy2(ROOT / "target/HOST_THIRD_PARTY_NOTICES.txt", host / "THIRD_PARTY_NOTICES.txt")
+    (host / "THIRD_PARTY_NOTICES.txt").write_text(host_notices(ROOT, host, node_version), encoding="utf-8")
+    check_host_binaries(host)
     normalize_modes(host)
     metadata = manifest("host", version, revision)
     runtime_package = json.loads((runtime / "package.json").read_text())
@@ -251,6 +256,8 @@ def embed_host(resources, payload, metadata):
     A data archive, not nested code: the app's signature covers it as a resource.
     """
     release = payload / HOST_BASE.relative_to("/") / "releases" / metadata["build_id"]
+    host_text = (release / "THIRD_PARTY_NOTICES.txt").read_text(encoding="utf-8")
+    (resources / "THIRD_PARTY_NOTICES.txt").write_text(app_notices(ROOT, host_text), encoding="utf-8")
     with tarfile.open(resources / "Host.tar.gz", "w:gz", compresslevel=6) as archive:
         archive.add(release, arcname=metadata["build_id"])
     write_json(resources / "host.json", metadata)
