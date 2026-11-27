@@ -14,6 +14,7 @@
 //! refused, which actions a keystroke would collide with, and how an
 //! assignment changes the map. The editor's view is in settings_keyboard.rs.
 
+use super::machine_picker::*;
 use super::{
     jump::*,
     tabs::*,
@@ -88,6 +89,20 @@ const fn entry(
 }
 
 use Place::{Hidden, Menu as Item, MenuGroup as Group};
+
+// Saved machines are ordered slots. Only the first nine have default keys.
+macro_rules! machine_slot {
+    ($number:literal, $key:expr) => {
+        entry(
+            concat!("machine_jump.", stringify!($number)),
+            concat!("Switch to Machine ", stringify!($number)),
+            "Navigation",
+            $key,
+            Hidden,
+            || Box::new(MachineNumber($number)),
+        )
+    };
+}
 
 /// In menu order. Categories are contiguous; each becomes one menu.
 #[rustfmt::skip]
@@ -164,6 +179,24 @@ pub(super) const ACTIONS: &[AppAction] = &[
     entry("tab.move_right", "Move Tab Right", "Window", Some("ctrl-shift-right"), Item, || Box::new(MoveTabRight)),
     entry("tab.move_left", "Move Tab Left", "Window", Some("ctrl-shift-left"), Item, || Box::new(MoveTabLeft)),
     entry("tab.list", "Show All Tabs…", "Window", Some("cmd-shift-\\"), Item, || Box::new(ListTabs)),
+    entry("machine.switch", "Switch Machine…", "Navigation", Some("ctrl-m"), Place::Palette, || Box::new(SwitchMachine)),
+    entry("machine.reconnect", "Reconnect", "Navigation", None, Place::Palette, || Box::new(ReconnectMachine)),
+    entry("machine.add", "Add machine…", "Navigation", None, Place::Palette, || Box::new(AddMachine)),
+    machine_slot!(1, Some("ctrl-1")),
+    machine_slot!(2, Some("ctrl-2")),
+    machine_slot!(3, Some("ctrl-3")),
+    machine_slot!(4, Some("ctrl-4")),
+    machine_slot!(5, Some("ctrl-5")),
+    machine_slot!(6, Some("ctrl-6")),
+    machine_slot!(7, Some("ctrl-7")),
+    machine_slot!(8, Some("ctrl-8")),
+    machine_slot!(9, Some("ctrl-9")),
+    machine_slot!(10, None), machine_slot!(11, None), machine_slot!(12, None), machine_slot!(13, None),
+    machine_slot!(14, None), machine_slot!(15, None), machine_slot!(16, None), machine_slot!(17, None),
+    machine_slot!(18, None), machine_slot!(19, None), machine_slot!(20, None), machine_slot!(21, None),
+    machine_slot!(22, None), machine_slot!(23, None), machine_slot!(24, None), machine_slot!(25, None),
+    machine_slot!(26, None), machine_slot!(27, None), machine_slot!(28, None), machine_slot!(29, None),
+    machine_slot!(30, None), machine_slot!(31, None), machine_slot!(32, None),
     entry("tab_jump.1", "Switch to Tab 1", "Navigation", Some("cmd-1"), Hidden, || Box::new(TabJump1)),
     entry("tab_jump.2", "Switch to Tab 2", "Navigation", Some("cmd-2"), Hidden, || Box::new(TabJump2)),
     entry("tab_jump.3", "Switch to Tab 3", "Navigation", Some("cmd-3"), Hidden, || Box::new(TabJump3)),
@@ -852,14 +885,16 @@ mod tests {
     fn ids_are_unique_and_default_keystrokes_parse_without_collisions() {
         let mut ids = HashSet::new();
         let mut keys = HashSet::new();
-        let mut names = HashSet::new();
+        let mut registered = Vec::<Box<dyn gpui::Action>>::new();
         for action in ACTIONS {
             assert!(ids.insert(action.id), "duplicate ID {}", action.id);
+            let run = action.action();
             assert!(
-                names.insert(action.action().name()),
+                !registered.iter().any(|seen| seen.partial_eq(run.as_ref())),
                 "{} repeats an action",
                 action.id
             );
+            registered.push(run);
             assert!(!action.title.is_empty() && !action.category.is_empty());
             if let Some(key) = action.key {
                 assert!(parses(key), "{key} does not parse");

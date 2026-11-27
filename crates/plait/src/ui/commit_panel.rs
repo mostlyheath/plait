@@ -178,6 +178,7 @@ impl Plait {
         cx: &mut Context<Self>,
     ) {
         let owner = self.state.checkout_id();
+        let machine = self.machines.active.clone();
         let answer = window.prompt(
             PromptLevel::Warning,
             &title,
@@ -190,7 +191,11 @@ impl Plait {
         );
         cx.spawn_in(window, async move |this, cx| {
             if answer.await == Ok(0) {
-                let _ = this.update(cx, |this, cx| this.git_write_for(owner, op, cx));
+                let _ = this.update(cx, |this, cx| {
+                    if this.machines.active == machine {
+                        this.git_write_for(owner, op, cx);
+                    }
+                });
             }
         })
         .detach();
