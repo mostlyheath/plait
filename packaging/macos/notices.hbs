@@ -7,11 +7,8 @@ available from their listed repositories and https://crates.io.
 {{#each licenses}}
 ======================================================================
 {{name}} ({{id}})
-Used by:
-{{#each used_by}}
-- {{crate.name}} {{crate.version}} — {{{crate.repository}}}
+{{#each used_by}}Used by: {{crate.name}} {{crate.version}}
 {{/each}}
-
 {{{text}}}
 
 {{/each}}

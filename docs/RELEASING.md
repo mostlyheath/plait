@@ -211,13 +211,36 @@ bash scripts/check.sh --require-command-sandbox
 bash scripts/build-macos.sh
 ```
 
-`scripts/build-macos.sh` compiles the locked workspace, generates Rust license
+`scripts/build-macos.sh` builds the locked client and host binaries, generates Rust license
 notices with pinned `cargo-about` 0.9.3, verifies the pinned Node **26.12.0**
 download checksum, installs locked production npm dependencies without
 lifecycle scripts, and validates Mach-O architecture, system-only dynamic links,
 signatures, property lists, package contents, and archives. Building never
 installs into `/Applications` or starts a LaunchAgent. Inspect a built app
 locally with `open dist/Plait.app --args /absolute/path/to/repository`.
+
+Settings → About opens `Contents/Resources/THIRD_PARTY_NOTICES.txt` inside the
+app. During packaging, `scripts/third_party_notices.py` combines the client
+and host Cargo reports, the license from the verified Node archive, and
+notices for the locked npm packages installed in the host payload. The host staging step removes
+examples, test suites, and other development files before scanning the remaining files for known binary extensions,
+magic bytes, and supported base64 and byte-array representations. Each match
+requires a recorded package and version. Other JavaScript encodings can go undetected.
+Each runtime binary record pins the file digest, including JavaScript containing base64
+or byte-array modules. The report associates each copy with its component notices
+and includes nested npm license and notice files. The collector preserves JavaScript
+license banners, resolves recognized versioned banners to package notices, and uses
+digest-pinned component lists for staged bundles. A new JavaScript file, changed bytes, or a changed
+component list requires review against the package inventory. See the
+[JavaScript notice sources](../packaging/js-notices/README.md). Photon dependency notices cite the
+versioned sources used for both builds.
+The Rust inventory follows normal dependencies for the target and excludes procedural
+macros and their private dependencies. Both Linux host architectures generate their
+Rust license texts with the same pinned cargo-about and template as the macOS build.
+When cargo-about reports a canonical-text fallback for a shipped dependency, the
+generator requires a checksum-verified notice from `packaging/rust-notices/`.
+The app report also includes the bundled fonts, theme credits, and
+harness icon licenses. The standalone macOS host carries its own report.
 
 | Artifact | Purpose |
 | --- | --- |

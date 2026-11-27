@@ -113,6 +113,9 @@ Previews are published from `main` when a release is started; see [Releasing](do
 - What is verified, and what is not yet, is in
   [Verification](docs/VERIFICATION.md).
 
+To report a vulnerability privately or check which versions receive security
+fixes, see the [security policy](SECURITY.md).
+
 ## Development
 
 The app is **Rust + GPUI**, the host is **Rust** with a **TypeScript** agent
@@ -125,4 +128,4 @@ Plait's code and documentation are [MIT licensed](LICENSE). Dependencies keep
 their own licenses, including GPUI's Apache-2.0. The bundled Base16 schemes in
 `assets/themes/base16` are from tinted-theming/schemes (MIT, license kept beside
 them); the Stillwater themes are from
-[Stillwater](https://github.com/heath0xFF/stillwater) (MIT).
+[Stillwater](https://github.com/heath0xFF/stillwater) ([MIT license](assets/themes/LICENSE-stillwater)).

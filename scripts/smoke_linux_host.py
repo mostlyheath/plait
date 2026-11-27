@@ -17,7 +17,7 @@ def main(archive):
     checksum = archive.with_name(archive.name + ".sha256").read_text().strip()
     if checksum != f"{digest(archive)}  {archive.name}":
         raise ValueError("Archive checksum mismatch")
-    with tempfile.TemporaryDirectory(prefix="plait-", dir="/tmp") as directory:
+    with tempfile.TemporaryDirectory(prefix="plait-", dir=archive.parent) as directory:
         root = Path(directory)
         with tarfile.open(archive, "r:gz") as tar:
             members = tar.getmembers()
@@ -30,6 +30,16 @@ def main(archive):
         metadata = json.loads((host / "component.json").read_text())
         if metadata["build_id"] != build_id:
             raise ValueError("Archive root does not match build ID")
+        notices = (host / "THIRD_PARTY_NOTICES.txt").read_text()
+        if "Rust packages in plait-host\n" not in notices:
+            raise ValueError("Archive is missing the host Rust inventory")
+        if "curve25519-dalek 4.1.3\n" in notices and not all(credit in notices for credit in (
+                "2016-2021 isis agora lovecruft", "2016-2021 Henry de Valence", "2012 The Go Authors")):
+            raise ValueError("Archive is missing the curve25519-dalek license text")
+        if "npm: jiti 2.7.0 " in notices:
+            for credit in ("Aseem Kishore", "Justin Ridgewell"):
+                if credit not in notices:
+                    raise ValueError(f"Archive is missing the jiti bundle credit for {credit}")
         binary = host / "bin/plait-host"
         env = {**os.environ, "PATH": str(host / "bin")}
         version = json.loads(subprocess.check_output([str(binary), "version"], env=env, text=True))

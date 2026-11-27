@@ -179,7 +179,7 @@ pub fn ensure(home: &Path) -> Result<Outcome, Error> {
 
 /// The `.app` this executable runs from, without the ownership checks updates
 /// need: first setup never writes the bundle.
-fn running_bundle() -> Option<PathBuf> {
+pub(crate) fn running_bundle() -> Option<PathBuf> {
     let executable = std::env::current_exe().ok()?.canonicalize().ok()?;
     executable
         .ancestors()

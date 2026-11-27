@@ -191,6 +191,9 @@ fn update_button_opens_about_settings_and_closes_machine_menu() {
             assert!(p.navigation.menu.is_none());
         });
         assert!(h.draw_a11y().has_node(Role::Button, |n| {
+            n.label.as_deref() == Some("Third-party notices")
+        }));
+        assert!(h.draw_a11y().has_node(Role::Button, |n| {
             n.label.as_deref() == Some("Install 1.2.3 and Restart")
         }));
     }

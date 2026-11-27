@@ -12,6 +12,9 @@ import tempfile
 import tomllib
 import urllib.request
 
+from rust_license_report import generate_reports
+from runtime_payload import check_host_binaries, prune_runtime
+from third_party_notices import host_notices
 from release_macos import ROOT, copy_runtime_sources, digest, manifest, normalize_modes, payload_digest, run, write_json
 
 
@@ -107,7 +110,7 @@ def package(arch, out, node_archive, allow_dirty, tag=None):
     if reported.get("revision") != revision or reported.get("release") != release:
         raise ValueError("Host build version does not match packaging revision and release")
     out.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory() as directory:
+    with tempfile.TemporaryDirectory(dir=ROOT / "target") as directory:
         host = Path(directory) / "host"
         (host / "bin").mkdir(parents=True)
         shutil.copy2(binary, host / "bin/plait-host")
@@ -118,8 +121,16 @@ def package(arch, out, node_archive, allow_dirty, tag=None):
             shutil.copy2(ROOT / "runtime" / filename, runtime / filename)
         env = {**os.environ, "PATH": str(host / "bin") + os.pathsep + os.environ.get("PATH", ""), "NPM_CONFIG_USERCONFIG": "/dev/null"}
         run("npm", "ci", "--omit=dev", "--ignore-scripts", cwd=runtime, env=env)
+        cpu = {"x86_64": "x64", "arm64": "arm64"}[arch]
+        prune_runtime(runtime, "linux", cpu)
+        triple = {"x86_64": "x86_64", "arm64": "aarch64"}[arch] + "-unknown-linux-gnu"
+        generate_reports(ROOT, triple, ["plait-host"], Path(directory))
+        notices = host_notices(ROOT, host, node_version, triple, Path(directory))
+        (host / "THIRD_PARTY_NOTICES.txt").write_text(notices, encoding="utf-8")
+
         shutil.copy2(ROOT / "LICENSE", host / "LICENSE")
         shutil.copy2(ROOT / "Cargo.lock", host / "Cargo.lock")
+        check_host_binaries(host)
         normalize_modes(host)
         metadata = manifest("host", version, revision)
         package_json = json.loads((runtime / "package.json").read_text())

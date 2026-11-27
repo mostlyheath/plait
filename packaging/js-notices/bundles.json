@@ -1,0 +1,2556 @@
+{
+  "@anthropic-ai/sdk 0.129.0": {
+    "_vendor/partial-json-parser/parser.js": {
+      "packages": [
+        "partial-json-parser (indgov)"
+      ],
+      "sha256": "1b5a565f3323d072d586f513d73c2efcc7941693620c8e82e128d11578976554"
+    },
+    "_vendor/partial-json-parser/parser.mjs": {
+      "packages": [
+        "partial-json-parser (indgov)"
+      ],
+      "sha256": "96267d2c3723f0d61cb08775558bcdf64e4cf56a205dad62ee90a784bd83b097"
+    },
+    "core/credentials.js": {
+      "packages": [
+        "@anthropic-ai/sdk 0.129.0",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "328c22730dddb3750dc7eb47656dfaeeefc5da026fd0254318a2be081937e7de"
+    },
+    "lib/credentials/credential-chain.js": {
+      "packages": [
+        "@anthropic-ai/sdk 0.129.0",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "2ec7a2d315012ca0dca8db5f1ae028d985a7be881daecee8daae5ccda3557dc3"
+    },
+    "lib/credentials/identity-token.js": {
+      "packages": [
+        "@anthropic-ai/sdk 0.129.0",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "6ede42bdd805be74b430f171c31c79b878b77720a46becf2db26e865e6637d7a"
+    },
+    "lib/credentials/types.js": {
+      "packages": [
+        "@anthropic-ai/sdk 0.129.0",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "8e3f0c3c6212551f3ff9ce4140fa5dfab7b42552a203462a97de47808664b4ef"
+    },
+    "lib/credentials/user-oauth.js": {
+      "packages": [
+        "@anthropic-ai/sdk 0.129.0",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "561f370f0da02afaff1c3df278a44724a7a8bfcd1d0099fdceeed41ef15f7999"
+    }
+  },
+  "@earendil-works/pi-ai 1.5.2": {
+    "dist/api/bedrock-converse-stream.lazy.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "c0627af43e438eac0d01d9853de71a0f16edf5f8be3c1640408c01352ef436ee"
+    },
+    "dist/auth/context.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "5d0ea91a2fd2acf84e3b9717ce59e75006933c68d8efa91873894a9d963d41a0"
+    },
+    "dist/auth/oauth/load.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "d91ed193afe81b53026b5e1afad659ee9771b3562b89842f1fdbb0251d5217df"
+    },
+    "dist/env-api-keys.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "c215e1a8f43c8504820c396410e087dee1680cf7b94909e67bd0f9020a16ce67"
+    }
+  },
+  "@earendil-works/pi-coding-agent 1.5.2": {
+    "dist/bundle/chunks/anthropic-messages-CA3HHOL3.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "27b739793dfc3a97c7608066775a413c84288b6399aebdfb9ce301d6633cb981"
+    },
+    "dist/bundle/chunks/anthropic.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "f76fb47980e8fd82a13fc356e420a9a2f554bba0fefd4eb3f5d97812583309a8"
+    },
+    "dist/bundle/chunks/azure-openai-responses-76TWS6DT.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "d428a7568baf0f3537ad20a275a013f143498d2c35de844f81c7846375ef0de5"
+    },
+    "dist/bundle/chunks/bedrock-converse-stream.js": {
+      "packages": [
+        "@aws-sdk/client-bedrock-runtime 3.1127.0",
+        "@aws-sdk/core 3.977.9",
+        "@aws-sdk/credential-provider-env 3.972.70",
+        "@aws-sdk/credential-provider-http 3.972.72",
+        "@aws-sdk/credential-provider-ini 3.973.15",
+        "@aws-sdk/credential-provider-login 3.972.77",
+        "@aws-sdk/credential-provider-node 3.972.82",
+        "@aws-sdk/credential-provider-process 3.972.70",
+        "@aws-sdk/credential-provider-sso 3.973.14",
+        "@aws-sdk/credential-provider-web-identity 3.972.76",
+        "@aws-sdk/eventstream-handler-node 3.972.34",
+        "@aws-sdk/middleware-eventstream 3.972.29",
+        "@aws-sdk/middleware-websocket 3.972.52",
+        "@aws-sdk/nested-clients 3.997.44",
+        "@aws-sdk/signature-v4-multi-region 3.996.46",
+        "@aws-sdk/token-providers 3.1116.0",
+        "@aws-sdk/token-providers 3.1127.0",
+        "@aws-sdk/xml-builder 3.972.40",
+        "@aws/lambda-invoke-store 0.3.0",
+        "@babel/helpers (Bowser ES5 build)",
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2",
+        "@smithy/core 3.33.3",
+        "@smithy/credential-provider-imds 4.5.2",
+        "@smithy/fetch-http-handler 5.8.0",
+        "@smithy/node-http-handler 4.12.1",
+        "@smithy/signature-v4 5.7.3",
+        "@smithy/types 4.18.0",
+        "agent-base 9.0.0",
+        "bowser 2.14.1",
+        "debug 4.4.3",
+        "esbuild 0.28.2",
+        "http-proxy-agent 9.1.0",
+        "https-proxy-agent 9.1.0",
+        "ms 2.1.3",
+        "partial-json 0.1.7",
+        "proxy-agent-negotiate 1.1.0",
+        "supports-color 10.2.2",
+        "typescript (emitted helpers)",
+        "webpack 4"
+      ],
+      "sha256": "289ad2696b8028516ef09f5386fbccfc27d68e48c0df615f3c24ede7c229fe52"
+    },
+    "dist/bundle/chunks/chunk-36QC74V4.js": {
+      "packages": [
+        "@earendil-works/pi-coding-agent 1.5.2",
+        "cross-spawn 7.0.6",
+        "isexe 2.0.0",
+        "path-key 3.1.1",
+        "shebang-command 2.0.0",
+        "shebang-regex 3.0.0",
+        "which 2.0.2"
+      ],
+      "sha256": "9d0bfdc1eaca5abb8f1796fdb9b256e981f7d429e99ce3aa3b9492fca7d1b5d0"
+    },
+    "dist/bundle/chunks/chunk-4KSTFUIK.js": {
+      "packages": [
+        "@earendil-works/pi-coding-agent 1.5.2",
+        "@earendil-works/pi-mcp 1.5.2",
+        "graceful-fs 4.2.11",
+        "proper-lockfile 4.1.2",
+        "retry 0.12.0",
+        "signal-exit 3.0.7"
+      ],
+      "sha256": "474ef4df04023a4b1cd177f1f7a9722a9c78929bbdd8fb98aa26d2ccc286d697"
+    },
+    "dist/bundle/chunks/chunk-4UNPP53I.js": {
+      "packages": [
+        "@earendil-works/pi-codemode 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "5e3e508ec380139b1c5e917a9bae4bc90726d18282ae8ee2a331b4f1293bfe2f"
+    },
+    "dist/bundle/chunks/chunk-5AGIVGSV.js": {
+      "packages": [
+        "@earendil-works/pi-coding-agent 1.5.2",
+        "highlight.js 10.7.3"
+      ],
+      "sha256": "5c90a831ae8d5f5aa8e66e2fa3c76b5e2f6046df80429172654385d23c6c9b73"
+    },
+    "dist/bundle/chunks/chunk-6QGV3IWD.js": {
+      "packages": [
+        "@earendil-works/pi-coding-agent 1.5.2",
+        "chalk 6.0.0"
+      ],
+      "sha256": "8849fd570c6155bcea2df8962b65e6b1b01ed88c5c25a1b29fba535ca07df35a"
+    },
+    "dist/bundle/chunks/chunk-7CBJINYJ.js": {
+      "packages": [
+        "@anthropic-ai/sdk 0.129.0",
+        "@earendil-works/pi-coding-agent 1.5.2",
+        "@stablelib/base64 1.0.1",
+        "fast-sha256 1.3.0",
+        "standardwebhooks 1.1.1",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "ba573c7e16ac49ca552f399dee4476b7bdc255212fd9a4bfda632158d1f37ef6"
+    },
+    "dist/bundle/chunks/chunk-7DDKXS2Q.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "b5c1320c3a3648f71ce27577893cb1a538f139dc86f23c8f2669f576478175dc"
+    },
+    "dist/bundle/chunks/chunk-7ZC4UXSL.js": {
+      "packages": [
+        "@anthropic-ai/sdk 0.129.0",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "c5057baea590a53e2534934d8d86fe358705859839f9e393f1482442593f41d2"
+    },
+    "dist/bundle/chunks/chunk-AUUCDC7R.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2",
+        "@earendil-works/pi-telemetry 1.5.2",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "3b24d90a43208a08f12b6f15fc669916db6b191d71d769957d603c755489f953"
+    },
+    "dist/bundle/chunks/chunk-BAC3QPNW.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "76b671f227dec9a5c594a5832c4d8bb830cddd5fc24a58c48bca15c0abaa10c8"
+    },
+    "dist/bundle/chunks/chunk-CF5GWZHW.js": {
+      "packages": [
+        "@earendil-works/pi-coding-agent 1.5.2",
+        "openai 7.19.0"
+      ],
+      "sha256": "7f9318ab1ffb8790307f100b13710731d409147788ceca33f4a1eed223f17454"
+    },
+    "dist/bundle/chunks/chunk-FF6XOTWB.js": {
+      "packages": [
+        "@earendil-works/pi-coding-agent 1.5.2",
+        "@earendil-works/pi-tui 1.5.2",
+        "get-east-asian-width 1.6.0",
+        "marked 18.0.11",
+        "marked-cjk-friendly 0.1.2"
+      ],
+      "sha256": "2d833946ea799edfd5c1d44fa33474370ab4d4f152d5ae189dd465dc51982958"
+    },
+    "dist/bundle/chunks/chunk-FFMDRXC4.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2",
+        "partial-json 0.1.7",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "cbc3f54b5179a1ce8c4608e06cb8da72463a9ed378713e6a6d455c2fc23081ac"
+    },
+    "dist/bundle/chunks/chunk-FMPAMX2W.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2",
+        "@earendil-works/pi-mcp 1.5.2"
+      ],
+      "sha256": "4378273f622a17f18ed6db86b71204186109b39afeaee00e34bfa5684bdb21c0"
+    },
+    "dist/bundle/chunks/chunk-GFUN2N5K.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "57eed07f60cbc0dad6687aa4cc61104d39a0aec1baa1fc6fe798af80bcfb8770"
+    },
+    "dist/bundle/chunks/chunk-IEBK4HQA.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "6167a1ed49cb3d62d754218b4e4cef61e0809105404cbad5760b9ef126547d1e"
+    },
+    "dist/bundle/chunks/chunk-IQUU5XIT.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "d51cfd6a78213e040c76d37f22b7e808fd6b8ae1db909423b8894772d72d33c3"
+    },
+    "dist/bundle/chunks/chunk-JXWJOIH4.js": {
+      "packages": [
+        "@earendil-works/pi-coding-agent 1.5.2",
+        "esbuild 0.28.2"
+      ],
+      "sha256": "2857397f268829d29c5b22ff366e723ba9c98f2a13fc290ff64ffe921ba1686a"
+    },
+    "dist/bundle/chunks/chunk-L2ZPNLYD.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "eeac72dce2d349ec26278d12cfc96e666a165e85fd4132a9fb1cdd2b8a893e3f"
+    },
+    "dist/bundle/chunks/chunk-LPXNMA2W.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "82078b13cabe692e5bb3495c1d1c2bd29b9290a1e5a4065234c507f4b668a8d9"
+    },
+    "dist/bundle/chunks/chunk-LQLJ7CDW.js": {
+      "packages": [
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "226fb3ac164d9f83ada8722c770c7bbfc87b8e54175adbf0994281056a45b8ac"
+    },
+    "dist/bundle/chunks/chunk-LVVZS2NO.js": {
+      "packages": [
+        "@earendil-works/pi-coding-agent 1.5.2",
+        "fetch-blob 3.2.0",
+        "formdata-polyfill 4.0.10",
+        "node-domexception 1.0.0",
+        "rollup (UMD wrapper)",
+        "web-streams-polyfill 3.3.3"
+      ],
+      "sha256": "536c349d1d8fcc0c0e550fde15978b1db87b45e9cc0ef23b035a485d4b8270f3"
+    },
+    "dist/bundle/chunks/chunk-MMDXLZVS.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2",
+        "@earendil-works/pi-schema 1.5.2",
+        "typebox 1.3.27",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "5d39160a8fa58d199ae1042b51667ca37e9dd70c6bc96f98509909dc31a4d28f"
+    },
+    "dist/bundle/chunks/chunk-P7FPUEYA.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "5e6e981a9554b58c73b7a586c8ef8916f503fb022fff32a9d0b2a318e9089b19"
+    },
+    "dist/bundle/chunks/chunk-PGXDEOVV.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "b6187ec855046de0f97de34bc7f4ad8057e9b9d51ff057f65acf6432d2373f37"
+    },
+    "dist/bundle/chunks/chunk-PJACZCIR.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "5aaa7984c9ef7e2db07b44323b0e21660926302599b1e76820a538a1d7ae538b"
+    },
+    "dist/bundle/chunks/chunk-PMRZO46Y.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "9e0921ff9785b4ab3c1e0d8d00feb9cea6a6d2b0936b7a0ac7e9d7b0a0e9f58d"
+    },
+    "dist/bundle/chunks/chunk-PRRNXB7S.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "87fdebf0992e87432f8bfb873e901cdc8eb2b473c5da3444650ef6d933f5f232"
+    },
+    "dist/bundle/chunks/chunk-QN4TOIZN.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "ab9e2b88dfa5d94928ae84cfe88afec2314fcf393bc08b9456fe239d2ee9df0e"
+    },
+    "dist/bundle/chunks/chunk-RDZVAGPR.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "657242b8d4b3ab52369ceaf5374ea7e9da241cb64752142855eb99f32be7de81"
+    },
+    "dist/bundle/chunks/chunk-RKNK4Y6L.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "e8b46a5523f759714a45251c9764fb0f12656bdb702e010ec1fa8ecd42381a05"
+    },
+    "dist/bundle/chunks/chunk-TMTOQ7H7.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "23eb2a77f71ee7e42cba6f9cf7557f8f8f2f80c9f3deb5d2ecd6d34bdb2aa5a3"
+    },
+    "dist/bundle/chunks/chunk-UTB4DTYQ.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "956609841588139d975e018004d520ce4eee345fde5f948239a9f72a748fa91c"
+    },
+    "dist/bundle/chunks/chunk-V7SLUK6A.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2",
+        "@google/genai 2.21.0",
+        "base64-js 1.5.1",
+        "bignumber.js 9.3.1",
+        "buffer-equal-constant-time 1.0.1",
+        "ecdsa-sig-formatter 1.0.11",
+        "extend 3.0.2",
+        "gaxios 7.1.4",
+        "gcp-metadata 8.1.2",
+        "google-auth-library 10.6.2",
+        "google-logging-utils 1.1.3",
+        "json-bigint 1.0.0",
+        "jwa 2.0.1",
+        "jws 4.0.1",
+        "p-retry 4.6.2",
+        "retry 0.13.1",
+        "safe-buffer 5.2.1",
+        "tslib 2.8.1",
+        "typescript (emitted helpers)",
+        "ws 8.21.0"
+      ],
+      "sha256": "09b8f392507f2daa951a22cf7e021549278b4f93e806b8150458319aaf60cd37"
+    },
+    "dist/bundle/chunks/chunk-VEJDBY3O.js": {
+      "packages": [
+        "@earendil-works/pi-agent-core 1.5.2",
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2",
+        "@isaacs/nonrecursive-glob-match 1.0.3",
+        "balanced-match 4.0.4",
+        "brace-expansion 5.0.12",
+        "diff 8.0.4",
+        "hosted-git-info 9.0.3",
+        "ignore 7.0.8",
+        "lovely-mermaid 0.3.3",
+        "lru-cache 11.4.0",
+        "minimatch 11.0.3",
+        "semver 7.8.5",
+        "undici 8.12.3",
+        "yaml 2.9.0"
+      ],
+      "sha256": "effbbd5d6247983dc11c7ae5796eb24bda88f9ebf78c707d3f92ca73cbb8b51e"
+    },
+    "dist/bundle/chunks/chunk-VKJQ6CME.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2",
+        "typebox 1.3.27"
+      ],
+      "sha256": "e3d7ba248555c17c0e03d2afec10e76117307e4bc1626b46f62186b4f3ed5ae4"
+    },
+    "dist/bundle/chunks/chunk-WL4TUXY7.js": {
+      "packages": [
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "9055cc722dfb34d79df15b660a475e94f88ed8c0999b306b05b60841269282dd"
+    },
+    "dist/bundle/chunks/chunk-Y55SJART.js": {
+      "packages": [
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "a89fabee8d170ff09ed3e3c0354eb56e72384a1e142fa08e5686975cbbdbf3e1"
+    },
+    "dist/bundle/chunks/chunk-ZBIZYD6W.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "57ffeeadcb8c2d8b71e97995a6a202ff6713071d4a264507fe599a6c6c4c82f5"
+    },
+    "dist/bundle/chunks/chunk-ZG74NES2.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "75791fb8ea55039975147e848a7785c930a5a21dae79c3a2eb1120513fdf4de7"
+    },
+    "dist/bundle/chunks/chunk-ZGYS4UTC.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "4a5b16927aa23173cd4598cfbb51ce4b8c0512f0d36ee055d3ada5e0f551e8c0"
+    },
+    "dist/bundle/chunks/cli-7RHMDOHL.js": {
+      "packages": [
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "faeca29201aa88a01af918f00e3afa8aef58851d8ac06a058647cd28cc058263"
+    },
+    "dist/bundle/chunks/cloudflare-workers-ai-system-one-U4J7D646.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "f79e1390ee2d844f78cd20b21da50c153d49acd2b2a014ec252eccbc9caf68c4"
+    },
+    "dist/bundle/chunks/codemode-worker.js": {
+      "packages": [
+        "@earendil-works/pi-codemode 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2",
+        "quickjs-wasi 3.6.2",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "e68f1da328891a985d6fbf6db72094688b4d8d0a1ea732e39a84a03e326b357a"
+    },
+    "dist/bundle/chunks/easter-egg-3d-GEVPKQF6.js": {
+      "packages": [
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "6a583fe682b4db91911e67e26bf25573cbe776e117c74a4d1cdd291a2e98b28e"
+    },
+    "dist/bundle/chunks/execute-L2EEDV3L.js": {
+      "packages": [
+        "@earendil-works/pi-codemode 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2",
+        "quickjs-wasi 3.6.2",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "21decb679406682a3d810502dd154f77a0d8bcb3f6757aa603af87366396d8a5"
+    },
+    "dist/bundle/chunks/github-copilot.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "dbded573eacd4a8d7ac601524beee96f9017ec1e1c7e688ebabcf8f692dc89bc"
+    },
+    "dist/bundle/chunks/google-generative-ai-D5B6W47J.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "648ae98b9728c783257ddf3d4f1a0642dcdfaf010e1b3f71f0faa636b2a17fe6"
+    },
+    "dist/bundle/chunks/google-vertex-U4H5YDEW.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "86f2bfbe0717a7889a178559bc50e8130515382bab24d6caf0f7207af1ce33eb"
+    },
+    "dist/bundle/chunks/https-proxy-agent-LVOO5TPL.js": {
+      "packages": [
+        "@earendil-works/pi-coding-agent 1.5.2",
+        "agent-base 7.1.4",
+        "debug 4.4.3",
+        "https-proxy-agent 7.0.6",
+        "ms 2.1.3",
+        "supports-color 10.2.2",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "6d2593a18653f9f6dfd06af44a9fce0a254981c5fe273f56691f8a7858cecdbc"
+    },
+    "dist/bundle/chunks/image-resize-worker.js": {
+      "packages": [
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "554367f8f1877b669efed456fcc07f7304a2fe80a89889e23d6ca119f859cac0"
+    },
+    "dist/bundle/chunks/jiti-loader-GL4HJFAD.js": {
+      "packages": [
+        "@earendil-works/pi-coding-agent 1.5.2",
+        "@rspack/core 2.0.1",
+        "acorn 8.16.0",
+        "escape-string-regexp 5.0.0",
+        "get-tsconfig 4.14.0",
+        "import-meta-resolve 4.2.0",
+        "is-fs-case-sensitive 2.0.0",
+        "jiti 2.7.0",
+        "jsonc-parser 3.3.1",
+        "mlly 1.8.2",
+        "pathe 2.0.3",
+        "resolve-pkg-maps 1.0.0",
+        "slash 5.1.0",
+        "std-env 4.1.0",
+        "ufo 1.6.4",
+        "yoctocolors 2.1.2"
+      ],
+      "sha256": "be2d0f1bb460e726bf4e1df1c0d20955f673f1ffa192435fd65440aa6073f38f"
+    },
+    "dist/bundle/chunks/jiti-static-loader-2RCDI6B4.js": {
+      "packages": [
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "5e088689059655c592551fac8376f9bb9eef58d00b903a07260a8d13e62ed17c"
+    },
+    "dist/bundle/chunks/kimi-coding.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "92615955d9595dec134dcc1f0906c0fb155014c22664eb339d1a1957a337292c"
+    },
+    "dist/bundle/chunks/lib-4AVRLBHM.js": {
+      "packages": [
+        "@earendil-works/pi-coding-agent 1.5.2",
+        "highlight.js 10.7.3"
+      ],
+      "sha256": "1ada30d2ddabb60ad5f86e95d7a13d7826ae737a81e8ad2da5efe90994f18c3a"
+    },
+    "dist/bundle/chunks/llama-cpp-classify-EJXCQRUQ.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "9677fcc8411b01c5e629f9971e2bed4199a460615c8e34f3963edf6783f93ae7"
+    },
+    "dist/bundle/chunks/meta.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "0bf7dd14521e13e6b3cc594aca9b4522bf8f3590691d093fce850cc0c62b7b39"
+    },
+    "dist/bundle/chunks/mistral-conversations-S277EKLB.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "80e824225d20f57475b5efa58b658775b10e13f5de6eaa84651fa3afa8b85b96"
+    },
+    "dist/bundle/chunks/multipart-parser-FMGQ7342.js": {
+      "packages": [
+        "@earendil-works/pi-coding-agent 1.5.2",
+        "node-fetch 3.3.2"
+      ],
+      "sha256": "73e0ee9663313882b6146146d8fe18ca677115bb8bd1ca4a8c37aba65bc7308a"
+    },
+    "dist/bundle/chunks/node-AUOGOBCN.js": {
+      "packages": [
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "6f5759eda9ea48b430e4c41d59e36d8e27a8b860fa392f82943b44e1feaa47b4"
+    },
+    "dist/bundle/chunks/node-KCMANYC2.js": {
+      "packages": [
+        "@anthropic-ai/sdk 0.129.0",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "755da427e754c8fff14d7486e36fac29e9c20f777c72d5a648e46d71ebc62c53"
+    },
+    "dist/bundle/chunks/openai-chatgpt.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "47a5c6b7d31ccbd99c407d388f0453272514219770f1f0e89de3ef0211c70136"
+    },
+    "dist/bundle/chunks/openai-codex-responses-TEQRB65N.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "0165f251129fd7a63ada4dc300591458d63fefc30ed9682f7f268ebba5bdbbe9"
+    },
+    "dist/bundle/chunks/openai-codex.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "c52c5a3ff9088bcbf38e46399f079512d2693f91afc22d6038289dc15d82693d"
+    },
+    "dist/bundle/chunks/openai-completions-HRZOSLBO.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "cb2da018bad7b2b259092498e9935e6da7117b09ea7db3cad8ea1351ad01207a"
+    },
+    "dist/bundle/chunks/openai-decisions-F66BDLOM.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "6e7f96802788e8fb3ac5569c46f59bff07b8d17f65ede5eda06fb84c9bb93d25"
+    },
+    "dist/bundle/chunks/openai-responses-BAKFWTGE.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "dc1f98915bd7d3fc8eee9454315c8817626868a7c7332e05d320fd963854521f"
+    },
+    "dist/bundle/chunks/openrouter-images-VXF5TVIK.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "6c5816621ed018c5db48f6422fb7ffe1a10c2cffdad37b7da82c41e6a8cbea56"
+    },
+    "dist/bundle/chunks/openrouter.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "53a48b9b030a46029f2e0f185cbc01fa43cb88ba6f5f357745e28579a2d87aa6"
+    },
+    "dist/bundle/chunks/pi-messages-UBJKNDRN.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "853e7ded02dc0edd0fc359fcb0d0638d4ffeac2cbb7972b214cb33102e9d2cbd"
+    },
+    "dist/bundle/chunks/radius.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "25b3334da1619c0a6766a35a2096514c66bc2c019efb34b8d0ce18e72ceeaade"
+    },
+    "dist/bundle/chunks/runtime-J5ZSBGTX.js": {
+      "packages": [
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "21e6b790ae222c4e8bac24fd0e08dc1966c779b6b5241d9ab55d077438f999d8"
+    },
+    "dist/bundle/chunks/src-QKGKDFSU.js": {
+      "packages": [
+        "@earendil-works/pi-coding-agent 1.5.2",
+        "data-uri-to-buffer 4.0.1",
+        "node-fetch 3.3.2"
+      ],
+      "sha256": "78f9cd0e05f671111ec9d1722d7b7551864c3bd58c8f025d5c305495f288aa42"
+    },
+    "dist/bundle/chunks/typesafe-system-one-56TEMIHL.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "0b1d137fb302655239717ec0f4b202ca4d26a3df034fbf64ca198eb7c8a3d537"
+    },
+    "dist/bundle/chunks/virtual-modules-KITQRTYM.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "769f37946eb78524c2c2066a1057506602dd0377331e8ad1fc56d7d0ef4f174a"
+    },
+    "dist/bundle/chunks/xai.js": {
+      "packages": [
+        "@earendil-works/pi-ai 1.5.2",
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "1551bf9d2db9fec7be60b87c72e5b6b7163c828c1e39adfff31b146374332d9b"
+    },
+    "dist/bundle/cli-runtime.js": {
+      "packages": [
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "8fdd4161be64f4aadb8bec47ae77b56dcbeab288da6e55dcab3e0243e50f80fc"
+    },
+    "dist/bundle/index.js": {
+      "packages": [
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "90a5b99054119815bb73e9b95210e4b3e45ddc0895fe16458cc3d808ea31d706"
+    },
+    "dist/bundle/rpc-entry.js": {
+      "packages": [
+        "@earendil-works/pi-coding-agent 1.5.2"
+      ],
+      "sha256": "790ab617fafc044f7c13922f838906e90cd75eb1c19c0889efce441804564550"
+    },
+    "dist/core/export-html/vendor/highlight.min.js": {
+      "packages": [
+        "highlight.js 11.9.0"
+      ],
+      "sha256": "837a6fa5b0c736b52bbde2b2b6190f305da3fc9ed41681db5321507057b5c846"
+    },
+    "dist/core/export-html/vendor/marked-cjk-friendly.min.js": {
+      "packages": [
+        "marked-cjk-friendly 0.1.2"
+      ],
+      "sha256": "93d2c938754cb24eef5b9ffecc268a98ef6beeb75dad614b0e874176aeeba565"
+    },
+    "dist/core/export-html/vendor/marked.min.js": {
+      "packages": [
+        "@earendil-works/pi-coding-agent 1.5.2",
+        "esbuild 0.28.2",
+        "esbuild-plugin-umd-wrapper 3.0.0",
+        "marked 18.0.11"
+      ],
+      "sha256": "438eedfcf932a414d0d0bfeea32dc365c063563b8ca713b4687fc8f8b501e5e4"
+    },
+    "dist/utils/ansi.js": {
+      "packages": [
+        "ansi-regex (Pi adaptation)",
+        "strip-ansi (Pi adaptation)"
+      ],
+      "sha256": "8218ad7cca4e4dbb0ac13f8b4decc78626ed87dc35cf7841ba34dbffd9db68b7"
+    }
+  },
+  "@earendil-works/pi-telemetry 1.5.2": {
+    "dist/testing/conformance.js": {
+      "packages": [
+        "@earendil-works/pi-telemetry 1.5.2",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "d640c6d6ac5f452377191cdf8fbf50b32bc9e69ad5315d42b5223cdd4dd5901b"
+    }
+  },
+  "@earendil-works/pi-tui 1.5.2": {
+    "dist/stdin-buffer.js": {
+      "packages": [
+        "OpenTUI"
+      ],
+      "sha256": "c0f3bbe4432ea639989691b4be4663e7e9c3f86dc383556b4ea4b5a64bec8b92"
+    },
+    "dist/utils.js": {
+      "packages": [
+        "string-width (Pi adaptation)"
+      ],
+      "sha256": "8a116df57e08b670742aef85fec547314b90bd25ddb564ed1ccd4687f7969055"
+    }
+  },
+  "@google/genai 2.21.0": {
+    "dist/index.cjs": {
+      "packages": [
+        "@google/genai 2.21.0",
+        "tslib 2.8.1"
+      ],
+      "sha256": "00a8f3a31f8a48a17b245cc07bcb85eebe8bde8ad8e2e3b871998e9a24171d1b"
+    },
+    "dist/index.mjs": {
+      "packages": [
+        "@google/genai 2.21.0",
+        "tslib 2.8.1"
+      ],
+      "sha256": "72756e2e7f2771c130552495371ff0e8bd82e3beefa3cb0ec3422fcb986a892d"
+    },
+    "dist/node/index.cjs": {
+      "packages": [
+        "@google/genai 2.21.0",
+        "tslib 2.8.1"
+      ],
+      "sha256": "68ac2ddd36fb2e7d1b86e9f2e1c3ab2d88e9d63ecb3ee3b6ebac4cd4ba7f422b"
+    },
+    "dist/node/index.mjs": {
+      "packages": [
+        "@google/genai 2.21.0",
+        "tslib 2.8.1"
+      ],
+      "sha256": "a5775355f9271057cd1e089dd2bce71c5996a88d49da9cd0ed6f183e5905cdb8"
+    },
+    "dist/tokenizer/node.cjs": {
+      "packages": [
+        "@google/genai 2.21.0"
+      ],
+      "sha256": "1ba1cb74ee78c334af9219d2fd7540757a173717b43d4e3e8760e40c21547ec2"
+    },
+    "dist/tokenizer/node.mjs": {
+      "packages": [
+        "@google/genai 2.21.0"
+      ],
+      "sha256": "39cc68ea50c1f996bb59ff975a36791fb287219d89a8448d222450439cfa0ca9"
+    },
+    "dist/vertex_internal/index.cjs": {
+      "packages": [
+        "@google/genai 2.21.0",
+        "tslib 2.8.1"
+      ],
+      "sha256": "6995abbba6fe5ef6f802b64a933879c69bc7041c70678f8a33fae7e81cbf7983"
+    },
+    "dist/vertex_internal/index.js": {
+      "packages": [
+        "@google/genai 2.21.0",
+        "tslib 2.8.1"
+      ],
+      "sha256": "d9b2ea52f0785f69357a73033ff423bb8a57392e58be938726793362aa7ff62a"
+    },
+    "dist/web/index.mjs": {
+      "packages": [
+        "@google/genai 2.21.0",
+        "tslib 2.8.1"
+      ],
+      "sha256": "f27dcab951b1a7fd75dd9a1646c47851cda41b81922a59802bd574462c77e35d"
+    }
+  },
+  "@isaacs/nonrecursive-glob-match 1.1.0": {
+    "dist/commonjs/index.min.js": {
+      "packages": [
+        "@isaacs/nonrecursive-glob-match 1.1.0",
+        "esbuild (CommonJS loader)"
+      ],
+      "sha256": "04261ac9c854686d68e0da53d84a588f295da2648294d6fcbbd163c0d7410387"
+    },
+    "dist/esm/index.min.js": {
+      "packages": [
+        "@isaacs/nonrecursive-glob-match 1.1.0"
+      ],
+      "sha256": "3626b2c4774b0e5064cb17a34e74a070a58cbd8c76dfbc300628e5e44797ab7e"
+    }
+  },
+  "@modelcontextprotocol/sdk 1.32.2": {
+    "dist/cjs/client/auth-extensions.js": {
+      "packages": [
+        "@modelcontextprotocol/sdk 1.32.2",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "da900f472e50efaf72965078cd17152ff6e3790bc471e746c15344e064fc5eb8"
+    },
+    "dist/cjs/client/auth.js": {
+      "packages": [
+        "@modelcontextprotocol/sdk 1.32.2",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "f98f261bc4039dfb24fc181590653408bbeff3f4fc2ca25ef0f3072daffbe90e"
+    },
+    "dist/cjs/client/stdio.js": {
+      "packages": [
+        "@modelcontextprotocol/sdk 1.32.2",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "ab9d226de9deb01552e61f07c639593f29c5f8e6115076ece497d21b18075d30"
+    },
+    "dist/cjs/experimental/index.js": {
+      "packages": [
+        "@modelcontextprotocol/sdk 1.32.2",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "112b971bdd7d22a1076f87e3d1203055567476366d19da31c7d3d633cdeafe6a"
+    },
+    "dist/cjs/experimental/tasks/index.js": {
+      "packages": [
+        "@modelcontextprotocol/sdk 1.32.2",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "71ff255143f2f382de17325b1221f923f751eb2016fd13353a7c839eb73aa574"
+    },
+    "dist/cjs/server/auth/handlers/authorize.js": {
+      "packages": [
+        "@modelcontextprotocol/sdk 1.32.2",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "96deb78e1f2f0be6efdd240843658cfdd40443c7bb9bcb5dfedc1b2d796d2c62"
+    },
+    "dist/cjs/server/auth/handlers/metadata.js": {
+      "packages": [
+        "@modelcontextprotocol/sdk 1.32.2",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "c314febee1d07ffc74930e35266e1c473712b3a51b6e011c414eda0377ec6b86"
+    },
+    "dist/cjs/server/auth/handlers/register.js": {
+      "packages": [
+        "@modelcontextprotocol/sdk 1.32.2",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "3ec002c0b051ca00c6e75ca4df5550805fbec65c39814140c99f72b4e278902c"
+    },
+    "dist/cjs/server/auth/handlers/revoke.js": {
+      "packages": [
+        "@modelcontextprotocol/sdk 1.32.2",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "fcf75999495b9ce0fea82f90b657a00d0d936f717b32a0d4e43fa2a2c6e9f2e1"
+    },
+    "dist/cjs/server/auth/handlers/token.js": {
+      "packages": [
+        "@modelcontextprotocol/sdk 1.32.2",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "91aecf87c02cabe4568e5677ee81a286fefb38e370aa376ce62843a68809ffda"
+    },
+    "dist/cjs/server/auth/middleware/clientAuth.js": {
+      "packages": [
+        "@modelcontextprotocol/sdk 1.32.2",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "116ad5eb83c59b8611205c29022f9af9a4228504e9e48846a7b4d74ee59c15e3"
+    },
+    "dist/cjs/server/auth/router.js": {
+      "packages": [
+        "@modelcontextprotocol/sdk 1.32.2",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "a70077e9fbc6a04ee23d2502743fd491e2ec230dd6c18282331dfcac18e02cb1"
+    },
+    "dist/cjs/server/express.js": {
+      "packages": [
+        "@modelcontextprotocol/sdk 1.32.2",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "ccbc234ad55bbfcd4d733e73e8abd2295e0c2333100cad818675133bf841fe7d"
+    },
+    "dist/cjs/server/sse.js": {
+      "packages": [
+        "@modelcontextprotocol/sdk 1.32.2",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "f7112c093ddbfa9a0dfc7c186ac5ef5ccb183a415b91b8ae8c97048d25922ee9"
+    },
+    "dist/cjs/server/stdio.js": {
+      "packages": [
+        "@modelcontextprotocol/sdk 1.32.2",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "1943b9fb037788c7ec04b0dc34a23bfcba0395b4ea4aa914b40a4348a5d890bf"
+    },
+    "dist/cjs/server/zod-compat.js": {
+      "packages": [
+        "@modelcontextprotocol/sdk 1.32.2",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "083cdae912fcc72bfaf7f072f10471d7a07fb8b9d5388b9f5389394802c874da"
+    },
+    "dist/cjs/server/zod-json-schema-compat.js": {
+      "packages": [
+        "@modelcontextprotocol/sdk 1.32.2",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "1e642542a22f273cb3b9cd17f8c9deb540be84ba35cc0c3e0872a0185760541a"
+    },
+    "dist/cjs/shared/auth.js": {
+      "packages": [
+        "@modelcontextprotocol/sdk 1.32.2",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "4695fb80127264a3827eb2c81b7005e71afbc4e5aa4604fc0f326c66e84d9ffb"
+    },
+    "dist/cjs/shared/mediaType.js": {
+      "packages": [
+        "@modelcontextprotocol/sdk 1.32.2",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "e6275d088db495052332a6971b333c61cb54f3aa72dcdd65a1afba25e8c55186"
+    },
+    "dist/cjs/types.js": {
+      "packages": [
+        "@modelcontextprotocol/sdk 1.32.2",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "2995d96aaf118ae001a6c673ff386bb7edb97b2ed7f3214549ba005b4a6c99be"
+    },
+    "dist/cjs/validation/ajv-provider.js": {
+      "packages": [
+        "@modelcontextprotocol/sdk 1.32.2",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "697c11d91d249750a3e44d4423c415264f102631b4fe755ff998ccc9b8402bff"
+    }
+  },
+  "@stablelib/base64 1.0.1": {
+    "lib/base64.js": {
+      "packages": [
+        "@stablelib/base64 1.0.1",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "e6fbabe53d8926cfd3baa4057493493f24d8c51ece428d97d7dbb68d5f001160"
+    }
+  },
+  "agent-base 7.1.4": {
+    "dist/helpers.js": {
+      "packages": [
+        "agent-base 7.1.4",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "6043c5c1bb76491992f6c56f65895e2e9167ae10122fef4d58d6638ebac4ba05"
+    },
+    "dist/index.js": {
+      "packages": [
+        "agent-base 7.1.4",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "c6503bd5e007db8b73fedf07b6eaaf4a94d5541953f0d06c8a17d1644c29a0c5"
+    }
+  },
+  "base64-js 1.5.1": {
+    "base64js.min.js": {
+      "packages": [
+        "browser-pack (Browserify prelude)",
+        "umd (Browserify wrapper)"
+      ],
+      "sha256": "d2e82495607abf54f16e21de04d90ba9ce1605451667d88425babece988f148b"
+    }
+  },
+  "bowser 2.15.0": {
+    "bundled.js": {
+      "packages": [
+        "@babel/helpers 7.29.7",
+        "bowser 2.15.0",
+        "core-js 3.49.0",
+        "regenerator-runtime 0.14.1",
+        "rolldown 1.2.0"
+      ],
+      "sha256": "7014d897aa5958525b3019cbcf6c27855b1d8cf5b0d0191fb27b8a81c32cbc14"
+    },
+    "es5.js": {
+      "packages": [
+        "@babel/helpers 7.29.7",
+        "bowser 2.15.0",
+        "rolldown 1.2.0"
+      ],
+      "sha256": "fa1c0903e2e51e6980b685a46612b671a634df4d794fcde8c02e95b7f5b04d9f"
+    }
+  },
+  "chalk 6.0.0": {
+    "source/vendor/ansi-styles/index.js": {
+      "packages": [
+        "ansi-styles (Chalk vendor)"
+      ],
+      "sha256": "f28f1ede59be327626e4ae5f9f05387ab8072f298ba1ab7f9c9262d39923a25d"
+    },
+    "source/vendor/supports-color/browser.js": {
+      "packages": [
+        "supports-color (Chalk vendor)"
+      ],
+      "sha256": "9baf3a04474e1d1cca8cb8bd46a4c9ca212f448c2c2f6f1725edf62ccf8a4997"
+    },
+    "source/vendor/supports-color/index.js": {
+      "packages": [
+        "supports-color (Chalk vendor)"
+      ],
+      "sha256": "57f56bb90a586a6c7a65fc831cae47f0773b8f42edf11abb7c4f2273b82fb63e"
+    }
+  },
+  "content-type 1.0.5": {
+    "index.js": {
+      "packages": [
+        "media-typer 0.3.0"
+      ],
+      "sha256": "7d76ae0f8ecc0a8c053de97b0f695f3fa3df33f692d1bd241307995304e5f63d"
+    }
+  },
+  "diff 8.0.4": {
+    "dist/diff.js": {
+      "packages": [
+        "diff 8.0.4",
+        "rollup (UMD wrapper)"
+      ],
+      "sha256": "e4553a1cd7ac8a2e88bb27580afb8df6018a0c6a028eb2b2f5f3a5a36f40f338"
+    },
+    "dist/diff.min.js": {
+      "packages": [
+        "diff 8.0.4",
+        "rollup (UMD wrapper)"
+      ],
+      "sha256": "867a25856adc5d6e1afef41d96781a601e7db1a9bc707f83be8cfd914024a7cc"
+    },
+    "libcjs/diff/array.js": {
+      "packages": [
+        "diff 8.0.4",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "09a034f96fc23827d69cfd8dc68a76d9fb8e333461ea9c7bd192bbd883dbbf11"
+    },
+    "libcjs/diff/character.js": {
+      "packages": [
+        "diff 8.0.4",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "3576be020bb96d076d2129d9fb64b0fcad0a51ff5c55adc9d4c7c6916f610f95"
+    },
+    "libcjs/diff/css.js": {
+      "packages": [
+        "diff 8.0.4",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "020c65aebad5c885f685a89b51f1a11465c1553a8855f51a5e116e4caf8733c3"
+    },
+    "libcjs/diff/json.js": {
+      "packages": [
+        "diff 8.0.4",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "9a1a6236f5d3a8f03d9988eb7d3cad5b684397aa2b3522552bc743973407d70d"
+    },
+    "libcjs/diff/line.js": {
+      "packages": [
+        "diff 8.0.4",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "f67389d2fbe9522cae247aaa9fce05250f1c19196c93a4a4d5f3bf06469b5af7"
+    },
+    "libcjs/diff/sentence.js": {
+      "packages": [
+        "diff 8.0.4",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "95a8abfa3db14d2cf4f0b440cde9cd3c102deeba8da8dd7217e81c0abc031251"
+    },
+    "libcjs/diff/word.js": {
+      "packages": [
+        "diff 8.0.4",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "24d8bcc679706f5600392f39bdc2e481aedac4e99b5610b4dfa2aa420d3484e9"
+    },
+    "libcjs/patch/create.js": {
+      "packages": [
+        "diff 8.0.4",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "ee198e219d6ad27984120c208aded70fc4d4b862924c35b85e301360216c3fef"
+    },
+    "libcjs/patch/line-endings.js": {
+      "packages": [
+        "diff 8.0.4",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "c7bbcd72d8fc604d4be20738561d380006a236bbcd9217cdeaef7a9e1fca0bcd"
+    },
+    "libcjs/patch/reverse.js": {
+      "packages": [
+        "diff 8.0.4",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "4113bedc10ee730295ca8b61b2cad367df6ec7a241db27e6b513a2a20654d67f"
+    }
+  },
+  "express-rate-limit 8.7.4": {
+    "dist/index.cjs": {
+      "packages": [
+        "esbuild 0.28.2"
+      ],
+      "sha256": "eef1506c4e3022b64488b6d4195fbac01fca168e79364fadbf17aca0415c4ef8"
+    }
+  },
+  "formdata-polyfill 4.0.10": {
+    "formdata.min.js": {
+      "packages": [
+        "google-closure-compiler 20210808.0.0"
+      ],
+      "sha256": "697a9732b7e7c2ea771298fe0020dd80797b280a3ce528a5d3044c89f891f1d4"
+    }
+  },
+  "gaxios 7.3.1": {
+    "build/cjs/browser-test/browser-test-runner.js": {
+      "packages": [
+        "gaxios 7.3.1",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "a2a31674fdc188e34ca2ff31d32e9460ff2dc3559d0fe3fc5b3a22508a53e7b1"
+    },
+    "build/cjs/browser-test/test.browser.js": {
+      "packages": [
+        "gaxios 7.3.1",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "a2a11e7827248d063eaf6f23557b2dc264405b4fdead8e72688b9fc3bf128ac9"
+    },
+    "build/cjs/src/common.js": {
+      "packages": [
+        "gaxios 7.3.1",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "189ee5c8a7d069160982c332ef63739e9ac16868b63c9da70c519d476320c9ef"
+    },
+    "build/cjs/src/gaxios.js": {
+      "packages": [
+        "gaxios 7.3.1",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "dd3f86c42823271c5424faec676cfd1e29b0bf4d8f56c8dfc002abd6ac7ca89c"
+    },
+    "build/cjs/src/index.js": {
+      "packages": [
+        "gaxios 7.3.1",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "be38d1413c611928eaeaac74efdb0a8cddb85c12bad8b72130c0515c7090ddd9"
+    },
+    "build/cjs/system-test/test.install.js": {
+      "packages": [
+        "gaxios 7.3.1",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "8fcbdf4cac3947551cab7c254da8d594d645a0f51dc214196b9d2d1f19922713"
+    }
+  },
+  "gcp-metadata 8.1.2": {
+    "build/src/index.js": {
+      "packages": [
+        "gcp-metadata 8.1.2",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "d804f162e0bcdffc926e7365af3445a0d483317c128ca7ea7044aced86ab9e27"
+    }
+  },
+  "get-intrinsic 1.3.0": {
+    "index.js": {
+      "packages": [
+        "lodash 4.17.15"
+      ],
+      "sha256": "c3bc7278af37cede0da2db32724fa0b89a07c44205c44c4f5db0e4d8d497d49c"
+    }
+  },
+  "google-auth-library 10.9.1": {
+    "build/src/crypto/crypto.js": {
+      "packages": [
+        "google-auth-library 10.9.1",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "6ad5f7a8cb78d5cb988eaa4232742f0614aef20ec694e91c04846d189288b715"
+    },
+    "build/src/index.js": {
+      "packages": [
+        "google-auth-library 10.9.1",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "2944d790f00cec86d7b00d7ea0ad8d26fe8c718f79f8e49fede5a7ba041c1a42"
+    }
+  },
+  "google-logging-utils 1.1.3": {
+    "build/src/index.js": {
+      "packages": [
+        "google-logging-utils 1.1.3",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "1a5ea0d9ced8b51d8c4756e6db9448649b14ba81a29b1d1c034fd3c17e050963"
+    },
+    "build/src/logging-utils.js": {
+      "packages": [
+        "Node.js debuglog",
+        "google-logging-utils 1.1.3",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "1295d208af97e5fbb2a1f38463afdfc27efc4c5178b1e22073d258f749b9bcea"
+    }
+  },
+  "hono 4.13.19": {
+    "dist/_virtual/_rolldown/runtime.js": {
+      "packages": [
+        "hono 4.13.19",
+        "rolldown 1.2.10"
+      ],
+      "sha256": "1b10431e13b4eb349c329aba7d2beb6e6c224de569eac52966731c8239a941c9"
+    },
+    "dist/cjs/_virtual/_rolldown/runtime.js": {
+      "packages": [
+        "hono 4.13.19",
+        "rolldown 1.2.10"
+      ],
+      "sha256": "3366cfc673858aaea1300f206dfa5d457d0d7caf0bc5553e09f8c675e39bfe48"
+    },
+    "dist/cjs/compose.js": {
+      "packages": [
+        "koa-compose (Hono adaptation)"
+      ],
+      "sha256": "6b7de513fab3ad04c44232ec16b1882a4677c6d2b3b1d4a3eef029141019cf03"
+    },
+    "dist/compose.js": {
+      "packages": [
+        "koa-compose (Hono adaptation)"
+      ],
+      "sha256": "6dcd93b8a74298b867b8d2c90ca4fa344677333f16e92393668d224404326b3a"
+    }
+  },
+  "https-proxy-agent 7.0.6": {
+    "dist/index.js": {
+      "packages": [
+        "https-proxy-agent 7.0.6",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "30165586fac3becbc9dbf2b7b5bdaa802a77ac34af9926208f6e94a3bd87ef31"
+    },
+    "dist/parse-proxy-response.js": {
+      "packages": [
+        "https-proxy-agent 7.0.6",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "36a30ebcd66060fa8e3aba8295854757afbd60f2643d8992814727f249c5eba0"
+    }
+  },
+  "ip-address 10.7.6": {
+    "dist/ip-address.js": {
+      "packages": [
+        "ip-address 10.7.6",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "3e38a4b349282e67a811aece46e273b1b24abbba2897bea707a00170ebdfc200"
+    },
+    "dist/ipv4.js": {
+      "packages": [
+        "ip-address 10.7.6",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "69b33990eca8bf92704c0b47843c2869daa517ee5cb7cb170c052481bcb67c90"
+    },
+    "dist/ipv6.js": {
+      "packages": [
+        "ip-address 10.7.6",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "722b85c8cac362ca98b991b988c7464e620702c419e934a8b2166867b6850511"
+    },
+    "dist/v6/regular-expressions.js": {
+      "packages": [
+        "ip-address 10.7.6",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "31f99f670ac43ebe9694dc84b6cc9a00eb5af08f90c0ca0d2d8c5c63e5b67415"
+    }
+  },
+  "jiti 2.7.0": {
+    "dist/babel.cjs": {
+      "packages": [
+        "@babel/core 7.29.0",
+        "@babel/generator 7.29.1",
+        "@babel/helper-annotate-as-pure 7.27.3",
+        "@babel/helper-create-class-features-plugin 7.29.3",
+        "@babel/helper-globals 7.28.0",
+        "@babel/helper-member-expression-to-functions 7.28.5",
+        "@babel/helper-module-imports 7.28.6",
+        "@babel/helper-module-transforms 7.28.6",
+        "@babel/helper-optimise-call-expression 7.27.1",
+        "@babel/helper-plugin-utils 7.28.6",
+        "@babel/helper-replace-supers 7.28.6",
+        "@babel/helper-simple-access 7.27.1",
+        "@babel/helper-skip-transparent-expression-wrappers 7.27.1",
+        "@babel/helper-string-parser 7.27.1",
+        "@babel/helper-validator-identifier 7.28.5",
+        "@babel/helper-validator-option 7.27.1",
+        "@babel/helpers 7.29.2",
+        "@babel/parser 7.29.3",
+        "@babel/plugin-proposal-decorators 7.29.0",
+        "@babel/plugin-syntax-class-properties 7.12.13",
+        "@babel/plugin-syntax-decorators 7.28.6",
+        "@babel/plugin-syntax-import-assertions 7.28.6",
+        "@babel/plugin-syntax-jsx 7.28.6",
+        "@babel/plugin-syntax-typescript 7.28.6",
+        "@babel/plugin-transform-destructuring 7.28.5",
+        "@babel/plugin-transform-explicit-resource-management 7.28.6",
+        "@babel/plugin-transform-export-namespace-from 7.27.1",
+        "@babel/plugin-transform-modules-commonjs 7.24.7",
+        "@babel/plugin-transform-modules-commonjs 7.28.6",
+        "@babel/plugin-transform-react-jsx 7.28.6",
+        "@babel/plugin-transform-typescript 7.28.6",
+        "@babel/preset-typescript 7.28.5",
+        "@babel/template 7.28.6",
+        "@babel/traverse 7.29.0",
+        "@babel/types 7.29.0",
+        "@import-meta-env/babel 0.4.2",
+        "@jridgewell/gen-mapping 0.3.13",
+        "@jridgewell/remapping 2.3.5",
+        "@jridgewell/resolve-uri 3.1.2",
+        "@jridgewell/sourcemap-codec 1.5.5",
+        "@jridgewell/trace-mapping 0.3.31",
+        "@rspack/core 2.0.1",
+        "acorn 8.16.0",
+        "babel-plugin-parameter-decorator 1.0.16",
+        "babel-plugin-transform-import-meta 2.1.1",
+        "babel-plugin-transform-typescript-metadata (jiti fork)",
+        "convert-source-map 2.0.0",
+        "debug 4.4.3",
+        "gensync 1.0.0-beta.2",
+        "has-flag 4.0.0",
+        "import-meta-resolve 4.2.0",
+        "jsesc 3.1.0",
+        "json5 2.2.3",
+        "mlly 1.8.2",
+        "ms 2.1.3",
+        "pathe 2.0.3",
+        "semver 6.3.1",
+        "supports-color 7.2.0"
+      ],
+      "sha256": "b3bc89a8dc40860fb6a7a78512bdfe5976c6253e6ded74b7d96ece803cac8701"
+    },
+    "dist/jiti.cjs": {
+      "packages": [
+        "@rspack/core 2.0.1",
+        "acorn 8.16.0",
+        "escape-string-regexp 5.0.0",
+        "get-tsconfig 4.14.0",
+        "import-meta-resolve 4.2.0",
+        "is-fs-case-sensitive 2.0.0",
+        "jsonc-parser 3.3.1",
+        "mlly 1.8.2",
+        "pathe 2.0.3",
+        "resolve-pkg-maps 1.0.0",
+        "slash 5.1.0",
+        "std-env 4.1.0",
+        "ufo 1.6.4",
+        "yoctocolors 2.1.2"
+      ],
+      "sha256": "a0b3b8d5e06a0519c66b62179e29200533057920f6f11370546e979dacd24c49"
+    }
+  },
+  "json-bigint 1.0.0": {
+    "lib/parse.js": {
+      "packages": [
+        "bourne (regexes)",
+        "secure-json-parse (regexes)"
+      ],
+      "sha256": "a0d37ada5af598f4285e465ebf428ef03d570305a2437aa0cd2653861061cc4f"
+    }
+  },
+  "lru-cache 11.5.3": {
+    "dist/commonjs/browser/index.min.js": {
+      "packages": [
+        "esbuild (CommonJS loader)",
+        "lru-cache 11.5.3"
+      ],
+      "sha256": "e68572bb74efeb966480dbf850cc198f02625b149f2018c1adeb3e034cbbe1fa"
+    },
+    "dist/commonjs/index.min.js": {
+      "packages": [
+        "esbuild (CommonJS loader)",
+        "lru-cache 11.5.3"
+      ],
+      "sha256": "e68572bb74efeb966480dbf850cc198f02625b149f2018c1adeb3e034cbbe1fa"
+    },
+    "dist/commonjs/node/index.min.js": {
+      "packages": [
+        "esbuild (CommonJS loader)",
+        "lru-cache 11.5.3"
+      ],
+      "sha256": "adc5795d0e23ec2528cc30236c4469b39a40322946f089a81daef1cfe7a8b928"
+    },
+    "dist/esm/browser/index.min.js": {
+      "packages": [
+        "lru-cache 11.5.3"
+      ],
+      "sha256": "de8cbf33aaab6c3baac77250443d991faeb82a87f772b8f2e1df39b75004dc88"
+    },
+    "dist/esm/index.min.js": {
+      "packages": [
+        "lru-cache 11.5.3"
+      ],
+      "sha256": "51fd7970cdf3cb675ec30bf13e2d5fbb5de918abb795a0aa61f66874494c5027"
+    },
+    "dist/esm/node/index.min.js": {
+      "packages": [
+        "lru-cache 11.5.3"
+      ],
+      "sha256": "9d59bb1a03f11f3ae91aa0bffbfd58a8c38de94cf011f960850740921b00e74d"
+    }
+  },
+  "marked 18.0.11": {
+    "lib/marked.esm.js": {
+      "packages": [
+        "marked 18.0.11"
+      ],
+      "sha256": "05e41134d075ad3a009a748d6c779c3d83cea9b942be911c2d9abade36d1dd31"
+    },
+    "lib/marked.umd.js": {
+      "packages": [
+        "esbuild 0.28.2",
+        "esbuild-plugin-umd-wrapper 3.0.0",
+        "marked 18.0.11"
+      ],
+      "sha256": "69451c8541c9c1e7a4bf3ffc6f73c4d89633de92bfbe3e484dfe182ef8091f88"
+    }
+  },
+  "openai 7.19.0": {
+    "internal/decoders/line.js": {
+      "packages": [
+        "httpx line decoder"
+      ],
+      "sha256": "565815d0a696fcca752799c25b2cd50ad0b88d0a67aa9314df230a6ef9f8c40d"
+    },
+    "internal/decoders/line.mjs": {
+      "packages": [
+        "httpx line decoder"
+      ],
+      "sha256": "cc64f56402b80488c3478a9586d6239e3c42d289b496ea97ee79ff3f4abffa7f"
+    }
+  },
+  "partial-json 0.1.7": {
+    "dist/index.js": {
+      "packages": [
+        "partial-json 0.1.7",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "23f750aa1170c830b7ef180135852317886cc58ce7d2597e5eeee044539072c7"
+    }
+  },
+  "protobufjs 7.6.6": {
+    "dist/light/protobuf.js": {
+      "packages": [
+        "@protobufjs/aspromise 1.1.2",
+        "@protobufjs/base64 1.1.2",
+        "@protobufjs/codegen 2.0.5",
+        "@protobufjs/eventemitter 1.1.1",
+        "@protobufjs/fetch 1.1.1",
+        "@protobufjs/float 1.0.2",
+        "@protobufjs/path 1.1.2",
+        "@protobufjs/pool 1.1.0",
+        "@protobufjs/utf8 1.1.1",
+        "browser-resolve 2.0.0"
+      ],
+      "sha256": "a8d63b448ded5c382c57e9726ce256946c351a3b774e9255b15d66f2618f105f"
+    },
+    "dist/light/protobuf.min.js": {
+      "packages": [
+        "@protobufjs/aspromise 1.1.2",
+        "@protobufjs/base64 1.1.2",
+        "@protobufjs/codegen 2.0.5",
+        "@protobufjs/eventemitter 1.1.1",
+        "@protobufjs/fetch 1.1.1",
+        "@protobufjs/float 1.0.2",
+        "@protobufjs/path 1.1.2",
+        "@protobufjs/pool 1.1.0",
+        "@protobufjs/utf8 1.1.1"
+      ],
+      "sha256": "b4f1c5131528ae8bccb8487bd0e78b34e330d4d2222356b46abcf2e341f3df6c"
+    },
+    "dist/minimal/protobuf.js": {
+      "packages": [
+        "@protobufjs/aspromise 1.1.2",
+        "@protobufjs/base64 1.1.2",
+        "@protobufjs/eventemitter 1.1.1",
+        "@protobufjs/float 1.0.2",
+        "@protobufjs/pool 1.1.0",
+        "@protobufjs/utf8 1.1.1"
+      ],
+      "sha256": "676840c83c3eed7250f8f610b3b64dfa3e96b91f995b81011e6a19f0063dd32a"
+    },
+    "dist/minimal/protobuf.min.js": {
+      "packages": [
+        "@protobufjs/aspromise 1.1.2",
+        "@protobufjs/base64 1.1.2",
+        "@protobufjs/eventemitter 1.1.1",
+        "@protobufjs/float 1.0.2",
+        "@protobufjs/pool 1.1.0",
+        "@protobufjs/utf8 1.1.1"
+      ],
+      "sha256": "89a2c97e9ebe58cd3c1c5d0c79328415cc16cde94fd77d585c144a56a6e588a6"
+    },
+    "dist/protobuf.js": {
+      "packages": [
+        "@protobufjs/aspromise 1.1.2",
+        "@protobufjs/base64 1.1.2",
+        "@protobufjs/codegen 2.0.5",
+        "@protobufjs/eventemitter 1.1.1",
+        "@protobufjs/fetch 1.1.1",
+        "@protobufjs/float 1.0.2",
+        "@protobufjs/path 1.1.2",
+        "@protobufjs/pool 1.1.0",
+        "@protobufjs/utf8 1.1.1",
+        "browser-resolve 2.0.0"
+      ],
+      "sha256": "a5690b7b726dd617f180005582c1fef3a18b1c6142c7fd0623977b1e26aa1446"
+    },
+    "dist/protobuf.min.js": {
+      "packages": [
+        "@protobufjs/aspromise 1.1.2",
+        "@protobufjs/base64 1.1.2",
+        "@protobufjs/codegen 2.0.5",
+        "@protobufjs/eventemitter 1.1.1",
+        "@protobufjs/fetch 1.1.1",
+        "@protobufjs/float 1.0.2",
+        "@protobufjs/path 1.1.2",
+        "@protobufjs/pool 1.1.0",
+        "@protobufjs/utf8 1.1.1"
+      ],
+      "sha256": "c7b991377d88cf50736bbfbd75592d6514c596b6ee195baf8ad2268316fe560a"
+    }
+  },
+  "qs 6.17.1": {
+    "dist/qs.js": {
+      "packages": [
+        "browser-pack (Browserify prelude)",
+        "call-bind-apply-helpers 1.0.2",
+        "call-bound 1.0.4",
+        "dunder-proto 1.0.1",
+        "es-define-property 1.0.1",
+        "es-errors 1.3.0",
+        "es-object-atoms 1.1.2",
+        "function-bind 1.1.2",
+        "get-intrinsic 1.3.0",
+        "get-proto 1.0.1",
+        "gopd 1.2.0",
+        "has-symbols 1.1.0",
+        "hasown 2.0.4",
+        "lodash 4.17.15",
+        "math-intrinsics 1.1.0",
+        "object-inspect 1.13.4",
+        "side-channel 1.1.1",
+        "side-channel-list 1.0.1",
+        "side-channel-map 1.0.1",
+        "side-channel-weakmap 1.0.2",
+        "umd (Browserify wrapper)"
+      ],
+      "sha256": "68ac191b62a8951f6bc23cd12bd34478d379e54ff71002f37117f952d3bcf471"
+    }
+  },
+  "quickjs-wasi 3.6.2": {
+    "dist/index.js": {
+      "packages": [
+        "quickjs-wasi 3.6.2",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "91fcfc11e7f7372f3aee8d4373c0d4f969baac5cd12648663971550054217ae8"
+    }
+  },
+  "typebox 1.3.27": {
+    "build/schema/engine/_stack.mjs": {
+      "packages": [
+        "typebox 1.3.27",
+        "typescript (emitted helpers)"
+      ],
+      "sha256": "de5f29c4e6851cf54502f6597d2a939830e562a00edc58486b990ca2c2c8e4b3"
+    }
+  },
+  "web-streams-polyfill 3.3.3": {
+    "dist/polyfill.es2018.js": {
+      "packages": [
+        "rollup (UMD wrapper)",
+        "web-streams-polyfill 3.3.3"
+      ],
+      "sha256": "33b2e1c79282ecbe66cfbb5d186506208ba175f5f65fb403918e7191cc254c06"
+    },
+    "dist/polyfill.es2018.min.js": {
+      "packages": [
+        "rollup (UMD wrapper)",
+        "web-streams-polyfill 3.3.3"
+      ],
+      "sha256": "4e59cc2239a43ece270b0819d801145905edac0a25649e3dcef8f0231a6e05b3"
+    },
+    "dist/polyfill.es6.js": {
+      "packages": [
+        "rollup (UMD wrapper)",
+        "tslib 2.6.2",
+        "web-streams-polyfill 3.3.3"
+      ],
+      "sha256": "b29c0ed31a973c184cb33947601fbabb850b03d881f8c51dfec931ec30591f9e"
+    },
+    "dist/polyfill.es6.min.js": {
+      "packages": [
+        "rollup (UMD wrapper)",
+        "tslib 2.6.2",
+        "web-streams-polyfill 3.3.3"
+      ],
+      "sha256": "727f882429b2a357d784c17e1a865afded64de840ef170b554e33a280968579e"
+    },
+    "dist/polyfill.es6.mjs": {
+      "packages": [
+        "tslib 2.6.2"
+      ],
+      "sha256": "8d98170adf433abbd775bb40749b4bd0f6689c22f4d74cf754d75cd816bb5ba4"
+    },
+    "dist/polyfill.js": {
+      "packages": [
+        "rollup (UMD wrapper)",
+        "tslib 2.6.2",
+        "web-streams-polyfill 3.3.3"
+      ],
+      "sha256": "bf60bbc49c594655fabdf7d7d4e92f49c19094a30187c412a5391d150980ae5f"
+    },
+    "dist/polyfill.min.js": {
+      "packages": [
+        "rollup (UMD wrapper)",
+        "tslib 2.6.2",
+        "web-streams-polyfill 3.3.3"
+      ],
+      "sha256": "839d34aee580c02fdb5174481cefba49bb08f23a7a91bca156a9c83342930caf"
+    },
+    "dist/polyfill.mjs": {
+      "packages": [
+        "tslib 2.6.2"
+      ],
+      "sha256": "8907cccf1dec3e222bb6a3d484ef7e50e8f47bea84b36f53896b88f4985e7c3b"
+    },
+    "dist/ponyfill.es2018.js": {
+      "packages": [
+        "rollup (UMD wrapper)",
+        "web-streams-polyfill 3.3.3"
+      ],
+      "sha256": "a08d04713a8bf455e3668dc8b65c370b8f45d8652246c6ceb9523aa5adac037f"
+    },
+    "dist/ponyfill.es6.js": {
+      "packages": [
+        "rollup (UMD wrapper)",
+        "tslib 2.6.2",
+        "web-streams-polyfill 3.3.3"
+      ],
+      "sha256": "695e4248096dc1c4c7190945ef509192c11de892d3fc34ee67f8ac84534b44ca"
+    },
+    "dist/ponyfill.es6.mjs": {
+      "packages": [
+        "tslib 2.6.2"
+      ],
+      "sha256": "613eb31956bf16ee182ff8876533a30e9bfa5f29c07659175641ca5f7189d448"
+    },
+    "dist/ponyfill.js": {
+      "packages": [
+        "rollup (UMD wrapper)",
+        "tslib 2.6.2",
+        "web-streams-polyfill 3.3.3"
+      ],
+      "sha256": "afaba1d6e4af6daae35514c8e7c993173a7af4e5c8960f0ec70e21e90505b1f7"
+    },
+    "dist/ponyfill.mjs": {
+      "packages": [
+        "tslib 2.6.2"
+      ],
+      "sha256": "e3dab07486b13ac13d3901dedfe66349e2ce0ff767996737d26d00e85483130a"
+    }
+  },
+  "ws 8.21.0": {
+    "lib/limiter.js": {
+      "packages": [
+        "async-limiter"
+      ],
+      "sha256": "e0469d4b83f6ba764b15f80e1766b75c136fbff68f048f4c050f0b1c7f065f69"
+    }
+  },
+  "zod 4.6.7": {
+    "compile.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "56dfeaf286f377344636dd37c19bd2dff50c0a0ed4ab99bb8c42bddcaa535914"
+    },
+    "index.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "d93a8730d52c0fedab13619c8bc971cc99934c13d8dce7c97ee4d03a98d4096e"
+    },
+    "locales/index.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "581bd6a445bee039476bc2af57fa9853879468a8ad19ea3a0f986ff27952ce1e"
+    },
+    "mini/index.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "7c8d8f6e8b841a620bb49de3d58bd1e97d0e8aacfa1f051747d7ae47b893e857"
+    },
+    "v3/errors.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "e22989a517c8a0ee9e0946df403ca0d1fe898125dc4e0e747bbc79dd5d17faec"
+    },
+    "v3/external.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "b543e566b3c5dfe3ce130b15514bbc62236d476edec3e7ee84bf995977db9b95"
+    },
+    "v3/helpers/parseUtil.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "53dfcdf771a06985cc4186aa3dd51552d13be3e90c59aa38414b93875f908e26"
+    },
+    "v3/index.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "80849f43fee80f567614da950ab7b1393bae87197a95c0298c55cb2fec765000"
+    },
+    "v4-mini/index.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "7c8d8f6e8b841a620bb49de3d58bd1e97d0e8aacfa1f051747d7ae47b893e857"
+    },
+    "v4/classic/coerce.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "0c682fe4f473e5896cfc048c392fc602fc885ffd7d6e15b1a5fe376b88b19942"
+    },
+    "v4/classic/compat.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "dd0289ac1a42ced592cbc6e049f61992649c524badf53eded6ea09ec05c2bb81"
+    },
+    "v4/classic/deep-partial.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "45a5b3cde1d17e5a87202d5f5a8c2d7d858bb2ca509855919a8b70cc3d858bf4"
+    },
+    "v4/classic/errors.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "7acf7b35400c681e4e9eb8da7b2921891f5a29a132cba0547a9635e625203436"
+    },
+    "v4/classic/external.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "0f917f6f02890347c44e4fca280480ace573ac87b9c697d1c47761a45fdcb620"
+    },
+    "v4/classic/from-json-schema.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "2bdbfa970dac5e9bccaf98e27ab2cf5264e253563df306a941878b634f3d56bf"
+    },
+    "v4/classic/in-out.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "17c0700c8c44ca7d23cc417353def8536fa1b267e3a44167fa3885c65f53683b"
+    },
+    "v4/classic/index.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "2d6bfbfbf3c1bc3a18afb218decda6cf34e1f4e9d2e9ddbabc92cabbbb0ad77d"
+    },
+    "v4/classic/iso.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "3620ee2ea251ef945af2f85504ca1099a47318b90ff1a83532dfba3eacb2d256"
+    },
+    "v4/classic/parse.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "3141ebbdd2d7b553dcf5ebfc683c1abeed21140c38db5bd532f2204970339dd7"
+    },
+    "v4/classic/schemas.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "c1870a72d6809d462a90ee1d2bcb67f7f6beea4a504ae56c28b95df50074c4b2"
+    },
+    "v4/core/api.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "1aef5cd4ed0cca874b02bf8081a67db4908cd7858ff0c61c593ce58c74e619dd"
+    },
+    "v4/core/checks.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "9a2a428602fe9e380ea2a08495a47101a56710d814fe18fb0e6e30f65686a703"
+    },
+    "v4/core/compile.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "53920c324ac3709a099d2b608398699a6160211738c9ced6473065d9509b7b61"
+    },
+    "v4/core/errors.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "2e00adbc6abd966a2b2c68815e0d0605cd69fbd8b8331a621a4ed1c906034479"
+    },
+    "v4/core/index.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "aed3af491dc4ee4d18d5c3454dfadc83ff7b5566921602a6adc37a5d58716f83"
+    },
+    "v4/core/json-schema-processors.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "224ea00a1d4a19732b5d76a30b8bba3d977463aab95c45f6825c677bb6fd49db"
+    },
+    "v4/core/memoizer.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "247fe6b5aa9ff57e8c83f984a14dea70b95f8428b15176d1666342a6449aac81"
+    },
+    "v4/core/parse.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "e19bfe843aed1844680a014f9a185d17374fe87bcd1676a2d62ed11177c1caa8"
+    },
+    "v4/core/regexes.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "0f597e9323d68371224cf7080d31e87e8f420dae4629e044a88b921470cb03d2"
+    },
+    "v4/core/schemas.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "valibot (Zod adaptation)",
+        "zod 4.6.7"
+      ],
+      "sha256": "7e35563b275bcc457a6d8ae0f5e1354b3c499ddd38401439f16bed1b8f357e41"
+    },
+    "v4/core/schemas.js": {
+      "packages": [
+        "valibot (Zod adaptation)"
+      ],
+      "sha256": "0ee56e8afbae28eeb1060a162ad7e56f0675ee6fb83f0ae56bea2e088f6cdbc0"
+    },
+    "v4/core/visit.cjs": {
+      "packages": [
+        "Jaen's mapOnSchema (Apache-2.0)",
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "66657f3a1c401d0f639c74fbac048c227446a440f9d99495418ced2d922bd881"
+    },
+    "v4/core/visit.js": {
+      "packages": [
+        "Jaen's mapOnSchema (Apache-2.0)"
+      ],
+      "sha256": "a804062900869e09ea0b975cfa569fd3c70dc33bad7fc30b63872d451cae29f7"
+    },
+    "v4/index.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "946e368ce2f7939fbf5946ab665f54d1e7d901d922db405aaf5dd40e87c636a0"
+    },
+    "v4/locales/ar.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "18559234f469cde82aafb15077a3765ffe76e8c80f1f7316a4d576edbc963e04"
+    },
+    "v4/locales/az.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "0a2110cf7561f599db6b62455791b7a68b57a4c93360a4ff1e6bf5e4e97bfe80"
+    },
+    "v4/locales/be.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "d7f97046fd97f51a879d124f860fb094a92a7404c88cc0db5b95f2e81823036f"
+    },
+    "v4/locales/bg.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "1cd93984b84ba81302994b085fb67b0c6f88a5eeceb3c45116bf3e6f1e3d49c1"
+    },
+    "v4/locales/bn.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "4fe9109396d083d9c2491fb0b19618441899b402807ede53202a50a1227e2984"
+    },
+    "v4/locales/ca.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "267b91c9833398c8c587316cd53eabac72c5542d159f9079badd50326a2316c7"
+    },
+    "v4/locales/ckb.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "af0033bd97c2840f0e081e0f7e0dac5ace12ee759abe714506a494ca04d0e518"
+    },
+    "v4/locales/cs.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "a0f49a63ded92bb49a3a5f3f4c9302818234ea356716e9a3d1635a4834f1d4c1"
+    },
+    "v4/locales/da.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "92bfee7ae9f3e0c3679802925ae770ff7ac38a4f5ee61242a8f3c93736430716"
+    },
+    "v4/locales/de.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "c32b1d9445bb790eba1b13645361e1e2f82436d4f4ea7ee5d8cbb638b3268bef"
+    },
+    "v4/locales/el.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "e0df8a9b0f6150b304e86536917c2e03bee05ffb1ee9276d605871d4324cf93f"
+    },
+    "v4/locales/en.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "14a0588e528ab1797db17fcb3913a5804089e17208330a4e442d21be67d47682"
+    },
+    "v4/locales/eo.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "5f527fcc03fbe88932cc5a01ad9bf97348a4259a8694b8b19100a5022437e582"
+    },
+    "v4/locales/es.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "a7378a27ab10a2c3f71814a1f5ab59e1882d75f04bf4719cedd46a743ef90bad"
+    },
+    "v4/locales/fa.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "9003c50e0b26fe1aa62ba1ecb4bb2eda7f09218e303eb3fb7691bdbb7306710e"
+    },
+    "v4/locales/fi.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "f8c8281ab10379a8603b7bd76257f6fa003c33e074a86bc20dfa05bd2e89dc4a"
+    },
+    "v4/locales/fr-CA.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "19abde712631bf2a3b367ea87a202d4967a89173846804ad4f094a0f12ef427b"
+    },
+    "v4/locales/fr.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "47dbdb2be984c58b78b52642b3cb2d1ca262c5be8f7e6e6110728a34ad6c6e55"
+    },
+    "v4/locales/gu.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "9dbafeed1d6b5906414ffd90b605c43fc50342ab9ec5f48a69c4a9319e17fb72"
+    },
+    "v4/locales/he.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "cd484340c55aea560e97411c9ae34500a0c9bd4441a1b4c1dc4021dc5af70d71"
+    },
+    "v4/locales/hi.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "0b2a995daed1ce721eb63eceef49ce13b5297982cb5fcd7df72659e42947aba5"
+    },
+    "v4/locales/hr.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "e680043892f62367fef1b35f3d07de6dd8f4865e5d32d476f493623b96c06bea"
+    },
+    "v4/locales/hu.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "f319b7f82012307620dc9010685bd820cdd4f713957f4cfabf504834592634b4"
+    },
+    "v4/locales/hy.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "ecf7a657a5d6ca7be0aa15d5e1fdc2608c11cf7d4bd3aa82e1ebc332f0032f95"
+    },
+    "v4/locales/id.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "fc95e772d0cc431b01740a75eb9cf42ee6ca24b06b3601772eca71d9d3f3cab2"
+    },
+    "v4/locales/index.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "eb58a51a00b5a880dcdf9d64b70f6069f386c9245350a54079a8c6007ac50ceb"
+    },
+    "v4/locales/is.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "915d8d354fc1b0385238e4a1cea9b409b66172a530e8bd265c758a31135b9f90"
+    },
+    "v4/locales/it.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "d66adacf3aa4df9b7c2cf3d92499da41d6b9039eac2b6e909b3d128699a156eb"
+    },
+    "v4/locales/ja.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "4277e0fa09adaf3d707b78c1d2468937e54dc6ee1350ed4d31ba7585c4258962"
+    },
+    "v4/locales/ka.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "3421600b01dd66f8ae65ba9a8ab9196737120792cceab431fe5ab90e73d52075"
+    },
+    "v4/locales/kh.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "5a5f3a63e4e97a25b44692b0910f73cf15e54fc5b03c61f9d87e2a9eb6e2a098"
+    },
+    "v4/locales/km.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "64491270f4b931ee972fb11721e36cf5c01e8cfae449f0e94e7dbb59b281653d"
+    },
+    "v4/locales/kn.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "1c05195a8a6e803ea732990c7cae61dd0d8162cf58dc0129d00de4f629798be2"
+    },
+    "v4/locales/ko.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "6a8121c8f38ffd119b4c229f8e22fe2b0115513aa1fd3d3c16970e967b11bebb"
+    },
+    "v4/locales/lt.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "e2f1b949cd5cc8b048955db5a85edcdf70ad17b6347bb6de493df53e18e0a9b9"
+    },
+    "v4/locales/mk.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "bdb023dd11a5b25d4caba0022491581f99264c12827146d2df3c2fb3b1a677d9"
+    },
+    "v4/locales/ms.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "fd5fa183bf0c2de256b12aa2a552bc6060d6e338a568f70eb2c53d508550c730"
+    },
+    "v4/locales/ne.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "dbbb0fbd17e5add4aa5552acf1fe880e4a884318b5476699f514e24a74be647f"
+    },
+    "v4/locales/nl.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "07cd7721ec51b7c89cb49af7a3b6fd596be2b783f06f923e21f29f7bce67c024"
+    },
+    "v4/locales/nn.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "91e2bf70fef65cd83e5f129ba919fdb6c306b394a1cc49dcdd70bb82a034a998"
+    },
+    "v4/locales/no.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "3606b2dc51dcc9f053a5d7311ee553cb158fa7af7883a7a502c4caf2ce6cd442"
+    },
+    "v4/locales/ota.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "4608faa8ed3d006312a7a6d7104765b111e32150138c388795327c69c5e79314"
+    },
+    "v4/locales/pl.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "9c369c4ab4f89df3339dae388e2bb2edb7e72a4842b780890dd5ce733af53a42"
+    },
+    "v4/locales/ps.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "b328aa16b991681bc0538e1034af3d61704434f5f10fa2d3509456314cb3c460"
+    },
+    "v4/locales/pt-BR.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "8f91c3ddd94d52ec29708a2efa4f6d0dfbc4ecd856708eca843c0bae031687f1"
+    },
+    "v4/locales/pt.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "6af7063f00ede92bf48760fde31b1fa61506be18254e38e2ae6fcf7aab997d89"
+    },
+    "v4/locales/ro.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "49f3e5315b019a14cd429729c81cac5de6996888ac1d9954219b15757177970e"
+    },
+    "v4/locales/ru.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "6cc82a211a5a72040148cfd929e1ec846fb1ea6c57388c7bf10aae7f16f4d3a0"
+    },
+    "v4/locales/sk.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "1ca6c89c6d63a2b8d22402f415cf99b153660f3986dd8a573f7f91ba1a28acca"
+    },
+    "v4/locales/sl.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "f987d45d2948b9c1ecc666cbec7f2470dabbd58a507391820ffd38f70c9dce0c"
+    },
+    "v4/locales/sv.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "c637d45fd8df36d8afb549adeb217085255cdc2fecc8dac348a50786c73099bf"
+    },
+    "v4/locales/ta.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "cefeaca1216517fb545069408f4df6861be08df745882360b6ea07f882b87a98"
+    },
+    "v4/locales/tg.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "8f8d44284f22935f9941dc5f242892c22a33ccce8d6cec0af6fd379eaeb3282b"
+    },
+    "v4/locales/th.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "ce34bfcf9be95ca74bf5034d45f957f291a5705997067a11d76740e6786438f6"
+    },
+    "v4/locales/tk.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "cf158cdbca312af9f2b879f78b09ebe189fabc272e67dbde59acd790da883dac"
+    },
+    "v4/locales/tr.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "e3343bc4bec8b59aa1cb5ea270d38d816f2ac41a05cd9f9222a4567bc919a4d4"
+    },
+    "v4/locales/ua.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "0565126e33d30fd26046fd5399fe6293e8827fa846c3a7ff414e4e63acbfbf0a"
+    },
+    "v4/locales/uk.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "b8483f06866654d53b689b0540492e2424cb4a128922781084365fe52ed443ae"
+    },
+    "v4/locales/ur.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "7d5c4e0fc0703e269fd2c98087187535d96d705be0f5b53b7b8cb403cf8d5843"
+    },
+    "v4/locales/uz.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "5694b9fd46b14f8645e241714b31b0ad1f06ed63122344906aa07c568e012bd3"
+    },
+    "v4/locales/vi.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "3019737524157cec5925e8d7886de8bd67ac21f923a1762505064dc93ebed177"
+    },
+    "v4/locales/yo.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "8ab657a1e641acc9f57b886b7b2ed47a96ed9a7677426a3047f14edec5041bb8"
+    },
+    "v4/locales/zh-CN.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "1cb0d539c55dd7def2507f008879542faf121a4e2d0edef87a8a9698a9a36517"
+    },
+    "v4/locales/zh-TW.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "d538244c13f88f72aa9b540f324590f546ce5649cc4540c9a439cb6b126384c7"
+    },
+    "v4/mini/coerce.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "41171fb2495686f645dccb177ae5f6462965d073c039ebb3df7d9b3c990bc6c2"
+    },
+    "v4/mini/deep-partial.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "fb888413040c7fb36bda2da5b9bf7099934c8a08018a4a1dff7d9af3dda3dffb"
+    },
+    "v4/mini/external.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "892311c6152ce5335814d29cff1453a517a44bef13696e11fb8b030775ef8c11"
+    },
+    "v4/mini/in-out.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "55796bd10e089338c913b0f62e96c2c8ce05691a780997109b11beabdbb5ee81"
+    },
+    "v4/mini/index.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "429b861f1d159fe1fdbb977ed4fbca5c11641d4df45d80d453768f8b0e710786"
+    },
+    "v4/mini/iso.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "9b8f6e3ae34dd9035dc7c4023ded84c655236121c32a66df3739dc28240ec460"
+    },
+    "v4/mini/schemas.cjs": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod 4.6.7"
+      ],
+      "sha256": "06fc34c10fb14cb50b09c525822886593fd501d9d9e964dec8f2dfc67c58f399"
+    }
+  },
+  "zod-to-json-schema 3.25.2": {
+    "dist/cjs/index.js": {
+      "packages": [
+        "typescript (emitted helpers)",
+        "zod-to-json-schema 3.25.2"
+      ],
+      "sha256": "b11a49bb4d13d0847ee2aef6487e8c3cf66cb1fef14065cac1f9ea5553952737"
+    }
+  }
+}
