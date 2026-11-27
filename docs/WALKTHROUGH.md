@@ -607,8 +607,8 @@ reaches `main`. Publishing a preview is a separate decision.
    `scripts/check.sh` on Ubuntu. The script checks the headless Rust crates
    and the runtime there. In the **macOS build** workflow, `plan` decides
    whether the change needs the Mac checks. `check` runs the workspace,
-   the real command sandbox, the iOS client compile check, the credential-free
-   Pi recovery probe and release-script tests. A prose-only PR skips the
+   the real command sandbox, the iOS client compile check, Pi recovery
+   tests and release-script tests. A prose-only PR skips the
    expensive Mac job. [Linux workflow](../.github/workflows/headless.yml) ·
    [Mac workflow](../.github/workflows/macos.yml) · [Shared checks](../scripts/check.sh)
 2. **Merge.** A push to `main` goes through `plan` again. Code changes
