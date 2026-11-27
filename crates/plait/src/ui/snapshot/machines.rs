@@ -340,6 +340,7 @@ fn remote_project_path_opens_only_absolute_paths() {
         // As after a real switch: the link is new, so opening a project does not relink.
         p.machines.fresh_link = true;
         p.run_command(
+            &p.machines.active.clone(),
             super::super::commands::Command::OpenRemoteProject("relative".into()),
             None,
             window,
@@ -347,6 +348,7 @@ fn remote_project_path_opens_only_absolute_paths() {
         );
         assert!(!p.lists().opened.contains(&PathBuf::from("relative")));
         p.run_command(
+            &p.machines.active.clone(),
             super::super::commands::Command::OpenRemoteProject("/remote/project".into()),
             None,
             window,

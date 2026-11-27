@@ -465,6 +465,9 @@ impl Plait {
         if self.draft_pending() {
             return self.retry_draft(window, cx);
         }
+        if self.host.creation.pending_create.is_none() {
+            return;
+        }
         self.new_thread_open = true;
         self.create_host_thread(window, cx);
     }

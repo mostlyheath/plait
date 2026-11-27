@@ -53,6 +53,16 @@ This table matches `ACTIONS` in `crates/plait/src/ui/actions.rs` (checked by aut
 | Control-Shift-Right | Move Tab Right | `tab.move_right` |
 | Control-Shift-Left | Move Tab Left | `tab.move_left` |
 | Cmd-Shift-Backslash | Show All Tabs… | `tab.list` |
+| Control-M | Switch Machine… | `machine.switch` |
+| Control-1 | Switch to Machine 1 | `machine_jump.1` |
+| Control-2 | Switch to Machine 2 | `machine_jump.2` |
+| Control-3 | Switch to Machine 3 | `machine_jump.3` |
+| Control-4 | Switch to Machine 4 | `machine_jump.4` |
+| Control-5 | Switch to Machine 5 | `machine_jump.5` |
+| Control-6 | Switch to Machine 6 | `machine_jump.6` |
+| Control-7 | Switch to Machine 7 | `machine_jump.7` |
+| Control-8 | Switch to Machine 8 | `machine_jump.8` |
+| Control-9 | Switch to Machine 9 | `machine_jump.9` |
 | Cmd-1 to Cmd-9 | Switch to Tab 1–9 | `tab_jump.1` to `tab_jump.9` |
 | Cmd-Option-1 to Cmd-Option-9 | Jump to Sidebar Item 1–9 | `jump.1` to `jump.9` |
 | Tab | Focus Next Control | `focus.next` |
@@ -60,6 +70,7 @@ This table matches `ACTIONS` in `crates/plait/src/ui/actions.rs` (checked by aut
 
 Notes on application shortcuts:
 
+- **Machines.** Control-M opens the picker. Up and Down move through its choices, Return activates the highlighted choice, and Escape closes it. Machine shortcuts follow saved list order and can be rebound individually. Reconnect and Add machine… start unbound.
 - **Commit.** With the commit message focused and the Commit button enabled, Cmd-Shift-C commits the staged changes, just like Return. Otherwise it opens Changes and focuses the commit message.
 - **Thread tabs.** All tab shortcuts, including **Show All Tabs…**, work with either **Hide** or **Show** in Settings → Appearance.
 - **Rebinding rules:** Text-editing keys and reserved macOS system shortcuts (such as `Cmd-Space`, `Cmd-Tab`, and `Cmd-Shift-3`–`5`) cannot be assigned. `Tab` and `Shift-Tab` always keep a binding. Each numbered jump set (`tab_jump.1`–`9` and `jump.1`–`9`) changes modifiers as one set.

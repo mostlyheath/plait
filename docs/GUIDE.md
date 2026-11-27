@@ -52,6 +52,10 @@ The client negotiates host protocol versions **1 through 7** per request and deg
 
 ## Machines
 
+Click the machine name at the foot of the sidebar or press **Ctrl-M**. The checkmark marks the current machine. Each saved address appears below its name. Use the arrow keys and Return to choose, or Escape to close. **Ctrl-1** through **Ctrl-9** choose machines in list order. The command palette also lists each machine by name. In **Settings → Keyboard**, you can change individual machine shortcuts and assign keys to machines beyond the ninth. Bindings follow list order.
+
+While a switch connects, the foot shows the current machine and its destination. If it fails, choose **Retry** or **Open settings…** in the menu. An offline machine offers **Reconnect**. After a host update check finds a release, **Host update** opens its settings. **Add machine…** opens the connection form.
+
 **Settings → Machines** selects which machine's host this window works with: **This Mac**, or another Mac or Linux machine over **SSH** or **Tailscale**. Each window works with one machine at a time; showing projects from several machines in one sidebar is planned ([Host-first Plait](HOST-FIRST.md)). The open folder belongs to the machine it was chosen on: after a switch, the window opens one of the new machine's projects and never lists or saves the other machine's folder as its own. Folding a project folds it only on that machine. A worktree removal that finishes after a switch or a reconnect changes the lists, and shows its result, only on the machine it ran on, once that machine's host is checked.
 
 **Saved work per machine.** Unsent work belongs to the machine entry selected in Plait when you typed it:
@@ -71,7 +75,7 @@ To add a remote machine, choose **Add machine…**:
 
 Choose **Use** to connect in the background; if connecting fails, Plait stays on the current machine and reports the error. The window remembers its last machine and reconnects at launch without blocking. **Remove…** forgets a machine locally without affecting its host or threads. Live remote verification against a separate Linux host remains open; see [Remote hosts](REMOTE.md) for transport and Linux service details.
 
-**Which machine you are on:** The control at the foot of the sidebar names the machine and shows its connection state. Open it to switch machines or choose **Manage machines…**. The window title also names a remote machine. A remote machine's name comes from its host (its hostname unless renamed); while it connects, the name you saved is shown.
+**Manage machines…** opens the saved list in Settings. The menu uses the names you saved. Once connected, the sidebar foot and window title use the name the remote host reports.
 
 Press **Cmd-Option-J** (Next Thread Needing Me) to open the oldest waiting approval, followed by failures or interruptions, then unread results. Archived threads are excluded. Settings and any available Update sit beside the machine control.
 

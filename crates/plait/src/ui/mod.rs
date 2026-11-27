@@ -31,6 +31,7 @@ mod issues_view;
 mod jump;
 mod live_conversation;
 mod machine_install;
+mod machine_picker;
 mod machine_update;
 mod markdown;
 mod model_picker;
@@ -202,6 +203,8 @@ pub struct Plait {
     issues: issues_view::IssuesUi,
     graph: graph_view::GraphUi,
     machines: settings_machines::MachinesUi,
+    machine_trigger: FocusHandle,
+    machine_menu_focus: FocusHandle,
     /// A thread was created at once (a worktree thread): open it when the host
     /// confirms creation, unless the user has gone elsewhere in the meantime.
     new_thread_open: bool,
@@ -245,7 +248,7 @@ pub struct Plait {
     toast_timer: Option<Task<()>>,
     session: session::SessionState,
     saved_work: saved_work::SavedWork,
-    picker_open: bool,
+    folder_prompt: Option<std::rc::Rc<plait_client::machines::MachineId>>,
     notice: Option<String>,
     machine_restore_notice: Option<String>,
     last_render_us: u128,
@@ -292,6 +295,8 @@ impl Plait {
             // remote folder must not be saved as this computer's.
             self.capture_session(cx);
             self.flush_machine_tabs(window, cx);
+            self.switch_creation_machine(&machine);
+            self.dismiss_machine_overlays(window, cx);
             self.park_workspace(cx);
             self.forget_saved_work();
         }
@@ -316,6 +321,45 @@ impl Plait {
         self.host.connection.connecting = false;
         self.reconnect_host(window, cx);
     }
+    fn dismiss_machine_overlays(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.overview = None;
+        self.worktrees.removal.answer(None);
+        self.close_overlay(false, window, cx);
+        self.navigation.menu = None;
+        self.navigation.rename = None;
+        self.dismiss_tab_controls();
+        self.remote_browser = None;
+        self.remote_listing = None;
+        self.folder_prompt = None;
+        self.pending_anchor = None;
+        if self.settings_open
+            && (self.settings_page == settings::SettingsPage::Project
+                || matches!(
+                    self.settings_tab,
+                    settings::SettingsTab::NewThreads
+                        | settings::SettingsTab::Providers
+                        | settings::SettingsTab::Linear
+                        | settings::SettingsTab::Agents
+                ))
+        {
+            self.show_settings(false, window, cx);
+        } else {
+            self.cancel_harness_path();
+            self.close_provider_form(cx);
+        }
+        self.settings_project = None;
+        self.cleanup.confirm = false;
+        self.policy.confirm = false;
+        window.focus(
+            if self.settings_open {
+                &self.settings_focus
+            } else {
+                &self.focus
+            },
+            cx,
+        );
+    }
+
     pub fn new(
         path: PathBuf,
         startup: Instant,
@@ -386,6 +430,8 @@ impl Plait {
             issues: Default::default(),
             graph: Default::default(),
             machines: Default::default(),
+            machine_trigger: cx.focus_handle(),
+            machine_menu_focus: cx.focus_handle(),
             new_thread_open: false,
             draft: Default::default(),
             admission: Default::default(),
@@ -417,7 +463,7 @@ impl Plait {
             toast_timer: None,
             session: session::SessionState::default(),
             saved_work: Default::default(),
-            picker_open: false,
+            folder_prompt: None,
             notice: None,
             machine_restore_notice: None,
             last_render_us: 0,
@@ -431,6 +477,18 @@ impl Plait {
             .live_scroll
             .set_scroll_handler(cx.listener(Self::scroll_history));
         this.initialize_navigation(window, cx);
+        for handle in [&this.machine_trigger, &this.machine_menu_focus] {
+            cx.on_focus_out(handle, window, |this, _, window, cx| {
+                if this.navigation.menu.as_deref() == Some("machines")
+                    && !this.machine_trigger.contains_focused(window, cx)
+                    && !this.machine_menu_focus.contains_focused(window, cx)
+                {
+                    this.navigation.menu = None;
+                    cx.notify();
+                }
+            })
+            .detach();
+        }
         this.pump(cx);
         this.load_preferences(cx);
         this.observe_appearance(window, cx);
@@ -733,7 +791,7 @@ impl Plait {
 
     fn open_repository(&mut self, _: &OpenRepository, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus, cx);
-        if self.picker_open {
+        if self.folder_prompt.is_some() {
             return;
         }
         if self.host.creation.pending_create.is_some() || self.host.creation.creating {
@@ -746,7 +804,8 @@ impl Plait {
             self.open_remote_browser(window, cx);
             return;
         }
-        self.picker_open = true;
+        let origin = std::rc::Rc::new(self.machines.active.clone());
+        self.folder_prompt = Some(origin.clone());
         let prompt = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
@@ -757,7 +816,15 @@ impl Plait {
         cx.spawn_in(window, async move |this, cx| {
             let result = prompt.await;
             let _ = this.update_in(cx, |this, window, cx| {
-                this.picker_open = false;
+                if this.machines.active != *origin
+                    || !this
+                        .folder_prompt
+                        .as_ref()
+                        .is_some_and(|open| std::rc::Rc::ptr_eq(open, &origin))
+                {
+                    return;
+                }
+                this.folder_prompt = None;
                 match result {
                     Ok(Ok(Some(paths))) => {
                         if let Some(path) = paths.into_iter().next() {
@@ -813,6 +880,7 @@ impl Plait {
         if page.is_some() && !self.settings_open {
             self.settings_restore = window.focused(cx);
         }
+        self.navigation.menu = None;
         self.settings_open = page.is_some();
         self.dismiss_tab_controls();
         self.cover_workspace(window, cx);
@@ -861,6 +929,7 @@ impl Plait {
     fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // Keep the shortcut context alive when its focused child is removed.
         window.focus(self.overview_focus().unwrap_or(&self.focus), cx);
+        self.navigation.menu = None;
         self.sidebar = !self.sidebar;
         cx.notify();
     }
@@ -1445,6 +1514,7 @@ impl Render for Plait {
             .on_action(cx.listener(|this, _: &ShowHiddenProjects, _, cx| {
                 this.show_hidden_projects(cx);
             }))
+            .map(|root| self.machine_picker_actions(root, cx))
             .on_action(cx.listener(|this, _: &CommandPalette, window, cx| {
                 this.toggle_command_palette(window, cx)
             }))
@@ -1652,7 +1722,9 @@ impl Render for Plait {
                     .flex_1()
                     .min_h_0()
                     .items_stretch()
-                    .when(sidebar, |el| el.child(self.navigation(cx)))
+                    .when(sidebar, |el| {
+                        el.child(self.navigation(window.viewport_size().height, cx))
+                    })
                     .child(
                         column()
                             .flex_1()
