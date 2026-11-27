@@ -191,11 +191,26 @@ test('feature-on runtime admits a draft and submits through the host handler', a
     if (previous === undefined) delete process.env.PLAIT_GRAPH;
     else process.env.PLAIT_GRAPH = previous;
   });
-  host.startBackground(request => host.handle(request));
+  let socketBusy = false;
+  host.startBackground(async request => {
+    socketBusy = true;
+    try { return await host.handle(request); }
+    finally { socketBusy = false; }
+  });
+  const info = host.admissions.info.bind(host.admissions);
+  let entered!: () => void, release!: () => void;
+  const probing = new Promise<void>(resolve => entered = resolve);
+  const gate = new Promise<void>(resolve => release = resolve);
+  host.admissions.info = async path => { entered(); await gate; return info(path); };
   const created = await host.reply({ ...draft, op_id: 'integration', checkout: await realpath(root), provider: 'faux', model_id: 'faux-1' });
   assert.ok(created.ok);
   const { node_id } = created.result as { node_id: string };
   assert.ok((await host.reply({ op: 'start_draft', node_id })).ok);
+  try {
+    await probing;
+    assert.equal(socketBusy, false, 'initial graph placement held the host socket');
+    assert.ok((await host.reply({ op: 'graph', project: root })).ok);
+  } finally { release(); }
   const deadline = Date.now() + 15000;
   for (; ;) {
     const { threads } = await host.handle({ op: 'list_threads', protocol_version: 6 }) as { threads: { id: string }[] };
@@ -570,4 +585,37 @@ test('admission waiting for preparation leaves the graph request pipe available'
     assert.equal((await h.view()).nodes.find(n => n.id === node_id)?.status, 'ready');
     assert.ok(!h.calls.some(r => r.op === 'submit_checkout'));
   } finally { release(); await scan; }
+});
+
+test('graph admissions from different projects share one local probe slot', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'graph-probes-'));
+  const host = new Runtime(dir, createModels(), new Set());
+  const old = process.env.PLAIT_GRAPH;
+  process.env.PLAIT_GRAPH = '1';
+  let polls = 0;
+  try {
+    host.startBackground(async () => { polls++; return {}; });
+  } finally {
+    if (old === undefined) delete process.env.PLAIT_GRAPH; else process.env.PLAIT_GRAPH = old;
+  }
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const probes: string[] = [];
+  host.admissions.info = async path => { probes.push(path); await gate; throw Error('end probe'); };
+  const projects = ['/one', '/two', '/three'];
+  const tasks = projects.map((checkout, i) => host['graph']!['send']({ op: 'create_admitted_thread',
+    request_id: 'project-' + i, checkout, placement: 'project', harness: 'pi', provider: 'example',
+    model_id: 'model', approval: 'ask' }));
+  const finished = Promise.allSettled(tasks);
+  try {
+    await new Promise<void>(resolve => setImmediate(resolve));
+    assert.equal(polls, projects.length);
+    assert.deepEqual(probes, projects.slice(0, 1));
+  } finally {
+    release();
+    await finished;
+    await host.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+  assert.deepEqual(probes, projects);
 });

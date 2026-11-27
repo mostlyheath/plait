@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { lstat, realpath } from 'node:fs/promises';
-import { projectKind } from '../safety.ts';
+import { projectKind, rootIdentity } from '../safety.ts';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { validateAdmission, type Start, type Admission } from '../admission.ts';
@@ -21,6 +21,7 @@ const fields: Record<string, string[]> = {
   delete_automation: ['id'], run_automation_now: ['id', 'request_id', 'received_at_ms'],
 };
 const settle = 60_000;
+const folderPending = 'Folder placement requires the newer automation runtime.';
 const drift = 'Settings changed outside the automation';
 function key(value: unknown) {
   if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(value)) fail('invalid_request', 'Invalid ID.');
@@ -87,6 +88,18 @@ export class Automations {
       this.db.exec(`INSERT OR IGNORE INTO automation_unknown_windows
         SELECT c.id FROM automation_claims c LEFT JOIN automation_claim_windows w USING(id)
         WHERE c.occurrence IS NOT NULL AND w.id IS NULL`);
+      this.db.prepare(`UPDATE automation_placements SET error=?
+        WHERE error IS NULL AND id IN (SELECT id FROM automation_creations
+          WHERE json_extract(definition,'$.target.kind')='directory')`).run(folderPending);
+      // Rebuild the click timeline in due order, including claims made during rollback.
+      this.db.exec('DELETE FROM automation_click_ranges');
+      for (const claim of this.db.prepare(`SELECT c.automation_id,c.id,c.due,w.catch_up_ms
+        FROM automation_claims c LEFT JOIN automation_claim_windows w USING(id)
+        LEFT JOIN automation_unknown_windows u USING(id) WHERE w.id IS NOT NULL OR u.id IS NOT NULL
+        ORDER BY c.due`).all())
+        this.indexWindow(String(claim.automation_id), String(claim.id), Number(claim.due),
+          claim.catch_up_ms === null ? null : Number(claim.catch_up_ms));
+      for (const a of this.list()) this.protectEditedWindow(a.id, a.definition.catch_up_ms);
       // A prior timer retries every claim without a receipt, even after downgrade.
       const unknown = this.db.prepare(`SELECT c.* FROM automation_claims c JOIN automation_unknown_windows u USING(id)
         WHERE NOT EXISTS (SELECT 1 FROM automation_occurrences WHERE automation_id=c.automation_id AND request_id=c.id)`).all();
@@ -113,7 +126,7 @@ export class Automations {
       JOIN automation_creations c USING(id) ORDER BY p.rowid`).all().map(row => ({
       id: String(row.id), definition: JSON.parse(String(row.definition)) as Definition,
       cursor: Number(row.cursor), submitted: Boolean(row.submitted),
-      error: row.error === null ? null : String(row.error),
+      error: row.error === null || row.error === folderPending ? null : String(row.error),
     }));
   }
   private progress(p: ReturnType<Automations['pending']>[number], fromHost = false) {
@@ -165,10 +178,16 @@ export class Automations {
         request.placement = 'worktree';
       } else this.db.prepare('INSERT OR IGNORE INTO automation_folder_checks VALUES (?)').run(id);
     }
+    const folder = this.localAdmission && request.placement === 'wait';
+    const identity = folder ? await rootIdentity(request.checkout) : undefined;
     await this.probe(request.checkout);
     if (this.db.prepare('SELECT 1 FROM automation_folder_checks WHERE id=?').get(id)
       && (await projectKind(request.checkout)).vcs !== 'folder')
       fail('permission_denied', 'The automation folder became a Git checkout. Choose the project instead.');
+    if (identity) {
+      const { placement: _, approval: _approval, ...create } = request;
+      return { ...create, op: 'create_thread', protocol_version: 6, identity, priorAdmission: request };
+    }
     return request;
   }
   private summary(a: Automation) {
@@ -184,7 +203,8 @@ export class Automations {
       if (!isDeepStrictEqual(JSON.parse(String(saved.definition)), d)) fail('conflict', 'Creation request already used.');
     } else this.transaction(() => {
       this.db.prepare('INSERT INTO automation_creations VALUES (?,?)').run(id, JSON.stringify(d));
-      this.db.prepare('INSERT INTO automation_placements(id,cursor) VALUES (?,?)').run(id, Date.now());
+      this.db.prepare('INSERT INTO automation_placements(id,cursor,error) VALUES (?,?,?)').run(id, Date.now(),
+        d.target.kind === 'directory' ? folderPending : null);
     });
     const pending = this.pending().find(p => p.id === id);
     return pending ? this.progress(pending) : this.summary(this.get(id));
@@ -193,6 +213,16 @@ export class Automations {
     this.db.exec('BEGIN IMMEDIATE');
     try { const result = work(); this.db.exec('COMMIT'); return result; }
     catch (error) { this.db.exec('ROLLBACK'); throw error; }
+  }
+  private protectEditedWindow(id: string, window: number) {
+    // Older timers match occurrence against the current definition. Keep the
+    // schedule cursor, but route these clicks through the saved-window trigger.
+    const row = this.db.prepare(`SELECT max(c.due) AS latest FROM automation_claims c
+      JOIN automation_claim_windows w USING(id) WHERE c.automation_id=? AND w.catch_up_ms<?`).get(id, window);
+    if (row?.latest == null) return;
+    this.db.prepare('UPDATE automations SET cursor=max(cursor,?) WHERE id=?').run(row.latest, id);
+    this.db.prepare(`UPDATE automation_claims SET occurrence=NULL WHERE automation_id=?
+      AND occurrence<=?`).run(id, row.latest);
   }
   private state(id: string, state: string, reason: string | null) {
     this.db.prepare('UPDATE automations SET state=?,pause_reason=?,revision=revision+1,cursor=CASE WHEN ? THEN ? ELSE cursor END WHERE id=?').run(state, reason, Number(state === 'active'), Date.now(), id);
@@ -267,7 +297,11 @@ export class Automations {
               ...(d.mode === undefined ? {} : { mode: d.mode }), ...(d.thinking === undefined ? {} : { thinking: d.thinking })
             });
           }
-          this.db.prepare('UPDATE automations SET definition=?,cursor=?,revision=revision+1 WHERE id=?').run(JSON.stringify(d), Date.now(), a.id);
+          this.transaction(() => {
+            this.db.prepare('UPDATE automations SET definition=?,cursor=?,revision=revision+1 WHERE id=?')
+              .run(JSON.stringify(d), Date.now(), a.id);
+            this.protectEditedWindow(a.id, d.catch_up_ms);
+          });
           return { automation: this.summary(this.get(a.id)) };
         }
         case 'run_automation_now': {
@@ -300,24 +334,30 @@ export class Automations {
   private claimClick(a: Automation, click: string, now: number) {
     const id = a.id;
     const claim = this.transaction(() => {
-      const saved = this.db.prepare(`SELECT c.request_id,c.due,k.revision,u.id AS unknown_window FROM automation_clicks c
+      const saved = this.db.prepare(`SELECT c.request_id,c.due,k.revision,u.id AS unknown_window, x.click AS uncertain FROM automation_clicks c
         JOIN automation_claims k ON k.id=c.request_id LEFT JOIN automation_unknown_windows u ON u.id=k.id
-        WHERE c.automation_id=? AND click=?`).get(id, click);
+        LEFT JOIN automation_uncertain_clicks x ON x.automation_id=c.automation_id AND x.click=c.click
+        WHERE c.automation_id=? AND c.click=?`).get(id, click);
       if (saved) {
-        if (a.state === 'active' && saved.request_id === id + '-' + saved.due && !this.receipt(id, String(saved.request_id)))
+        const recorded = this.receipt(id, String(saved.request_id));
+        if (a.state === 'active' && saved.request_id === id + '-' + saved.due && !recorded)
           this.claimDue(a, Math.max(now, Date.now()));
-        return saved;
+        return { ...saved, unknown_window: saved.uncertain || (saved.unknown_window && !recorded) };
       }
       const due = a.state === 'active' ? this.claimDue(a, now, true) : null;
-      const pending = due ?? this.db.prepare(`SELECT c.id AS request_id,due,revision,w.catch_up_ms AS catch_up_ms FROM automation_claims c LEFT JOIN automation_claim_windows w USING(id)
-        WHERE automation_id=? AND occurrence <= ? AND (w.catch_up_ms IS NULL OR ? - occurrence <= w.catch_up_ms)
-        ORDER BY occurrence DESC LIMIT 1`).get(id, now, now);
+      const pending = due ?? this.db.prepare(`SELECT c.id AS request_id,c.due,c.revision,w.catch_up_ms
+        FROM automation_claims c LEFT JOIN automation_claim_windows w USING(id)
+        WHERE c.id=(SELECT request_id FROM automation_click_ranges WHERE automation_id=? AND start<=?
+          ORDER BY start DESC LIMIT 1)`).get(id, now);
       if (!pending && now < a.cursor && a.revision > 1)
         fail('conflict', 'Automation changed after this click was received.');
       const claim = pending ?? this.insertClaim(a, null, now, 'manual-' + createHash('sha256').update(id + '-' + click).digest('hex'));
+      const dispatchTime = Date.now();
+      if (a.state === 'active' && pending && now < dispatchTime) this.claimDue(a, dispatchTime);
       this.db.prepare('INSERT INTO automation_clicks VALUES (?,?,?,?)').run(id, click, claim.request_id, claim.due);
-      return { request_id: claim.request_id, due: claim.due, revision: claim.revision,
-        unknown_window: pending && 'catch_up_ms' in pending && pending.catch_up_ms === null };
+      const uncertain = pending && 'catch_up_ms' in pending && pending.catch_up_ms === null;
+      if (uncertain) this.db.prepare('INSERT INTO automation_uncertain_clicks VALUES (?,?)').run(id, click);
+      return { request_id: claim.request_id, due: claim.due, revision: claim.revision, unknown_window: uncertain };
     });
     // Commit the click binding before reporting the conflict. A rollback retry reads it.
     if (claim.unknown_window) fail('conflict', 'The catch-up window for this older occurrence is unknown.');
@@ -396,7 +436,7 @@ export class Automations {
     }
     this.transaction(() => {
       const current = this.db.prepare('SELECT revision FROM automations WHERE id=?').get(a.id);
-      if (!current) return;
+      if (!current || this.receipt(a.id, request_id)) return;
       if (outcome === 'paused' && current.revision === a.revision) this.state(a.id, 'paused', detail);
       this.db.prepare('INSERT INTO automation_occurrences VALUES (?,?,?,?,?,?)').run(a.id, request_id, a.revision, due, outcome, detail);
     });
@@ -406,14 +446,37 @@ export class Automations {
     const row = this.db.prepare('SELECT max(occurrence) AS latest FROM automation_claims WHERE automation_id=?').get(a.id);
     return Math.max(a.cursor, Number(row?.latest ?? a.cursor));
   }
+  private indexWindow(automation: string, request: string, due: number, window: number | null) {
+    // Each boundary names the newest matching claim until the next boundary.
+    // Preserve later claims if a clock or schedule edit inserts a claim out of order.
+    const end = window === null ? Infinity : due + window + 1;
+    const boundary = this.db.prepare(`INSERT OR IGNORE INTO automation_click_ranges
+      VALUES (?,?,(SELECT request_id FROM automation_click_ranges WHERE automation_id=? AND start<=?
+        ORDER BY start DESC LIMIT 1))`);
+    if (Number.isSafeInteger(end)) boundary.run(automation, end, automation, end);
+    boundary.run(automation, due, automation, due);
+    this.db.prepare(`UPDATE automation_click_ranges SET request_id=? WHERE automation_id=? AND start>=? AND start<?
+      AND (request_id IS NULL OR (SELECT due FROM automation_claims WHERE id=request_id)<=?)`)
+      .run(request, automation, due, end, due);
+  }
   private insertClaim(a: Automation, occurrence: number | null, due: number, id: string) {
     this.db.prepare('INSERT INTO automation_claims(id,automation_id,occurrence,due,revision) VALUES (?,?,?,?,?)').run(id, a.id, occurrence, due, a.revision);
-    if (occurrence !== null) this.db.prepare('INSERT INTO automation_claim_windows VALUES (?,?)').run(id, a.definition.catch_up_ms);
+    if (occurrence !== null) {
+      this.db.prepare('INSERT INTO automation_claim_windows VALUES (?,?)').run(id, a.definition.catch_up_ms);
+      this.indexWindow(a.id, id, due, a.definition.catch_up_ms);
+    }
     return { request_id: id, due, revision: a.revision };
   }
   private claimDue(a: Automation, now: number, forClick = false) {
     const due = dueOccurrences(a.definition.schedule, this.boundary(a), now, a.definition.catch_up_ms);
     if (forClick && due.run === null) return null;
+    const latest = due.run ?? due.missed.at(-1);
+    if (latest !== undefined) {
+      const older = this.db.prepare(`SELECT id,due,revision FROM automation_claims c
+        WHERE automation_id=? AND occurrence<? AND NOT EXISTS
+        (SELECT 1 FROM automation_occurrences WHERE automation_id=c.automation_id AND request_id=c.id)`).all(a.id, latest);
+      for (const claim of older) this.reconcileAccepted(a, String(claim.id), Number(claim.due), Number(claim.revision));
+    }
     for (const time of due.missed) {
       const claim = this.insertClaim(a, time, time, a.id + '-' + time);
       this.db.prepare("INSERT INTO automation_occurrences VALUES (?,?,?,?,'missed',NULL)").run(a.id, claim.request_id, a.revision, time);
