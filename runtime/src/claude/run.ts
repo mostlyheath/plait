@@ -49,7 +49,7 @@ export type ClaudeRunContext = {
   approvals: InteractiveApproval;
   signal: AbortSignal;
   /** Checkout paths that had changes when the run started, shown on edit approvals. */
-  dirty: ReadonlySet<string>;
+  dirty: ReadonlySet<string> | undefined;
   inputs(): InputRecord[];
   place(requestId: string, entry: number): void;
   persist(head: number): void;
@@ -228,9 +228,10 @@ export class ClaudeRun {
     const turn = this.asking.then(async () => {
       if (signal.aborted) return false;
       this.flush();
-      const dirty = approval.paths.map(path => this.inCheckout(path)).filter((path): path is string => !!path && this.context.dirty.has(path));
+      const dirty = approval.paths.map(path => this.inCheckout(path)).filter((path): path is string => !!path && this.context.dirty?.has(path) === true);
       return this.context.approvals.ask({
-        id: randomUUID(), tool_id: toolId, kind: approval.kind, summary: approval.summary, details: approval.details, dirty_paths: dirty, risk: approval.risk,
+        id: randomUUID(), tool_id: toolId, kind: approval.kind, summary: approval.summary, details: approval.details, dirty_paths: dirty, risk: approval.kind === 'edit' && !this.context.dirty
+          ? `Plait could not check for pre-existing changes. ${approval.risk}` : approval.risk,
       }, signal);
     }).catch(() => false);
     this.asking = turn;

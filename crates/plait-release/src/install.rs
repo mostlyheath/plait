@@ -271,13 +271,37 @@ pub fn prune(layout: &Layout, keep: &[&Path]) {
 /// Count persisted active threads and conservatively guard live runner locks.
 /// A runner can still hold a checkout after an event gap marked its thread interrupted.
 pub fn active_runs(store: &Path) -> Result<u64, Error> {
-    let database = store.join("host.sqlite");
-    let count = if database.exists() {
-        let output = run(Command::new("/usr/bin/sqlite3")
+    active_runs_with(store, |database| {
+        run(Command::new("/usr/bin/sqlite3")
             .args(["-cmd", "PRAGMA query_only=1"])
-            .arg(&database)
-            .arg("SELECT count(*) FROM threads WHERE json_extract(snapshot,'$.status') IN ('running','awaiting_approval')"))?;
-        output
+            .arg(database)
+            .arg(ACTIVE_RUNS_QUERY))
+    })
+}
+
+const ACTIVE_RUNS_QUERY: &str = "SELECT count(*) AS active FROM threads WHERE json_extract(snapshot,'$.status') IN ('running','awaiting_approval')";
+
+#[cfg(target_os = "linux")]
+pub(super) fn active_runs_with_node(store: &Path, node: &Path) -> Result<u64, Error> {
+    const COUNT: &str = "const { DatabaseSync } = require('node:sqlite');
+        const db = new DatabaseSync(process.argv[1], { readOnly: true });
+        console.log(db.prepare(process.argv[2]).get().active);";
+    active_runs_with(store, |database| {
+        run(Command::new(node)
+            .env_remove("NODE_OPTIONS")
+            .args(["--input-type=commonjs", "-e", COUNT, "--"])
+            .arg(database)
+            .arg(ACTIVE_RUNS_QUERY))
+    })
+}
+
+fn active_runs_with(
+    store: &Path,
+    query: impl FnOnce(&Path) -> Result<String, Error>,
+) -> Result<u64, Error> {
+    let database = store.join("host.sqlite");
+    let count = if database.try_exists()? {
+        query(&database)?
             .trim()
             .parse()
             .map_err(|_| invalid("could not read active runs"))?

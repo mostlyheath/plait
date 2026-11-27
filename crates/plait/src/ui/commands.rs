@@ -137,7 +137,7 @@ pub(super) struct Overlay {
     /// The host state a model picker's rows were built from.
     pub stamp: Option<PickerStamp>,
     /// Quick open: its rows fill in when the file list arrives.
-    pub files: bool,
+    pub files_pending: bool,
     /// The branch picker: its rows fill in when the branches arrive.
     pub branches: bool,
     _events: Subscription,
@@ -381,7 +381,7 @@ impl Plait {
             purpose,
             restore,
             stamp: purpose.map(|_| self.picker_stamp()),
-            files: false,
+            files_pending: false,
             branches: false,
             _events: events,
         });

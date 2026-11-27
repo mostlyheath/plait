@@ -233,6 +233,18 @@ fn run_recorded(
     timeout: Duration,
     recording: Option<crate::lease::git_cleanup::Running>,
 ) -> Result<Raw> {
+    run_with_reader(command, input, timeout, recording, move |pipe| {
+        drain(pipe, limit)
+    })
+}
+
+fn run_with_reader(
+    command: &mut Command,
+    input: Option<Vec<u8>>,
+    timeout: Duration,
+    recording: Option<crate::lease::git_cleanup::Running>,
+    stdout_reader: impl FnOnce(std::process::ChildStdout) -> std::io::Result<Output> + Send + 'static,
+) -> Result<Raw> {
     #[cfg(test)]
     SPAWNED.with(|count| count.set(count.get() + 1));
     let stdin = if input.is_some() {
@@ -274,8 +286,8 @@ fn run_recorded(
             let _ = pipe.write_all(&bytes);
         })
     });
-    let out = reader(stdout, limit);
-    let err = reader(stderr, ERROR_LIMIT);
+    let out = reader(move || stdout_reader(stdout));
+    let err = reader(move || drain(stderr, ERROR_LIMIT));
     let group = i32::try_from(child.id()).ok();
     let (done, finished) = mpsc::channel();
     // A waiting thread wakes the moment Git exits; polling added up to a
@@ -313,12 +325,11 @@ fn run_recorded(
 
 /// Drain a pipe on its own thread, reporting through a channel so the wait can be bounded.
 fn reader(
-    pipe: impl Read + Send + 'static,
-    limit: usize,
+    read: impl FnOnce() -> std::io::Result<Output> + Send + 'static,
 ) -> mpsc::Receiver<std::io::Result<Output>> {
     let (send, receive) = mpsc::channel();
     thread::spawn(move || {
-        let _ = send.send(drain(pipe, limit));
+        let _ = send.send(read());
     });
     receive
 }

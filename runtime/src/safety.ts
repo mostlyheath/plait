@@ -75,6 +75,18 @@ export async function sharedGitDir(root: string): Promise<string | undefined> {
 /** `vcs` is the thread's stored kind. Without it the checkout is treated as
  * Git, so a repository that lost its `.git` is refused, never unprotected. */
 export async function dirtyPaths(root: string, vcs: ProjectVcs = 'git'): Promise<string[]> {
+  const paths = await scanDirtyPaths(root, vcs);
+  if (paths.length > 500 || Buffer.byteLength(JSON.stringify(paths)) > 32768) fail('permission_denied', 'Dirty baseline exceeds the safety bound.');
+  return [...new Set(paths)];
+}
+
+/** External approvals keep the scan in memory and send only the requested paths. */
+export async function approvalDirtyPaths(root: string, vcs: ProjectVcs): Promise<ReadonlySet<string> | undefined> {
+  try { return new Set(await scanDirtyPaths(root, vcs)); }
+  catch { return undefined; }
+}
+
+async function scanDirtyPaths(root: string, vcs: ProjectVcs): Promise<string[]> {
   if (vcs === 'folder') return [];
   let names = '';
   try { names = await git(root, ['config', '--name-only', '--get-regexp', '^filter\\..*\\.(clean|process)$']); }
@@ -92,8 +104,7 @@ export async function dirtyPaths(root: string, vcs: ProjectVcs = 'git'): Promise
   // Submodules are separate checkouts; never run their status hooks or edit through them.
   const tracked = await git(root, ['ls-files', '--stage', '-z']);
   for (const entry of tracked.split('\0')) if (entry.startsWith('160000 ')) paths.push(entry.slice(entry.indexOf('\t') + 1));
-  if (paths.length > 500 || Buffer.byteLength(JSON.stringify(paths)) > 32768) fail('permission_denied', 'Dirty baseline exceeds the safety bound.');
-  return [...new Set(paths)];
+  return paths;
 }
 export type FileIdentity = { dev: string; ino: string };
 export type Postimage = FileIdentity & { path: string; sha256: string; mode: string; size: string; mtime: string; ctime: string };

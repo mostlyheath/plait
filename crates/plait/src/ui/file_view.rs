@@ -478,7 +478,10 @@ impl Plait {
         let palette = cx.new(|cx| Palette::new(options, items, window, cx));
         self.present(palette, None, window, cx);
         if let Some(overlay) = self.overlay.as_mut() {
-            overlay.files = true;
+            overlay.files_pending = !matches!(
+                self.state.repository.files(),
+                Load::Ready(_) | Load::Error(_)
+            );
         }
     }
 
@@ -518,19 +521,25 @@ impl Plait {
 
     /// After a Git job: fill an open quick-open list once its files arrive.
     pub(super) fn deliver_quick_open(&mut self, cx: &mut Context<Self>) {
-        let Some(overlay) = self.overlay.as_ref().filter(|overlay| overlay.files) else {
+        let Some(overlay) = self
+            .overlay
+            .as_mut()
+            .filter(|overlay| overlay.files_pending)
+        else {
             return;
         };
         if !matches!(
             self.state.repository.files(),
             Load::Ready(_) | Load::Error(_)
-        ) || !overlay.palette.read(cx).is_empty()
-        {
+        ) {
             return;
         }
+        overlay.files_pending = false;
         let palette = overlay.palette.clone();
-        let (items, _, _) = self.file_items();
-        palette.update(cx, |palette, cx| palette.set_items(items, cx));
+        let (items, empty, note) = self.file_items();
+        palette.update(cx, |palette, cx| {
+            palette.set_listing(items, empty.into(), note, cx)
+        });
     }
 
     /// Cmd-F: show the find field over the open file.
@@ -1127,6 +1136,16 @@ pub(super) fn find_highlight(style: &mut HighlightStyle, current: bool) {
     }
 }
 
+fn visible_prefix(source: &str) -> &str {
+    if source.len() <= LINE_CLIP {
+        return source;
+    }
+    match source.char_indices().nth(LINE_CLIP) {
+        Some((end, _)) => &source[..end],
+        None => source,
+    }
+}
+
 /// Line `index` as shown (tabs expanded, clipped at `LINE_CLIP` characters)
 /// and its styled runs in display offsets. Spans and matches are sorted.
 pub(super) fn line_runs(
@@ -1136,17 +1155,13 @@ pub(super) fn line_runs(
     current: Option<&Range<usize>>,
 ) -> (SharedString, Vec<(Range<usize>, RunStyle)>) {
     let line = text.lines[index].clone();
-    let source = &text.text[line.clone()];
-    // Display offset of each source byte that starts a character, and the end.
+    let source = visible_prefix(&text.text[line.clone()]);
+    // Display offset of each visible source character and the clipped end.
     let mut at = vec![usize::MAX; source.len() + 1];
     let mut shown = String::with_capacity(source.len());
     let mut column = 0;
-    let mut clipped = source.len();
-    for (count, (offset, ch)) in source.char_indices().enumerate() {
-        if count == LINE_CLIP {
-            clipped = offset;
-            break;
-        }
+    let clipped = source.len();
+    for (offset, ch) in source.char_indices() {
         at[offset] = shown.len();
         if ch == '\t' {
             let spaces = TAB_WIDTH - column % TAB_WIDTH;
@@ -1157,10 +1172,7 @@ pub(super) fn line_runs(
             column += 1;
         }
     }
-    let end = shown.len();
-    for slot in &mut at[clipped..] {
-        *slot = end;
-    }
+    at[clipped] = shown.len();
     let map = |offset: usize| at[offset.clamp(line.start, line.start + clipped) - line.start];
     // Every place the style can change, within the shown part of the line.
     let visible = line.start..line.start + clipped;
@@ -1318,6 +1330,12 @@ mod tests {
         // The syntax color stays; only the fill and underline mark a match.
         assert_eq!(other.color, found(0).color);
         assert_eq!(found(0).background_color, None);
+    }
+
+    #[core::prelude::v1::test]
+    fn layout_input_is_bounded_even_for_a_megabyte_line() {
+        let source = "🦀".repeat(512 * 1024);
+        assert_eq!(visible_prefix(&source).len(), LINE_CLIP * 4);
     }
 
     #[core::prelude::v1::test]

@@ -456,8 +456,14 @@ impl Palette {
     }
 
     /// Whether the caller supplied no items; a typed item does not count.
+    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.base == 0
+    }
+
+    #[cfg(test)]
+    pub fn listing_status(&self) -> (&str, Option<&str>) {
+        (&self.options.empty, self.options.note.as_deref())
     }
 
     /// Offer an item built from the typed text, ahead of the matches.
@@ -557,6 +563,18 @@ impl Palette {
         items
             .map(|index| self.items[index].title.to_string())
             .collect()
+    }
+
+    pub fn set_listing(
+        &mut self,
+        items: Vec<Item>,
+        empty: SharedString,
+        note: Option<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
+        self.options.empty = empty;
+        self.options.note = note;
+        self.set_items(items, cx);
     }
 
     pub fn set_note(&mut self, note: Option<SharedString>, cx: &mut Context<Self>) {

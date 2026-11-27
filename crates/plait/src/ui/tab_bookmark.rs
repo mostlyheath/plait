@@ -29,10 +29,19 @@ fn set_offset(handle: &UniformListScrollHandle, value: i32) {
         .base_handle
         .set_offset(point(px(0.), pixels(value)));
 }
+// Find can search longer text than a tab bookmark can store.
+fn saved_query(text: &str) -> &str {
+    if text.len() <= 4096 && !text.contains('\0') {
+        text
+    } else {
+        ""
+    }
+}
+
 fn query(field: &Option<Entity<TextField>>, cx: &App) -> String {
     field
         .as_ref()
-        .map(|f| f.read(cx).text().to_owned())
+        .map(|f| saved_query(f.read(cx).text()).to_owned())
         .unwrap_or_default()
 }
 
@@ -270,7 +279,7 @@ impl Plait {
         self.workspace.thread_files.collapsed = bookmark.panels.changed_files_collapsed;
         self.workspace.thread_controls.usage_open = bookmark.panels.context_open;
         self.workspace.commit_message.update(cx, |field, cx| {
-            field.set_text(&bookmark.details.commit_message, cx)
+            field.restore_text(&bookmark.details.commit_message, cx)
         });
         self.workspace.reading.restore_selection(
             self.host.thread.selected.as_deref().unwrap_or_default(),
@@ -537,5 +546,21 @@ impl Plait {
             }
         }
         cx.notify();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[core::prelude::v1::test]
+    fn oversized_find_query_leaves_a_valid_bookmark() {
+        let limit = "é".repeat(2048);
+        assert_eq!(saved_query(&limit), limit);
+        for open in [false, true] {
+            let mut bookmark = ThreadBookmark::default();
+            bookmark.files.find.open = open;
+            bookmark.files.find.query = saved_query(&(limit.clone() + "x")).into();
+            assert!(BookmarkRecord::capture(&bookmark).is_ok());
+        }
     }
 }

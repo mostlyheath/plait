@@ -228,13 +228,24 @@ impl Plait {
     }
 
     /// Push, pull, or publish, whichever the branch's state calls for.
-    /// The Push and Pull menu items each run only their own.
-    pub(super) fn push(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn sync_branch(&mut self, cx: &mut Context<Self>) {
         let Some(sync) = self.state.repository.snapshot().ready().map(|s| sync_of(s)) else {
             return;
         };
         if let (Some(op), None) = (sync.op, sync.blocker) {
             self.git_write(op, cx);
+        }
+    }
+
+    pub(super) fn push(&mut self, cx: &mut Context<Self>) {
+        if self
+            .state
+            .repository
+            .snapshot()
+            .ready()
+            .is_some_and(|s| sync_of(s).can_push())
+        {
+            self.git_write(WriteOp::Push, cx);
         }
     }
 
@@ -291,7 +302,7 @@ impl Plait {
                         button("push", label)
                             .aria_description(sync.blocker.unwrap_or(description))
                             .disabled(busy || sync.blocker.is_some())
-                            .on_activate(cx, |this, _, cx| this.push(cx)),
+                            .on_activate(cx, |this, _, cx| this.sync_branch(cx)),
                     )
                 }),
         )

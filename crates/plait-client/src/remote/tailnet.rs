@@ -36,10 +36,7 @@ pub fn connect(host: &str, port: u16) -> Result<Arc<Link>, Error> {
     }
     let socket =
         socket.ok_or_else(|| Error::Transport("Could not connect to tailnet host.".into()))?;
-    let writer = socket
-        .try_clone()
-        .map_err(|e| Error::Transport(e.to_string()))?;
-    let link = Arc::new(Link::new(socket, writer, Settings::default()));
+    let link = socket_link(socket)?;
     let result = (|| -> std::io::Result<()> {
         let mut stream = link.open()?;
         stream.set_read_timeout(Some(Duration::from_secs(15)))?;
@@ -77,4 +74,33 @@ pub fn connect(host: &str, port: u16) -> Result<Arc<Link>, Error> {
         })
     })?;
     Ok(link)
+}
+
+fn socket_link(socket: TcpStream) -> Result<Arc<Link>, Error> {
+    let writer = socket
+        .try_clone()
+        .map_err(|e| Error::Transport(e.to_string()))?;
+    let closer = writer
+        .try_clone()
+        .map_err(|e| Error::Transport(e.to_string()))?;
+    let link = Arc::new(Link::new(socket, writer, Settings::default()));
+    link.on_dead(move || {
+        let _ = closer.shutdown(std::net::Shutdown::Both);
+    });
+    Ok(link)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn dropping_idle_link_closes_peer_socket() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let link =
+            socket_link(TcpStream::connect(listener.local_addr().unwrap()).unwrap()).unwrap();
+        let (mut peer, _) = listener.accept().unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        drop(link);
+        assert_eq!(peer.read(&mut [0]).unwrap(), 0);
+    }
 }

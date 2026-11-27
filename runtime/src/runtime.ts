@@ -35,7 +35,7 @@ import { Store } from './store.ts';
 import { RunnerRegistry, type RunnerEntry } from './runner/registry.ts';
 import { RunnerSession, applyRunnerReceipt } from './runner/session.ts';
 import { Records } from './records.ts';
-import { checkout, projectKind, gitCheckout, dirtyPaths, fileAction, acquireCheckout, rootIdentity, checkRoot, verifyExpectedIdentity } from './safety.ts';
+import { checkout, projectKind, gitCheckout, approvalDirtyPaths, fileAction, acquireCheckout, rootIdentity, checkRoot, verifyExpectedIdentity } from './safety.ts';
 import type { CheckoutLease, FileIdentity, ProjectVcs } from './safety.ts';
 import { registry } from './tools.ts';
 import { mcpPolicy, setMcpEnabled } from './mcp/policy.ts';
@@ -186,11 +186,13 @@ export class Runtime {
       request.op === 'create_admitted_thread' || request.op === 'admission_status' ? { ...request, poll: true } : request);
     if (process.env.PLAIT_GRAPH === '1') {
       this.graph = new Graph(this.directory, send,
-        id => this.store.refreshRootIdentity(id, this.store.get(id).checkout), (id, request) => this.store.waiters.get(id, request));
+        id => this.store.refreshRootIdentity(id, this.store.get(id).checkout),
+        (id, request) => this.store.waiters.get(id, request), id => this.store.rootIdentity(id));
     }
     if (process.env.PLAIT_AUTOMATIONS === '1') {
       this.automations = new Automations(this.directory, send,
-        (id, request) => this.store.waiters.get(id, request)?.kind === 'checkout');
+        (id, request) => this.store.waiters.get(id, request)?.kind === 'checkout',
+        checkout => this.admissions.info(checkout), request => this.handle({ ...request, poll: true }));
       this.automations.start();
     }
     this.graph?.wake();
@@ -1431,7 +1433,7 @@ export class Runtime {
     const snapshot = session.snapshot;
     const id = snapshot.id;
     // Shown on edit approvals only; Codex does not honor Plait's guard on these files.
-    const dirty = new Set(await dirtyPaths(snapshot.checkout, threadKind(this.store, snapshot.id)).catch(() => [] as string[]));
+    const dirty = await approvalDirtyPaths(snapshot.checkout, threadKind(this.store, snapshot.id));
     const lease = await this.codex.acquire();
     session.external = { harness: 'codex', supportsSteer: this.codex.supportsSteer, lease, close() { this.run?.close(); this.entries?.close(); this.lease?.release(); } };
     const model = lease.models.find(candidate => candidate.id === snapshot.model.model_id);
@@ -1465,7 +1467,7 @@ export class Runtime {
     const snapshot = session.snapshot;
     const id = snapshot.id;
     // Shown on edit approvals only; Claude Code does not honor Plait's guard on these files.
-    const dirty = new Set(await dirtyPaths(snapshot.checkout, threadKind(this.store, snapshot.id)).catch(() => [] as string[]));
+    const dirty = await approvalDirtyPaths(snapshot.checkout, threadKind(this.store, snapshot.id));
     const launch = await this.claude.launch();
     const mode = snapshot.harness?.mode ?? this.claude.defaultMode();
     snapshot.harness = { ...snapshot.harness, id: 'claude', version: launch.install.version ?? null, mode };

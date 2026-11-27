@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { dirtyPaths, identities } from '../src/safety.ts';
+import { approvalDirtyPaths, dirtyPaths, identities } from '../src/safety.ts';
 import { exec, setup } from './support/safety.ts';
 
 const git = (root: string, ...args: string[]) => exec('/usr/bin/git', ['-C', root, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@invalid', ...args],
@@ -38,4 +38,18 @@ test('files ignored one by one, and untracked files, still count individually', 
   assert.equal((await dirtyPaths(root)).length, 80);
   await fill(join(root, 'objects'), 501, index => `unit-${index}.o`);
   await assert.rejects(dirtyPaths(root), /Dirty baseline exceeds the safety bound/);
+});
+
+test('external edit approvals keep the dirty baseline for 501 modified tracked files', async t => {
+  const { root } = await setup(t);
+  await fill(root, 501);
+  await writeFile(join(root, 'clean'), '');
+  await git(root, 'add', '.');
+  await git(root, 'commit', '-qm', 'fixture');
+  for (let index = 0; index < 501; index++) await writeFile(join(root, `file-${index}`), 'changed');
+  const baseline = await approvalDirtyPaths(root, 'git');
+  assert.ok(baseline);
+  assert.equal(baseline.size, 501);
+  assert.ok(baseline.has('file-500'));
+  assert.ok(!baseline.has('clean'));
 });

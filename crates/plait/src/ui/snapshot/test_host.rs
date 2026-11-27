@@ -56,7 +56,7 @@ impl TestHost {
     pub(super) fn start() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         // Keep the socket path short for macOS's 104-byte Unix socket limit.
-        let dir = PathBuf::from("/tmp").join(format!(
+        let dir = std::env::temp_dir().join(format!(
             "plait-th-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)

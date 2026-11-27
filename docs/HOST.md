@@ -3183,7 +3183,7 @@ checkout, followed by common metadata exclusion. The record must name the
 UUID-derived folder and branch; the main checkout and common-directory
 identities, worktree membership and branch are rechecked under those leases
 (the checkout a worktree was started from need not still exist). Removal also
-refuses queued work, record recovery, uncommitted/untracked/ignored content,
+refuses queued work, record recovery, populated submodules (their contents are not inspected), uncommitted/untracked/ignored content,
 unfinished merge/rebase/sequencer state, tracked files whose edits are hidden
 by an assume-unchanged or present skip-worktree flag, and commits reachable
 only from the worktree's own HEAD reflog or per-worktree refs, whichever

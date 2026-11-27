@@ -457,7 +457,7 @@ impl Plait {
         self.workspace.host_watch = None;
         self.host.select(None);
         let field = self.workspace.commit_message.clone();
-        field.update(cx, |f, cx| f.set_text("", cx));
+        field.update(cx, |f, cx| f.restore_text("", cx));
         // Configuration acknowledgements are keyed operations, not view payload.
         let controls = std::mem::take(&mut self.workspace.thread_controls);
         let review_generation = self.workspace.turn_review.generation + 1;

@@ -8,11 +8,13 @@ export function state(n: Fact, threads: Threads) {
   if (n.reason) return 'blocked';
   if (!n.started) return 'draft';
   const t = threads.get(n.thread!) ?? (n.summary ? JSON.parse(n.summary) as Summary : undefined);
-  if (!t) return 'blocked';
-  if (t.archived) return t.status === 'idle' && n.done ? 'done' : 'blocked';
+  return t ? threadState(t, !!n.done, n.kind) : 'blocked';
+}
+function threadState(t: Summary, done: boolean, kind: Fact['kind']) {
+  if (t.archived) return t.status === 'idle' && done ? 'done' : 'blocked';
   if (t.pending_approval || ['error', 'stopped', 'interrupted', 'awaiting_approval'].includes(t.status)) return 'needs_you';
-  if (t.status === 'idle' && n.done) return 'done';
-  if (t.status === 'running') return n.kind === 'discuss' ? 'discussing' : 'building';
+  if (t.status === 'idle' && done) return 'done';
+  if (t.status === 'running') return kind === 'discuss' ? 'discussing' : 'building';
   return 'draft';
 }
 /** Placement depends only on visible topology and stable node order. */
@@ -26,20 +28,37 @@ export class GraphView {
     this.previous = { topology, layout };
     return layout;
   }
-  read(store: Storage, project: string, identity: string, revision: unknown, page: { threads: Summary[]; next_cursor: string | null }) {
+  read(store: Storage, path: string, current: { project: string; identity: string } | null, revision: unknown, page: { threads: Summary[]; next_cursor: string | null }) {
     if (revision !== undefined && (!Number.isSafeInteger(revision) || Number(revision) < 0)) fail('invalid_request', 'Invalid graph revision.');
     const db = store.db;
     const threads: Threads = new Map(page.threads.map(t => [t.id, t]));
-    const signature = JSON.stringify([identity, !!page.next_cursor, page.threads.filter(t => t.checkout === project)]);
-    const firstPoll = !db.prepare('SELECT 1 FROM pages WHERE project=?').get(project);
-    db.prepare('INSERT INTO pages(project,summary) VALUES(?,?) ON CONFLICT(project) DO UPDATE SET summary=excluded.summary WHERE summary<>excluded.summary').run(project, signature);
+    const project = current?.project ?? path;
+    const desktop = page.threads.filter(t => t.checkout === project);
+    const signature = JSON.stringify([project, current?.identity, !!page.next_cursor, desktop]);
+    const firstPoll = !db.prepare('SELECT 1 FROM pages WHERE project=?').get(path);
+    db.prepare('INSERT INTO pages(project,summary) VALUES(?,?) ON CONFLICT(project) DO UPDATE SET summary=excluded.summary WHERE summary<>excluded.summary').run(path, signature);
     const graph_revision = store.revision();
     if (revision === graph_revision && !firstPoll) return { graph_revision, unchanged: true };
+    if (!current) {
+      const nodes = desktop.map((t, order) => ({
+        id: t.id, order, thread_id: t.id, title: '', lifecycle: 'thread', kind: 'build',
+        status: threadState(t, false, 'build'),
+        archived: t.archived, harness: t.harness, model_id: t.model.model_id, reason: null,
+        start_when_ready: false, waiting: { done: 0, total: 0 }, blocked_by: null, unblocks: 0, finished_children: 0
+      }));
+      return { nodes, edges: [], layout: this.layout(nodes, []), graph_revision, unlinked: 0, truncated: !!page.next_cursor };
+    }
+    const { identity } = current;
     const rows = db.prepare(`SELECT rowid AS ordering,id,thread,title,kind,started,reason,done,summary,settings,auto,requested,
-    (SELECT count(*) FROM edges e JOIN nodes child ON child.id=e.dst WHERE e.src=nodes.id AND e.kind='fork' AND child.done) finished_children,
-    (SELECT count(*) FROM edges e JOIN nodes child ON child.id=e.dst WHERE e.src=nodes.id AND e.kind='depends_on' AND NOT child.started) unblocks
-    FROM nodes WHERE deleted=0 AND ((started=0 AND project_identity=?) OR (started=1 AND project=?)) AND
-    (started=0 OR EXISTS(SELECT 1 FROM edges WHERE src=nodes.id OR dst=nodes.id)) ORDER BY rowid LIMIT 501`).all(identity, project) as (Node & { ordering: number; finished_children: number; unblocks: number })[];
+    (SELECT count(*) FROM edges e JOIN nodes child ON child.id=e.dst WHERE e.src=nodes.id AND e.kind='fork'
+      AND child.project=nodes.project AND child.project_identity=nodes.project_identity AND child.done) finished_children,
+    (SELECT count(*) FROM edges e JOIN nodes child ON child.id=e.dst WHERE e.src=nodes.id AND e.kind='depends_on'
+      AND child.project=nodes.project AND child.project_identity=nodes.project_identity AND NOT child.started) unblocks
+    FROM nodes WHERE deleted=0 AND project_identity=? AND project=? AND
+    (started=0 OR EXISTS(SELECT 1 FROM edges JOIN nodes peer
+      ON peer.id=CASE WHEN src=nodes.id THEN dst ELSE src END
+      WHERE (src=nodes.id OR dst=nodes.id) AND peer.project=nodes.project AND peer.project_identity=nodes.project_identity))
+    ORDER BY rowid LIMIT 501`).all(identity, project) as (Node & { ordering: number; finished_children: number; unblocks: number })[];
     const selected = rows.slice(0, 500);
     for (const n of selected) if (n.thread && !threads.has(n.thread) && n.summary) threads.set(n.thread, JSON.parse(n.summary));
     const nodes = selected.map(n => {
@@ -54,8 +73,9 @@ export class GraphView {
       };
     });
     const ids = JSON.stringify(nodes.map(n => n.id));
-    const links = db.prepare(`SELECT src AS "from",dst AS "to",kind FROM edges WHERE dst IN (SELECT value FROM json_each(?))
-    ORDER BY dst,src,kind LIMIT 2001`).all(ids) as LayoutEdge[];
+    const links = db.prepare(`SELECT src AS "from",dst AS "to",edges.kind FROM edges JOIN nodes source ON source.id=src
+    WHERE source.project=? AND source.project_identity=? AND dst IN (SELECT value FROM json_each(?))
+    ORDER BY dst,src,edges.kind LIMIT 2001`).all(project, identity, ids) as LayoutEdge[];
     const indices = new Map(nodes.map((n, i) => [n.id, i]));
     const edges: LayoutEdge[] = [];
     const partial = new Set<string>();
@@ -78,7 +98,7 @@ export class GraphView {
     for (const [i, n] of nodes.entries()) {
       if (links.length > 2000 || partial.has(n.id)) {
         n.waiting = { done: 0, total: 0 }; n.blocked_by = null;
-        for (const dep of store.dependencies(n.id, identity)) count(n, dep);
+        for (const dep of store.dependencies(n.id, project, identity)) count(n, dep);
       }
       if (n.lifecycle === 'draft' && !n.reason) {
         if (n.blocked_by) n.status = 'blocked';
@@ -86,9 +106,12 @@ export class GraphView {
         else if (n.waiting.total || selected[i].requested) n.status = 'ready';
       }
     }
-    const candidates = page.threads.filter(t => t.checkout === project && !t.archived).map(t => t.id);
+    const candidates = desktop.filter(t => !t.archived).map(t => t.id);
     const unlinked = Number(db.prepare(`SELECT count(*) n FROM json_each(?) candidate WHERE NOT EXISTS
-    (SELECT 1 FROM nodes JOIN edges ON src=nodes.id OR dst=nodes.id WHERE thread=candidate.value)`).get(JSON.stringify(candidates))!.n);
+    (SELECT 1 FROM nodes n JOIN edges ON src=n.id OR dst=n.id
+      JOIN nodes peer ON peer.id=CASE WHEN src=n.id THEN dst ELSE src END
+      WHERE n.thread=candidate.value AND n.deleted=0 AND peer.deleted=0
+        AND n.project=? AND n.project_identity=? AND peer.project=n.project AND peer.project_identity=n.project_identity)`).get(JSON.stringify(candidates), project, identity)!.n);
     return { nodes, edges, layout: this.layout(nodes, edges), graph_revision, unlinked, truncated: !!page.next_cursor || rows.length > 500 || links.length > 2000 };
   }
 }

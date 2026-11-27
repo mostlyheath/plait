@@ -379,6 +379,12 @@ impl Line {
         self.typing = false;
     }
 
+    fn restore_text(&mut self, text: &str) {
+        self.set_text(text);
+        self.undo.clear();
+        self.redo.clear();
+    }
+
     fn utf16_range(&self, range: Range<usize>) -> Range<usize> {
         self.value.text[..range.start].encode_utf16().count()
             ..self.value.text[..range.end].encode_utf16().count()
@@ -501,6 +507,13 @@ impl TextField {
     pub fn set_text(&mut self, text: &str, cx: &mut Context<Self>) {
         let before = self.line.revision;
         self.line.set_text(text);
+        self.input_changed = true;
+        self.report(before, cx);
+    }
+
+    pub(super) fn restore_text(&mut self, text: &str, cx: &mut Context<Self>) {
+        let before = self.line.revision;
+        self.line.restore_text(text);
         self.input_changed = true;
         self.report(before, cx);
     }
@@ -1225,6 +1238,22 @@ mod tests {
         assert_eq!(line.byte_range(2..2), 1..1);
         assert_eq!(line.byte_range(9..99), 6..6);
         assert_eq!(line.utf16_range(0..line.text().len()), 0..4);
+    }
+
+    #[test]
+    fn restored_commit_field_starts_its_own_undo_history() {
+        for restored in ["", "other message"] {
+            let mut line = typed("first message");
+            line.restore_text("");
+            line.restore_text(restored);
+            line.undo(false);
+            assert_eq!(line.text(), restored);
+            line.undo(true);
+            assert_eq!(line.text(), restored);
+            line.set_text("new edit");
+            line.undo(false);
+            assert_eq!(line.text(), restored);
+        }
     }
 
     #[test]

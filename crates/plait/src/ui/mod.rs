@@ -576,6 +576,9 @@ impl Plait {
     }
 
     fn checkout_matches_thread(&self) -> bool {
+        if self.worktrees_visible() || self.issues_visible() || self.graph_visible() {
+            return false;
+        }
         let Some(id) = self.host.thread.selected.as_deref() else {
             return true;
         };
@@ -1168,7 +1171,7 @@ impl Plait {
                         }
                         window.focus(&this.workspace.commit_message.focus_handle(cx), cx);
                     } else {
-                        this.push(cx);
+                        this.sync_branch(cx);
                     }
                 }),
         )

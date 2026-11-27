@@ -1,7 +1,7 @@
 // Codex threads through the real runtime, against the scripted fake app-server.
 // Nothing here starts a real Codex or reaches a model.
 import assert from 'node:assert/strict';
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { createModels } from '@earendil-works/pi-ai/models';
@@ -25,7 +25,7 @@ async function host(t: Context, scenario = 'turn', options: { store?: string; re
   const models = createModels(); models.setProvider(fauxProvider().provider);
   const runtime = new Runtime(store, models, new Set(['faux']));
   runtime.codex = new CodexHarness(runtime.store, {
-    environment: async () => fakeEnv({ FAKE_CODEX_SCENARIO: scenario, FAKE_CODEX_LOG: log }),
+    environment: async () => fakeEnv({ FAKE_CODEX_SCENARIO: scenario, FAKE_CODEX_LOG: log, FAKE_CODEX_EDIT_ROOT: root }),
     find: async () => ({ state: 'ready', path: FAKE_CODEX, version: '0.169.0', message: 'ready' }),
     start: async (path, env) => { const server = await AppServer.start(path, { env, requestTimeoutMs: 10_000 }); servers.push(server); return server; },
     idleMs: 50,
@@ -152,10 +152,12 @@ test('Approve for me hands requests to Codex\'s reviewer; a Codex held to anothe
 
 test('a declined Codex edit is shown as declined and writes nothing to changed files', async t => {
   const h = await host(t, 'edit');
+  await writeFile(join(h.root, 'a.txt'), 'mine');
   const thread = await h.create('ask');
   await h.call({ op: 'submit', thread_id: thread.id, request_id: 'r1', text: 'Edit', approval: 'ask' });
   const asked = await h.until(thread.id, snapshot => !!snapshot.pending_approval);
   assert.equal(asked.pending_approval!.kind, 'edit');
+  assert.deepEqual(asked.pending_approval!.dirty_paths, ['a.txt']);
   await h.call({ op: 'approve', thread_id: thread.id, approval_id: asked.pending_approval!.id, allow: false });
   const done = await h.idle(thread.id);
   assert.equal(done.tools[0].status, 'error');

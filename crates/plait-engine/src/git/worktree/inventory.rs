@@ -28,6 +28,7 @@ pub(super) fn preservation_with_output(
             "-z",
             "--untracked-files=all",
             "--ignored=matching",
+            "--ignore-submodules=dirty",
         ],
     )?;
     let mut entries = dirty.split(|b| *b == 0).filter(|v| !v.is_empty());
