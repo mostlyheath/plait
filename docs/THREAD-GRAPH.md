@@ -1,6 +1,6 @@
 # Thread graph
 
-**Agreed design.** The host operations are built behind `PLAIT_GRAPH=1`, off by default and not ready to turn on: issues labelled [`blocks-flag`](https://github.com/mostlyheath/plait/issues?q=label%3Ablocks-flag) (#269–#271) must be fixed first. The desktop Graph tab and Discuss enforcement are planned. The project owner agreed the product
+**Agreed design.** The host operations are built behind `PLAIT_GRAPH=1`, off by default. The desktop Graph tab and Discuss enforcement are planned. The project owner agreed the product
 decisions and the host contract below. Each pull request that changes storage or the protocol needs its independent review (see
 [Contributing](../CONTRIBUTING.md)).
 
@@ -144,8 +144,11 @@ unknown-operation error.
 With the graph enabled, each background host request shares the desktop
 client’s socket dispatch path. Admission, result collection, and submission take separate
 turns. To edit a draft waiting in the checkout queue, first withdraw its
-submission with `cancel_queued`. A graph poll selects unstarted drafts by
-the project device and inode captured at creation. A worktree admission
+submission with `cancel_queued`. A graph poll matches cards and their dependency counts by project path, device,
+and inode. At most two path checks run at once. While both slots are busy, a check is pending, or the
+path is unavailable, the graph shows only threads listed by the desktop at that path,
+with titles, links, and counts withheld. A changed identity invalidates the polling revision.
+A worktree admission
 must match the captured checkout path, device, and inode before submission.
 
 ## Speed
