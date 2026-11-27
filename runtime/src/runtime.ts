@@ -186,7 +186,8 @@ export class Runtime {
       request.op === 'create_admitted_thread' || request.op === 'admission_status' ? { ...request, poll: true } : request);
     if (process.env.PLAIT_GRAPH === '1') {
       this.graph = new Graph(this.directory, send,
-        id => this.store.refreshRootIdentity(id, this.store.get(id).checkout), (id, request) => this.store.waiters.get(id, request));
+        id => this.store.refreshRootIdentity(id, this.store.get(id).checkout),
+        (id, request) => this.store.waiters.get(id, request), id => this.store.rootIdentity(id));
     }
     if (process.env.PLAIT_AUTOMATIONS === '1') {
       this.automations = new Automations(this.directory, send,

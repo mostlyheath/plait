@@ -28,7 +28,14 @@ export class Storage {
       CREATE TRIGGER IF NOT EXISTS node_update AFTER UPDATE ON nodes BEGIN UPDATE version SET revision=revision+1; END;
       CREATE TRIGGER IF NOT EXISTS link_add AFTER INSERT ON edges BEGIN UPDATE version SET revision=revision+1; END;
       CREATE TRIGGER IF NOT EXISTS link_remove AFTER DELETE ON edges BEGIN UPDATE version SET revision=revision+1; END;
+      CREATE TRIGGER IF NOT EXISTS page_insert AFTER INSERT ON pages BEGIN UPDATE version SET revision=revision+1; END;
       CREATE TRIGGER IF NOT EXISTS page_update AFTER UPDATE ON pages BEGIN UPDATE version SET revision=revision+1; END;`);
+    // The older runtime keys its three-field signatures by canonical path. Evict
+    // those entries so its first poll after rollback also advances the revision.
+    this.transaction(() => {
+      const legacy = this.db.prepare('DELETE FROM pages WHERE json_array_length(summary)=3').run();
+      if (legacy.changes) this.db.exec('UPDATE version SET revision=revision+1');
+    });
     if (!this.db.prepare("SELECT 1 FROM pragma_table_info('nodes') WHERE name='identity'").get())
       this.db.exec('ALTER TABLE nodes ADD COLUMN identity TEXT');
     if (!this.db.prepare("SELECT 1 FROM pragma_table_info('nodes') WHERE name='project_identity'").get())
@@ -56,9 +63,9 @@ export class Storage {
   node(id: string) {
     return this.db.prepare('SELECT * FROM nodes WHERE deleted=0 AND (id=? OR thread=?)').get(id, id) as Node | undefined;
   }
-  dependencies(id: string, identity: string) {
+  dependencies(id: string, project: string, identity: string) {
     return this.db.prepare(`SELECT n.id,n.title,n.started,n.thread,n.kind,n.reason,n.done,n.summary
-      FROM edges e JOIN nodes n ON n.id=e.src WHERE e.dst=? AND e.kind='depends_on' AND (n.started OR n.project_identity=?) ORDER BY n.rowid`).all(id, identity) as Fact[];
+      FROM edges e JOIN nodes n ON n.id=e.src WHERE e.dst=? AND e.kind='depends_on' AND n.project=? AND n.project_identity=? ORDER BY n.rowid`).all(id, project, identity) as Fact[];
   }
   resultChildren(id: string) {
     return this.db.prepare(`SELECT n.thread, count(*) OVER () AS total FROM edges e JOIN nodes n ON n.id=e.dst
