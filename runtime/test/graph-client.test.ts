@@ -293,6 +293,59 @@ test('graph polls and edits finish while a single identity refresh is stalled', 
   await waitForCard(h, node_id, true);
 });
 
+test('stalled graph probes leave a filesystem worker free in small pools', async t => {
+  for (const [size, expectedProbes] of [['1', 0], ['2', 1], ['\u00a02', 0]] as const) {
+    await t.test(`UV_THREADPOOL_SIZE=${JSON.stringify(size)}`, async t => {
+      const previous = process.env.UV_THREADPOOL_SIZE;
+      process.env.UV_THREADPOOL_SIZE = size;
+      t.after(() => {
+        if (previous === undefined) delete process.env.UV_THREADPOOL_SIZE;
+        else process.env.UV_THREADPOOL_SIZE = previous;
+      });
+      let release!: () => void;
+      const stalled = new Promise<void>(resolve => { release = resolve; });
+      const probe = t.mock.fn(async (project: string) => {
+        await stalled;
+        return { project, identity: 'unused' };
+      });
+      const h = await fixture(t, probe);
+      try {
+        for (const name of ['a', 'b', 'c'])
+          await h.graph.handle({ op: 'graph', project: join(h.dir, name) });
+        assert.equal(probe.mock.callCount(), expectedProbes);
+      } finally { release(); }
+    });
+  }
+});
+
+test('revision polls recover drafts when every identity check takes 75 ms', async t => {
+  let completed!: () => void;
+  const firstProbe = new Promise<void>(resolve => { completed = resolve; });
+  const h = await fixture(t, async project => {
+    await new Promise(resolve => setTimeout(resolve, 75));
+    const identity = JSON.stringify(await rootIdentity(project));
+    completed();
+    return { project, identity };
+  });
+  h.threads.clear();
+  const draft = await h.create();
+  const fallback = await h.view();
+  assert.deepEqual(fallback.nodes, []);
+  await firstProbe;
+  await new Promise(resolve => setImmediate(resolve));
+  const db = new DatabaseSync(join(h.dir, 'graph.sqlite'), { readOnly: true });
+  try {
+    assert.ok(Number(db.prepare('SELECT revision FROM version').get()!.revision) > fallback.graph_revision);
+  } finally { db.close(); }
+  const next = await h.graph.handle({ op: 'graph', project: h.root, revision: fallback.graph_revision }) as typeof fallback;
+  assert.notEqual(next.graph_revision, fallback.graph_revision);
+  assert.deepEqual(next.nodes.map(n => n.id), [draft.node_id]);
+  await rename(h.root, h.root + '-old');
+  await mkdir(h.root);
+  const replacement = await h.graph.handle({ op: 'graph', project: h.root, revision: next.graph_revision }) as typeof fallback;
+  assert.deepEqual(replacement.nodes, []);
+});
+
 test('a failed refresh clears confirmed cards and recovery invalidates the fallback revision', async t => {
   let unavailable = false;
   const h = await fixture(t, async project => {
