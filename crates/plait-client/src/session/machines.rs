@@ -226,6 +226,25 @@ fn read(path: &Path, machine: &MachineId) -> Result<MachineWork, String> {
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(path)
         .map_err(io)?;
+    let bytes = read_private(file, machine)?;
+    let document: Document = serde_json::from_slice(&bytes).map_err(|e| {
+        format!(
+            "Saved work for {} is invalid ({e}); it was not changed.",
+            machine.as_str()
+        )
+    })?;
+    if document.schema_version != SCHEMA || &document.machine != machine {
+        return Err(format!(
+            "Saved work for {} is from another version or machine; it was not changed.",
+            machine.as_str()
+        ));
+    }
+    document.work.validate()?;
+    Ok(document.work)
+}
+
+fn read_private(file: File, machine: &MachineId) -> Result<Vec<u8>, String> {
+    let io = |e: std::io::Error| format!("Cannot read saved work for {}: {e}", machine.as_str());
     let metadata = file.metadata().map_err(io)?;
     if !metadata.is_file()
         || metadata.nlink() != 1
@@ -242,20 +261,7 @@ fn read(path: &Path, machine: &MachineId) -> Result<MachineWork, String> {
     file.take(FILE_LIMIT as u64 + 1)
         .read_to_end(&mut bytes)
         .map_err(io)?;
-    let document: Document = serde_json::from_slice(&bytes).map_err(|e| {
-        format!(
-            "Saved work for {} is invalid ({e}); it was not changed.",
-            machine.as_str()
-        )
-    })?;
-    if document.schema_version != SCHEMA || &document.machine != machine {
-        return Err(format!(
-            "Saved work for {} is from another version or machine; it was not changed.",
-            machine.as_str()
-        ));
-    }
-    document.work.validate()?;
-    Ok(document.work)
+    Ok(bytes)
 }
 
 /// A copy of each image a machine file refers to, outside `images/`. An older
@@ -387,13 +393,16 @@ pub(super) fn write(root: &Path, machine: &MachineId, work: &MachineWork) -> Res
             FILE_LIMIT / (1024 * 1024)
         ));
     }
+    replace(root, machine, &path(root, machine), &bytes)
+}
+
+fn replace(root: &Path, machine: &MachineId, target: &Path, bytes: &[u8]) -> Result<(), String> {
     let directory = directory(root);
     fs::create_dir_all(&directory).map_err(|e| format!("Cannot save machine work: {e}"))?;
     let metadata = fs::symlink_metadata(&directory).map_err(|e| e.to_string())?;
     if !metadata.is_dir() || metadata.uid() != unsafe { libc::geteuid() } {
         return Err("Saved machine work needs an owned directory.".into());
     }
-    let target = path(root, machine);
     static SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let temporary = directory.join(format!(
         ".{}.{}.{}.tmp",
@@ -408,9 +417,9 @@ pub(super) fn write(root: &Path, machine: &MachineId, work: &MachineWork) -> Res
             .mode(0o600)
             .custom_flags(libc::O_NOFOLLOW)
             .open(&temporary)?;
-        file.write_all(&bytes)?;
+        file.write_all(bytes)?;
         file.sync_all()?;
-        fs::rename(&temporary, &target)?;
+        fs::rename(&temporary, target)?;
         File::open(&directory)?.sync_all()
     })();
     if let Err(error) = result {
@@ -420,6 +429,62 @@ pub(super) fn write(root: &Path, machine: &MachineId, work: &MachineWork) -> Res
         ));
     }
     Ok(())
+}
+
+impl super::Journal {
+    /// Reserve the durable ID before contacting the host. Blocking.
+    pub fn run_click(&self, machine: &MachineId, id: &str) -> Result<String, String> {
+        self.update_run_clicks(machine, |clicks| {
+            clicks
+                .entry(id.to_owned())
+                .or_insert_with(crate::host_state::request_id)
+                .clone()
+        })
+    }
+
+    /// Only the receipt for the current click can settle it. Blocking.
+    pub fn clear_run_click(
+        &self,
+        machine: &MachineId,
+        id: &str,
+        click: &str,
+    ) -> Result<(), String> {
+        self.update_run_clicks(machine, |clicks| {
+            if clicks.get(id).is_some_and(|stored| stored == click) {
+                clicks.remove(id);
+            }
+        })
+    }
+
+    fn update_run_clicks<T>(
+        &self,
+        machine: &MachineId,
+        update: impl FnOnce(&mut BTreeMap<String, String>) -> T,
+    ) -> Result<T, String> {
+        let _guard = self
+            .run_click_writer
+            .lock()
+            .map_err(|_| "Run now storage is unavailable.")?;
+        // Preview.84 scans only machine files ending in .json.
+        let target = directory(&self.directory).join(format!("{}.run-clicks", machine.as_str()));
+        let mut clicks = match OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+            .open(&target)
+        {
+            Ok(file) => serde_json::from_slice(&read_private(file, machine)?)
+                .map_err(|e| format!("Invalid saved Run now requests: {e}"))?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => BTreeMap::new(),
+            Err(e) => return Err(format!("Cannot read Run now requests: {e}")),
+        };
+        let result = update(&mut clicks);
+        let bytes = serde_json::to_vec(&clicks).map_err(|e| e.to_string())?;
+        if bytes.len() > FILE_LIMIT {
+            return Err("Saved Run now requests exceed their size limit.".into());
+        }
+        replace(&self.directory, machine, &target, &bytes)?;
+        Ok(result)
+    }
 }
 
 #[cfg(test)]
@@ -574,6 +639,48 @@ mod tests {
         drop(journal);
         let (journal, _) = Journal::open(&root, "/host".into()).unwrap();
         assert_eq!(journal.take_machines()[&remote()], work);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn unresolved_run_click_survives_preview_84_rewriting_the_machine_session() {
+        let root = root("automation-clicks");
+        let local = MachineId::default();
+        let (journal, _) = Journal::open(&root, "/host".into()).unwrap();
+        let click = journal.run_click(&local, "a").unwrap();
+        let neighbor = journal.run_click(&local, "b").unwrap();
+        assert_ne!(neighbor, click);
+        let other = journal.run_click(&remote(), "a").unwrap();
+        assert_ne!(other, click);
+        assert_eq!(journal.run_click(&local, "a").unwrap(), click);
+        journal.queue_machine(&local, MachineWork::default());
+        journal.flush().unwrap();
+        drop(journal);
+
+        // Preview.84 saves a draft by replacing the document with its known fields.
+        let session_path = path(&root, &local);
+        let old: serde_json::Value =
+            serde_json::from_slice(&fs::read(&session_path).unwrap()).unwrap();
+        assert!(old["work"].get("run_clicks").is_none());
+        let rewritten = serde_json::json!({
+            "schema_version": old["schema_version"], "machine": old["machine"],
+            "work": {"drafts": {"d": tab("typed after rollback")}}
+        });
+        fs::write(session_path, serde_json::to_vec(&rewritten).unwrap()).unwrap();
+
+        let (journal, _) = Journal::open(&root, "/host".into()).unwrap();
+        assert_eq!(
+            journal.take_machines()[&local].drafts["d"].draft.text,
+            "typed after rollback"
+        );
+        assert_eq!(journal.run_click(&local, "a").unwrap(), click);
+        journal.clear_run_click(&local, "a", &click).unwrap();
+        let next = journal.run_click(&local, "a").unwrap();
+        assert_ne!(next, click);
+        journal.clear_run_click(&local, "a", &click).unwrap();
+        assert_eq!(journal.run_click(&local, "a").unwrap(), next);
+        assert_eq!(journal.run_click(&local, "b").unwrap(), neighbor);
+        assert_eq!(journal.run_click(&remote(), "a").unwrap(), other);
         fs::remove_dir_all(root).unwrap();
     }
 
