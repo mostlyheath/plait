@@ -1736,13 +1736,13 @@ impl Plait {
     }
 
     fn machine_control(&self, cx: &mut Context<Self>) -> Control {
-        let machine = self
+        let target = self
             .machines
             .connecting
             .as_ref()
             .and_then(|id| self.preferences.value.machines.get(id))
-            .map(|m| m.name.clone())
-            .unwrap_or_else(|| self.machine_label());
+            .filter(|m| m.id != self.machines.active);
+        let machine = self.machine_label();
         let (state, tint) = if self.host.connection.connecting || self.machines.connecting.is_some()
         {
             ("Connecting…", colors().muted)
@@ -1751,8 +1751,13 @@ impl Plait {
         } else {
             ("Offline", colors().amber)
         };
-        let hover = format!("{machine}, {state}. Switch machine…");
+        let hover = match target {
+            Some(m) => format!("{machine} → {}…, {state}. Switch machine…", m.name),
+            None => format!("{machine}, {state}. Switch machine…"),
+        };
         button("machine-switcher", "")
+            .track_focus(&self.machine_trigger)
+            .aria_keyshortcuts(self.shortcut_aria("machine.switch"))
             .h(px(24.))
             .px_1()
             .gap_1()
@@ -1763,66 +1768,21 @@ impl Plait {
             .tooltip(move |_, cx| cx.new(|_| TextTooltip(hover.clone())).into())
             .child(dot(tint))
             .child(div().min_w_0().truncate().child(machine))
-            .when(state != "Connected", |el| {
+            .when_some(target, |el, m| {
+                el.child(div().flex_shrink_0().child("→"))
+                    .child(div().min_w_0().truncate().child(format!("{}…", m.name)))
+            })
+            .when(state != "Connected" && target.is_none(), |el| {
                 el.child(div().flex_shrink_0().child(state))
             })
-            .on_activate(cx, |this, _, cx| {
-                this.navigation.menu = (this.navigation.menu.as_deref() != Some("machines"))
-                    .then(|| "machines".into());
+            .on_activate(cx, |this, window, cx| {
+                if this.navigation.menu.as_deref() == Some("machines") {
+                    this.navigation.menu = None;
+                } else {
+                    this.open_machine_picker(window, cx);
+                }
                 cx.notify();
             })
-    }
-
-    /// The machines this device knows, and where to manage them.
-    fn machine_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut panel = column()
-            .id("sidebar-machines-menu")
-            .absolute()
-            .bottom(px(38.))
-            .left(px(8.))
-            .right(px(8.))
-            .max_h(relative(0.8))
-            .overflow_y_scroll()
-            .p_2()
-            .gap_1()
-            .border_1()
-            .border_color(rgb(colors().edge))
-            .rounded(px(SURFACE_CORNER))
-            .shadow(floating_shadow())
-            .bg(rgb(colors().raised))
-            .occlude()
-            .child(tag("machine-menu-heading", "Machines", colors().muted));
-        for (index, machine) in self.preferences.value.machines.list().iter().enumerate() {
-            let id = &machine.id;
-            let label = if self.machines.connecting.as_ref() == Some(id) {
-                format!("{} · Connecting…", machine.name)
-            } else if id == &self.machines.active {
-                format!("{} ✓", machine.name)
-            } else {
-                machine.name.clone()
-            };
-            let enabled = self.machines.connecting.as_ref() != Some(id)
-                && (id != &self.machines.active || self.machines.connecting.is_some());
-            let id = id.clone();
-            panel = panel.child(
-                button(("machine-use", index), label)
-                    .disabled(!enabled)
-                    .when(enabled, |el| {
-                        el.on_activate(cx, move |this, window, cx| {
-                            this.navigation.menu = None;
-                            this.use_machine(id.clone(), window, cx);
-                        })
-                    }),
-            );
-        }
-        panel.child(button("machine-manage", "Manage machines…").on_activate(
-            cx,
-            |this, window, cx| {
-                this.navigation.menu = None;
-                this.settings_tab = super::settings::SettingsTab::Machines;
-                this.show_settings(true, window, cx);
-            },
-        ))
     }
 
     fn sidebar_foot(&self, cx: &mut Context<Self>) -> Div {
@@ -1834,6 +1794,10 @@ impl Plait {
             .flex_shrink_0()
             .border_t_1()
             .border_color(rgb(colors().border))
+            .on_children_prepainted({
+                let trigger = self.machines.trigger_bounds.clone();
+                move |children, _, _| trigger.set(children.first().copied())
+            })
             .child(self.machine_control(cx))
             .child(div().flex_1())
             .when(self.update_available(), |el| {
@@ -1862,7 +1826,7 @@ impl Plait {
             )
     }
 
-    pub(super) fn navigation(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn navigation(&self, height: Pixels, cx: &mut Context<Self>) -> impl IntoElement {
         column()
             .relative()
             .w(px(self.panel_width(super::panels::Panel::Sidebar)))
@@ -1883,7 +1847,7 @@ impl Plait {
             .child(div().px_2().child(self.open_project_row(cx)))
             .child(self.sidebar_foot(cx))
             .when(self.navigation.menu.as_deref() == Some("machines"), |el| {
-                el.child(self.machine_menu(cx))
+                el.child(deferred(self.machine_menu(height, cx)))
             })
             .child(
                 div()

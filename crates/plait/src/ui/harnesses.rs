@@ -791,11 +791,12 @@ impl Plait {
             multiple: false,
             prompt: Some(format!("Use this {name}").into()),
         });
+        let origin = self.machines.active.clone();
         let epoch = self.host.connection.epoch;
         cx.spawn(async move |this, cx| {
             let result = prompt.await;
             let _ = this.update(cx, |this, cx| {
-                if this.host.connection.epoch != epoch {
+                if this.machines.active != origin || this.host.connection.epoch != epoch {
                     return;
                 }
                 match result {

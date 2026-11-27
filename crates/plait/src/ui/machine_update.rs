@@ -125,7 +125,7 @@ impl Plait {
     }
 
     fn update_host(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((id, name, destination, options)) = self.update_target() else {
+        let Some((id, _, destination, options)) = self.update_target() else {
             return;
         };
         let Some(state) = self
@@ -143,44 +143,57 @@ impl Plait {
         cx.spawn_in(window, async move |this, cx| {
             let result = task.await;
             let _ = this.update_in(cx, |this, window, cx| {
-                if this.machines.active != id {
-                    return;
-                }
-                let Some(state) = this
-                    .machines
-                    .update
-                    .as_mut()
-                    .filter(|s| s.id == id && matches!(s.stage, Stage::Updating))
-                else {
-                    return;
-                };
-                match result {
-                    Ok(result) => {
-                        let note = match result {
-                            install::Updated::Current => {
-                                "This machine's host is current.".to_owned()
-                            }
-                            install::Updated::Active { version } => {
-                                format!("Updated the host on {name} to {version}.")
-                            }
-                        };
-                        this.use_machine(id, window, cx);
-                        this.machines.note = Some((note, false));
-                    }
-                    Err(error) => state.stage = Stage::Failed(error),
-                }
-                cx.notify();
+                this.finish_host_update(id, result, window, cx);
             });
         })
         .detach();
         cx.notify();
     }
 
+    pub(super) fn finish_host_update(
+        &mut self,
+        id: MachineId,
+        result: Result<install::Updated, String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.machines.active != id {
+            return;
+        }
+        let Some(state) = self
+            .machines
+            .update
+            .as_mut()
+            .filter(|s| s.id == id && matches!(s.stage, Stage::Updating))
+        else {
+            return;
+        };
+        let name = &state.name;
+        match result {
+            Ok(result) => {
+                let note = match result {
+                    install::Updated::Current => "This machine's host is current.".to_owned(),
+                    install::Updated::Active { version } => {
+                        format!("Updated the host on {name} to {version}.")
+                    }
+                };
+                state.stage = Stage::Current;
+                if self.machines.connecting.is_none() {
+                    self.use_machine(id, window, cx);
+                    self.machines.note = Some((note, false));
+                }
+            }
+            Err(error) => state.stage = Stage::Failed(error),
+        }
+        cx.notify();
+    }
+
     pub(super) fn update_panel(&self, cx: &mut Context<Self>) -> Option<Div> {
         let id = self.machines.active.clone();
         let state = self.machines.update.as_ref().filter(|s| s.id == id);
-        if self.update_target().is_none()
-            && !state.is_some_and(|s| matches!(s.stage, Stage::Updating))
+        let reachable = self.update_target().is_some();
+        if !reachable
+            && !state.is_some_and(|s| matches!(s.stage, Stage::Available(_) | Stage::Updating))
         {
             return None;
         }
@@ -195,7 +208,14 @@ impl Plait {
                 Stage::Failed(error) => (error.clone(), colors().amber),
             };
             panel = panel.child(tag("machine-update-line", text, tint).line_height(px(18.)));
-            if matches!(state.stage, Stage::Available(_)) {
+            if matches!(state.stage, Stage::Available(_)) && !reachable {
+                panel = panel.child(tag(
+                    "machine-update-offline",
+                    "Connect to this machine to update its host.",
+                    colors().muted,
+                ));
+            }
+            if reachable && matches!(state.stage, Stage::Available(_)) {
                 panel = panel.child(
                     row().child(
                         button("machine-update", "Update host")
@@ -204,7 +224,8 @@ impl Plait {
                 );
             }
         }
-        if !state.is_some_and(|s| matches!(s.stage, Stage::Checking | Stage::Updating)) {
+        if reachable && !state.is_some_and(|s| matches!(s.stage, Stage::Checking | Stage::Updating))
+        {
             panel = panel.child(
                 row().child(
                     button("machine-update-check", "Check for host update")

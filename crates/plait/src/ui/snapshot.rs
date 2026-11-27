@@ -2301,9 +2301,11 @@ fn keys_drive_the_palette_and_picker() {
                 && !matches!(action.id, "palette.toggle" | "view.graph"))
             .count()
             + 1
-            + 5,
-        "threads, commands, projects, models"
+            + 5
+            + 1,
+        "threads, commands, projects, models, and the saved local machine"
     );
+    assert!(shown(&mut harness).contains(&"Switch to This Mac".to_owned()));
     press(&mut harness, "escape");
     harness.update(|plait, _, _| assert!(plait.overlay.is_none()));
     assert!(focused(&mut harness) == before, "Escape returns focus");
@@ -3903,6 +3905,7 @@ fn claude_walk(harness: &mut Harness, repository: &Path, suffix: &str) {
         plait.close_overlay(true, window, cx);
         // Choosing it opens Settings → Agents, where the setup shows.
         plait.run_command(
+            &plait.machines.active.clone(),
             super::commands::Command::SetUpHarness(HarnessId::Claude),
             None,
             window,

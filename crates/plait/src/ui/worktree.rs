@@ -316,7 +316,8 @@ impl Plait {
             .map(|choice| PromptButton::Other(choice.label().into()))
             .collect();
         buttons.push(PromptButton::Cancel("Cancel".into()));
-        self.worktrees.removal_project = Some((self.machines.active.clone(), project));
+        let machine = self.machines.active.clone();
+        self.worktrees.removal_project = Some((machine.clone(), project));
         let answer = window.prompt(
             PromptLevel::Warning,
             "Remove this worktree?",
@@ -330,7 +331,9 @@ impl Plait {
                 .ok()
                 .and_then(|index| choices.get(index).copied());
             let _ = this.update(cx, |this, cx| {
-                if this.worktrees.removal.asking.as_ref() != Some(&asked) {
+                if this.machines.active != machine
+                    || this.worktrees.removal.asking.as_ref() != Some(&asked)
+                {
                     return;
                 }
                 if this.worktrees.removal.answer(choice).is_some() {
