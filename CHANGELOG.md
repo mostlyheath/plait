@@ -3,6 +3,22 @@
 What changed in each Plait preview, newest first. Notes for the next preview
 wait in [changes/](changes/README.md) until a release collects them.
 
+## v0.1.0-preview.85
+
+### Added
+
+- Settings → About lists the licenses for the software, fonts and artwork bundled with Plait. SECURITY.md explains how to report a vulnerability privately.
+
+### Fixed
+
+- Rendered Markdown wraps to the panel and reflows as you resize it; long code lines scroll sideways instead. Editor opens the file you're looking at, at the line you're on, including in worktrees.
+- A thread started in a plain folder that later becomes a Git repository now protects your uncommitted edits and records its runs for Undo.
+- Discarding a hunk is refused if the change has moved on since you reviewed it, Delete keeps a copy of an untracked file before removing it, and Unstage All no longer cancels a merge in progress.
+- Installs and updates come from mostlyheath/plait, and hosts report their full preview version.
+- A leftover steering message keeps its own approval setting, and when Codex or Claude Code interrupts a turn, queued follow-ups wait instead of starting.
+- A slow commit, such as one with a long pre-commit hook, no longer disconnects every thread on that host.
+- A failed or cancelled Wait message no longer loses its attached images when the draft already has content. Plait keeps your draft in place, copies any recovered text to the clipboard, and attaches recovered images that fit within the 4-image and 5 MiB limits.
+
 ## v0.1.0-preview.84
 
 ### Added
