@@ -1,10 +1,11 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { fail } from '../protocol.ts';
-import type { LinearIssueDetail } from './types.ts';
+import type { EditVerification, LinearIssueDetail } from './types.ts';
 
 export const LINEAR_WRITE_HISTORY_LIMIT = 10_000;
 export type WriteOutcome = 'not_sent' | 'rejected' | 'accepted' | 'unknown';
 export type WriteReceipt = {
+  verification?: EditVerification;
   comment_id?: string;
   /** A created issue's id and, when Linear returned it, its identifier. */
   issue_id?: string;

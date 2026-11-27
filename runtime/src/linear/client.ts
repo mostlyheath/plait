@@ -1,3 +1,4 @@
+import type { EditVerification, IssueEditFields } from './types.ts';
 import { escapeDisplay } from '../text.ts';
 import {
   FIELD_LIMITS,
@@ -315,6 +316,20 @@ function parseLabel(raw: unknown, sanitize: ResponseSanitizer): LinearLabel | nu
   return { id, name };
 }
 
+/** Compare the live fields before clipping, redacting or escaping them for display. */
+function verifyIssueText(issue: JsonObject, id: string, partial: boolean, sent: IssueEditFields): EditVerification {
+  if (issue.id !== id) return 'unverified';
+  // A partial GraphQL response can carry an error-induced null.
+  const description = issue.description === null && !partial ? '' : issue.description;
+  if ((sent.title !== undefined && typeof issue.title === 'string' && issue.title !== sent.title)
+    || (sent.description !== undefined && typeof description === 'string' && description !== sent.description)) {
+    return 'different';
+  }
+  if (partial || (sent.title !== undefined && typeof issue.title !== 'string')
+    || (sent.description !== undefined && typeof description !== 'string')) return 'unverified';
+  return 'matched';
+}
+
 function parseIssueSummary(raw: unknown, sanitize: ResponseSanitizer): LinearIssueSummary | null {
   const obj = asObject(raw);
   if (!obj) return null;
@@ -510,9 +525,9 @@ export class LinearClient {
   /** Fetches one issue's detail, attachments metadata (never fetched), and one page of comments. */
   async getIssue(
     apiKey: string,
-    params: { issueId: string; commentsCursor?: string },
+    params: { issueId: string; commentsCursor?: string; verify?: IssueEditFields },
     signal?: AbortSignal,
-  ): Promise<LinearQueryResult<LinearIssueDetail | null>> {
+  ): Promise<LinearQueryResult<LinearIssueDetail | null> & { verification?: EditVerification }> {
     const sanitize = makeSanitizer(apiKey);
     const response = await this.graphql(
       apiKey,
@@ -549,6 +564,7 @@ export class LinearClient {
     const commentsPage = parsePageInfo(commentsObj?.pageInfo, sanitize);
     const partial = response.errors.length > 0;
     return {
+      verification: params.verify && verifyIssueText(raw, params.issueId, partial, params.verify),
       data: {
         ...summary,
         description: sanitize.nullableText(raw.description, FIELD_LIMITS.description),

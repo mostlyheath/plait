@@ -1059,18 +1059,12 @@ impl Plait {
                         this.load_issue_list(true, cx);
                     }
                     FormDone::Reload => {
-                        // Linear's version, beside a refused edit or after an accepted one.
+                        // Linear's version, beside a refused edit.
                         if let FormKind::Edit { issue_id, .. } = &request.kind
                             && this.issues.view.selected.as_deref() == Some(issue_id)
                             && let Some((id, generation)) = this.issues.view.reload_detail()
                         {
                             this.load_issue_detail(id, generation, cx);
-                        }
-                        // An accepted edit closed its form; a refused one is still open.
-                        if let FormKind::Edit { issue_id, .. } = &request.kind
-                            && !this.issues.view.edits.contains_key(issue_id)
-                        {
-                            this.load_issue_list(true, cx);
                         }
                     }
                     FormDone::Nothing => {}
@@ -1110,7 +1104,10 @@ impl Plait {
             ),
         };
         let saving = form.frozen();
-        let changed = form.status == FormStatus::Changed;
+        let changed = matches!(
+            form.status,
+            FormStatus::Changed | FormStatus::SavedDifferent { .. }
+        );
         // While a save is in flight the text is shown, not edited.
         let frozen_text = |id: &'static str, text: String| {
             div()
@@ -1133,6 +1130,10 @@ impl Plait {
         };
         let note = match &form.status {
             FormStatus::Failed { note, .. } => Some(note.clone()),
+            FormStatus::SavedUnverified => Some(
+                "The save went through, but Plait could not verify it. Your draft is still here."
+                    .into(),
+            ),
             FormStatus::Unknown => {
                 Some("Linear may have saved this. Check in Linear before saving again.".to_owned())
             }
@@ -1256,7 +1257,7 @@ impl Plait {
                                     if saving { "Saving…" } else { "Save" },
                                     Tone::Primary,
                                 )
-                                .disabled(saving || form.status == FormStatus::Unknown)
+                                .disabled(saving || matches!(form.status, FormStatus::Unknown | FormStatus::SavedUnverified))
                                 .on_activate(cx, |this, _, cx| this.save_issue_form(cx)),
                             ),
                     )
@@ -1276,41 +1277,59 @@ impl Plait {
             return div();
         };
         // Linear's version is the re-read issue, once it is newer than the edit's start.
-        let theirs = self
+        let detail = self
             .issues
             .view
             .detail
             .as_ref()
             .map(|d| &d.issue)
             .filter(|d| &d.summary.id == issue_id && &d.summary.updated_at != expected_updated_at);
+        let (note, theirs) = match &form.status {
+            FormStatus::SavedDifferent {
+                title, description, ..
+            } => (
+                "The save went through, but someone else may have changed this issue. Review Linear’s version and your draft.",
+                Some((title.as_str(), description.as_str())),
+            ),
+            _ => (
+                "Someone changed this issue in Linear after you started editing. Nothing was saved.",
+                detail.map(|issue| {
+                    (
+                        issue.summary.title.as_str(),
+                        issue.description.as_deref().unwrap_or_default(),
+                    )
+                }),
+            ),
+        };
         column()
             .gap_2()
             .p_3()
             .rounded(px(ITEM_CORNER))
             .border_1()
             .border_color(rgb(colors().amber))
-            .child(
-                tag(
-                    "issue-conflict-note",
-                    "Someone changed this issue in Linear after you started editing. Nothing was saved.",
-                    colors().amber,
-                )
-                .line_height(px(18.)),
-            )
+            .child(tag("issue-conflict-note", note, colors().amber).line_height(px(18.)))
             .child(match theirs {
-                Some(theirs) => column()
+                Some((title, description)) => column()
                     .gap_1()
-                    .child(tag("issue-conflict-label", "Linear's version", colors().muted))
+                    .child(tag(
+                        "issue-conflict-label",
+                        "Linear's version",
+                        colors().muted,
+                    ))
                     .child(
                         div()
                             .text_size(px(15.))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(rgb(colors().text))
-                            .child(theirs.summary.title.clone()),
+                            .child(title.to_owned()),
                     )
                     .child(plain_text(
                         "issue-conflict-description",
-                        theirs.description.as_deref().unwrap_or("No description."),
+                        if description.is_empty() {
+                            "No description."
+                        } else {
+                            description
+                        },
                     )),
                 None => column().child(tag(
                     "issue-conflict-loading",

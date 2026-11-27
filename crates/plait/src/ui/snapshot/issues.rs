@@ -334,6 +334,44 @@ pub(super) fn walk(repo: &Path, out: Option<&Path>, suffix: &str, width: f32, he
     }
 }
 
+/// The accepted conflict carries its own refreshed text and needs no test server.
+#[cfg(debug_assertions)]
+#[core::prelude::v1::test]
+fn accepted_edit_shows_both_versions() {
+    if !isolated("issues::accepted_edit_shows_both_versions") {
+        return;
+    }
+    let scratch = std::env::temp_dir().join(format!("plait-edit-review-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    let output = std::env::var_os("PLAIT_SNAPSHOT_DIR").map(PathBuf::from);
+    for (width, height) in [(1380., 860.), (900., 600.)] {
+        let mut h = Harness::with_host(&repo, output.as_deref(), width, height, None);
+        h.connect(&repo, false);
+        open(&mut h);
+        edit_refused(&mut h);
+        h.update(|p, _, _| {
+            let current = &p.issues.view.detail.as_ref().unwrap().issue;
+            p.issues.view.edits.get_mut("i1").unwrap().status =
+                plait_client::linear_issues::FormStatus::SavedDifferent {
+                    updated_at: current.summary.updated_at.clone(),
+                    title: current.summary.title.clone(),
+                    description: current.description.clone().unwrap_or_default(),
+                };
+        });
+        let frame = h.draw_a11y();
+        for required in ["Issue title", "Keep editing mine", "Discard mine"] {
+            assert!(
+                frame
+                    .nodes
+                    .iter()
+                    .any(|node| node.label.as_deref() == Some(required))
+            );
+        }
+        h.capture(&format!("issues-edit-after-save-{width}"));
+    }
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
 /// Only the Issues scenes, for reviewing their layout quickly.
 #[core::prelude::v1::test]
 #[ignore = "writes PNG files; set PLAIT_SNAPSHOT_DIR and pass --ignored"]

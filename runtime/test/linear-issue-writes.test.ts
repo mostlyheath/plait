@@ -104,6 +104,7 @@ test('linear_update_issue edits title and description when the issue is unchange
   const edited = await h.call({ op: 'linear_update_issue', issue_id: 'issue-142', expected_updated_at: expected,
     title: 'Retry 429s with backoff', description: 'Use **Retry-After**.', request_id: 'edit-1' });
   assert.equal(edited.ok, true, JSON.stringify(edited));
+  assert.equal(edited.result.verification, 'matched');
   assert.equal(edited.result.issue.title, 'Retry 429s with backoff');
   assert.equal(edited.result.issue.description, 'Use **Retry-After**.');
   assert.notEqual(edited.result.issue.updated_at, expected);
@@ -114,6 +115,47 @@ test('linear_update_issue edits title and description when the issue is unchange
     expected_updated_at: edited.result.issue.updated_at, description: 'Shorter.', request_id: 'edit-2' });
   assert.equal(described.ok, true);
   assert.equal(described.result.issue.title, 'Retry 429s with backoff');
+});
+
+test('an accepted edit compares the live text and replays the discrepancy without writing again', async t => {
+  const h = await setup(t);
+  const issue = h.fake.issues.find(i => i.id === 'issue-142')!;
+  const request = { op: 'linear_update_issue', issue_id: issue.id, expected_updated_at: issue.updatedAt,
+    title: 'My title', request_id: 'edit-race' };
+  h.fake.enqueueFault(() => false); // Timestamp check.
+  h.fake.enqueueFault(() => false); // Mutation.
+  h.fake.enqueueFault((_req, _res, parsed) => {
+    assert.match(parsed.query, /PlaitIssueDetail/);
+    issue.title = 'Another title';
+    return false;
+  });
+  const result = (await h.call(request)).result;
+  assert.equal(result.outcome, 'accepted');
+  assert.equal(result.verification, 'different');
+  assert.equal(result.issue.title, 'Another title');
+  assert.match(result.warning, /someone else/i);
+  await h.restart();
+  assert.deepEqual((await h.call(request)).result, result);
+  assert.equal(mutations(h.fake, 'PlaitIssueUpdateText'), 1);
+});
+
+test('a failed post-edit refresh leaves the save accepted', async t => {
+  const h = await setup(t);
+  const issue = h.fake.issues.find(i => i.id === 'issue-142')!;
+  h.fake.enqueueFault(() => false);
+  h.fake.enqueueFault(() => false);
+  h.fake.enqueueFault((_req, res) => {
+    res.writeHead(503).end();
+    return true;
+  });
+  const reply = await h.call({ op: 'linear_update_issue', issue_id: issue.id,
+    expected_updated_at: issue.updatedAt, description: 'Mine', request_id: 'edit-unverified' });
+  assert.equal(reply.result.outcome, 'accepted');
+  assert.equal(reply.result.issue, null);
+  assert.equal(reply.result.verification, 'unverified');
+  assert.match(reply.result.warning, /could not/i);
+  assert.equal(issue.description, 'Mine');
+  assert.equal(mutations(h.fake, 'PlaitIssueUpdateText'), 1);
 });
 
 test('linear_update_issue refuses an issue that changed since it was read', async t => {

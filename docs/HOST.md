@@ -2824,7 +2824,16 @@ owner-only host socket, which any process running as you can reach.
   so before sending the host reads the issue and refuses with
   `linear_issue_changed` (`outcome:"not_sent"`) when its `updatedAt` differs
   from `expected_updated_at`. A change landing between that read and the
-  mutation is still possible. Returns the same shape without `issue_id`.
+  mutation can be overwritten without detection. After acceptance the host
+  refreshes the issue once and compares only the fields sent, before display
+  escaping or truncation. A null description compares as empty. The receipt
+  has the create reply shape without `issue_id`, with optional `verification`
+  (`matched`, `different`, or `unverified`). A mismatch carries the refreshed
+  detail and a warning. The desktop keeps the draft and shows both versions.
+  A failed or incomplete read leaves the write accepted and the desktop
+  reports that it could not verify the save. Later edits can occur after
+  this read. Older hosts omit `verification`; the desktop shows discrepancies
+  in their returned detail and otherwise reports the save as unverified.
 - **`linear_read_image`** reads one image from Linear's file storage, which
   Linear documents at `uploads.linear.app` with the same `authorization`
   header as the API. `url` must be https on exactly that host, with no port or

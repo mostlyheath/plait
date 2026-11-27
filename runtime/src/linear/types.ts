@@ -215,3 +215,6 @@ export function safeLinearUrl(value: unknown): string {
 export function safeNumber(value: unknown, fallback = 0): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
+
+export type IssueEditFields = { title?: string; description?: string };
+export type EditVerification = 'matched' | 'different' | 'unverified';
