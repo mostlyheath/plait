@@ -130,3 +130,27 @@ fn title_edits_leave_thread_and_worktrees_rows_out_of_the_draft_cache() {
     drop(h);
     std::fs::remove_dir_all(scratch).unwrap();
 }
+
+#[core::prelude::v1::test]
+fn stage_all_from_worktrees_refuses_the_previous_checkout() {
+    if !isolated("mixed_tabs::stage_all_from_worktrees_refuses_the_previous_checkout") {
+        return;
+    }
+    let scratch =
+        std::env::temp_dir().join(format!("plait-stage-worktrees-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    let mut h = Harness::with_host(&repo, None, 900., 600., None);
+    h.update(|p, w, cx| p.open_worktrees(scratch.join("other"), w, cx));
+    h.draw();
+    h.update(|_, w, cx| w.dispatch_action(Box::new(crate::ui::StageAll), cx));
+    h.update(|p, _, _| {
+        assert!(p.worktrees_visible());
+        assert_eq!(
+            p.notice.as_deref(),
+            Some("Checkout identity is not verified.")
+        );
+        assert!(!p.state.repository.write().busy());
+    });
+    drop(h);
+    std::fs::remove_dir_all(scratch).unwrap();
+}

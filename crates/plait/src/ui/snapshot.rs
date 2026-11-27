@@ -120,7 +120,10 @@ fn isolated(test: &str) -> bool {
         return true;
     }
     // Unix sockets have a short pathname limit, including the temporary home.
-    let home = PathBuf::from("/tmp").join(format!("plait-scene-{}-{test}", std::process::id()));
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static NEXT_HOME: AtomicUsize = AtomicUsize::new(0);
+    let seq = NEXT_HOME.fetch_add(1, Ordering::Relaxed);
+    let home = std::env::temp_dir().join(format!("plait-scene-{}-{seq}", std::process::id()));
     let _ = std::fs::remove_dir_all(&home);
     std::fs::create_dir_all(&home).expect("scratch home");
     // libtest names omit the crate: `ui::snapshot::<test>`.
@@ -173,7 +176,7 @@ fn a_scripted_host_outlives_a_client_that_left() {
     use std::io::Write;
     use std::os::unix::net::{UnixListener, UnixStream};
     // Unix sockets have a short pathname limit.
-    let path = PathBuf::from("/tmp").join(format!("plait-scripted-{}.sock", std::process::id()));
+    let path = std::env::temp_dir().join(format!("plait-scripted-{}.sock", std::process::id()));
     let _ = std::fs::remove_file(&path);
     let listener = UnixListener::bind(&path).unwrap();
     // Gone without a request, gone after one, and still waiting for a reply.
@@ -1480,10 +1483,46 @@ fn files_tab_reads_finds_and_reloads_a_real_file() {
     harness.update(|plait, window, cx| plait.quick_open(window, cx));
     harness.update(|plait, window, cx| {
         let overlay = plait.overlay.as_ref().expect("quick open");
-        assert!(overlay.files && !overlay.palette.read(cx).is_empty());
+        assert!(!overlay.files_pending && !overlay.palette.read(cx).is_empty());
         plait.close_overlay(true, window, cx);
     });
     let _ = std::fs::remove_dir_all(&scratch);
+}
+
+#[core::prelude::v1::test]
+fn quick_open_displays_the_completed_empty_listing() {
+    if !isolated("quick_open_displays_the_completed_empty_listing") {
+        return;
+    }
+    let repo = std::env::temp_dir();
+    let mut h = Harness::with_host(&repo, None, 900., 600., None);
+    for error in [None, Some("Connection lost")] {
+        h.update(|p, w, cx| {
+            p.state.repository.data.files = Load::Loading;
+            p.quick_open(w, cx);
+            p.state.repository.data.files = match error {
+                Some(reason) => Load::Error(reason.into()),
+                None => Load::Ready(Arc::new(plait_protocol::git::FileList {
+                    paths: Vec::new(),
+                    truncated: false,
+                    skipped: 0,
+                    elapsed: Duration::ZERO,
+                })),
+            };
+            p.deliver_quick_open(cx);
+        });
+        h.draw();
+        h.update(|p, w, cx| {
+            let palette = p.overlay.as_ref().unwrap().palette.read(cx);
+            let empty = if error.is_some() {
+                "Files could not be listed."
+            } else {
+                "No files in this checkout."
+            };
+            assert_eq!(palette.listing_status(), (empty, error));
+            p.close_overlay(true, w, cx);
+        });
+    }
 }
 
 /// The Files tab with a file, with find open, and quick open.

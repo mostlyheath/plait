@@ -116,7 +116,7 @@ pub(super) fn wait(harness: &mut Harness, done: impl Fn(&Plait) -> bool) {
     }
 }
 pub(super) fn setup(name: &str) -> (PathBuf, PathBuf, Harness) {
-    let scratch = PathBuf::from("/tmp").join(format!("plait-{name}-{}", std::process::id()));
+    let scratch = std::env::temp_dir().join(format!("plait-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&scratch);
     let repository = fixture_repository(&scratch);
     let mut harness = Harness::new(&repository, None, 900., 600.);
