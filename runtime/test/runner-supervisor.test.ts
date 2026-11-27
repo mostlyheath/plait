@@ -10,6 +10,9 @@ import { spawnRunner } from '../src/runner/spawn.ts';
 import type { Event } from '../src/runner/protocol.ts';
 import { setup } from './support/safety.ts';
 
+// Launch waits for attach or child exit. Allow cold module loading on busy CI runners.
+const runnerStartupTimeoutMs = 30_000;
+
 async function waitFor(check: () => boolean | Promise<boolean>): Promise<void> {
   const end = Date.now() + 5000;
   while (!await check()) { if (Date.now() > end) throw new Error('Timed out'); await new Promise(resolve => setTimeout(resolve, 25)); }
@@ -19,7 +22,7 @@ for (const mode of ['finish', 'stop', 'reattach', 'kill'] as const) test(`runner
   const { root, base } = await setup(t); const lease = await acquireCheckout(root);
   const previous = process.env.PLAIT_RUNNER_TEST_TURNS; process.env.PLAIT_RUNNER_TEST_TURNS = '1';
   const events: Event[] = []; let disconnected = '';
-  const supervisor = new RunnerSupervisor({ store: base, onEvent: event => { events.push(event); }, onDisconnect: entry => { disconnected = entry?.status ?? ''; } });
+  const supervisor = new RunnerSupervisor({ store: base, launchTimeoutMs: runnerStartupTimeoutMs, onEvent: event => { events.push(event); }, onDisconnect: entry => { disconnected = entry?.status ?? ''; } });
   let next: RunnerSupervisor | undefined; let pid = 0;
   try {
     const gate = join(base, 'gate');
@@ -72,7 +75,7 @@ test('runner exits without attach and start', async t => {
     await lease.close();
     // The orphan timer starts only after the child loads its modules and opens its socket.
     const code = await Promise.race([exited, new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error('Orphan runner did not exit')), 30_000);
+      timer = setTimeout(() => reject(new Error('Orphan runner did not exit')), runnerStartupTimeoutMs);
     })]);
     pid = undefined;
     assert.equal(code, 0, await readFile(log, 'utf8'));
@@ -139,7 +142,7 @@ test('start is not sent if acceptance fails; runner stops and releases checkout'
   const lease = await acquireCheckout(root);
   const previous = process.env.PLAIT_RUNNER_TEST_TURNS; process.env.PLAIT_RUNNER_TEST_TURNS = '1';
   const pidFile = join(base, 'should-not-exist.pid');
-  const supervisor = new RunnerSupervisor({ store: base, onEvent: () => {} });
+  const supervisor = new RunnerSupervisor({ store: base, launchTimeoutMs: runnerStartupTimeoutMs, onEvent: () => {} });
   try {
     await assert.rejects(
       supervisor.launch({
@@ -276,7 +279,7 @@ test('failed acceptance leaves registry files intact when runner stays live past
     await server.listen();
     await new Promise(() => {});
   `);
-  const supervisor = new RunnerSupervisor({ store: base, entry: stubborn, failedStopTimeoutMs: 150, onEvent: () => {} });
+  const supervisor = new RunnerSupervisor({ store: base, entry: stubborn, launchTimeoutMs: runnerStartupTimeoutMs, failedStopTimeoutMs: 150, onEvent: () => {} });
   let stubbornPid = 0;
   try {
     await assert.rejects(
@@ -306,7 +309,7 @@ test('a runner that cannot listen explains why the launch failed', async t => {
   const { root, base } = await setup(t); const lease = await acquireCheckout(root);
   // A store this deep puts the runner socket past the Unix socket path limit.
   const store = join(base, 'x'.repeat(100)); await mkdir(store, { mode: 0o700 });
-  const supervisor = new RunnerSupervisor({ store, onEvent: () => {} });
+  const supervisor = new RunnerSupervisor({ store, launchTimeoutMs: runnerStartupTimeoutMs, onEvent: () => {} });
   try {
     await assert.rejects(supervisor.launch({ threadId: 'thread', requestId: 'request', lease, payload: { kind: 'test' } }), /Runner did not start[\s\S]*too long/);
   } finally { supervisor.detach(); await lease.close(); }

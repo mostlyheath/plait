@@ -20,6 +20,7 @@ mod document;
 mod draft_tabs;
 mod draft_titles;
 mod file_view;
+mod graph_view;
 mod harnesses;
 mod history;
 mod host;
@@ -199,6 +200,7 @@ pub struct Plait {
     naming: plait_client::host::thread_naming::State,
     linear: settings_linear::LinearState,
     issues: issues_view::IssuesUi,
+    graph: graph_view::GraphUi,
     machines: settings_machines::MachinesUi,
     /// A thread was created at once (a worktree thread): open it when the host
     /// confirms creation, unless the user has gone elsewhere in the meantime.
@@ -301,6 +303,8 @@ impl Plait {
             self.machines.active = machine;
             self.host.connection.threads_mut().clear();
             self.navigation.available.clear();
+            self.graph.reset_for_reconnect();
+            self.sync_graph_menu(cx);
             self.automations.reset_for_machine();
             self.host_workspace = self.host_workspace.for_another_machine();
             self.switch_machine_tabs(window, cx);
@@ -380,6 +384,7 @@ impl Plait {
             naming: Default::default(),
             linear: Default::default(),
             issues: Default::default(),
+            graph: Default::default(),
             machines: Default::default(),
             new_thread_open: false,
             draft: Default::default(),
@@ -447,11 +452,13 @@ impl Plait {
             this.sync_linear_settings(cx);
             this.sync_issues_view(cx);
             this.sync_issue_links(cx);
+            this.sync_graph_view(cx);
         })
         .detach();
         // The machine saved last time, once preferences have loaded.
         let entity = cx.entity();
         cx.observe_in(&entity, window, |this, _, window, cx| {
+            this.sync_graph_capability(window, cx);
             this.restore_machine(window, cx)
         })
         .detach();
@@ -706,6 +713,10 @@ impl Plait {
             self.refresh_worktrees_view(true, cx);
             return;
         }
+        if self.graph_visible() {
+            self.refresh_graph_now(cx);
+            return;
+        }
         window.focus(&self.focus, cx);
         self.fetch_turn_records(window, cx);
         self.refresh_turn_review(cx);
@@ -852,7 +863,7 @@ impl Plait {
     }
 
     fn show_tab(&mut self, tab: Workspace, window: &mut Window, cx: &mut Context<Self>) {
-        if self.worktrees_visible() || !self.ensure_view_tab() {
+        if self.worktrees_visible() || self.graph_visible() || !self.ensure_view_tab() {
             return;
         }
         if tab != Workspace::Conversation && !self.panel_is_open() {
@@ -884,7 +895,7 @@ impl Plait {
     // Restoring a tab presents its content without moving its remembered pane focus.
     fn present_workspace(&mut self, tab: Workspace, window: &mut Window, cx: &mut Context<Self>) {
         self.close_overview(window, cx);
-        if self.worktrees_visible() {
+        if self.worktrees_visible() || self.graph_visible() {
             return;
         }
         if !self.ensure_view_tab() {
@@ -1007,6 +1018,7 @@ impl Plait {
         let sidebar = self.sidebar;
         let current_thread = !self.worktrees_visible()
             && !self.issues_visible()
+            && !self.graph_visible()
             && self.host.thread.selected.is_some();
         let inset = if sidebar {
             16.
@@ -1081,6 +1093,8 @@ impl Plait {
             "Close Worktrees"
         } else if self.issues_visible() {
             "Close Linear issues"
+        } else if self.graph_visible() {
+            "Close Graph"
         } else {
             return None;
         };
@@ -1165,6 +1179,8 @@ impl Plait {
             "Worktrees".to_owned()
         } else if self.issues_visible() {
             "Linear issues".to_owned()
+        } else if self.graph_visible() {
+            "Graph".to_owned()
         } else if let Some(id) = &self.host.thread.selected {
             self.thread_title(id)
         } else if self.draft.open {
@@ -1345,6 +1361,11 @@ impl Render for Plait {
             )
             .on_action(cx.listener(|this, _: &issues_view::Issues, window, cx| {
                 this.open_issues(this.visible_project_checkout().to_owned(), window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &graph_view::Graph, window, cx| {
+                if this.graph_supported() {
+                    this.open_graph(this.visible_project_checkout().to_owned(), window, cx)
+                }
             }))
             .on_action(
                 cx.listener(|this, _: &Settings, window, cx| this.toggle_settings(window, cx)),
@@ -1716,6 +1737,8 @@ impl Render for Plait {
                                         self.worktrees_view(wide, cx)
                                     } else if self.issues_visible() {
                                         self.issues_tab(wide, cx)
+                                    } else if self.graph_visible() {
+                                        self.graph_view(wide, cx)
                                     } else if self.plain_folder_open()
                                         && matches!(
                                             self.workspace.tab,

@@ -772,6 +772,10 @@ impl AssetSource for Assets {
             "issue" => {
                 r#"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5" fill="none" stroke="black" stroke-width="1.4"/><circle cx="8" cy="8" r="1.6"/></svg>"#
             }
+            // An original mark for the thread graph: a root node linked to two children.
+            "graph" => {
+                r#"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><g fill="none" stroke="black" stroke-width="1.4" stroke-linecap="round"><circle cx="8" cy="3.5" r="1.8"/><circle cx="4" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><path d="M7.1 5.1 4.9 10.4M8.9 5.1 11.1 10.4"/></g></svg>"#
+            }
             "open-external" => {
                 r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M6.5 4H4v8h8V9.5m-5.5 0 6-6M9 3.5h3.5V7" fill="none" stroke="black" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>"#
             }
@@ -976,6 +980,7 @@ mod tests {
             "thread",
             "branch",
             "worktree",
+            "graph",
             "down",
             "right",
             "plus",

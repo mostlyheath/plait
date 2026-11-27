@@ -13,7 +13,7 @@ static SERIAL: AtomicU64 = AtomicU64::new(1);
 impl Journal {
     pub fn remove_record(&self, name: &str) -> Result<(), String> {
         valid_name(name)?;
-        match fs::remove_file(self.record_directory()?.join(name)) {
+        match fs::remove_file(self.record_directory("tabs")?.join(name)) {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(e) => Err(e.to_string()),
@@ -32,10 +32,18 @@ impl Journal {
 
     pub fn write_record_bytes(&self, name: &str, bytes: &[u8], limit: usize) -> Result<(), String> {
         valid_name(name)?;
+        Self::write_private_record(&self.record_directory("tabs")?, name, bytes, limit)
+    }
+
+    pub(super) fn write_private_record(
+        directory: &std::path::Path,
+        name: &str,
+        bytes: &[u8],
+        limit: usize,
+    ) -> Result<(), String> {
         if bytes.len() > limit {
             return Err("Saved tab data exceeds its storage limit.".into());
         }
-        let directory = self.record_directory()?;
         let temporary = directory.join(format!(
             ".{}-{}",
             std::process::id(),
@@ -51,7 +59,7 @@ impl Journal {
             file.write_all(bytes)?;
             file.sync_all()?;
             fs::rename(&temporary, directory.join(name))?;
-            File::open(&directory)?.sync_all()
+            File::open(directory)?.sync_all()
         })();
         if let Err(error) = result {
             let _ = fs::remove_file(&temporary);
@@ -74,7 +82,14 @@ impl Journal {
 
     pub fn read_record_bytes(&self, name: &str, limit: usize) -> Result<Option<Vec<u8>>, String> {
         valid_name(name)?;
-        let directory = self.record_directory()?;
+        Self::read_private_record(&self.record_directory("tabs")?, name, limit)
+    }
+
+    pub(super) fn read_private_record(
+        directory: &std::path::Path,
+        name: &str,
+        limit: usize,
+    ) -> Result<Option<Vec<u8>>, String> {
         let file = match OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
@@ -103,8 +118,8 @@ impl Journal {
         Ok(Some(bytes))
     }
 
-    fn record_directory(&self) -> Result<std::path::PathBuf, String> {
-        let directory = self.directory.join("tabs");
+    pub(super) fn record_directory(&self, name: &str) -> Result<std::path::PathBuf, String> {
+        let directory = self.directory.join(name);
         match fs::create_dir(&directory) {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}

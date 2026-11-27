@@ -392,7 +392,10 @@ impl Plait {
         }
         let drafts = self.recoverable_tab_drafts();
         let checkouts = self.verified_tab_checkouts();
+        let awaiting_graph_probe =
+            !cfg!(test) && self.host.connection.connected && self.graph.capability.is_none();
         let context = RestoreContext {
+            graph_supported: awaiting_graph_probe || self.graph_supported(),
             host: &self.tabs.host,
             threads: self.host.connection.threads(),
             checkouts: &checkouts,
@@ -403,10 +406,23 @@ impl Plait {
                 .connected
                 .then_some(self.host.connection.epoch),
         };
-        let bytes = self.tabs.persistence.bytes.take();
-        let restored = bytes
+        let restored = self
+            .tabs
+            .persistence
+            .bytes
             .as_deref()
             .map(|bytes| persistence::decode(bytes, super::tabs::fresh_window_id(), &context));
+        if awaiting_graph_probe
+            && restored.as_ref().is_some_and(|r| {
+                r.window
+                    .tabs()
+                    .iter()
+                    .any(|t| t.session().target().is_graph())
+            })
+        {
+            return;
+        }
+        self.tabs.persistence.bytes = None;
         let connection = context.connection;
         self.tabs.persistence.restored = true;
         if let Some(restored) = restored {
@@ -506,7 +522,8 @@ impl Plait {
                 TabTarget::Draft { id, .. } => Some(id.clone()),
                 TabTarget::Existing { .. }
                 | TabTarget::Worktrees { .. }
-                | TabTarget::Issues { .. } => None,
+                | TabTarget::Issues { .. }
+                | TabTarget::Graph { .. } => None,
             })
             .collect();
         kept.extend(self.draft.id.clone());
@@ -554,6 +571,7 @@ impl Plait {
         let drafts = self.recoverable_tab_drafts();
         let checkouts = self.verified_tab_checkouts();
         let context = RestoreContext {
+            graph_supported: self.graph_supported(),
             host: &self.tabs.host,
             threads: self.host.connection.threads(),
             checkouts: &checkouts,
@@ -570,7 +588,7 @@ impl Plait {
                 .tabs
                 .model
                 .active()
-                .filter(|_| !self.worktrees_visible())
+                .filter(|_| !self.worktrees_visible() && !self.graph_visible())
                 .map(|id| (id, self.capture_tab_bookmark(window, cx))),
             target: state
                 .target

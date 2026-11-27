@@ -101,6 +101,7 @@ pub struct TabMetadata {
     pub title: String,
     pub worktrees: bool,
     pub issues: bool,
+    pub graph: bool,
     pub project: String,
     pub state: TabState,
     pub word: &'static str,
@@ -138,6 +139,8 @@ pub fn metadata(window: &WindowTabs, context: &RowContext<'_>) -> Vec<TabMetadat
                 "Worktrees"
             } else if target.is_issues() {
                 "Issues"
+            } else if target.is_graph() {
+                "Graph"
             } else if target.is_draft() {
                 "New thread"
             } else {
@@ -157,6 +160,8 @@ pub fn metadata(window: &WindowTabs, context: &RowContext<'_>) -> Vec<TabMetadat
                     "Project branches, worktrees and storage"
                 } else if target.is_issues() && state != TabState::Offline {
                     "The project's Linear issues"
+                } else if target.is_graph() && state != TabState::Offline {
+                    "Project thread graph"
                 } else {
                     state.description()
                 },
@@ -169,6 +174,7 @@ pub fn metadata(window: &WindowTabs, context: &RowContext<'_>) -> Vec<TabMetadat
                 id: tab.id,
                 worktrees: target.is_worktrees(),
                 issues: target.is_issues(),
+                graph: target.is_graph(),
                 title,
                 project,
                 state,

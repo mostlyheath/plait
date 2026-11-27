@@ -6,6 +6,7 @@ pub mod automations;
 pub mod checkout_queue;
 pub mod folders;
 pub mod git;
+pub mod graph;
 pub mod harness;
 pub mod history;
 pub mod linear;

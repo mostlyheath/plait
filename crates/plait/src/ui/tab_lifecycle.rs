@@ -43,7 +43,8 @@ impl Lifecycle {
                 TabTarget::Existing { checkout, .. }
                 | TabTarget::Draft { checkout, .. }
                 | TabTarget::Worktrees { checkout }
-                | TabTarget::Issues { checkout } => checkout,
+                | TabTarget::Issues { checkout }
+                | TabTarget::Graph { checkout } => checkout,
             };
             if checkout.host == key.host && checkout.root == key.root {
                 *checkout = key.clone();
@@ -71,7 +72,8 @@ impl Lifecycle {
                     TabTarget::Existing { checkout, .. }
                     | TabTarget::Draft { checkout, .. }
                     | TabTarget::Worktrees { checkout }
-                    | TabTarget::Issues { checkout } => checkout,
+                    | TabTarget::Issues { checkout }
+                    | TabTarget::Graph { checkout } => checkout,
                 };
                 if &checkout.host == previous {
                     checkout.host = host.clone();
@@ -143,7 +145,7 @@ impl Plait {
             self.perform_tab(intent, window, cx);
             return;
         };
-        if self.worktrees_visible() {
+        if self.worktrees_visible() || self.graph_visible() {
             self.perform_tab(intent, window, cx);
             return;
         }
@@ -319,6 +321,7 @@ impl Plait {
             .into_iter()
             .map(|(id, tab)| (id, tab.checkout.clone()))
             .collect();
+        let graph_supported = self.graph_supported();
         let result = match intent {
             Intent::Open(target) => self.tabs.model.open(target, connection).map(|_| ()),
             Intent::Activate(id) => self.tabs.model.activate(id),
@@ -365,8 +368,11 @@ impl Plait {
                 TabNavigation::Previous => self.tabs.model.previous_tab(),
                 TabNavigation::Jump(n) => self.tabs.model.jump(n),
                 TabNavigation::Reopen => self.tabs.model.reopen(|target| match target {
+                    TabTarget::Graph { .. } if !graph_supported => None,
                     // As on restore: only a project the sidebar still verifies.
-                    TabTarget::Worktrees { checkout } | TabTarget::Issues { checkout } => (checkout.host == self.tabs.host
+                    TabTarget::Worktrees { checkout }
+                    | TabTarget::Issues { checkout }
+                    | TabTarget::Graph { checkout } => (checkout.host == self.tabs.host
                         && self.tabs.identity.checkouts.iter().any(|(root, identity)| {
                             *root == checkout.root && checkout.directory == Some(*identity)
                         }))
@@ -444,6 +450,7 @@ impl Plait {
 
     pub(super) fn park_workspace(&mut self, cx: &mut Context<Self>) {
         self.worktrees.park();
+        self.graph.park();
         self.tabs.lifecycle.hydrating = false;
         self.tabs.lifecycle.hydrate_generation += 1;
         self.workspace.cancelled.store(true, Ordering::Release);
@@ -475,7 +482,7 @@ impl Plait {
     }
 
     pub(super) fn hydrate_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.worktrees_visible() {
+        if self.worktrees_visible() || self.graph_visible() {
             return;
         }
         let Some(tab) = self
@@ -511,7 +518,9 @@ impl Plait {
         let task = cx.background_executor().spawn(async move {
             let bookmark = match record {
                 BookmarkRecord::Inline { .. } => record.inline(),
-                BookmarkRecord::Worktrees { .. } | BookmarkRecord::Issues { .. } => None,
+                BookmarkRecord::Worktrees { .. }
+                | BookmarkRecord::Issues { .. }
+                | BookmarkRecord::Graph { .. } => None,
                 BookmarkRecord::Stored { blob, .. } => journal
                     .read_record_bytes(&blob, bookmark::EXTENDED_BOOKMARK_LIMIT)?
                     .and_then(|bytes| bookmark::decode_extended(&bytes)),

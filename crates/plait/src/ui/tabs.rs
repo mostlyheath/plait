@@ -393,7 +393,7 @@ impl Plait {
         let Some(id) = self.tabs.model.active() else {
             return true;
         };
-        if self.worktrees_visible() {
+        if self.worktrees_visible() || self.graph_visible() {
             return true;
         }
         self.capture_session(cx);
@@ -443,6 +443,14 @@ impl Plait {
             return;
         }
         match target {
+            Some((TabTarget::Graph { .. }, _)) => {
+                self.host.select(None);
+                self.draft.open = false;
+                window.focus(&self.focus, cx);
+                self.restore_graph_bookmark();
+                self.sync_graph_view(cx);
+                cx.notify();
+            }
             Some((TabTarget::Issues { .. }, _)) => {
                 self.host.select(None);
                 self.draft.open = false;
@@ -840,10 +848,16 @@ impl Plait {
                     .flex_shrink_0()
                     .flex()
                     .justify_center()
-                    .child(if meta.worktrees || meta.issues {
-                        icon(if meta.issues { "issue" } else { "branch" })
-                            .text_color(rgb(colors().muted))
-                            .into_any_element()
+                    .child(if meta.worktrees || meta.issues || meta.graph {
+                        icon(if meta.graph {
+                            "graph"
+                        } else if meta.issues {
+                            "issue"
+                        } else {
+                            "branch"
+                        })
+                        .text_color(rgb(colors().muted))
+                        .into_any_element()
                     } else {
                         tab_state_mark(meta, self.host.connection.connected)
                     }),

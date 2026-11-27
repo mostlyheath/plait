@@ -1,0 +1,166 @@
+[
+  {
+    "source": "https://github.com/AccessKit/accesskit/blob/a55d3e1a18bb9ef0e4bccc9083fb13c3e0ad8969/LICENSE-MIT",
+    "file": "accesskit-MIT",
+    "crates": [
+      "accesskit 0.24.1"
+    ],
+    "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+  },
+  {
+    "source": "https://github.com/AccessKit/accesskit/blob/c88605b96d04431f9c3c792464a0f2f253480e94/LICENSE-MIT",
+    "file": "accesskit-MIT",
+    "crates": [
+      "accesskit_consumer 0.38.0",
+      "accesskit_macos 0.26.3"
+    ],
+    "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+  },
+  {
+    "source": "https://github.com/madsmtm/objc2/blob/b4167b582b2f75f9a1be75495c41b765344fd03c/LICENSE.md",
+    "file": "objc2-terms",
+    "crates": [
+      "block2 0.6.2"
+    ],
+    "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54"
+  },
+  {
+    "source": "https://github.com/madsmtm/objc2/blob/8852b424193ca41602281b3d7540d7c8ed51e49a/LICENSE.md",
+    "file": "objc2-terms",
+    "crates": [
+      "dispatch2 0.3.1"
+    ],
+    "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54"
+  },
+  {
+    "source": "https://github.com/nical/lyon/blob/db98d26a1a90076a7a894262dcb51117eef643c8/LICENSE-MIT",
+    "file": "lyon-MIT",
+    "crates": [
+      "lyon_geom 1.0.20"
+    ],
+    "sha256": "80f275e90d799911ed3830a7f242a2ef5a4ade2092fe0aa07bfb2d2cf2f2b95e"
+  },
+  {
+    "source": "https://github.com/nical/lyon/blob/56219c95c658d4f39de7b190d98e57d5773ba241/LICENSE-MIT",
+    "file": "lyon-MIT",
+    "crates": [
+      "lyon_path 1.0.19"
+    ],
+    "sha256": "80f275e90d799911ed3830a7f242a2ef5a4ade2092fe0aa07bfb2d2cf2f2b95e"
+  },
+  {
+    "source": "https://github.com/madsmtm/objc2/blob/4fc083f1c6d6784577e38b0ee8dbd344481e2fd2/LICENSE.txt",
+    "file": "objc2-MIT",
+    "crates": [
+      "objc-sys 0.3.5"
+    ],
+    "sha256": "e353f37b12aefbb9f9b29490e837cfee05d9bda70804b3562839a3285c1df1e5"
+  },
+  {
+    "source": "https://github.com/madsmtm/objc2/blob/5237cbf081d04ef75a1f6a207b4018e7c1ae7438/LICENSE.txt",
+    "file": "objc2-MIT",
+    "crates": [
+      "objc2 0.5.3"
+    ],
+    "sha256": "e353f37b12aefbb9f9b29490e837cfee05d9bda70804b3562839a3285c1df1e5"
+  },
+  {
+    "source": "https://github.com/madsmtm/objc2/blob/d7d2fa23ceaa5e6096c923b081040e5d81b3b9df/LICENSE.md",
+    "file": "objc2-terms",
+    "crates": [
+      "objc2 0.6.5"
+    ],
+    "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54"
+  },
+  {
+    "source": "https://github.com/madsmtm/objc2/blob/e282618be4c3a3b9542957e0c8540e9588472ce8/LICENSE.txt",
+    "file": "objc2-MIT",
+    "crates": [
+      "objc2-app-kit 0.2.2",
+      "objc2-foundation 0.2.2"
+    ],
+    "sha256": "e353f37b12aefbb9f9b29490e837cfee05d9bda70804b3562839a3285c1df1e5"
+  },
+  {
+    "source": "https://github.com/madsmtm/objc2/blob/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md",
+    "file": "objc2-terms",
+    "crates": [
+      "objc2-app-kit 0.3.2",
+      "objc2-core-foundation 0.3.2",
+      "objc2-core-graphics 0.3.2",
+      "objc2-core-text 0.3.2",
+      "objc2-core-video 0.3.2",
+      "objc2-foundation 0.3.2",
+      "objc2-metal 0.3.2",
+      "objc2-quartz-core 0.3.2",
+      "objc2-security 0.3.2",
+      "objc2-uniform-type-identifiers 0.3.2",
+      "objc2-user-notifications 0.3.2"
+    ],
+    "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54"
+  },
+  {
+    "source": "https://github.com/madsmtm/objc2/blob/8d214f5477365ffcbcbb7de058c86ed9a518efb7/LICENSE.md",
+    "file": "objc2-terms",
+    "crates": [
+      "objc2-encode 4.1.0"
+    ],
+    "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54"
+  },
+  {
+    "source": "https://github.com/servo/pathfinder/blob/6c3c0466f451c5bd2007087728cd168798cd64e8/LICENSE-MIT",
+    "file": "pathfinder-MIT",
+    "crates": [
+      "pathfinder_simd 0.5.6"
+    ],
+    "sha256": "0621878e61f0d0fda054bcbe02df75192c28bde1ecc8289cbd86aeba2dd72720"
+  },
+  {
+    "source": "https://github.com/aclysma/profiling/blob/8271551172eb6fa4cba47369aedd93790c623df9/LICENSE-MIT",
+    "file": "profiling-MIT",
+    "crates": [
+      "profiling 1.0.18"
+    ],
+    "sha256": "e64891b51361725890d69bafa508ad013bc92aeef99054caecb6f5ce5f7dfd51"
+  },
+  {
+    "source": "https://github.com/nical/rust_debug/blob/93f414cd572b5c2781df93dbdc068ed13443d05a/LICENSE",
+    "file": "rust_debug-MIT",
+    "crates": [
+      "svg_fmt 0.4.5"
+    ],
+    "sha256": "7e98bed7f100747aaae7d82ab94fbe6b76fd6b84b09a3aaa413bff8196d0fbb1"
+  },
+  {
+    "source": "https://github.com/DioxusLabs/taffy/blob/eb6450694f33e2b7413e40677f230ff63f0fc194/LICENSE",
+    "file": "taffy-MIT",
+    "crates": [
+      "taffy 0.15.0"
+    ],
+    "sha256": "f97daf1a0124413dccf399a4e6626b4b74acd05282f80b6d64ac82225650b77a"
+  },
+  {
+    "source": "pathfinder_geometry 0.5.1 src/*.rs (copyright headers and MIT grant)",
+    "file": "pathfinder-geometry-credits",
+    "crates": [
+      "pathfinder_geometry 0.5.1"
+    ],
+    "sha256": "5383f8aadf385303fc09c685339510966e5ea96aa5ed131fe90221bf7453db1e"
+  },
+  {
+    "source": "seahash 4.1.0 Cargo.toml (MIT declaration and author list)",
+    "file": "seahash-credits",
+    "crates": [
+      "seahash 4.1.0"
+    ],
+    "sha256": "bb9b3b69281caa625068c0c07e45db41f72b16943328ec8c86c28da271e4074b"
+  },
+  {
+    "source": "zune-inflate 0.2.54 src/lib.rs and zune-core 0.5.3 LICENSE-MIT",
+    "file": "zune-MIT",
+    "crates": [
+      "zune-inflate 0.2.54"
+    ],
+    "sha256": "36427770ea88c281def0c7ab45d54e74d7d2872595c9600f5358a1b16173b863"
+  }
+]
