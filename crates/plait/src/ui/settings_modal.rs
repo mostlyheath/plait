@@ -70,8 +70,13 @@ impl Plait {
     /// Tell assistive actions what covers the workspace this frame: the
     /// modal, and a picker opened over it.
     pub(super) fn cover_workspace(&self, window: &Window, cx: &mut Context<Self>) {
-        let above = self.settings_open.then(|| {
-            let mut above = vec![self.settings_focus.clone()];
+        let modal = if self.settings_open {
+            Some(self.settings_focus.clone())
+        } else {
+            self.automation_form.as_ref().map(|form| form.focus.clone())
+        };
+        let above = modal.map(|focus| {
+            let mut above = vec![focus];
             if let Some(overlay) = &self.overlay {
                 above.push(overlay.palette.focus_handle(cx));
             }

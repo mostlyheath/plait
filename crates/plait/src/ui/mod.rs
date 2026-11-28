@@ -3,6 +3,7 @@ mod actions;
 mod admission;
 mod anchors;
 mod appearance;
+mod automation_form;
 mod automations;
 mod branches;
 mod build_output;
@@ -171,6 +172,7 @@ pub struct Plait {
     navigation: navigation::Navigation,
     automation_timer: Option<Task<()>>,
     automations: plait_client::automations::AutomationsState,
+    automation_form: Option<automation_form::AutomationForm>,
     overview: Option<overview::OverviewView>,
     host_workspace: host_workspace::HostWorkspace,
     /// What a window on a machine with no projects yet shows as its project.
@@ -226,6 +228,7 @@ pub struct Plait {
     pending_anchor: Option<Bounds<Pixels>>,
     /// Whether the open remote-folder picker's host can list folders.
     remote_browser: Option<std::rc::Rc<std::cell::Cell<bool>>>,
+    remote_browser_for_automation: bool,
     remote_browser_generation: u64,
     remote_listing: Option<plait_client::host::folders::Listing>,
     panels: panels::Panels,
@@ -329,7 +332,9 @@ impl Plait {
         self.navigation.rename = None;
         self.dismiss_tab_controls();
         self.remote_browser = None;
+        self.remote_browser_for_automation = false;
         self.remote_listing = None;
+        self.automation_form = None;
         self.folder_prompt = None;
         self.pending_anchor = None;
         if self.settings_open
@@ -398,6 +403,7 @@ impl Plait {
             navigation: navigation::Navigation::new(),
             automation_timer: None,
             automations: Default::default(),
+            automation_form: None,
             overview: None,
             host_workspace: Default::default(),
             no_project: plait_client::model::Project {
@@ -444,6 +450,7 @@ impl Plait {
             anchors: Default::default(),
             pending_anchor: None,
             remote_browser: None,
+            remote_browser_for_automation: false,
             remote_browser_generation: 0,
             remote_listing: None,
             panels: Default::default(),
@@ -527,6 +534,8 @@ impl Plait {
             window.focus(
                 if this.settings_open {
                     &this.settings_focus
+                } else if let Some(form) = &this.automation_form {
+                    &form.focus
                 } else {
                     &this.focus
                 },
@@ -877,6 +886,10 @@ impl Plait {
     ) {
         self.close_overlay(true, window, cx);
         self.cancel_harness_path();
+        if page.is_some() {
+            self.automation_form = None;
+            self.remote_browser_for_automation = false;
+        }
         if page.is_some() && !self.settings_open {
             self.settings_restore = window.focused(cx);
         }
@@ -1424,6 +1437,7 @@ impl Render for Plait {
             .key_context("Plait")
             .track_focus(&self.focus)
             .map(|root| self.settings_shortcuts(root, cx))
+            .map(|root| self.automation_form_shortcuts(root, cx))
             .on_action(cx.listener(Self::open_repository))
             .on_action(cx.listener(Self::refresh))
             .on_action(
@@ -1460,7 +1474,10 @@ impl Render for Plait {
             )
             .on_action(cx.listener(|this, _: &FillPanel, window, cx| this.fill_panel(window, cx)))
             .when(
-                !show_overview && !self.settings_open && self.panel_is_open(),
+                !show_overview
+                    && !self.settings_open
+                    && self.automation_form.is_none()
+                    && self.panel_is_open(),
                 |el| {
                     el.on_action(cx.listener(|this, _: &FocusNextPane, window, cx| {
                         this.cycle_panel_focus(window, cx)
@@ -1526,6 +1543,7 @@ impl Render for Plait {
                 } else if event.keystroke.key == "escape"
                     && event.keystroke.modifiers == Modifiers::default()
                     && !this.settings_open
+                    && this.automation_form.is_none()
                     && this.overlay.is_none()
                     && this.automations.confirm_delete.is_some()
                     && !this
@@ -1541,6 +1559,7 @@ impl Render for Plait {
                 } else if event.keystroke.key == "escape"
                     && event.keystroke.modifiers == Modifiers::default()
                     && !this.settings_open
+                    && this.automation_form.is_none()
                     && this.overlay.is_none()
                     && this.overview.is_some()
                     // The rename field leaves Escape to an input method mid-composition.
@@ -1857,7 +1876,10 @@ impl Render for Plait {
             .when(self.settings_open, |el| {
                 el.child(self.settings_modal(window, cx))
             })
-            // Pickers remain above Settings.
+            .when(self.automation_form.is_some(), |el| {
+                el.child(self.automation_form_modal(window, cx))
+            })
+            // Pickers remain above Settings and the automation form.
             .when_some(self.overlay.as_ref(), |el, overlay| {
                 el.child(overlay.palette.clone())
             });

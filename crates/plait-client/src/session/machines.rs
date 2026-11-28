@@ -431,7 +431,171 @@ fn replace(root: &Path, machine: &MachineId, target: &Path, bytes: &[u8]) -> Res
     Ok(())
 }
 
+/// Cap on saved entries in `<machine>.automation-creates`. Resolved and discarded
+/// entries are removed immediately; if any resolved entries remain, the oldest
+/// resolved entries are dropped first to stay within the cap while keeping
+/// unresolved entries intact.
+pub const MAX_AUTOMATION_CREATES: usize = 64;
+
+/// A persisted automation creation attempt keyed by its creation `request_id`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AutomationCreateEntry {
+    pub definition: crate::host::automations::Definition,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caller_thread_id: Option<String>,
+    #[serde(default)]
+    pub created_at_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_at_ms: Option<u64>,
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+fn drop_oldest_resolved(creates: &mut BTreeMap<String, AutomationCreateEntry>) -> bool {
+    let oldest = creates
+        .iter()
+        .filter_map(|(id, entry)| {
+            entry
+                .resolved_at_ms
+                .map(|resolved| ((resolved, entry.created_at_ms, id.as_str()), id.clone()))
+        })
+        .min_by(|(a, _), (b, _)| a.cmp(b))
+        .map(|(_, id)| id);
+    if let Some(id) = oldest {
+        creates.remove(&id);
+        true
+    } else {
+        false
+    }
+}
+
+/// Drops the oldest resolved entries until `creates.len() <= max_entries`,
+/// never dropping unresolved entries.
+pub fn cap_automation_creates(
+    creates: &mut BTreeMap<String, AutomationCreateEntry>,
+    max_entries: usize,
+) {
+    while creates.len() > max_entries && drop_oldest_resolved(creates) {}
+}
+
 impl super::Journal {
+    /// Persist the exact definition sent with `request_id` before contacting the
+    /// host. If `request_id` is already saved, returns the original persisted
+    /// entry unchanged so retries always resend the exact same definition. Blocking.
+    /// Kept per machine in a separate file older desktops never scan or rewrite.
+    pub fn save_automation_create(
+        &self,
+        machine: &MachineId,
+        request_id: &str,
+        definition: &crate::host::automations::Definition,
+        caller_thread_id: Option<&str>,
+    ) -> Result<AutomationCreateEntry, String> {
+        self.update_automation_creates(machine, |creates| {
+            creates
+                .entry(request_id.to_owned())
+                .or_insert_with(|| AutomationCreateEntry {
+                    definition: definition.clone(),
+                    caller_thread_id: caller_thread_id.map(str::to_owned),
+                    created_at_ms: now_ms(),
+                    resolved_at_ms: None,
+                })
+                .clone()
+        })
+    }
+
+    /// Reads one persisted creation attempt by `request_id`, if present. Blocking.
+    pub fn automation_create(
+        &self,
+        machine: &MachineId,
+        request_id: &str,
+    ) -> Result<Option<AutomationCreateEntry>, String> {
+        let _guard = self
+            .automation_create_writer
+            .lock()
+            .map_err(|_| "Automation creation storage is unavailable.")?;
+        let creates = self.read_automation_creates(machine)?;
+        Ok(creates.get(request_id).cloned())
+    }
+
+    /// Creation attempts on `machine` the host has not definitively answered,
+    /// oldest first (so `pop` yields the newest).
+    pub fn unresolved_automation_creates(
+        &self,
+        machine: &MachineId,
+    ) -> Result<Vec<(String, AutomationCreateEntry)>, String> {
+        let _writer = self
+            .automation_create_writer
+            .lock()
+            .map_err(|_| "Automation creation storage is unavailable.")?;
+        let mut pending: Vec<_> = self
+            .read_automation_creates(machine)?
+            .into_iter()
+            .filter(|(_, entry)| entry.resolved_at_ms.is_none())
+            .collect();
+        pending.sort_by_key(|(_, entry)| entry.created_at_ms);
+        Ok(pending)
+    }
+
+    /// Remove a resolved or discarded creation entry from `<machine>.automation-creates`.
+    /// Blocking.
+    pub fn remove_automation_create(
+        &self,
+        machine: &MachineId,
+        request_id: &str,
+    ) -> Result<bool, String> {
+        self.update_automation_creates(machine, |creates| creates.remove(request_id).is_some())
+    }
+
+    fn read_automation_creates(
+        &self,
+        machine: &MachineId,
+    ) -> Result<BTreeMap<String, AutomationCreateEntry>, String> {
+        // Older desktops scan only machine files ending in .json.
+        let target =
+            directory(&self.directory).join(format!("{}.automation-creates", machine.as_str()));
+        match OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+            .open(&target)
+        {
+            Ok(file) => serde_json::from_slice(&read_private(file, machine)?)
+                .map_err(|e| format!("Invalid saved automation create requests: {e}")),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(BTreeMap::new()),
+            Err(e) => Err(format!("Cannot read automation create requests: {e}")),
+        }
+    }
+
+    fn update_automation_creates<T>(
+        &self,
+        machine: &MachineId,
+        update: impl FnOnce(&mut BTreeMap<String, AutomationCreateEntry>) -> T,
+    ) -> Result<T, String> {
+        let _guard = self
+            .automation_create_writer
+            .lock()
+            .map_err(|_| "Automation creation storage is unavailable.")?;
+        // Older desktops scan only machine files ending in .json.
+        let target =
+            directory(&self.directory).join(format!("{}.automation-creates", machine.as_str()));
+        let mut creates = self.read_automation_creates(machine)?;
+        let result = update(&mut creates);
+        cap_automation_creates(&mut creates, MAX_AUTOMATION_CREATES);
+        let mut bytes = serde_json::to_vec(&creates).map_err(|e| e.to_string())?;
+        while bytes.len() > FILE_LIMIT && drop_oldest_resolved(&mut creates) {
+            bytes = serde_json::to_vec(&creates).map_err(|e| e.to_string())?;
+        }
+        if bytes.len() > FILE_LIMIT {
+            return Err("Saved automation create requests exceed their size limit.".into());
+        }
+        replace(&self.directory, machine, &target, &bytes)?;
+        Ok(result)
+    }
+
     /// Reserve the durable ID before contacting the host. Blocking.
     pub fn run_click(&self, machine: &MachineId, id: &str) -> Result<String, String> {
         self.update_run_clicks(machine, |clicks| {
@@ -681,6 +845,185 @@ mod tests {
         assert_eq!(journal.run_click(&local, "a").unwrap(), next);
         assert_eq!(journal.run_click(&local, "b").unwrap(), neighbor);
         assert_eq!(journal.run_click(&remote(), "a").unwrap(), other);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn sample_definition(name: &str, instructions: &str) -> crate::host::automations::Definition {
+        crate::host::automations::Definition {
+            name: name.into(),
+            instructions: instructions.into(),
+            target: crate::host::automations::Target::Project {
+                checkout: "/repo".into(),
+            },
+            harness: crate::host::harness::HarnessId::Pi,
+            provider: "faux".into(),
+            model_id: "faux-1".into(),
+            mode: None,
+            thinking: None,
+            approval: crate::host::ApprovalMode::Auto,
+            command_policy: crate::host::automations::CommandPolicy::Sandboxed,
+            schedule: crate::host::automations::Schedule::Weekdays {
+                time: "09:00".into(),
+                time_zone: "UTC".into(),
+            },
+            catch_up_ms: None,
+        }
+    }
+
+    #[test]
+    fn unresolved_automation_create_survives_older_desktop_rewriting_session() {
+        let root = root("automation-creates");
+        let local = MachineId::default();
+        let (journal, _) = Journal::open(&root, "/host".into()).unwrap();
+        let def_a = sample_definition("Audit", "Check dependencies");
+        let def_edited = sample_definition("Audit", "Edited instructions");
+        let def_b = sample_definition("Sweep", "Run tests");
+
+        let saved = journal
+            .save_automation_create(&local, "req-a", &def_a, Some("thr-1"))
+            .unwrap();
+        assert_eq!(saved.definition, def_a);
+        assert_eq!(saved.caller_thread_id.as_deref(), Some("thr-1"));
+
+        journal
+            .save_automation_create(&local, "req-b", &def_b, None)
+            .unwrap();
+        journal
+            .save_automation_create(&remote(), "req-a", &def_b, None)
+            .unwrap();
+
+        // Retrying with the same request ID returns the exact original persisted definition.
+        let retried = journal
+            .save_automation_create(&local, "req-a", &def_edited, None)
+            .unwrap();
+        assert_eq!(retried.definition, def_a);
+        assert_eq!(retried.caller_thread_id.as_deref(), Some("thr-1"));
+
+        journal.queue_machine(&local, MachineWork::default());
+        journal.flush().unwrap();
+        drop(journal);
+
+        // Older desktops rewrite `<machine>.json` with only their known fields.
+        let session_path = path(&root, &local);
+        let old: serde_json::Value =
+            serde_json::from_slice(&fs::read(&session_path).unwrap()).unwrap();
+        let rewritten = serde_json::json!({
+            "schema_version": old["schema_version"],
+            "machine": old["machine"],
+            "work": {"drafts": {"d": tab("typed after rollback")}}
+        });
+        fs::write(session_path, serde_json::to_vec(&rewritten).unwrap()).unwrap();
+
+        let (journal, _) = Journal::open(&root, "/host".into()).unwrap();
+        assert_eq!(
+            journal
+                .automation_create(&local, "req-a")
+                .unwrap()
+                .unwrap()
+                .definition,
+            def_a
+        );
+        // Removing a resolved or discarded entry removes it from the file.
+        assert!(journal.remove_automation_create(&local, "req-a").unwrap());
+        assert_eq!(journal.automation_create(&local, "req-a").unwrap(), None);
+        assert!(!journal.remove_automation_create(&local, "req-a").unwrap());
+        // Neighboring entries and other machines remain intact.
+        assert_eq!(
+            journal
+                .automation_create(&local, "req-b")
+                .unwrap()
+                .unwrap()
+                .definition,
+            def_b
+        );
+        assert_eq!(
+            journal
+                .automation_create(&remote(), "req-a")
+                .unwrap()
+                .unwrap()
+                .definition,
+            def_b
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn unresolved_automation_creates_lists_only_unanswered_attempts_oldest_first() {
+        let root = root("automation-creates-unresolved");
+        let (journal, _) = Journal::open(&root, "/host".into()).unwrap();
+        let local = MachineId::default();
+        let definition = sample_definition("Audit", "Check dependencies");
+        journal
+            .save_automation_create(&local, "req-1", &definition, None)
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        journal
+            .save_automation_create(&local, "req-2", &definition, Some("thr"))
+            .unwrap();
+        let pending = journal.unresolved_automation_creates(&local).unwrap();
+        assert_eq!(
+            pending
+                .iter()
+                .map(|(id, _)| id.as_str())
+                .collect::<Vec<_>>(),
+            ["req-1", "req-2"]
+        );
+        journal.remove_automation_create(&local, "req-1").unwrap();
+        let pending = journal.unresolved_automation_creates(&local).unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].1.caller_thread_id.as_deref(), Some("thr"));
+    }
+
+    #[test]
+    fn automation_creates_cap_drops_oldest_resolved_entries_first() {
+        let root = root("automation-creates-cap");
+        let local = MachineId::default();
+        let (journal, _) = Journal::open(&root, "/host".into()).unwrap();
+
+        let mut seeded = BTreeMap::new();
+        for idx in 0..(MAX_AUTOMATION_CREATES + 5) {
+            let resolved = if idx < 10 {
+                Some(1_000 + idx as u64)
+            } else {
+                None
+            };
+            seeded.insert(
+                format!("req-{idx:03}"),
+                AutomationCreateEntry {
+                    definition: sample_definition(&format!("Auto {idx}"), "Check"),
+                    caller_thread_id: None,
+                    created_at_ms: 100 + idx as u64,
+                    resolved_at_ms: resolved,
+                },
+            );
+        }
+        let target = directory(&root).join(format!("{}.automation-creates", local.as_str()));
+        replace(
+            &root,
+            &local,
+            &target,
+            &serde_json::to_vec(&seeded).unwrap(),
+        )
+        .unwrap();
+
+        // Next write enforces MAX_AUTOMATION_CREATES by dropping the oldest resolved entries.
+        let fresh = sample_definition("Fresh", "Run fresh");
+        journal
+            .save_automation_create(&local, "req-fresh", &fresh, None)
+            .unwrap();
+
+        let stored: BTreeMap<String, AutomationCreateEntry> =
+            serde_json::from_slice(&fs::read(&target).unwrap()).unwrap();
+        assert_eq!(stored.len(), MAX_AUTOMATION_CREATES);
+        // Oldest 6 resolved entries (000..=005) were dropped to fit 69 + 1 - 64 = 6 over cap.
+        for dropped in 0..6 {
+            assert!(!stored.contains_key(&format!("req-{dropped:03}")));
+        }
+        // Newer resolved entries (006..=009) and all unresolved entries remain.
+        for kept in 6..(MAX_AUTOMATION_CREATES + 5) {
+            assert!(stored.contains_key(&format!("req-{kept:03}")));
+        }
+        assert!(stored.contains_key("req-fresh"));
         fs::remove_dir_all(root).unwrap();
     }
 

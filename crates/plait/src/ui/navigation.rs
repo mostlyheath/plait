@@ -169,6 +169,7 @@ enum RowId {
     Thread(String),
     Draft,
     AutomationsHeader,
+    AutomationsNew,
     Automation(String),
     AutomationsEmpty,
 }
@@ -203,6 +204,7 @@ pub(super) enum Row {
         after: bool,
         folded: Option<usize>,
     },
+    AutomationsNew,
     Automation(usize),
     AutomationsEmpty,
 }
@@ -384,6 +386,7 @@ impl Plait {
                 folded: (!open && count > 0).then_some(count),
             });
             if open {
+                rows.push(Row::AutomationsNew);
                 if count == 0 && !self.automations.loading {
                     rows.push(Row::AutomationsEmpty);
                 } else {
@@ -817,6 +820,7 @@ impl Plait {
                         }
                         Row::Draft => RowId::Draft,
                         Row::AutomationsHeader { .. } => RowId::AutomationsHeader,
+                        Row::AutomationsNew => RowId::AutomationsNew,
                         Row::Automation(index) => {
                             RowId::Automation(self.automations.items[index].summary.id.clone())
                         }
@@ -951,6 +955,7 @@ impl Plait {
                                         focus.is_focused(window),
                                         cx,
                                     ),
+                                Row::AutomationsNew => this.automations_new_row(focus, cx),
                                 Row::Automation(index) => this.automation_card(index, focus, cx),
                                 Row::AutomationsEmpty => this.automations_empty_row(focus),
                             }
@@ -1118,6 +1123,9 @@ impl Plait {
         let owner = id.to_owned();
         let rename = id.to_owned();
         let archive = id.to_owned();
+        let make_automation = id.to_owned();
+        let can_make_automation =
+            self.automations.supported && self.automations.by_thread(id).is_none();
         let archived = thread.archived == Some(true);
         let worktrees = thread.checkout.clone();
         let branch = self
@@ -1202,6 +1210,18 @@ impl Plait {
                 "thread.archive",
                 "thread-archive-keys",
             ))
+            .when(can_make_automation, |el| {
+                el.child(
+                    button("thread-make-automation", "Make automation from this thread")
+                        .on_activate(cx, move |this, window, cx| {
+                            this.open_automation_form_from_thread(
+                                make_automation.clone(),
+                                window,
+                                cx,
+                            );
+                        }),
+                )
+            })
             .when_some(branch, |el, branch| {
                 el.child(
                     tag(

@@ -38,6 +38,97 @@ fn valid_automation(automation: &Automation) -> bool {
             .is_none_or(worktree::bounded_id)
 }
 
+fn valid_created(created: &CreatedAutomation) -> bool {
+    worktree::bounded_id(&created.id)
+        && created
+            .admission_request_id
+            .as_deref()
+            .is_none_or(worktree::bounded_id)
+        && created
+            .thread_id
+            .as_deref()
+            .is_none_or(worktree::bounded_id)
+        && created.target_path.as_deref().is_none_or(worktree::path)
+}
+
+/// True when the host gave a definitive refusal to `create_automation`, so a
+/// saved creation request ID can be cleared. Transport, protocol, unknown
+/// outcomes, and `internal` errors without a definitive outcome retain the
+/// request ID so retries never create duplicates.
+pub fn is_definitive_create_error(error: &Error) -> bool {
+    let Error::Rejected(reason) = error else {
+        return false;
+    };
+    match reason.outcome.as_deref() {
+        Some("not_sent" | "rejected") => true,
+        Some(_) => false,
+        None => reason.code != "internal",
+    }
+}
+
+/// Host automation ID derived from a creation `request_id`
+/// (`runtime/src/automations/service.ts`: `sha256(request_id)` hex).
+pub fn automation_id_for_request(request_id: &str) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(request_id.as_bytes()))
+}
+
+/// Outcome of asking the host once whether a prior creation `request_id`
+/// already created an automation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ExistingCheck {
+    Found {
+        summary: Box<Summary>,
+        detail: Option<Box<DetailReply>>,
+    },
+    NotFound,
+    Unknown,
+}
+
+/// Asks the host once (using the existing `get_automation` path, or falling
+/// back to `list_automations` if `get_automation` is unsupported) whether
+/// `request_id` already created an automation.
+pub fn check_existing(client: &Client, request_id: &str) -> ExistingCheck {
+    let id = automation_id_for_request(request_id);
+    match get(client, &id) {
+        Ok(detail) => {
+            let last_result = detail.occurrences.first().map(|latest| LastResult {
+                due: latest.due,
+                outcome: latest.outcome,
+                detail: latest.detail.clone(),
+            });
+            let summary = Summary {
+                id: detail.automation.id.clone(),
+                name: detail.automation.definition.name.clone(),
+                schedule: detail.automation.definition.schedule.clone(),
+                target_path: detail.automation.definition.target.path().to_path_buf(),
+                state: detail.automation.state,
+                next_run: None,
+                last_result,
+                pause_reason: detail.automation.pause_reason.clone(),
+                error: detail.automation.error.clone(),
+                thread_id: detail.automation.thread_id.clone(),
+            };
+            ExistingCheck::Found {
+                summary: Box::new(summary),
+                detail: Some(Box::new(detail)),
+            }
+        }
+        Err(Error::Rejected(reason)) if reason.code == "not_found" => ExistingCheck::NotFound,
+        Err(Error::Rejected(reason)) if reason.code == "invalid_request" => match list(client) {
+            Ok(Some(summaries)) => match summaries.into_iter().find(|s| s.id == id) {
+                Some(summary) => ExistingCheck::Found {
+                    summary: Box::new(summary),
+                    detail: None,
+                },
+                None => ExistingCheck::NotFound,
+            },
+            _ => ExistingCheck::Unknown,
+        },
+        Err(_) => ExistingCheck::Unknown,
+    }
+}
+
 #[derive(serde::Deserialize)]
 struct ListRecords {
     automations: Vec<serde_json::Value>,
@@ -153,6 +244,33 @@ pub fn run_now(client: &Client, id: &str, request_id: &str) -> Result<Occurrence
         return Err(invalid());
     }
     Ok(reply.occurrence)
+}
+
+/// Creates an automation using idempotent `request_id`.
+/// Supply `caller_thread_id` when creating from a thread so the host can
+/// refuse creation from an automation's own thread.
+pub fn create(
+    client: &Client,
+    definition: &Definition,
+    request_id: &str,
+    caller_thread_id: Option<&str>,
+) -> Result<CreatedAutomation, Error> {
+    if !worktree::bounded_id(request_id)
+        || caller_thread_id.is_some_and(|id| !worktree::bounded_id(id))
+    {
+        return Err(Error::Protocol("Invalid creation or thread ID.".into()));
+    }
+    let reply: CreateReply = client.send(&Request::CreateAutomation {
+        definition: Box::new(definition.clone()),
+        request_id: request_id.into(),
+        caller: caller_thread_id.map(|thread_id| Caller {
+            thread_id: thread_id.into(),
+        }),
+    })?;
+    if !valid_created(&reply.automation) {
+        return Err(invalid());
+    }
+    Ok(reply.automation)
 }
 
 /// Deletes automation `id`. Its thread and conversation history remain on the host.
@@ -379,6 +497,193 @@ mod tests {
         );
         assert!(matches!(pause(&client, "auto_1"), Err(Error::Protocol(_))));
         server.join().unwrap();
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn create_sends_definition_and_validates_reply_and_error_classification() {
+        let definition = Definition {
+            name: "Nightly checks".into(),
+            instructions: "Run tests".into(),
+            target: Target::Worktree {
+                checkout: "/repo".into(),
+            },
+            harness: super::super::harness::HarnessId::Pi,
+            provider: "faux".into(),
+            model_id: "faux-1".into(),
+            mode: None,
+            thinking: None,
+            approval: super::super::ApprovalMode::Auto,
+            command_policy: CommandPolicy::Sandboxed,
+            schedule: Schedule::Daily {
+                time: "09:00".into(),
+                time_zone: "UTC".into(),
+            },
+            catch_up_ms: None,
+        };
+        let (client, server, directory) = scripted(
+            "create",
+            vec![json!({
+                "ok": true,
+                "result": {
+                    "automation": {
+                        "id": "auto_new",
+                        "state": "preparing",
+                        "admission_request_id": "automation-auto_new",
+                        "cursor": 1735722000000u64,
+                        "error": null
+                    }
+                }
+            })],
+        );
+        let created = create(&client, &definition, "create-req-1", Some("thr_7")).unwrap();
+        assert_eq!(created.id, "auto_new");
+        assert_eq!(created.state, State::Preparing);
+        let requests = server.join().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0]["op"], "create_automation");
+        assert_eq!(requests[0]["request_id"], "create-req-1");
+        assert_eq!(requests[0]["caller"], json!({"thread_id": "thr_7"}));
+        assert_eq!(requests[0]["definition"]["target"]["kind"], "worktree");
+        std::fs::remove_dir_all(directory).unwrap();
+
+        let rejected = Error::Rejected(super::super::HostError {
+            retry_after_seconds: None,
+            code: "permission_denied".into(),
+            message: "An automation thread cannot create automations.".into(),
+            outcome: None,
+        });
+        assert!(is_definitive_create_error(&rejected));
+
+        // Internal error without a definitive outcome is treated as unconfirmed.
+        let internal_no_outcome = Error::Rejected(super::super::HostError {
+            retry_after_seconds: None,
+            code: "internal".into(),
+            message: "Database busy.".into(),
+            outcome: None,
+        });
+        assert!(!is_definitive_create_error(&internal_no_outcome));
+
+        // Internal error with an explicit definitive outcome is definitive.
+        for definitive_outcome in ["not_sent", "rejected"] {
+            let err = Error::Rejected(super::super::HostError {
+                retry_after_seconds: None,
+                code: "internal".into(),
+                message: "Refused".into(),
+                outcome: Some(definitive_outcome.into()),
+            });
+            assert!(is_definitive_create_error(&err));
+        }
+
+        let unknown = Error::Rejected(super::super::HostError {
+            retry_after_seconds: None,
+            code: "internal".into(),
+            message: "Unknown".into(),
+            outcome: Some("unknown".into()),
+        });
+        assert!(!is_definitive_create_error(&unknown));
+        assert!(!is_definitive_create_error(&Error::Transport(
+            "lost".into()
+        )));
+        assert!(!is_definitive_create_error(&Error::Protocol("bad".into())));
+    }
+
+    #[test]
+    fn check_existing_queries_host_with_derived_id_and_handles_all_outcomes() {
+        let request_id = "desktop-req-42";
+        let expected_id = automation_id_for_request(request_id);
+        assert_eq!(expected_id.len(), 64);
+
+        let (client, server, directory) = scripted(
+            "check-existing",
+            vec![
+                // 1. Not found -> NotFound.
+                json!({
+                    "ok": false,
+                    "error": {"code": "not_found", "message": "Automation not found."}
+                }),
+                // 2. Found via get_automation -> Found.
+                json!({
+                    "ok": true,
+                    "result": {
+                        "automation": {
+                            "id": expected_id,
+                            "state": "preparing",
+                            "admission_request_id": format!("automation-{expected_id}"),
+                            "cursor": 1735722000000u64,
+                            "error": null,
+                            "definition": {
+                                "name": "Nightly checks",
+                                "instructions": "Run tests",
+                                "target": {"kind": "project", "checkout": "/repo"},
+                                "harness": "pi",
+                                "provider": "faux",
+                                "model_id": "faux-1",
+                                "approval": "auto",
+                                "command_policy": "sandboxed",
+                                "schedule": {"kind": "daily", "time": "09:00", "timeZone": "UTC"},
+                                "catch_up_ms": 43200000
+                            }
+                        },
+                        "occurrences": []
+                    }
+                }),
+                // 3. Internal error -> Unknown.
+                json!({
+                    "ok": false,
+                    "error": {"code": "internal", "message": "Sidecar restarting."}
+                }),
+                // 4. get_automation unsupported -> falls back to list_automations.
+                json!({
+                    "ok": false,
+                    "error": {"code": "invalid_request", "message": "Unknown operation."}
+                }),
+                json!({
+                    "ok": true,
+                    "result": {
+                        "automations": [{
+                            "id": expected_id,
+                            "name": "Nightly checks",
+                            "schedule": {"kind": "daily", "time": "09:00", "timeZone": "UTC"},
+                            "target_path": "/repo",
+                            "state": "active",
+                            "next_run": null,
+                            "last_result": null
+                        }]
+                    }
+                }),
+            ],
+        );
+
+        assert_eq!(check_existing(&client, request_id), ExistingCheck::NotFound);
+        match check_existing(&client, request_id) {
+            ExistingCheck::Found { summary, detail } => {
+                assert_eq!(summary.id, expected_id);
+                assert_eq!(summary.name, "Nightly checks");
+                assert!(detail.is_some());
+            }
+            other => panic!("expected Found, got {other:?}"),
+        }
+        assert_eq!(check_existing(&client, request_id), ExistingCheck::Unknown);
+        match check_existing(&client, request_id) {
+            ExistingCheck::Found { summary, detail } => {
+                assert_eq!(summary.id, expected_id);
+                assert!(detail.is_none());
+            }
+            other => panic!("expected Found via list fallback, got {other:?}"),
+        }
+
+        let requests = server.join().unwrap();
+        assert_eq!(
+            requests,
+            vec![
+                json!({"op": "get_automation", "id": expected_id}),
+                json!({"op": "get_automation", "id": expected_id}),
+                json!({"op": "get_automation", "id": expected_id}),
+                json!({"op": "get_automation", "id": expected_id}),
+                json!({"op": "list_automations"}),
+            ]
+        );
         std::fs::remove_dir_all(directory).unwrap();
     }
 }

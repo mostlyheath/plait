@@ -26,6 +26,8 @@ pub(super) enum ModelPurpose {
     /// Save the chosen model as the host's default for new threads.
     DefaultModel,
     ThreadModel,
+    /// The new-automation form's model, from its chosen harness's list.
+    Automation,
 }
 
 /// What an open picker's rows and footer were built from. When it changes,
@@ -152,6 +154,7 @@ impl Plait {
         match purpose {
             Some(ModelPurpose::ThreadModel) => self.thread_harness(),
             Some(ModelPurpose::NewThread) => self.draft_harness(),
+            Some(ModelPurpose::Automation) => self.automation_form_harness(),
             _ => HarnessId::Pi,
         }
     }
@@ -365,6 +368,7 @@ impl Plait {
                 ("Choose the default model", "Search models for the default…")
             }
             ModelPurpose::ThreadModel => ("Change thread model", "Search models for this thread…"),
+            ModelPurpose::Automation => ("Model for the automation", "Search models…"),
         };
         let status = self
             .host
@@ -373,6 +377,7 @@ impl Plait {
             .as_ref()
             .filter(|_| self.host.connection.connected);
         let drafted = self.draft_model();
+        let automated = self.automation_form_model();
         let preferred = match purpose {
             ModelPurpose::ThreadModel => self
                 .host
@@ -382,6 +387,7 @@ impl Plait {
                 .map(|snapshot| &snapshot.model),
             ModelPurpose::NewThread => drafted.as_ref(),
             ModelPurpose::DefaultModel => status.and_then(|status| status.default_model.as_ref()),
+            ModelPurpose::Automation => automated.as_ref(),
         };
         let harness = self.picker_harness(Some(purpose));
         let default = status.and_then(|status| {

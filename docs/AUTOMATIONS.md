@@ -53,15 +53,32 @@ each harness's own context compaction; Plait does not reset the conversation.
 
 ### Making one
 
-- **New automation…** in the Automations list opens the form.
-- **From a project thread, ask for it.** Say "do this every weekday at 9". The
-  agent drafts an automation, shown as a card with the instructions, schedule
-  and where it works. Nothing is scheduled until you press **Create**, and you
-  can edit the draft first. This works in Pi threads, where Plait supplies the
-  tools. Plait adds no tools to Codex or Claude Code (see the
-  [roadmap](ROADMAP.md#harnesses-and-tools)), so for those threads:
-- **Make automation from this thread** opens the form prefilled with the
-  thread's project, harness, model and last message.
+- **New automation…** in the Automations section of the sidebar opens the form
+  on the current machine.
+- **Make automation from this thread** (the thread's ⋯ menu or the command
+  palette) opens it prefilled with the thread's project, harness, model, mode,
+  approval and last message. This is the way to make one from a Codex or Claude
+  Code thread: Plait adds no tools to those harnesses (see the
+  [roadmap](ROADMAP.md#harnesses-and-tools)).
+
+The form asks for a name, the instructions, where it works and when it runs.
+**This project (own worktree)** gives each run its own worktree of the project;
+**An existing worktree** and **Folder** run in the place you choose. The
+schedule uses the kinds listed above; **Once** defaults to today's date in the
+chosen time zone. The form reads the command policy for that place before it
+creates anything, and refuses if it cannot, rather than guessing a broader one.
+
+Nothing is scheduled until the host confirms **Create**. Each open form has one
+creation request, so pressing Create again after a lost reply never makes a
+second automation. If Plait couldn't confirm an attempt, the form says so and
+offers **Retry**, which resends exactly what was sent. Changing the form after
+that asks first whether to retry the earlier attempt or discard it; discarding
+checks the host and warns when a duplicate is possible. Closing the form keeps
+the attempt: the next time the form opens on that machine, it offers it again.
+
+Planned: in a Pi thread, saying "do this every weekday at 9" will let the agent
+draft an automation as a card you can edit. Nothing is scheduled until you press
+**Create**.
 
 ### When it needs you
 

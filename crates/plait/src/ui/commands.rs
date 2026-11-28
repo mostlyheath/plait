@@ -75,6 +75,16 @@ pub(super) enum Command {
     IssueToThread(String),
     /// The workflow state to move the shown Linear issue to.
     IssueState(String),
+    /// Open the automation creation form.
+    NewAutomation,
+    /// Open the automation creation form prefilled from a thread.
+    MakeAutomationFromThread(String),
+    /// Choices made from pickers inside the automation creation form.
+    AutomationProject(std::path::PathBuf),
+    AutomationDirectory(std::path::PathBuf),
+    AutomationHarness(HarnessId),
+    AutomationApproval(plait_client::host::ApprovalMode),
+    AutomationThinking(plait_client::host::ThinkingLevel),
 }
 
 impl Clone for Command {
@@ -125,6 +135,13 @@ impl Clone for Command {
             Self::DraftApproval(mode) => Self::DraftApproval(*mode),
             Self::DraftThinking(level) => Self::DraftThinking(*level),
             Self::DefaultThinking(level) => Self::DefaultThinking(*level),
+            Self::NewAutomation => Self::NewAutomation,
+            Self::MakeAutomationFromThread(id) => Self::MakeAutomationFromThread(id.clone()),
+            Self::AutomationProject(path) => Self::AutomationProject(path.clone()),
+            Self::AutomationDirectory(path) => Self::AutomationDirectory(path.clone()),
+            Self::AutomationHarness(id) => Self::AutomationHarness(*id),
+            Self::AutomationApproval(mode) => Self::AutomationApproval(*mode),
+            Self::AutomationThinking(level) => Self::AutomationThinking(*level),
         }
     }
 }
@@ -336,6 +353,32 @@ impl Plait {
             );
         }
         items.extend(action_items(self, window));
+        if self.automations.supported {
+            items.push(
+                Item::new("automation:new", "New automation…", Command::NewAutomation)
+                    .detail("Create a scheduled automation on this machine")
+                    .section("Automations")
+                    .glyph("plus", colors().mint),
+            );
+            if let Some(thread_id) = &self.host.thread.selected {
+                let already = self.automations.by_thread(thread_id).is_some();
+                items.push(
+                    Item::new(
+                        format!("automation:from-thread:{thread_id}"),
+                        "Make automation from this thread",
+                        Command::MakeAutomationFromThread(thread_id.clone()),
+                    )
+                    .enabled(!already)
+                    .detail(if already {
+                        "This thread is already an automation."
+                    } else {
+                        "Prefill a new automation from this thread"
+                    })
+                    .section("Automations")
+                    .glyph("clock", colors().mint),
+                );
+            }
+        }
         items.extend(self.new_thread_items());
         items.extend(
             self.providers
@@ -570,9 +613,19 @@ impl Plait {
             Command::DraftHarness(id) => self.choose_draft_harness(id, cx),
             Command::DraftApproval(mode) => self.choose_draft_approval(mode, cx),
             Command::DraftThinking(level) => self.choose_draft_thinking(level, cx),
+            Command::NewAutomation => self.open_automation_form(window, cx),
+            Command::MakeAutomationFromThread(id) => {
+                self.open_automation_form_from_thread(id, window, cx)
+            }
+            Command::AutomationProject(path) => self.choose_automation_project(path, cx),
+            Command::AutomationDirectory(path) => self.choose_automation_directory(path, cx),
+            Command::AutomationHarness(id) => self.choose_automation_harness(id, cx),
+            Command::AutomationApproval(mode) => self.choose_automation_approval(mode, cx),
+            Command::AutomationThinking(level) => self.choose_automation_thinking(level, cx),
             Command::HarnessModel(id, choice) => match purpose {
                 Some(ModelPurpose::NewThread) => self.choose_draft_model(id, choice, cx),
                 Some(ModelPurpose::ThreadModel) => self.choose_thread_model(choice, window, cx),
+                Some(ModelPurpose::Automation) => self.choose_automation_model(id, choice, cx),
                 _ => {}
             },
             // Handled while the picker stays open; reaching here means it closed first.
@@ -600,6 +653,9 @@ impl Plait {
                 Some(ModelPurpose::NewThread) => self.choose_draft_model(HarnessId::Pi, choice, cx),
                 Some(ModelPurpose::DefaultModel) => self.choose_default_model(choice, window, cx),
                 Some(ModelPurpose::ThreadModel) => self.choose_thread_model(choice, window, cx),
+                Some(ModelPurpose::Automation) => {
+                    self.choose_automation_model(HarnessId::Pi, choice, cx)
+                }
                 None => {}
             },
         }

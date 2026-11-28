@@ -18,9 +18,22 @@ use std::{
 
 /// The picker's rows for one folder: open it, go up, then its repositories
 /// and its other folders.
+#[cfg(test)]
 pub(super) fn browse_items(listing: &Listing) -> Vec<Item> {
+    browse_items_for(listing, false)
+}
+
+pub(super) fn browse_items_for(listing: &Listing, for_automation: bool) -> Vec<Item> {
     let mut items = Vec::new();
     let here = listing.path.display().to_string();
+    let select = |path: &Path| {
+        if for_automation {
+            Command::AutomationDirectory(path.to_owned())
+        } else {
+            open(path)
+        }
+    };
+    let verb = if for_automation { "Choose" } else { "Open" };
     // A folder that is not a repository opens too, without Git's features.
     let (detail, tint) = if listing.git {
         (here.clone(), colors().mint)
@@ -30,8 +43,8 @@ pub(super) fn browse_items(listing: &Listing) -> Vec<Item> {
     items.push(
         Item::new(
             "open-here",
-            format!("Open {}", folder_name(&listing.path)),
-            open(&listing.path),
+            format!("{verb} {}", folder_name(&listing.path)),
+            select(&listing.path),
         )
         .detail(detail)
         .section("This folder")
@@ -66,7 +79,7 @@ pub(super) fn browse_items(listing: &Listing) -> Vec<Item> {
             format!("folder:{}", entry.name),
             entry.name.clone(),
             if entry.git {
-                open(&path)
+                select(&path)
             } else {
                 browse(&path)
             },
@@ -117,11 +130,33 @@ fn reply_is_current(generation: u64, current: u64, epoch: u64, current_epoch: u6
 }
 
 impl Plait {
-    /// Opens the picker on the remote machine's home folder.
+    /// Opens the picker on the remote machine's home folder to open a project.
     pub(super) fn open_remote_browser(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_remote_browser_mode(false, window, cx);
+    }
+
+    /// Opens the same folder browser to choose a directory for the automation form.
+    pub(super) fn open_remote_browser_for_automation(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_remote_browser_mode(true, window, cx);
+    }
+
+    fn open_remote_browser_mode(
+        &mut self,
+        for_automation: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let machine = self.machine_label();
         let options = Options {
-            name: format!("Open a project on {machine}").into(),
+            name: if for_automation {
+                format!("Choose a folder on {machine}").into()
+            } else {
+                format!("Open a project on {machine}").into()
+            },
             placeholder: "Filter folders, or type a path…".into(),
             empty: "No folders here.".into(),
             initial: None,
@@ -144,6 +179,11 @@ impl Plait {
                         format!("Go to {text}"),
                         Command::BrowseRemote(PathBuf::from(text)),
                     )
+                } else if for_automation {
+                    (
+                        format!("Choose {text}"),
+                        Command::AutomationDirectory(PathBuf::from(text)),
+                    )
                 } else {
                     (
                         format!("Open {text}"),
@@ -163,6 +203,7 @@ impl Plait {
             palette.set_typed(typed, cx);
             palette
         });
+        self.remote_browser_for_automation = for_automation;
         self.remote_browser = Some(browsable);
         self.remote_listing = None;
         self.present(palette, None, window, cx);
@@ -202,7 +243,7 @@ impl Plait {
                 }
                 match result {
                     Ok(listing) => {
-                        let items = browse_items(&listing);
+                        let items = browse_items_for(&listing, this.remote_browser_for_automation);
                         this.remote_listing = Some(listing);
                         palette.update(cx, |palette, cx| {
                             palette.clear_query(cx);
@@ -218,7 +259,11 @@ impl Plait {
                         });
                     }
                     Err(error) => {
-                        let mut items = this.remote_listing.as_ref().map(browse_items).unwrap_or_default();
+                        let mut items = this
+                            .remote_listing
+                            .as_ref()
+                            .map(|listing| browse_items_for(listing, this.remote_browser_for_automation))
+                            .unwrap_or_default();
                         let failed_query = retry.as_ref().map(|path| path.display().to_string()).unwrap_or_default();
                         let target = if failed_query.is_empty() { "Home folder" } else { &failed_query };
                         items.insert(0, Item::new("retry", "Retry", Command::BrowseRemote(retry.unwrap_or_default())).detail(target.to_owned()));
