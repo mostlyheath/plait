@@ -1,4 +1,5 @@
 use plait_protocol::host::{
+    build_cache::{ClearReply, Status as BuildCacheStatus},
     folders::Listing,
     release::{CancelReply, DrainReply, HostInfo},
 };
@@ -20,6 +21,43 @@ fn recorded_reply_shapes_round_trip() {
     );
     round_trip::<DrainReply>(json!({"draining":true,"active_runs":1}));
     round_trip::<CancelReply>(json!({"draining":false}));
+    round_trip::<BuildCacheStatus>(
+        json!({"schema":1,"total_bytes":4200000000u64,"idle_bytes":3000000000u64,"thread_count":2,"active_count":1,"cap_bytes":20000000000u64,"measuring":false}),
+    );
+    round_trip::<ClearReply>(
+        json!({"schema":1,"cleared_threads":1,"cleared_bytes":3000000000u64,"skipped_active":1,"total_bytes":1200000000u64,"idle_bytes":0,"thread_count":1,"active_count":1,"cap_bytes":20000000000u64,"measuring":false}),
+    );
+}
+
+#[test]
+fn build_cache_replies_ignore_unknown_fields_and_default_measuring() {
+    let status: BuildCacheStatus = serde_json::from_value(json!({
+        "schema": 1,
+        "total_bytes": 100,
+        "idle_bytes": 50,
+        "thread_count": 2,
+        "active_count": 1,
+        "cap_bytes": 1000,
+        "future_field": "ignored"
+    }))
+    .unwrap();
+    assert!(!status.measuring);
+
+    let clear: ClearReply = serde_json::from_value(json!({
+        "schema": 1,
+        "cleared_threads": 1,
+        "cleared_bytes": 50,
+        "skipped_active": 1,
+        "total_bytes": 50,
+        "idle_bytes": 0,
+        "thread_count": 1,
+        "active_count": 1,
+        "cap_bytes": 1000,
+        "future_field": true
+    }))
+    .unwrap();
+    assert!(!clear.measuring);
+    assert!(!clear.status().measuring);
 }
 
 #[test]

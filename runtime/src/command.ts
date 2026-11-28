@@ -15,9 +15,13 @@ export async function command(root: string, text: string, _baseline: string[], s
   if (signal.aborted) fail('permission_denied', 'Run stopped.');
   // Platform paths keep native Unix socket names within the operating-system limit.
   const scratch = await realpath(await mkdtemp(platform.scratchPrefix));
+  cache?.onCommandStart?.();
   try {
     if (identity) await checkRoot(root, identity);
     const environment = await platform.prepare(root, scratch, signal, cache, readable);
     return await runGuardian({ root, text, ...environment, checkoutFd, lifecycleFd, cleanup }, signal, output, undefined, capture);
-  } finally { await removeScratch(scratch); }
+  } finally {
+    try { await removeScratch(scratch); }
+    finally { cache?.onCommandEnd?.(); }
+  }
 }

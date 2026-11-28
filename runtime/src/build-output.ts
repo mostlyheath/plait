@@ -48,7 +48,7 @@ export function buildHelper<T>(input: unknown, signal?: AbortSignal, progress?: 
     });
   });
 }
-type Job = { abort: AbortController; done: Promise<unknown> };
+type Job = { abort: AbortController; done: Promise<unknown>; sourceCache?: string | null };
 type SeedReply = { outcome: Outcome; checked_at: number };
 type CloneReply = { outcome: Outcome; seedless: boolean };
 /** The helper's SEED_FRESH: a seed that matches the approval and was taken or
@@ -58,6 +58,7 @@ export const SEED_FRESH_MS = 60 * 60 * 1000;
 export class BuildOutputs {
   private seeds = new Map<string, Job>();
   private clones = new Map<string, Job>();
+  private pendingSeedSources = new Map<string, number>();
   private closing = false;
   private seedErrors = new Map<string, string>();
   /** When the helper last judged each checkout's seed, so a run end inside
@@ -65,6 +66,8 @@ export class BuildOutputs {
   private checked = new Map<string, number>();
   /** Helper actions started, in order; tests count processes with it. */
   readonly started: string[] = [];
+  /** Invoker for the build-output helper; overridable in deterministic tests. */
+  invokeHelper: typeof buildHelper = buildHelper;
   private store: Store; private directory: string; private changed: () => void; private busy: (root: string) => boolean;
   constructor(store: Store, directory: string, changed: () => void, busy: (root: string) => boolean) {
     this.store = store; this.directory = directory; this.changed = changed; this.busy = busy;
@@ -72,7 +75,7 @@ export class BuildOutputs {
   private helper<T>(input: { action: string } & Record<string, unknown>, signal?: AbortSignal, progress?: (counts: Counts) => void) {
     // Bounded: a long-lived runtime starts helpers for days; tests read only the recent ones.
     if (this.started.length >= 256) this.started.shift();
-    this.started.push(input.action); return buildHelper<T>(input, signal, progress);
+    this.started.push(input.action); return this.invokeHelper<T>(input, signal, progress);
   }
   /** The Refresh control asks for a refresh now, whatever the seed's age. */
   async info(checkout: string, refresh = false): Promise<BuildInfo> {
@@ -144,41 +147,81 @@ export class BuildOutputs {
     this.store.setSetting(`build_skip:${thread}`, 'yes'); this.clones.get(thread)?.abort.abort();
     return this.state(thread);
   }
+  /** True while a worktree creation is cloning build output into this thread's cache. */
+  isWarming(thread: string): boolean { return this.clones.has(thread); }
+  /** True while a scheduled or in-progress seed clone is reading from this thread's cache. */
+  isSeedingFrom(thread: string): boolean {
+    if ((this.pendingSeedSources.get(thread) ?? 0) > 0) return true;
+    for (const job of this.seeds.values()) {
+      if (job.sourceCache === thread) return true;
+    }
+    return false;
+  }
   /** After a run or an admitted creation. Inside the hour this starts nothing;
    * after it the helper walks the source and clones only what changed. */
   scheduleSeed(root: string, sourceCache?: string, force = false) {
     if (sourceCache !== undefined) this.store.setSetting(`build_source:${root}`, sourceCache);
     const checked = this.checked.get(root);
     if (!force && checked !== undefined && checked <= Date.now() && Date.now() - checked < SEED_FRESH_MS) return;
+    const source = this.store.setting(`build_source:${root}`) || null;
+    if (source) this.pendingSeedSources.set(source, (this.pendingSeedSources.get(source) ?? 0) + 1);
+    let released = false;
+    const release = () => {
+      if (released || !source) return;
+      released = true;
+      const remaining = (this.pendingSeedSources.get(source) ?? 0) - 1;
+      if (remaining > 0) this.pendingSeedSources.set(source, remaining);
+      else this.pendingSeedSources.delete(source);
+    };
     // Queue draining reserves its run synchronously first. A user run always wins.
-    setImmediate(() => { if (!this.closing && !this.busy(root)) void this.refreshSeed(root, force); });
-  }
-  private async refreshSeed(root: string, force = false): Promise<void> {
-    if (this.closing || this.busy(root)) return;
-    const previous = this.seeds.get(root);
-    if (previous) { await previous.done; if (force) await this.refreshSeed(root, true); return; }
-    const abort = new AbortController();
-    const done = (async () => {
-      const identity = await rootIdentity(root);
-      if (abort.signal.aborted || this.busy(root)) return;
-      const reply = await this.helper<SeedReply>({ action: 'seed', store: this.directory, root, identity, generation: randomUUID(), source_cache: this.store.setting(`build_source:${root}`) || null, force }, abort.signal);
-      this.checked.set(root, reply.checked_at * 1000);
-      this.seedErrors.delete(root);
-    })().catch(error => {
-      // A failure is retried after the same bound, not after every run; a run
-      // that interrupted the refresh leaves the next run end free to retry.
-      if (!abort.signal.aborted) this.checked.set(root, Date.now());
-      this.seedErrors.set(root, error instanceof Error ? error.message : 'The build seed could not be prepared.');
+    setImmediate(() => {
+      if (this.closing || this.busy(root)) { release(); return; }
+      void this.refreshSeed(root, force, release);
     });
-    this.seeds.set(root, { abort, done });
-    try { await done; } finally { if (this.seeds.get(root)?.done === done) this.seeds.delete(root); }
+  }
+  private async refreshSeed(root: string, force = false, onRegistered?: () => void): Promise<void> {
+    try {
+      if (this.closing || this.busy(root)) return;
+      const previous = this.seeds.get(root);
+      if (previous) {
+        await previous.done;
+        if (force) {
+          const pass = onRegistered;
+          onRegistered = undefined;
+          await this.refreshSeed(root, true, pass);
+        }
+        return;
+      }
+      const sourceCache = this.store.setting(`build_source:${root}`) || null;
+      const abort = new AbortController();
+      const done = (async () => {
+        const identity = await rootIdentity(root);
+        if (abort.signal.aborted || this.busy(root)) return;
+        const reply = await this.helper<SeedReply>({ action: 'seed', store: this.directory, root, identity, generation: randomUUID(), source_cache: sourceCache, force }, abort.signal);
+        this.checked.set(root, reply.checked_at * 1000);
+        this.seedErrors.delete(root);
+      })().catch(error => {
+        // A failure is retried after the same bound, not after every run; a run
+        // that interrupted the refresh leaves the next run end free to retry.
+        if (!abort.signal.aborted) this.checked.set(root, Date.now());
+        this.seedErrors.set(root, error instanceof Error ? error.message : 'The build seed could not be prepared.');
+      });
+      this.seeds.set(root, { abort, done, sourceCache });
+      onRegistered?.();
+      onRegistered = undefined;
+      try { await done; } finally { if (this.seeds.get(root)?.done === done) this.seeds.delete(root); }
+    } finally {
+      onRegistered?.();
+    }
   }
   /** Stops the low-priority helper before a local run attempts its writer lease. */
   async yieldToRun(root: string) { const job = this.seeds.get(root); if (job) { job.abort.abort(); await job.done; } }
   /** Waits for scheduled and running refreshes without interrupting them. */
   async settled() { await new Promise(resolve => setImmediate(resolve)); await Promise.allSettled([...this.seeds.values()].map(job => job.done)); }
   async close() {
-    this.closing = true; for (const job of [...this.seeds.values(), ...this.clones.values()]) job.abort.abort();
+    this.closing = true;
+    this.pendingSeedSources.clear();
+    for (const job of [...this.seeds.values(), ...this.clones.values()]) job.abort.abort();
     await Promise.allSettled([...this.seeds.values(), ...this.clones.values()].map(job => job.done));
   }
 }

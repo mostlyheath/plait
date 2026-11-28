@@ -256,6 +256,9 @@ export class Store {
     if (!row) fail('not_found', 'Thread not found.');
     return JSON.parse(String(row.snapshot));
   }
+  isArchived(id: string): boolean {
+    return this.db.prepare('SELECT archived FROM threads WHERE id=?').get(id)?.archived === 1;
+  }
   /** Saves the snapshot and its summary columns; reports whether the summary changed. */
   save(snapshot: Snapshot, head = 0): boolean {
     const previous = this.db.prepare('SELECT status,title,archived,pending,model,updated_at FROM threads WHERE id=?').get(snapshot.id);

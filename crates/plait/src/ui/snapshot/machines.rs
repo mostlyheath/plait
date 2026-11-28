@@ -690,3 +690,113 @@ fn a_switch_saves_and_probes_only_what_belongs_to_each_machine() {
     drop(h);
     std::fs::remove_dir_all(scratch).unwrap();
 }
+
+#[cfg(debug_assertions)]
+#[core::prelude::v1::test]
+fn build_cache_line_is_capability_gated_and_confirms_clear() {
+    if !isolated("machines::build_cache_line_is_capability_gated_and_confirms_clear") {
+        return;
+    }
+    let scratch = std::env::temp_dir().join(format!("plait-cache-{}", std::process::id()));
+    let repo = fixture_repository(&scratch);
+    let mut h = Harness::new(&repo, None, 900., 600.);
+    h.connect(&repo, false);
+    open(&mut h);
+
+    // Older hosts without build_cache_v1 hide the build caches line.
+    let older = h.draw_a11y();
+    older.assert_no_duplicates("machines-older-host");
+    assert!(!older.nodes.iter().any(|n| {
+        n.label
+            .as_deref()
+            .is_some_and(|l| l.starts_with("Build caches:"))
+    }));
+
+    // While the host is measuring caches in the background, show the measuring label.
+    h.update(|p, _, cx| {
+        p.host.connection.has_build_cache = true;
+        let epoch = p.host.connection.epoch;
+        p.machines.build_cache.sync(epoch);
+        p.machines.build_cache.complete_status(
+            epoch,
+            Ok(plait_client::host::build_cache::Status {
+                schema: 1,
+                total_bytes: 0,
+                idle_bytes: 0,
+                thread_count: 2,
+                active_count: 0,
+                cap_bytes: 20_000_000_000,
+                measuring: true,
+            }),
+        );
+        cx.notify();
+    });
+    let measuring = h.draw_a11y();
+    measuring.assert_no_duplicates("machines-build-cache-measuring");
+    assert!(
+        measuring
+            .nodes
+            .iter()
+            .any(|n| n.value.as_deref() == Some("Build caches: measuring…"))
+    );
+    assert!(
+        !measuring
+            .nodes
+            .iter()
+            .any(|n| n.label.as_deref() == Some("Clear build caches"))
+    );
+
+    // Capable host shows the total and Clear control, then confirms before clearing.
+    h.update(|p, _, cx| {
+        let epoch = p.host.connection.epoch;
+        p.machines.build_cache.complete_status(
+            epoch,
+            Ok(plait_client::host::build_cache::Status {
+                schema: 1,
+                total_bytes: 4_200_000_000,
+                idle_bytes: 4_200_000_000,
+                thread_count: 2,
+                active_count: 0,
+                cap_bytes: 20_000_000_000,
+                measuring: false,
+            }),
+        );
+        cx.notify();
+    });
+    let ready = h.draw_a11y();
+    ready.assert_no_duplicates("machines-build-cache-ready");
+    assert!(
+        ready
+            .nodes
+            .iter()
+            .any(|n| n.value.as_deref() == Some("Build caches: 4.2 GB"))
+    );
+    assert!(
+        ready
+            .nodes
+            .iter()
+            .any(|n| n.label.as_deref() == Some("Clear build caches"))
+    );
+
+    h.update(|p, _, cx| {
+        p.machines.build_cache.confirm_clear = true;
+        cx.notify();
+    });
+    let confirm = h.draw_a11y();
+    confirm.assert_no_duplicates("machines-build-cache-confirm");
+    assert!(
+        confirm
+            .nodes
+            .iter()
+            .any(|n| n.label.as_deref() == Some("Clear idle caches"))
+    );
+    assert!(
+        confirm
+            .nodes
+            .iter()
+            .any(|n| n.label.as_deref() == Some("Cancel"))
+    );
+
+    drop(h);
+    std::fs::remove_dir_all(scratch).unwrap();
+}

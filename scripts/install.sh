@@ -192,7 +192,7 @@ main() {
     # Signing is not yet configured. Never treat an unknown policy as trusted.
     [[ $signing == unsigned-preview ]] || fail 'Unsupported signing policy; use the release instructions.'
     if ! "$unsigned" && [[ -z $destination ]]; then
-        fail 'This is an unsigned preview. Read the release notes, then pass --allow-unsigned to install, or --download DIRECTORY to inspect it first. Gatekeeper settings are not changed.'
+        fail 'This release is unsigned. Read the release notes, then pass --allow-unsigned to install, or --download DIRECTORY to inspect it first. Gatekeeper settings are not changed.'
     fi
     build_id=$(field host_build_id "$work/release.json")
     [[ $build_id =~ ^[0-9]+\.[0-9]+\.[0-9]+-[0-9a-f]{20}$ ]] || fail 'Invalid host build identity.'
@@ -223,7 +223,7 @@ main() {
         /bin/mkdir -p -- "$destination"
         [[ ! -e "$destination/$name" && ! -L "$destination/$name" ]] || fail 'The download destination already contains this filename.'
         /bin/cp -n "$package" "$destination/$name"
-        printf 'Verified download: %s/%s\nUnsigned preview; see https://github.com/%s/releases/tag/%s\n' "$destination" "$name" "$repository" "$version"
+        printf 'Verified download: %s/%s\nUnsigned release; see https://github.com/%s/releases/tag/%s\n' "$destination" "$name" "$repository" "$version"
         return
     fi
     if [[ $component == app ]]; then
@@ -236,7 +236,7 @@ main() {
         printf '\nInstalled Plait %s. Future updates: Plait → Check for Updates…\n' "$version"
         return
     fi
-    printf '\nUnsigned preview. No macOS security setting will be changed.\nQuit Plait before installing the client. Active host work will not be stopped.\n\n'
+    printf '\nUnsigned release. No macOS security setting will be changed.\nQuit Plait before installing the client. Active host work will not be stopped.\n\n'
     /usr/bin/sudo /usr/sbin/installer -pkg "$package" -target /
     printf '\nInstalled Plait %s. Open Plait from Applications.\n' "$version"
     if [[ $component != client ]]; then

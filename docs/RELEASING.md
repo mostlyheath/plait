@@ -76,7 +76,8 @@ gh workflow run "macOS build" --ref main -f final=true
 
 The final can promote the last preview even when only release notes changed.
 Publication requires the matching changelog section, no outstanding notes,
-and an unused final tag. GitHub publishes a regular release with the same
+and an unused final tag. The Linux check runs only on pull requests, so it gated
+every change on that commit before it merged; the final needs no separate Linux gate. GitHub publishes a regular release with the same
 signed update manifests. Preview users are offered the final on their next
 update check. Bump the Cargo version before planning another preview.
 

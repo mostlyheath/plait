@@ -1,4 +1,5 @@
 import { sweepStaleScratch } from './command/scratch.ts';
+import { BuildCacheManager } from './build-cache.ts';
 import { COMMAND_TIMEOUT_MS } from './command/supervisor.ts';
 import { Automations } from './automations/service.ts';
 import { Graph } from './graph/host.ts';
@@ -108,6 +109,7 @@ export class Runtime {
   private checkoutWatcher: CheckoutWatcher;
   linear: LinearService;
   worktrees: Worktrees;
+  buildCaches: BuildCacheManager;
   admissions: Admissions;
   private automations?: Automations;
   capacity = new RunCapacity();
@@ -180,6 +182,10 @@ export class Runtime {
     this.worktrees = new Worktrees(this.store, directory, (request, id) => this.prepareWorktreeThread(request, id), () => this.changed('#'), root => this.active.has(root) || this.records.busy(root), () => this.admitWork(), {
       made: (tree, creation) => this.workspace.madeWorktree(tree.path, tree.parent.root, tree.branch, creation, tree.identity),
       removed: folder => this.workspace.removedWorktree(folder),
+    });
+    this.buildCaches = new BuildCacheManager(this.directory, {
+      isActive: id => this.sessions.has(id) || this.runnerSessions.has(id) || this.worktrees.builds.isWarming(id) || this.worktrees.builds.isSeedingFrom(id),
+      isArchived: id => this.store.isArchived(id),
     });
     this.admissions = new Admissions(this.store, this.worktrees, this.capacity, (input, identity) => this.handle(input, identity), root => this.active.has(root) || this.records.busy(root) || this.store.waiters.line(root).some(waiter => waiter.kind === 'checkout' || waiter.state === 'waiting'), () => this.admitWork());
   }
@@ -290,6 +296,8 @@ export class Runtime {
       this.store.transaction(() => this.store.closeRecoveredRuns(snapshot));
     }
     this.records.start(liveCheckouts);
+    // Sweep orphaned removal directories, archived thread caches, and LRU excess off the startup path.
+    this.buildCaches.scheduleStartupCleanup();
   }
   private runnerEventHooks() {
     return {
@@ -351,6 +359,8 @@ export class Runtime {
     this.notify(session.threadId, summaryChanged);
     this.changed('#');
     for (const root of this.store.waiters.roots()) this.drainCheckout(root);
+    if (session.snapshot.archived) this.buildCaches.scheduleRemove(session.threadId);
+    else this.buildCaches.scheduleEnforceCap(session.threadId);
   }
   /** Validate the selected harness before reserving filesystem effects. */
   private async prepareWorktreeThread(request: WorktreeCreate, id: string): Promise<Snapshot> {
@@ -506,7 +516,7 @@ export class Runtime {
             build_id = typeof metadata.build_id === 'string' ? metadata.build_id : null;
           }
         } catch { /* Development hosts have no packaged metadata. */ }
-        return { schema: 1, release, build_id, protocol_min: PROTOCOL_VERSIONS[0], protocol_max: PROTOCOL_VERSIONS[PROTOCOL_VERSIONS.length - 1], capabilities: ['drain_v1', 'checkout_identity_v1', 'project_fingerprint_v1', 'guarded_discard_v1'], storage_schema: 1 };
+        return { schema: 1, release, build_id, protocol_min: PROTOCOL_VERSIONS[0], protocol_max: PROTOCOL_VERSIONS[PROTOCOL_VERSIONS.length - 1], capabilities: ['drain_v1', 'checkout_identity_v1', 'project_fingerprint_v1', 'guarded_discard_v1', 'build_cache_v1'], storage_schema: 1 };
       }
       if (op === 'drain_for_update') {
         this.draining = true;
@@ -529,6 +539,7 @@ export class Runtime {
     if (this.workspace.handles(input)) return this.workspace.handle(input);
     if (this.linear.handles(input)) return this.linear.handle(input);
     if (this.worktrees.handles(input)) return this.worktrees.handle(input);
+    if (this.buildCaches.handles(input)) return this.buildCaches.handle(input);
     if ((this.graph || this.automations) && (op === 'admission_status' || op === 'create_admitted_thread')) {
       const { poll, ...request } = input as Record<string, unknown>;
       if (poll === true) return this.admissions.handle(request, true);
@@ -700,6 +711,8 @@ export class Runtime {
         const snapshot = this.snapshot(String(request.thread_id));
         snapshot.archived = request.archived === true;
         this.save(snapshot);
+        // Active runs keep their cache until the run ends; idle ones are removed in the background.
+        if (snapshot.archived) this.buildCaches.scheduleRemove(snapshot.id);
         return { thread: snapshot };
       }
       case 'configure_thread': return { thread: await this.configure(String(request.thread_id), request) };
@@ -1108,7 +1121,7 @@ export class Runtime {
       const runId = randomUUID();
       const finish = () => this.notify(id, this.store.saveRunEvent(runId, 0, snapshot, { state: 'finished', finished: true }));
       const session: Session = {
-        runId, finish, snapshot, vcs, baseline: [], protected: [], rootIdentity: this.store.rootIdentity(id), buildCache: { store: this.directory, thread: id }, owned: new Map(), inputs: [], requestId,
+        runId, finish, snapshot, vcs, baseline: [], protected: [], rootIdentity: this.store.rootIdentity(id), buildCache: this.buildCaches.forThread(id), owned: new Map(), inputs: [], requestId,
         authorization, approvals, mcpApproval: executor ?? approvals, lease, save, outputs: this.store.outputs, record: image => this.store.record(id, image), steered: new Map(),
       };
       if (executor) {
@@ -1442,6 +1455,8 @@ export class Runtime {
       if (session.sink) session.sink.emit({ type: 'finished' });
       else session.finish();
       this.sessions.delete(snapshot.id);
+      if (snapshot.archived) this.buildCaches.scheduleRemove(snapshot.id);
+      else if (this.buildCaches.consumeUsed(snapshot.id)) this.buildCaches.scheduleEnforceCap(snapshot.id);
       if (snapshot.status === 'error' || snapshot.status === 'interrupted') this.store.waiters.hold(snapshot.id);
       this.changed('#');
       for (const root of this.store.waiters.roots()) this.drainCheckout(root);
@@ -1528,6 +1543,8 @@ export class Runtime {
     await this.naming.close();
     clearTimeout(this.queueWake);
     await Promise.allSettled(this.queueDrains.values());
+    // Stop build-cache work before detaching runnerSessions so queued cleanup never sees a live runner as idle.
+    await this.buildCaches.close();
     // Detached runners survive host shutdown: disconnect without stopping or interrupting.
     for (const runnerSession of this.runnerSessions.values()) runnerSession.detach();
     this.runnerSessions.clear();
