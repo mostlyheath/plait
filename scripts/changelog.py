@@ -17,7 +17,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 CATEGORIES = ("Added", "Changed", "Fixed", "Removed")
-HEADER = "# Changelog\n\nWhat changed in each Plait preview, newest first.\n"
+HEADER = "# Changelog\n\nWhat changed in each Plait release, newest first.\n"
 TAG = re.compile(r"^v\d+\.\d+\.\d+(-preview\.\d+)?$")
 
 
