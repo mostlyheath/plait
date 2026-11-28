@@ -8,8 +8,9 @@
 //! nothing here opens a link from an issue.
 
 use crate::host::linear::{
-    Binding, Cache, Earlier, Filter, IssueDetail, IssueReply, IssueSummary, IssueText, IssueWrite,
-    Issues, ProjectBinding, Rejection, StateUpdate, Teams, WorkflowState, WriteFailure,
+    Binding, Cache, Earlier, EditVerification, Filter, IssueDetail, IssueReply, IssueSummary,
+    IssueText, IssueWrite, Issues, ProjectBinding, Rejection, StateUpdate, Teams, WorkflowState,
+    WriteFailure,
 };
 use crate::linear_settings::{Pending, message};
 use std::{
@@ -594,6 +595,12 @@ pub enum FormStatus {
     /// Linear changed the issue since this edit started. Nothing was written;
     /// the view shows Linear's version beside the person's.
     Changed,
+    SavedDifferent {
+        updated_at: String,
+        title: String,
+        description: String,
+    },
+    SavedUnverified,
     /// Linear may have written it; the host will not send it again.
     Unknown,
 }
@@ -680,8 +687,7 @@ pub enum FormDone {
     Closed(FormSlot),
     /// A new issue: drop the form's fields, select it, and read the list again.
     Created(String),
-    /// Read the shown issue again: after an accepted edit without a refreshed
-    /// issue, or to show Linear's version beside a refused one.
+    /// Read the issue again to show Linear's version beside a refused edit.
     Reload,
 }
 
@@ -822,20 +828,43 @@ impl IssuesView {
     /// After a conflict: base the edit on Linear's version now shown, keeping
     /// the person's text, so Save writes it over that version on purpose.
     pub fn keep_mine(&mut self) -> bool {
-        let Some(detail) = self.detail.as_ref().map(|d| d.issue.clone()) else {
+        let Some(id) = self.selected.as_ref() else {
             return false;
         };
-        let Some(form) = self.edits.get_mut(&detail.summary.id) else {
+        let Some(form) = self.edits.get_mut(id) else {
             return false;
         };
-        if form.status != FormStatus::Changed {
-            return false;
-        }
+        let (updated_at, title, description) = match &form.status {
+            FormStatus::SavedDifferent {
+                updated_at,
+                title,
+                description,
+            } => {
+                form.request_id = crate::host_state::request_id();
+                (updated_at.clone(), title.clone(), description.clone())
+            }
+            FormStatus::Changed => {
+                let Some(detail) = self
+                    .detail
+                    .as_ref()
+                    .map(|d| &d.issue)
+                    .filter(|d| &d.summary.id == id)
+                else {
+                    return false;
+                };
+                (
+                    detail.summary.updated_at.clone(),
+                    detail.summary.title.clone(),
+                    detail.description.clone().unwrap_or_default(),
+                )
+            }
+            _ => return false,
+        };
         form.kind = FormKind::Edit {
-            issue_id: detail.summary.id.clone(),
-            expected_updated_at: detail.summary.updated_at.clone(),
-            title: detail.summary.title.clone(),
-            description: detail.description.clone().unwrap_or_default(),
+            issue_id: id.clone(),
+            expected_updated_at: updated_at,
+            title,
+            description,
         };
         form.status = FormStatus::Editing;
         form.sent = None;
@@ -854,7 +883,11 @@ impl IssuesView {
         };
         if matches!(
             form.status,
-            FormStatus::Saving | FormStatus::Unknown | FormStatus::Changed
+            FormStatus::Saving
+                | FormStatus::Unknown
+                | FormStatus::Changed
+                | FormStatus::SavedDifferent { .. }
+                | FormStatus::SavedUnverified
         ) {
             return Submit::Nothing;
         }
@@ -964,21 +997,27 @@ impl IssuesView {
         };
         let (status, retire) = match result {
             Ok(write) => {
-                self.remove_form(&slot);
-                return match (&slot, write.issue_id, write.issue) {
-                    (FormSlot::New, Some(id), _) => FormDone::Created(id),
-                    (FormSlot::New, None, _) => FormDone::Closed(slot),
-                    (FormSlot::Edit(id), _, issue) => {
-                        let shown = self.detail.as_mut().filter(|d| &d.issue.summary.id == id);
-                        match (issue, shown) {
-                            (Some(issue), Some(shown)) => {
-                                shown.issue = issue;
-                                FormDone::Closed(slot)
-                            }
-                            (None, Some(_)) => FormDone::Reload,
-                            (_, None) => FormDone::Closed(slot),
-                        }
+                if let FormSlot::Edit(id) = &slot {
+                    let status = edit_review(request, &write);
+                    let keep_draft = status.is_some();
+                    if let Some(status) = status {
+                        form.sent = None;
+                        form.status = status;
                     }
+                    if let Some(issue) = write.issue
+                        && let Some(shown) =
+                            self.detail.as_mut().filter(|d| &d.issue.summary.id == id)
+                    {
+                        shown.issue = issue;
+                    }
+                    if keep_draft {
+                        return FormDone::Nothing;
+                    }
+                }
+                self.remove_form(&slot);
+                return match (&slot, write.issue_id) {
+                    (FormSlot::New, Some(id)) => FormDone::Created(id),
+                    _ => FormDone::Closed(slot),
                 };
             }
             Err(WriteFailure::Changed) => {
@@ -1051,6 +1090,38 @@ impl IssuesView {
         form.sent = None;
         FormDone::Nothing
     }
+}
+
+/// Decide whether an accepted edit needs to stay open for review.
+fn edit_review(request: &FormRequest, write: &IssueWrite) -> Option<FormStatus> {
+    let Some(issue) = &write.issue else {
+        return Some(FormStatus::SavedUnverified);
+    };
+    let different = match write.verification {
+        Some(EditVerification::Matched) => return None,
+        Some(EditVerification::Different) => true,
+        Some(EditVerification::Unverified) => false,
+        // Legacy receipts carry display text, which can be escaped or clipped.
+        None => {
+            request
+                .title
+                .as_ref()
+                .is_some_and(|t| t != &issue.summary.title)
+                || request
+                    .description
+                    .as_deref()
+                    .is_some_and(|d| d != issue.description.as_deref().unwrap_or_default())
+        }
+    };
+    Some(if different {
+        FormStatus::SavedDifferent {
+            updated_at: issue.summary.updated_at.clone(),
+            title: issue.summary.title.clone(),
+            description: issue.description.clone().unwrap_or_default(),
+        }
+    } else {
+        FormStatus::SavedUnverified
+    })
 }
 
 fn request_slot(request: &FormRequest) -> FormSlot {
@@ -1585,6 +1656,7 @@ mod form_tests {
 
     fn written(issue_id: Option<&str>, issue: Option<IssueDetail>) -> IssueWrite {
         IssueWrite {
+            verification: None,
             issue_id: issue_id.map(Into::into),
             identifier: None,
             issue,
@@ -1786,6 +1858,48 @@ mod form_tests {
         assert!(
             matches!(&again.kind, FormKind::Edit { expected_updated_at, .. } if expected_updated_at == "3")
         );
+    }
+
+    #[test]
+    fn legacy_edit_receipts_keep_the_draft_when_the_host_cannot_confirm_the_exact_text() {
+        let mut view = view();
+        edit(&mut view);
+        let request = sent(view.submit_form("Mine", "Body", "x".into()));
+        let mut receipt = written(None, Some(detail("I", "2", "Mine").issue));
+        assert_eq!(
+            edit_review(&request, &receipt),
+            Some(FormStatus::SavedUnverified)
+        );
+        receipt.issue = Some(detail("I", "2", "Theirs").issue);
+        assert!(matches!(
+            edit_review(&request, &receipt),
+            Some(FormStatus::SavedDifferent { .. })
+        ));
+    }
+
+    #[test]
+    fn an_accepted_mismatch_keeps_the_draft_and_requires_a_new_deliberate_write() {
+        let mut view = view();
+        edit(&mut view);
+        let request = sent(view.submit_form("Mine", "Body", "x".into()));
+        let mut reply = written(None, Some(detail("I", "3", "Theirs").issue));
+        reply.verification = Some(EditVerification::Different);
+        assert_eq!(view.form_reply(&request, Ok(reply)), FormDone::Nothing);
+        assert!(
+            matches!(&view.form().unwrap().status, FormStatus::SavedDifferent { title, .. } if title == "Theirs")
+        );
+        assert_eq!(
+            view.submit_form("Mine", "Body", "x".into()),
+            Submit::Nothing
+        );
+        assert!(view.keep_mine());
+        let next = sent(view.submit_form("Mine", "Body", "x".into()));
+        assert_ne!(request.request_id, next.request_id);
+        assert!(
+            matches!(&next.kind, FormKind::Edit {expected_updated_at, ..} if expected_updated_at == "3")
+        );
+        view.form_reply(&next, Ok(written(None, None)));
+        assert_eq!(view.form().unwrap().status, FormStatus::SavedUnverified);
     }
 
     #[test]

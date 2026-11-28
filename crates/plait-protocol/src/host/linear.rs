@@ -324,6 +324,8 @@ pub struct StateUpdate {
 /// the refreshed detail, or null when that read failed and `warning` says so.
 #[derive(Clone, Debug, Deserialize)]
 pub struct IssueWrite {
+    /// Absent on hosts predating exact post-save comparison.
+    pub verification: Option<EditVerification>,
     /// The created issue's id; absent for an edit.
     #[serde(default)]
     pub issue_id: Option<String>,
@@ -334,6 +336,13 @@ pub struct IssueWrite {
     pub partial: bool,
     pub warning: Option<String>,
     pub outcome: String,
+}
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EditVerification {
+    Matched,
+    Different,
+    Unverified,
 }
 /// One base64 chunk of a Linear image, `size` bytes in all.
 #[derive(Clone, Debug, Deserialize)]

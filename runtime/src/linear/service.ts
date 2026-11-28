@@ -29,6 +29,8 @@ import {
   safeLinearUrl,
 } from './types.ts';
 import type {
+  EditVerification,
+  IssueEditFields,
   LinearAuthStatus,
   LinearFilterPreset,
   LinearIssueDetail,
@@ -452,7 +454,9 @@ export class LinearService {
     workspaceId?: string;
     commentsCursor?: string;
     refresh: boolean;
+    verify?: IssueEditFields;
   }): Promise<{
+    verification?: EditVerification;
     issue: LinearIssueDetail;
     workspace_id: string;
     cached: boolean;
@@ -493,6 +497,7 @@ export class LinearService {
       const fresh = await this.client.getIssue(auth.api_key, {
         issueId: params.issueId,
         commentsCursor: params.commentsCursor,
+        verify: params.verify,
       });
       if (this.authGeneration !== authGen) {
         throw new LinearError('not_signed_in', 'Linear sign-in changed while the request was in flight.');
@@ -506,6 +511,7 @@ export class LinearService {
         this.store.linear.saveIssueDetail(fresh.data, fetchedAt, auth.workspace_id, owner.credential);
       }
       return {
+        ...(params.verify && { verification: fresh.verification }),
         issue: fresh.data,
         workspace_id: auth.workspace_id,
         cached: false,
@@ -762,7 +768,7 @@ export class LinearService {
         await this.client.updateIssueText(auth.api_key, params.issueId,
           { title: params.title, description: params.description });
         return {};
-      });
+      }, { title: params.title, description: params.description });
   }
 
   /** An issue's exact title and description, read live for an edit. */
@@ -815,6 +821,7 @@ export class LinearService {
     requestId: string, op: string, issueId: string, payload: string,
     validate: (auth: StoredLinearAuth, authGen: number) => Promise<void>,
     send: (auth: StoredLinearAuth) => Promise<{ comment_id?: string; issue_id?: string; identifier?: string | null }>,
+    verify?: IssueEditFields,
   ): Promise<WriteReceipt> {
     const { auth, authGen } = await this.requireAuth();
     // Never persist a pasted credential as an exact mutation payload or identifier.
@@ -828,9 +835,9 @@ export class LinearService {
     });
     const inflight = this.inFlightWrites.get(requestId);
     if (inflight?.authGen === authGen) return inflight.promise as Promise<WriteReceipt>;
-    if (intent.outcome === 'accepted') return this.acceptedReceipt(intent, authGen);
+    if (intent.outcome === 'accepted') return this.acceptedReceipt(intent, authGen, verify);
     if (intent.outcome === 'unknown') this.unknownWrite();
-    const promise = this.executeWrite(intent, payload, auth, authGen, validate, send);
+    const promise = this.executeWrite(intent, payload, auth, authGen, validate, send, verify);
     this.inFlightWrites.set(requestId, { authGen, promise });
     try {
       return await promise;
@@ -849,6 +856,7 @@ export class LinearService {
     intent: WriteIntent, payload: string, auth: StoredLinearAuth, authGen: number,
     validate: (auth: StoredLinearAuth, authGen: number) => Promise<void>,
     send: (auth: StoredLinearAuth) => Promise<{ comment_id?: string; issue_id?: string; identifier?: string | null }>,
+    verify?: IssueEditFields,
   ): Promise<WriteReceipt> {
     try {
       await validate(auth, authGen);
@@ -878,20 +886,20 @@ export class LinearService {
       this.cacheGeneration++;
       this.store.linear.invalidateIssue(intent.issue_id!);
     }
-    const reply: WriteReceipt = { ...receipt, ...await this.refreshAfterWrite(intent.issue_id!, authGen) };
+    const reply: WriteReceipt = { ...receipt, ...await this.refreshAfterWrite(intent.issue_id!, authGen, verify) };
     if (this.authGeneration === authGen) {
       this.store.linear.saveWrite(intent.request_id, intent.op, intent.hash, reply, this.now());
     }
     return reply;
   }
 
-  private async acceptedReceipt(intent: WriteIntent, authGen: number): Promise<WriteReceipt> {
+  private async acceptedReceipt(intent: WriteIntent, authGen: number, verify?: IssueEditFields): Promise<WriteReceipt> {
     const full = this.store.linear.getWrite(intent.request_id)?.result as WriteReceipt | undefined;
     const receipt = { ...(full ?? intent.receipt!), outcome: 'accepted' as const };
     // Migrated receipts have no workspace identity; only their compact historical receipt is safe.
     if (!intent.workspace_id || !intent.issue_id) return intent.receipt!;
-    if (receipt.issue) return receipt;
-    const reply = { ...receipt, ...await this.refreshAfterWrite(intent.issue_id, authGen) };
+    if (receipt.issue && (!verify || receipt.verification)) return receipt;
+    const reply = { ...receipt, ...await this.refreshAfterWrite(intent.issue_id, authGen, verify) };
     if (this.authGeneration === authGen) {
       this.store.linear.saveWrite(intent.request_id, intent.op, intent.hash, reply, this.now());
     }
@@ -932,15 +940,33 @@ export class LinearService {
   private async refreshAfterWrite(
     issueId: string,
     authGen: number,
-  ): Promise<{ issue: LinearIssueDetail | null; partial: boolean; warning: string | null }> {
+    verify?: IssueEditFields,
+  ): Promise<Pick<WriteReceipt, 'issue' | 'partial' | 'warning' | 'verification'>> {
+    const unavailable = {
+      issue: null, partial: false,
+      ...(verify && { verification: 'unverified' as const }),
+      warning: verify ? 'The save went through, but Plait could not verify it.'
+        : 'Write succeeded, but the refreshed issue could not be loaded.',
+    };
     if (this.authGeneration !== authGen) {
-      return { issue: null, partial: false, warning: 'Linear sign-in changed after the write succeeded.' };
+      return { ...unavailable, warning: 'Linear sign-in changed after the write succeeded.' };
     }
     try {
-      const refreshed = await this.getIssue({ issueId, refresh: true });
-      return { issue: refreshed.issue, partial: refreshed.partial, warning: refreshed.warning };
+      const refreshed = await this.getIssue({ issueId, refresh: true, verify });
+      const { issue, partial, warning } = refreshed;
+      if (!verify) return { issue, partial, warning };
+      if (this.authGeneration !== authGen || refreshed.cached || issue.id !== issueId) return unavailable;
+      const verification = refreshed.verification ?? 'unverified';
+      switch (verification) {
+        case 'different':
+          return { issue, partial, verification, warning: 'Someone else may have changed this issue after the save.' };
+        case 'unverified':
+          return { issue, partial, verification, warning: unavailable.warning };
+        case 'matched':
+          return { issue, partial, verification, warning };
+      }
     } catch {
-      return { issue: null, partial: false, warning: 'Write succeeded, but the refreshed issue could not be loaded.' };
+      return unavailable;
     }
   }
 
