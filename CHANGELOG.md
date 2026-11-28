@@ -1,6 +1,6 @@
 # Changelog
 
-What changed in each Plait preview, newest first. Notes for the next preview
+What changed in each Plait release, newest first. Notes for the next release
 wait in [changes/](changes/README.md) until a release collects them.
 
 ## v0.1.0-preview.85

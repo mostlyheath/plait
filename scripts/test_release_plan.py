@@ -28,6 +28,12 @@ class NextPreview(unittest.TestCase):
             [sys.executable, "-c", command], cwd=plan.ROOT / "scripts", text=True)
         self.assertRegex(result, r"(?m)^tag=v[0-9.]+-preview\.1$")
 
+    def test_final_refuses_when_the_final_tag_already_exists(self):
+        version = plan.cargo_version()
+        with patch.object(plan, "git", lambda *args: f"v{version}\nv{version}-preview.3" if args[:1] == ("tag",) else ""):
+            with patch("sys.stderr"):
+                self.assertNotEqual(plan.main(["main", "--final"]), 0)
+
     def test_final_requires_latest_successful_main_push_at_dispatch_sha(self):
         workflow = (plan.ROOT / ".github/workflows/macos.yml").read_text()
         step = workflow.split("      - name: Require the latest main check", 1)[1].split("\n      #", 1)[0]
