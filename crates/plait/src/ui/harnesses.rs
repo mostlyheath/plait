@@ -272,6 +272,16 @@ pub(super) fn thread_items(row: &HarnessRow) -> Vec<Item> {
 /// lists. One that needs setup is offered to set it up; any other that cannot
 /// start a thread is listed, disabled, with its state.
 pub(super) fn harness_items(rows: &[HarnessRow], current: HarnessId) -> Vec<Item> {
+    harness_items_for(rows, current, Command::DraftHarness)
+}
+
+/// Same harness list as `harness_items`, parameterized by the command to run
+/// when a startable harness is chosen (shared by New thread and New automation).
+pub(super) fn harness_items_for(
+    rows: &[HarnessRow],
+    current: HarnessId,
+    on_pick: impl Fn(HarnessId) -> Command,
+) -> Vec<Item> {
     let item = |id: HarnessId, name: SharedString, detail: SharedString, command: Command| {
         let item = Item::new(format!("harness\u{1f}{name}"), name, command)
             .detail(detail)
@@ -294,17 +304,17 @@ pub(super) fn harness_items(rows: &[HarnessRow], current: HarnessId) -> Vec<Item
             HarnessId::Pi,
             "Pi".into(),
             "Built into the host".into(),
-            Command::DraftHarness(HarnessId::Pi),
+            on_pick(HarnessId::Pi),
         );
         let mut items = vec![current_badge(pi, HarnessId::Pi)];
         items.extend(
             rows.iter()
-                .map(|row| harness_item(row, &item, &current_badge)),
+                .map(|row| harness_item(row, &item, &current_badge, &on_pick)),
         );
         return items;
     }
     rows.iter()
-        .map(|row| harness_item(row, &item, &current_badge))
+        .map(|row| harness_item(row, &item, &current_badge, &on_pick))
         .collect()
 }
 
@@ -312,6 +322,7 @@ fn harness_item(
     row: &HarnessRow,
     item: &impl Fn(HarnessId, SharedString, SharedString, Command) -> Item,
     current: &impl Fn(Item, HarnessId) -> Item,
+    on_pick: &impl Fn(HarnessId) -> Command,
 ) -> Item {
     let detail = row.note.clone().unwrap_or_else(|| row.version.clone());
     // Setup is the only way forward for this harness, so choosing it starts
@@ -326,12 +337,7 @@ fn harness_item(
         )
         .badge(row.state.clone(), colors().amber);
     }
-    let listed = item(
-        row.id,
-        row.name.clone(),
-        detail,
-        Command::DraftHarness(row.id),
-    );
+    let listed = item(row.id, row.name.clone(), detail, on_pick(row.id));
     if row.startable() {
         return current(listed, row.id);
     }

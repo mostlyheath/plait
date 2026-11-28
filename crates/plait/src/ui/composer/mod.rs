@@ -1355,6 +1355,7 @@ impl Render for Composer {
             None => hint.clone(),
         };
         let input = cx.entity().downgrade();
+        let own_focus = self.focus.clone();
         let enabled = self.enabled;
         let focused = self.focus.is_focused(window);
         // Suggestions belong to typing; they do not outlive keyboard focus.
@@ -1381,8 +1382,7 @@ impl Render for Composer {
                     .aria_value(self.draft.value.text.clone())
                     .aria_placeholder(self.placeholder.clone())
                     .on_a11y_action(AccessibleAction::SetValue, move |data, window, cx| {
-                        // A composer is never in a window modal.
-                        if crate::ui::theme::beneath_modal(None, window, cx) {
+                        if crate::ui::theme::beneath_modal(Some(&own_focus), window, cx) {
                             return;
                         }
                         if let Some(gpui::accesskit::ActionData::Value(text)) = data {

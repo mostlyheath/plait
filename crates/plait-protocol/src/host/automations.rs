@@ -14,11 +14,36 @@ use std::path::{Path, PathBuf};
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Request {
     ListAutomations,
-    GetAutomation { id: String },
-    PauseAutomation { id: String },
-    ResumeAutomation { id: String },
-    RunAutomationNow { id: String, request_id: String },
-    DeleteAutomation { id: String },
+    GetAutomation {
+        id: String,
+    },
+    CreateAutomation {
+        // Boxed: a definition is far larger than every other request.
+        definition: Box<Definition>,
+        request_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        caller: Option<Caller>,
+    },
+    PauseAutomation {
+        id: String,
+    },
+    ResumeAutomation {
+        id: String,
+    },
+    RunAutomationNow {
+        id: String,
+        request_id: String,
+    },
+    DeleteAutomation {
+        id: String,
+    },
+}
+
+/// Identifies the thread a create request came from so the host can refuse
+/// creation from an automation's own thread.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Caller {
+    pub thread_id: String,
 }
 
 /// Schedule cadence and IANA time zone (`runtime/src/automations/schedule.ts`).
@@ -240,6 +265,61 @@ pub struct DeleteReply {
     pub deleted: bool,
 }
 
+/// Reply payload of `create_automation`: either a pending placement status
+/// (`state: "preparing"` or `"failed"`, `admission_request_id`, `cursor`, `error`)
+/// or a full `Summary` when a retry lands after placement already finished.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreatedAutomation {
+    pub id: String,
+    pub state: State,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admission_request_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schedule: Option<Schedule>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_path: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_run: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_result: Option<LastResult>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pause_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
+}
+
+impl CreatedAutomation {
+    /// Builds a sidebar `Summary` from the host's create reply, filling fields
+    /// omitted from a pending placement status from the submitted `Definition`.
+    pub fn into_summary(self, definition: &Definition) -> Summary {
+        Summary {
+            id: self.id,
+            name: self.name.unwrap_or_else(|| definition.name.clone()),
+            schedule: self.schedule.unwrap_or_else(|| definition.schedule.clone()),
+            target_path: self
+                .target_path
+                .unwrap_or_else(|| definition.target.path().to_path_buf()),
+            state: self.state,
+            next_run: self.next_run,
+            last_result: self.last_result,
+            pause_reason: self.pause_reason,
+            error: self.error,
+            thread_id: self.thread_id,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreateReply {
+    pub automation: CreatedAutomation,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -457,5 +537,83 @@ mod tests {
 
         let deleted: DeleteReply = serde_json::from_value(json!({"deleted": true})).unwrap();
         assert!(deleted.deleted);
+    }
+
+    #[test]
+    fn create_request_and_replies_match_runtime_shapes() {
+        let definition = Definition {
+            name: "Daily audit".into(),
+            instructions: "Check dependencies".into(),
+            target: Target::Project {
+                checkout: "/repo".into(),
+            },
+            harness: HarnessId::Pi,
+            provider: "openai-codex".into(),
+            model_id: "gpt-5.6-luna".into(),
+            mode: None,
+            thinking: None,
+            approval: ApprovalMode::Auto,
+            command_policy: CommandPolicy::Sandboxed,
+            schedule: Schedule::Weekdays {
+                time: "09:00".into(),
+                time_zone: "America/New_York".into(),
+            },
+            catch_up_ms: None,
+        };
+        let without_caller = serde_json::to_value(Request::CreateAutomation {
+            definition: Box::new(definition.clone()),
+            request_id: "req-1".into(),
+            caller: None,
+        })
+        .unwrap();
+        assert_eq!(without_caller["op"], "create_automation");
+        assert_eq!(without_caller["request_id"], "req-1");
+        assert!(without_caller.get("caller").is_none());
+        assert!(without_caller["definition"].get("catch_up_ms").is_none());
+        assert!(without_caller["definition"].get("mode").is_none());
+
+        let with_caller = serde_json::to_value(Request::CreateAutomation {
+            definition: Box::new(definition.clone()),
+            request_id: "req-2".into(),
+            caller: Some(Caller {
+                thread_id: "thr-9".into(),
+            }),
+        })
+        .unwrap();
+        assert_eq!(with_caller["caller"], json!({"thread_id": "thr-9"}));
+
+        let preparing: CreateReply = serde_json::from_value(json!({
+            "automation": {
+                "id": "abc123",
+                "state": "preparing",
+                "admission_request_id": "automation-abc123",
+                "cursor": 1735722000000u64,
+                "error": null
+            }
+        }))
+        .unwrap();
+        assert_eq!(preparing.automation.state, State::Preparing);
+        let summary = preparing.automation.into_summary(&definition);
+        assert_eq!(summary.id, "abc123");
+        assert_eq!(summary.name, "Daily audit");
+        assert_eq!(summary.target_path, PathBuf::from("/repo"));
+        assert_eq!(summary.state, State::Preparing);
+
+        let ready: CreateReply = serde_json::from_value(json!({
+            "automation": {
+                "id": "abc123",
+                "name": "Daily audit",
+                "schedule": {"kind": "weekdays", "time": "09:00", "timeZone": "America/New_York"},
+                "target_path": "/private/repo",
+                "state": "active",
+                "next_run": 1735725600000u64,
+                "last_result": null
+            }
+        }))
+        .unwrap();
+        let summary = ready.automation.into_summary(&definition);
+        assert_eq!(summary.state, State::Active);
+        assert_eq!(summary.target_path, PathBuf::from("/private/repo"));
+        assert_eq!(summary.next_run, Some(1735725600000u64));
     }
 }

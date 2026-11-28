@@ -12,7 +12,10 @@ use crate::host::ModelChoice;
 use crate::host_state::PendingSubmit;
 use crate::machines::MachineId;
 pub use drafts::{DraftSettings, DraftTab, DraftTabCreation};
-pub use machines::{MachineWork, SavedThread, draft_is_empty, read_all as read_machines};
+pub use machines::{
+    AutomationCreateEntry, MAX_AUTOMATION_CREATES, MachineWork, SavedThread,
+    cap_automation_creates, draft_is_empty, read_all as read_machines,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -333,6 +336,7 @@ pub struct Journal {
     /// life so switching away and back reuses the same writer.
     machines: Mutex<BTreeMap<MachineId, MachineSlot>>,
     run_click_writer: Mutex<()>,
+    automation_create_writer: Mutex<()>,
     /// Image references in the last durable `desktop.json`.
     durable: Mutex<Vec<String>>,
     loaded: Mutex<Option<BTreeMap<MachineId, MachineWork>>>,
@@ -477,6 +481,7 @@ impl Journal {
             written: Mutex::new(0),
             machines: Mutex::new(slots),
             run_click_writer: Mutex::new(()),
+            automation_create_writer: Mutex::new(()),
             durable: Mutex::new(durable),
             loaded: Mutex::new(Some(machines)),
         };

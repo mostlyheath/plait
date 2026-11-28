@@ -646,6 +646,32 @@ impl Plait {
             .into_any_element()
     }
 
+    pub(super) fn automations_new_row(
+        &self,
+        focus: &FocusHandle,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        nav_row("automations-new", "New automation…", false)
+            .role(Role::TreeItem)
+            .aria_level(2)
+            .track_focus(focus)
+            .h(px(30.))
+            .px(px(9.))
+            .gap(px(6.))
+            .child(icon("plus").size(px(14.)).text_color(rgb(colors().mint)))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_size(px(12.5))
+                    .text_color(rgb(colors().muted))
+                    .child("New automation…"),
+            )
+            .on_activate(cx, |this, window, cx| this.open_automation_form(window, cx))
+            .into_any_element()
+    }
+
     pub(super) fn automations_empty_row(&self, focus: &FocusHandle) -> AnyElement {
         let (label, tint) = match &self.automations.error {
             Some(error) => (error.clone(), colors().amber),
