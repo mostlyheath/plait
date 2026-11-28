@@ -1706,8 +1706,14 @@ Anonymous socket pairs also work. TCP, outside Unix sockets, real checkout/Git
 writes, source-cache writes, and unlisted Mach services remain denied. Commands
 can signal only processes in the same sandbox, not the host or outside processes.
 Each command has a 15-minute deadline; Stop remains available during a build.
-Caches have no automatic eviction or size quota. To discard one, stop the host
-and remove only that thread's `STORE/build-cache/THREAD_ID` directory.
+Archiving a thread removes its `STORE/build-cache/THREAD_ID` directory in the
+background once no run or command in that thread is active; unarchiving recreates
+it on demand. Total build-cache size across threads is capped at the smaller of
+20 GB or 10% of the store volume's available free space. After each command and
+at host start, the host evicts whole idle thread caches oldest-used first (tracked
+by a private `.last-used` timestamp updated when a command starts) until the total
+is within the cap. A cache belonging to an active run, detached runner, running
+command, or in-progress worktree seed clone is never evicted.
 
 Commands must not daemonize or start background services. A Rust guardian kills
 the normal shell process group on Stop, host/Node death, timeout, or shell exit,
@@ -3429,7 +3435,9 @@ and a partial frame has a 15-second deadline. SSH uses the bridge.
 
 These additive operations are versionless and do not change protocol versions 1–6. Requests accept only the `op` field; unknown fields return `invalid_request`.
 
-- `{"op":"host_info"}` returns `{"schema":1,"release":null,"build_id":null,"protocol_min":1,"protocol_max":7,"capabilities":["drain_v1","checkout_identity_v1","project_fingerprint_v1"],"storage_schema":1}`. Tagged host packages report the full release version, including the preview number. Untagged builds report a null release. Packaged hosts also report their build ID.
+- `{"op":"host_info"}` returns `{"schema":1,"release":null,"build_id":null,"protocol_min":1,"protocol_max":7,"capabilities":["drain_v1","checkout_identity_v1","project_fingerprint_v1","guarded_discard_v1","build_cache_v1"],"storage_schema":1}`. Tagged host packages report the full release version, including the preview number. Untagged builds report a null release. Packaged hosts also report their build ID.
+- `{"op":"build_cache_status"}` (advertised by `build_cache_v1`) returns stored totals `{"schema":1,"total_bytes":N,"idle_bytes":N,"thread_count":N,"active_count":N,"cap_bytes":N,"measuring":false}` without walking thread caches inside the request; background sizing skips symlinks inside thread caches and sets `"measuring":true` while sizing is in progress or any thread cache has not yet been measured.
+- `{"op":"clear_build_caches"}` (advertised by `build_cache_v1`) moves idle thread build caches aside synchronously for background deletion while skipping active threads, reports freed bytes from the stored sizes without walking caches inside the request, and returns `{"schema":1,"cleared_threads":N,"cleared_bytes":N,"skipped_active":N,"total_bytes":N,"idle_bytes":0,"thread_count":N,"active_count":N,"cap_bytes":N,"measuring":false}`.
 - `{"op":"drain_for_update"}` returns `{"draining":true,"active_runs":N}`. Running and approval-waiting threads count as active. New work returns `busy` while accepted work, Stop, approvals, reads and watches continue. Repeating the request is safe.
 - `{"op":"cancel_drain"}` returns `{"draining":false}` and wakes the checkout queue. Drain state is in memory and does not survive a host restart.
 - While draining, a retried request that would admit work also returns `busy`, even if an earlier attempt was already accepted; after the update the same request ID returns its saved result as usual, so a client retries after `busy` rather than treating it as a refusal of the original.

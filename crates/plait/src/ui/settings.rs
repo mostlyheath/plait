@@ -474,7 +474,13 @@ impl Plait {
                     if tab != SettingsTab::Providers {
                         this.close_provider_form(cx);
                     }
+                    if tab != SettingsTab::Machines {
+                        this.machines.build_cache.confirm_clear = false;
+                    }
                     this.settings_tab = tab;
+                    if tab == SettingsTab::Machines {
+                        this.refresh_build_caches(cx);
+                    }
                     this.settings_scroll.set_offset(point(px(0.), px(0.)));
                     cx.notify();
                 }),

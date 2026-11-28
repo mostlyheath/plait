@@ -19,6 +19,7 @@ pub struct HostConnection {
     pub epoch: u64,
     pub connected: bool,
     pub has_checkout_identity: bool,
+    pub has_build_cache: bool,
     pub connecting: bool,
     pub error: Option<String>,
     pub status: Option<Status>,
@@ -260,6 +261,7 @@ impl HostState {
         self.connection.epoch += 1;
         self.connection.connected = false;
         self.connection.has_checkout_identity = false;
+        self.connection.has_build_cache = false;
         self.connection.connecting = true;
         self.connection.error = None;
         if self.connection.saving {
