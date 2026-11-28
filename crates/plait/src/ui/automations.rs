@@ -123,9 +123,10 @@ impl Plait {
                 let result = result.map_err(|error| error.to_string());
                 if this.automations.apply_list(epoch, generation, result) {
                     this.navigation.invalidate_rows();
+                    let delay = this.automations.next_refresh_delay(now_ms());
                     if this.automations.refresh_queued {
                         this.refresh_automations(cx);
-                    } else if let Some(delay) = this.automations.next_refresh_delay(now_ms()) {
+                    } else if let Some(delay) = delay {
                         this.schedule_automation_refresh(epoch, generation, delay, cx);
                     }
                     cx.notify();
@@ -133,6 +134,19 @@ impl Plait {
             });
         })
         .detach();
+    }
+
+    fn apply_automation_detail(
+        &mut self,
+        epoch: u64,
+        detail: host::automations::DetailReply,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let applied = self.automations.apply_detail(epoch, detail);
+        if applied && self.automations.refresh_queued && !self.automations.loading {
+            self.refresh_automations(cx);
+        }
+        applied
     }
 
     fn schedule_automation_refresh(
@@ -176,7 +190,7 @@ impl Plait {
                 }
                 match result {
                     Ok(detail) => {
-                        if this.automations.apply_detail(epoch, detail) {
+                        if this.apply_automation_detail(epoch, detail, cx) {
                             this.navigation.invalidate_rows();
                             cx.notify();
                         }
@@ -244,7 +258,7 @@ impl Plait {
                         }
                         if let Ok(detail) = result {
                             let thread_id = detail.automation.thread_id.clone();
-                            this.automations.apply_detail(epoch, detail);
+                            this.apply_automation_detail(epoch, detail, cx);
                             this.navigation.invalidate_rows();
                             if let Some(thread_id) = thread_id {
                                 this.open_automation_thread(thread_id, window, cx);
@@ -332,7 +346,7 @@ impl Plait {
                         this.automations.record_successful_action(&id);
                         this.automations.apply_summary(epoch, summary);
                         if let Some(detail) = detail {
-                            this.automations.apply_detail(epoch, detail);
+                            this.apply_automation_detail(epoch, detail, cx);
                         }
                         this.refresh_automations(cx);
                         this.navigation.invalidate_rows();
@@ -484,7 +498,7 @@ impl Plait {
                         .iter()
                         .find(|occ| occ.request_id == occurrence_request_id)
                         .cloned();
-                    this.automations.apply_detail(epoch, detail);
+                    this.apply_automation_detail(epoch, detail, cx);
                     this.navigation.invalidate_rows();
                     if let Some(receipt) = receipt.filter(|r| {
                         !matches!(
@@ -820,6 +834,24 @@ impl Plait {
                     .on_activate(cx, move |this, window, cx| {
                         this.open_automation(open_id.clone(), window, cx)
                     }),
+            )
+            .when_some(
+                self.automations
+                    .note
+                    .as_ref()
+                    .filter(|(owner, _, error)| confirming_failed && *error && owner == &id),
+                |el, (_, message, _)| {
+                    el.child(
+                        tag(
+                            ("automation-delete-error", index),
+                            message.clone(),
+                            palette.red,
+                        )
+                        .id(("automation-delete-alert", index))
+                        .role(Role::Alert)
+                        .audited(),
+                    )
+                },
             )
             .when(confirming_failed, |el| {
                 el.child(
