@@ -350,6 +350,7 @@ impl Plait {
         self.settings_project = None;
         self.cleanup.confirm = false;
         self.policy.confirm = false;
+        self.machines.build_cache.confirm_clear = false;
         window.focus(
             if self.settings_open {
                 &self.settings_focus
@@ -507,6 +508,7 @@ impl Plait {
             this.sync_harnesses(cx);
             this.sync_provider_settings(cx);
             this.sync_naming_settings(cx);
+            this.sync_build_caches(cx);
             this.sync_linear_settings(cx);
             this.sync_issues_view(cx);
             this.sync_issue_links(cx);
@@ -903,6 +905,9 @@ impl Plait {
                 self.prepare_editor_settings(cx);
                 self.prepare_providers(cx);
                 self.load_naming_settings(cx);
+                if self.settings_tab == settings::SettingsTab::Machines {
+                    self.refresh_build_caches(cx);
+                }
             }
             Some(settings::SettingsPage::Project) => {
                 self.close_provider_form(cx);

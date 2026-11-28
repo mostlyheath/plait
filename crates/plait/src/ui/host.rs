@@ -159,17 +159,18 @@ impl Plait {
         let is_status =
             self.host.connection.connecting && matches!(request, Request::Status { .. });
         let task = cx.background_executor().spawn(async move {
-            let capability = if is_status {
-                Some(
-                    host::release::host_info(&client)
-                        .ok()
-                        .flatten()
-                        .is_some_and(|info| {
+            let capabilities = if is_status {
+                Some(host::release::host_info(&client).ok().flatten().map_or(
+                    (false, false),
+                    |info| {
+                        (
                             info.capabilities
                                 .iter()
-                                .any(|c| c == "checkout_identity_v1")
-                        }),
-                )
+                                .any(|c| c == "checkout_identity_v1"),
+                            info.capabilities.iter().any(|c| c == "build_cache_v1"),
+                        )
+                    },
+                ))
             } else {
                 None
             };
@@ -207,18 +208,19 @@ impl Plait {
                 }
                 result
             });
-            (result, capability)
+            (result, capabilities)
         });
         cx.spawn_in(window, async move |this, cx| {
-            let (result, capability) = task.await;
+            let (result, capabilities) = task.await;
             let _ = this.update_in(cx, |this, window, cx| {
                 if this.host.identity != identity
                     || (!acknowledgement && this.host.connection.epoch != epoch)
                 {
                     return;
                 }
-                if let Some(capability) = capability {
-                    this.host.connection.has_checkout_identity = capability;
+                if let Some((checkout_identity, build_cache)) = capabilities {
+                    this.host.connection.has_checkout_identity = checkout_identity;
+                    this.host.connection.has_build_cache = build_cache;
                 }
                 complete(this, result, window, cx);
                 this.sync_composer(cx);

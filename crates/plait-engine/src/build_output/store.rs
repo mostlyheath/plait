@@ -285,6 +285,23 @@ fn private_cache(store: &Path, thread: &str) -> io::Result<PathBuf> {
     policy::private_directory(&root, true)?;
     Ok(root)
 }
+/// Reads an existing private build cache without recreating one that was evicted or cleared.
+fn existing_private_cache(store: &Path, thread: &str) -> io::Result<Option<PathBuf>> {
+    uuid(thread)?;
+    policy::private_directory(store, false)?;
+    let parent = store.join("build-cache");
+    match policy::private_directory(&parent, false) {
+        Ok(()) => (),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e),
+    }
+    let root = parent.join(thread);
+    match policy::private_directory(&root, false) {
+        Ok(()) => Ok(Some(root)),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
+    }
+}
 const MAIN_ONLY: &str = "Build seeds are taken only from the project's main checkout.";
 /// A run-end refresh is skipped while the seed matches the approval and was
 /// taken, or found unchanged, within this bound. What makes a seed worth having
@@ -332,27 +349,34 @@ fn sources(
     let mut sources = Vec::new();
     for directory in &approved.paths {
         git::build_output::ignored(root, directory).map_err(io::Error::other)?;
-        let source_root = if directory == "target" {
-            source_cache
-                .map(|id| private_cache(store, id))
-                .transpose()?
-                .unwrap_or(root.into())
+        let found = if directory == "target"
+            && let Some(id) = source_cache
+        {
+            match existing_private_cache(store, id)? {
+                Some(source_root) => {
+                    let source_identity = Identity::read(&source_root).map_err(io::Error::other)?;
+                    match build_output::directory_owned(
+                        &source_root,
+                        Path::new(directory),
+                        identity_pair(&source_identity)?,
+                    ) {
+                        Ok((fd, _)) => Some((fd, source_root, source_identity)),
+                        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+                        Err(e) => return Err(e),
+                    }
+                }
+                None => None,
+            }
         } else {
-            root.into()
-        };
-        let source_identity = if source_root == root {
-            identity.clone()
-        } else {
-            Identity::read(&source_root).map_err(io::Error::other)?
-        };
-        let found = match build_output::directory_owned(
-            &source_root,
-            Path::new(directory),
-            identity_pair(&source_identity)?,
-        ) {
-            Ok((fd, _)) => Some((fd, source_root, source_identity)),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => None,
-            Err(e) => return Err(e),
+            match build_output::directory_owned(
+                root,
+                Path::new(directory),
+                identity_pair(identity)?,
+            ) {
+                Ok((fd, _)) => Some((fd, root.into(), identity.clone())),
+                Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+                Err(e) => return Err(e),
+            }
         };
         sources.push(Source {
             directory: directory.clone(),

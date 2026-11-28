@@ -527,3 +527,21 @@ fn clearing_every_approval_removes_the_project_seed() {
         b"target source"
     );
 }
+
+#[test]
+fn seeding_from_a_removed_private_cache_does_not_recreate_it() {
+    let f = Fixture::new();
+    f.approve(&["target"]);
+    let outcome = seed(
+        &f.store,
+        &f.root,
+        &f.identity,
+        GENERATION,
+        Some(THREAD),
+        true,
+    )
+    .unwrap()
+    .outcome;
+    assert!(!outcome.warm);
+    assert!(!f.store.join("build-cache").join(THREAD).exists());
+}

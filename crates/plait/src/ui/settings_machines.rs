@@ -4,7 +4,7 @@
 use super::{Plait, jump::PreferenceGroup, settings, text_field::TextField, theme::*};
 use gpui::{prelude::*, *};
 use plait_client::{
-    host::Client,
+    host::{Client, build_cache},
     machines::{MachineId, Transport},
     remote::{
         ssh::{self, SshDestination, SshOptions},
@@ -47,6 +47,7 @@ pub(super) struct MachinesUi {
     /// Installing Plait on a machine that lacks it, while that is offered.
     pub(super) install: Option<super::machine_install::MachineInstall>,
     pub(super) update: Option<super::machine_update::MachineUpdate>,
+    pub(super) build_cache: build_cache::State,
 }
 
 // A window update may never run. Keep ownership until the current attempt claims it.
@@ -557,6 +558,243 @@ impl Plait {
             )
     }
 
+    pub(super) fn sync_build_caches(&mut self, cx: &mut Context<Self>) {
+        self.machines.build_cache.sync(self.host.connection.epoch);
+        if !cfg!(test)
+            && self.settings_open
+            && self.settings_page == settings::SettingsPage::Application
+            && self.settings_tab == settings::SettingsTab::Machines
+            && self.host.connection.connected
+            && self.host.connection.has_build_cache
+            && self.machines.build_cache.status.is_none()
+            && !self.machines.build_cache.busy
+            && !self.machines.build_cache.clearing
+            && self.machines.build_cache.note.is_none()
+        {
+            self.load_build_cache_status(cx);
+        }
+    }
+
+    pub(super) fn refresh_build_caches(&mut self, cx: &mut Context<Self>) {
+        self.machines.build_cache.sync(self.host.connection.epoch);
+        if !cfg!(test)
+            && self.host.connection.connected
+            && self.host.connection.has_build_cache
+            && !self.machines.build_cache.busy
+            && !self.machines.build_cache.clearing
+        {
+            self.load_build_cache_status(cx);
+        }
+    }
+
+    fn load_build_cache_status(&mut self, cx: &mut Context<Self>) {
+        self.machines.build_cache.sync(self.host.connection.epoch);
+        if !self.host.connection.connected
+            || !self.host.connection.has_build_cache
+            || self.machines.build_cache.busy
+            || self.machines.build_cache.clearing
+            || cfg!(test)
+        {
+            return;
+        }
+        self.machines.build_cache.busy = true;
+        let epoch = self.host.connection.epoch;
+        self.settings_request(
+            build_cache::Request::BuildCacheStatus,
+            cx,
+            move |this, result, _| {
+                this.machines.build_cache.complete_status(epoch, result);
+            },
+        );
+    }
+
+    fn clear_build_caches(&mut self, cx: &mut Context<Self>) {
+        self.machines.build_cache.sync(self.host.connection.epoch);
+        if !self.host.connection.connected
+            || !self.host.connection.has_build_cache
+            || self.machines.build_cache.clearing
+        {
+            return;
+        }
+        self.machines.build_cache.clearing = true;
+        self.machines.build_cache.confirm_clear = false;
+        self.machines.build_cache.note = None;
+        if cfg!(test) {
+            cx.notify();
+            return;
+        }
+        let epoch = self.host.connection.epoch;
+        self.settings_request(
+            build_cache::Request::ClearBuildCaches,
+            cx,
+            move |this, result, _| {
+                this.machines.build_cache.complete_clear(epoch, result);
+            },
+        );
+        cx.notify();
+    }
+
+    fn build_cache_line(&self, cx: &mut Context<Self>) -> Option<Div> {
+        if !self.host.connection.connected || !self.host.connection.has_build_cache {
+            return None;
+        }
+        let state = &self.machines.build_cache;
+        let mut block = column().gap_1().pb_1();
+        if let Some(status) = state.status.as_ref().filter(|status| !status.measuring) {
+            let total = build_cache::format_bytes(status.total_bytes);
+            let idle = build_cache::format_bytes(status.idle_bytes);
+            let can_clear = status.idle_bytes > 0 && !state.clearing && !state.busy;
+            if state.confirm_clear {
+                let active_note = if status.active_count > 0 {
+                    format!(
+                        "Remove {idle} of idle thread build caches? Active threads ({}) are kept; cleared caches rebuild on demand.",
+                        status.active_count
+                    )
+                } else {
+                    format!(
+                        "Remove {idle} of idle thread build caches? Active threads are kept; cleared caches rebuild on demand."
+                    )
+                };
+                block = block
+                    .child(
+                        row()
+                            .gap_2()
+                            .child(tag(
+                                "machine-build-caches",
+                                format!("Build caches: {total}"),
+                                colors().subtle,
+                            ))
+                            .child(
+                                toned_button(
+                                    "machine-build-caches-confirm",
+                                    "Clear idle caches",
+                                    Tone::Primary,
+                                )
+                                .h(px(22.))
+                                .px(px(8.))
+                                .on_activate(cx, |this, _, cx| this.clear_build_caches(cx)),
+                            )
+                            .child(
+                                button("machine-build-caches-cancel", "Cancel")
+                                    .h(px(22.))
+                                    .px(px(8.))
+                                    .on_activate(cx, |this, _, cx| {
+                                        this.machines.build_cache.confirm_clear = false;
+                                        cx.notify();
+                                    }),
+                            ),
+                    )
+                    .child(
+                        tag(
+                            "machine-build-caches-confirm-note",
+                            active_note,
+                            colors().amber,
+                        )
+                        .line_height(px(18.)),
+                    );
+            } else {
+                let reason = if state.clearing {
+                    "Clearing idle build caches…"
+                } else if state.busy {
+                    "Measuring build caches…"
+                } else if status.active_count > 0 {
+                    "Only active threads have build caches; wait for them to finish before clearing."
+                } else {
+                    "No idle build caches to clear."
+                };
+                block = block.child(
+                    row()
+                        .gap_1()
+                        .child(tag(
+                            "machine-build-caches",
+                            format!("Build caches: {total}"),
+                            colors().subtle,
+                        ))
+                        .child(
+                            div()
+                                .text_size(px(TYPE_META_SIZE))
+                                .text_color(rgb(colors().subtle))
+                                .child("·"),
+                        )
+                        .child(
+                            button(
+                                "machine-build-caches-clear",
+                                if state.clearing {
+                                    "Clearing…"
+                                } else {
+                                    "Clear"
+                                },
+                            )
+                            .aria_label("Clear build caches")
+                            .h(px(22.))
+                            .px(px(8.))
+                            .disabled(!can_clear)
+                            .tooltip(move |_, cx| {
+                                cx.new(|_| {
+                                    super::thread_controls::TextTooltip(
+                                        if can_clear {
+                                            "Clear idle thread build caches"
+                                        } else {
+                                            reason
+                                        }
+                                        .into(),
+                                    )
+                                })
+                                .into()
+                            })
+                            .when(can_clear, |el| {
+                                el.on_activate(cx, |this, _, cx| {
+                                    this.machines.confirm_remove = None;
+                                    this.machines.build_cache.confirm_clear = true;
+                                    cx.notify();
+                                })
+                            }),
+                        ),
+                );
+            }
+        } else if state.busy
+            || state.status.as_ref().is_some_and(|status| status.measuring)
+            || state.note.is_none()
+        {
+            block = block.child(tag(
+                "machine-build-caches",
+                "Build caches: measuring…",
+                colors().subtle,
+            ));
+        } else {
+            block = block.child(
+                row()
+                    .gap_2()
+                    .child(tag(
+                        "machine-build-caches",
+                        "Build caches: unavailable",
+                        colors().subtle,
+                    ))
+                    .child(
+                        button("machine-build-caches-retry", "Retry")
+                            .h(px(22.))
+                            .px(px(8.))
+                            .on_activate(cx, |this, _, cx| this.refresh_build_caches(cx)),
+                    ),
+            );
+        }
+        if let Some((note, failed)) = state.note.clone() {
+            block = block.child(
+                tag(
+                    "machine-build-caches-note",
+                    note,
+                    if failed {
+                        colors().amber
+                    } else {
+                        colors().mint
+                    },
+                )
+                .line_height(px(18.)),
+            );
+        }
+        Some(block)
+    }
+
     pub(super) fn machine_settings(&self, cx: &mut Context<Self>) -> Div {
         let active = &self.machines.active;
         let busy = self.machines.connecting.is_some();
@@ -620,6 +858,7 @@ impl Plait {
                             .disabled(busy)
                             .when(!busy, |el| {
                                 el.on_activate(cx, move |this, _, cx| {
+                                    this.machines.build_cache.confirm_clear = false;
                                     this.machines.confirm_remove = Some(confirm_id.clone());
                                     cx.notify();
                                 })
@@ -662,6 +901,9 @@ impl Plait {
                     )
                     .line_height(px(18.)),
                 );
+            }
+            if in_use {
+                list = list.children(self.build_cache_line(cx));
             }
         }
         let connecting = self.machines.connecting.as_ref().and_then(|id| {

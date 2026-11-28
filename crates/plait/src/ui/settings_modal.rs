@@ -59,6 +59,13 @@ impl Plait {
                     this.project_policy_mut().confirm = false;
                     window.focus(&this.settings_focus, cx);
                     cx.notify();
+                } else if this.settings_page == SettingsPage::Application
+                    && this.settings_tab == super::settings::SettingsTab::Machines
+                    && this.machines.build_cache.confirm_clear
+                {
+                    this.machines.build_cache.confirm_clear = false;
+                    window.focus(&this.settings_focus, cx);
+                    cx.notify();
                 } else {
                     this.show_settings(false, window, cx);
                 }
