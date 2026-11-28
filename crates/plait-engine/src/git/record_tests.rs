@@ -14,7 +14,7 @@ struct Scratch(PathBuf);
 impl Scratch {
     fn new() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
-        let path = std::env::temp_dir().join(format!(
+        let path = plait_test_support::temp_dir().join(format!(
             "plait-records-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
@@ -201,7 +201,10 @@ fn untouched<T>(roots: &[&Path], work: impl FnOnce() -> T) -> T {
 }
 
 fn committed() -> Repo {
-    let repo = Repo::new();
+    commit_fixture(Repo::new())
+}
+
+fn commit_fixture(repo: Repo) -> Repo {
     repo.write("a.txt", "one\ntwo\n");
     repo.write("keep.txt", "keep\n");
     repo.write("old.txt", "old\n");
@@ -926,7 +929,7 @@ fn untracked_unreadable_directories_stay_excluded_on_either_side() {
 
 #[test]
 fn untracked_fifo_and_socket_are_reported_as_unsupported() {
-    let repo = committed();
+    let repo = commit_fixture(Repo::at(plait_test_support::socket_temp_dir().join("repo")));
     let store = Scratch::new();
     let name = std::ffi::CString::new(repo.0.join("pipe").as_os_str().as_bytes()).unwrap();
     assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);

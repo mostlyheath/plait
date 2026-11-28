@@ -217,7 +217,7 @@ mod tests {
 
     #[test]
     fn bridge_forwards_reply_and_closes_on_input_eof() {
-        let dir = std::env::temp_dir().join(format!(
+        let dir = plait_test_support::socket_temp_dir().join(format!(
             "plait-bridge-{}-{:?}",
             std::process::id(),
             thread::current().id()

@@ -1,7 +1,8 @@
+import { fixtureDirectory, fixtureDirectorySync } from './support/temp.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { HostError } from '../src/protocol.ts';
@@ -61,7 +62,7 @@ test('a failed helper reveals nothing about why', async () => {
 });
 
 test('the real helper reads a checkout', async t => {
-  const root = await realpath(await mkdtemp(join(tmpdir(), 'plait-git-read-')));
+  const root = await realpath(await fixtureDirectory(join(tmpdir(), 'plait-git-read-')));
   t.after(() => rm(root, { recursive: true, force: true }));
   const git = (...args: string[]) => execFileSync('git', ['-c', 'user.name=Plait', '-c', 'user.email=plait@example.invalid', ...args], { cwd: root });
   git('init', '-q', '-b', 'main'); await writeFile(join(root, 'a.txt'), 'one\n'); git('add', '.'); git('commit', '-q', '-m', 'First');
@@ -104,11 +105,11 @@ test('only a size read is given the host store, and a client cannot name one', a
 });
 
 test('git write retries run the helper once', async t => {
-  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { rmSync } = await import('node:fs');
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
   const { Store } = await import('../src/store.ts');
-  const dir = mkdtempSync(join(tmpdir(), 'plait-git-ops-'));
+  const dir = fixtureDirectorySync(join(tmpdir(), 'plait-git-ops-'));
   const store = new Store(dir);
   t.after(() => { store.db.close(); rmSync(dir, { recursive: true, force: true }); });
   let calls = 0;
@@ -119,7 +120,7 @@ test('git write retries run the helper once', async t => {
 });
 
 test('identity resolves symlinks and main checkout works for unborn and linked trees', async t => {
-  const base = await realpath(await mkdtemp(join(tmpdir(), 'plait-identity-')));
+  const base = await realpath(await fixtureDirectory(join(tmpdir(), 'plait-identity-')));
   t.after(() => rm(base, { recursive: true, force: true }));
   const root = join(base, 'repo'); const linked = join(base, 'linked'); const alias = join(base, 'alias');
   const { mkdir, symlink } = await import('node:fs/promises');

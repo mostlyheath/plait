@@ -430,7 +430,8 @@ mod tests {
     }
     #[test]
     fn files_are_bounded_and_special_files_are_refused() {
-        let root = std::env::temp_dir().join(format!("plait-images-{}", std::process::id()));
+        let root =
+            plait_test_support::temp_dir().join(format!("plait-images-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
         let path = root.join("misleading.jpg");
         fs::write(&path, PNG).unwrap();

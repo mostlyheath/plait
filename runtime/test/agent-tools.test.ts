@@ -1,6 +1,7 @@
+import { fixtureDirectory } from './support/temp.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdir, open, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { installable, installBuild, installTool, managedPath } from '../src/agent-tools.ts';
@@ -15,7 +16,7 @@ import { validate } from '../src/protocol.ts';
 
 async function script(path: string, body: string) { await mkdir(dirname(path), { recursive: true }); await writeFile(path, `#!/bin/sh\n${body}\n`, { mode: 0o755 }); }
 test('unsupported builds and integrity mismatch leave no managed executable', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'plait-tools-'));
+  const dir = await fixtureDirectory(join(tmpdir(), 'plait-tools-'));
   try {
     assert.equal(installable('codex', { platform: 'plan9', arch: 'x64' }), null);
     await assert.rejects(installTool('codex', { directory: dir, platform: 'plan9' }), /plan9/);
@@ -25,7 +26,7 @@ test('unsupported builds and integrity mismatch leave no managed executable', as
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 test('configured and PATH Codex take precedence over managed', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'plait-find-'));
+  const dir = await fixtureDirectory(join(tmpdir(), 'plait-find-'));
   try {
     const managed = join(dir, 'tools/codex/0.169.0/bin/codex'); const onPath = join(dir, 'path/codex'); const configured = join(dir, 'chosen/codex');
     for (const path of [managed, onPath, configured]) await script(path, "echo 'codex-cli 0.169.0'");
@@ -36,7 +37,7 @@ test('configured and PATH Codex take precedence over managed', async () => {
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 test('Claude sign-in relays a secret', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'plait-login-')); const executable = join(dir, 'claude'); const flows = new SignIns({ settleMs: 1000 });
+  const dir = await fixtureDirectory(join(tmpdir(), 'plait-login-')); const executable = join(dir, 'claude'); const flows = new SignIns({ settleMs: 1000 });
   try {
     await script(executable, "echo https://example.com/login; read code; [ \"$code\" = good ] || { echo 'Code rejected' >&2; exit 1; }");
     const view = await flows.start('harness:claude', undefined, harnessLogin('claude', executable, process.env), async () => {});
@@ -44,19 +45,33 @@ test('Claude sign-in relays a secret', async () => {
     assert.equal((await flows.answer(view.id, 'good')).state, 'signed_in');
   } finally { await flows.close(); await rm(dir, { recursive: true, force: true }); }
 });
-test('Codex device code and CLI failure are relayed', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'plait-codex-login-')); const executable = join(dir, 'codex'); const flows = new SignIns({ settleMs: 1000 });
+test('Codex device code and CLI failure are relayed', async t => {
+  const dir = await fixtureDirectory(join(tmpdir(), 'plait-codex-login-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const executable = join(dir, 'codex');
+  const gate = join(dir, 'exit');
+  await promisify(execFile)('mkfifo', [gate]);
+  const pipe = await open(gate, 'r+');
+  const flows = new SignIns();
   try {
-    await script(executable, "printf '\\033[32mhttps://example.com/device\\033[0m ABCD-1234\\n' >&2; sleep 1; exit 1");
-    const view = await flows.start('harness:codex', undefined, harnessLogin('codex', executable, process.env), async () => {});
-    assert.equal(view.user_code, 'ABCD-1234');
-    await new Promise(resolve => setTimeout(resolve, 1200));
-    assert.equal(flows.status(view.id).state, 'failed');
-  } finally { await flows.close(); await rm(dir, { recursive: true, force: true }); }
+    await script(executable, "printf '\\033[32mhttps://example.com/device\\033[0m ABCD-1234\\n' >&2; read release < \"$EXIT_GATE\"; echo 'Device rejected' >&2; exit 1");
+    const login = harnessLogin('codex', executable, { ...process.env, EXIT_GATE: gate });
+    const view = await flows.start('harness:codex', undefined, login, async () => {});
+    // The timeouts bound a stuck CLI. The test releases it only after observing the code.
+    if (view.state === 'starting') {
+      await t.waitFor(() => assert.equal(flows.status(view.id).user_code, 'ABCD-1234'), { timeout: 30_000 });
+    } else {
+      assert.equal(view.state, 'waiting');
+      assert.equal(view.user_code, 'ABCD-1234');
+    }
+    await pipe.write('exit\n');
+    await t.waitFor(() => assert.equal(flows.status(view.id).state, 'failed'), { timeout: 30_000 });
+    assert.equal(flows.status(view.id).error?.message, 'Device rejected');
+  } finally { await flows.close(); await pipe.close(); }
 });
 
 test('a build unpacks only its own tree, keeps exec bits, and installs once', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'plait-tools-ok-'));
+  const dir = await fixtureDirectory(join(tmpdir(), 'plait-tools-ok-'));
   try {
     const source = join(dir, 'source');
     await script(join(source, 'package/vendor/triple/bin/codex'), "echo 'codex-cli 0.169.0'");
@@ -84,7 +99,7 @@ test('a build unpacks only its own tree, keeps exec bits, and installs once', as
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 test('cancelling a sign-in stops the CLI', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'plait-login-cancel-')); const executable = join(dir, 'claude'); const flows = new SignIns({ settleMs: 1000 });
+  const dir = await fixtureDirectory(join(tmpdir(), 'plait-login-cancel-')); const executable = join(dir, 'claude'); const flows = new SignIns({ settleMs: 1000 });
   const pid = join(dir, 'pid');
   try {
     await script(executable, `echo $$ > '${pid}'; echo https://example.com/login; read code; exit 0`);

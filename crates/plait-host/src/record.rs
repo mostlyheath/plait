@@ -415,8 +415,8 @@ mod tests {
     #[test]
     fn the_helper_deadline_stops_the_entire_git_group() {
         use std::os::{fd::AsRawFd, unix::fs::PermissionsExt};
-        let scratch =
-            std::env::temp_dir().join(format!("plait-helper-budget-{}", std::process::id()));
+        let scratch = plait_test_support::temp_dir()
+            .join(format!("plait-helper-budget-{}", std::process::id()));
         std::fs::create_dir(&scratch).unwrap();
         let lock = std::fs::File::open(&scratch).unwrap();
         assert_eq!(

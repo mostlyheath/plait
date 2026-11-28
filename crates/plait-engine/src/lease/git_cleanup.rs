@@ -415,7 +415,7 @@ mod tests {
     };
     static NEXT: AtomicU64 = AtomicU64::new(0);
     fn root() -> PathBuf {
-        let root = std::env::temp_dir().join(format!(
+        let root = plait_test_support::temp_dir().join(format!(
             "plait-git-cleanup-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
@@ -582,6 +582,7 @@ mod tests {
                 "--exact",
                 "lease::git_cleanup::tests::dying_before_spawn_fixture",
             ])
+            .env("PLAIT_LEASE_DIR", default_lease_dir().unwrap())
             .env("PLAIT_GIT_START_FIXTURE", &root)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -766,6 +767,7 @@ mod tests {
                 "lease::git_cleanup::tests::crashed_desktop_fixture",
                 "--nocapture",
             ])
+            .env("PLAIT_LEASE_DIR", default_lease_dir().unwrap())
             .env("PLAIT_GIT_CRASH_FIXTURE", &root)
             .stdout(Stdio::null())
             .stderr(Stdio::null());

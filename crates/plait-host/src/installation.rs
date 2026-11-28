@@ -49,7 +49,7 @@ mod tests {
 
     #[test]
     fn installed_host_uses_adjacent_runtime_and_rejects_unknown_contracts() {
-        let root = std::env::temp_dir().join(format!(
+        let root = plait_test_support::temp_dir().join(format!(
             "plait-installation-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()

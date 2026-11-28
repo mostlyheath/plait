@@ -13,7 +13,7 @@ mod tests {
             fs::{PermissionsExt, symlink},
             net::UnixListener,
         };
-        let root = std::env::temp_dir().join(format!(
+        let root = plait_test_support::socket_temp_dir().join(format!(
             "plait-socket-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()

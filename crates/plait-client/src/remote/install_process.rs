@@ -222,7 +222,8 @@ mod tests {
 
     #[test]
     fn update_uses_ssh_and_reports_refusal() {
-        let home = std::env::temp_dir().join(format!("plait-update-{}", std::process::id()));
+        let home =
+            plait_test_support::temp_dir().join(format!("plait-update-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(home.join("bin")).unwrap();
         let host = home.join("bin/plait-host");
@@ -288,7 +289,8 @@ mod tests {
 
     #[test]
     fn a_mismatched_download_installs_nothing() {
-        let home = std::env::temp_dir().join(format!("plait-install-{}", std::process::id()));
+        let home =
+            plait_test_support::temp_dir().join(format!("plait-install-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(&home).unwrap();
         let options = fake_ssh(&home);
@@ -320,7 +322,8 @@ mod tests {
     #[test]
     fn a_verified_download_installs_links_and_starts_the_host() {
         use std::process::Command;
-        let home = std::env::temp_dir().join(format!("plait-install-ok-{}", std::process::id()));
+        let home =
+            plait_test_support::temp_dir().join(format!("plait-install-ok-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(home.join("bin")).unwrap();
         let build = format!("0.1.0-{}", "b".repeat(20));

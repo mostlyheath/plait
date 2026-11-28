@@ -180,8 +180,8 @@ mod tests {
                 false,
             ),
         ] {
-            let directory =
-                std::env::temp_dir().join(format!("plait-review-{name}-{}", std::process::id()));
+            let directory = plait_test_support::socket_temp_dir()
+                .join(format!("plait-review-{name}-{}", std::process::id()));
             std::fs::create_dir_all(&directory).unwrap();
             std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();
             let path = directory.join("host.sock");

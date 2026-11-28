@@ -1,3 +1,4 @@
+import { fixtureDirectory } from './support/temp.ts';
 // Setting up the Agent SDK: the tar reader, the hash check, and the atomic
 // install. No test downloads anything: fetch is a stand-in serving archives
 // built here, and the module that loads is the dev copy.
@@ -5,7 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
@@ -58,7 +59,7 @@ function serving(body: Buffer, status = 200) {
   return { fetch, calls };
 }
 async function scratch(t: test.TestContext) {
-  const dir = await mkdtemp(join(tmpdir(), 'plait-claude-sdk-'));
+  const dir = await fixtureDirectory(join(tmpdir(), 'plait-claude-sdk-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   return { dir, target: sdkDirectory(dir) };
 }

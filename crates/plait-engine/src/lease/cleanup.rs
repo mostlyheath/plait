@@ -168,7 +168,7 @@ mod tests {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     #[test]
     fn quarantine_blocks_runs_and_desktop_writes_until_exact_confirmation() {
-        let base = std::env::temp_dir().join(format!(
+        let base = plait_test_support::temp_dir().join(format!(
             "plait-cleanup-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
@@ -222,7 +222,7 @@ mod tests {
     #[test]
     fn quarantine_refuses_desktop_git_changes_with_reason_and_resolution_restores_them() {
         use crate::git::{WriteOp, write};
-        let base = std::env::temp_dir().join(format!(
+        let base = plait_test_support::temp_dir().join(format!(
             "plait-quarantined-git-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
@@ -289,7 +289,7 @@ mod tests {
 
     #[test]
     fn torn_cleanup_state_fails_closed_and_can_be_confirmed() {
-        let base = std::env::temp_dir().join(format!(
+        let base = plait_test_support::temp_dir().join(format!(
             "plait-cleanup-torn-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)

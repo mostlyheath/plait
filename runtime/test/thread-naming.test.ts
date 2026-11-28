@@ -1,6 +1,7 @@
+import { fixtureDirectory } from './support/temp.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setImmediate as tick, setTimeout as delay } from 'node:timers/promises';
@@ -20,7 +21,7 @@ function deferred<T>() {
 }
 
 async function fixture(t: { after(fn: () => Promise<void>): void }, call: NamingCall = async () => answer, deadline = 45_000) {
-  const directory = await mkdtemp(join(tmpdir(), 'plait-naming-'));
+  const directory = await fixtureDirectory(join(tmpdir(), 'plait-naming-'));
   const store = new Store(directory);
   const models = createModels(); models.setProvider(fauxProvider().provider);
   const authenticated = new Set(['faux']);

@@ -1,6 +1,7 @@
+import { fixtureDirectory } from './support/temp.ts';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { access, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { access, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -35,7 +36,7 @@ function makeSnapshot(id: string, checkout: string): Snapshot {
 }
 
 test('finished event persists terminal snapshot and last_seq in one transaction; recovery keeps it finished', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'pr-'));
+  const dir = await fixtureDirectory(join(tmpdir(), 'pr-'));
   try {
     const store = new Store(dir);
     const snapshot = makeSnapshot('thread-1', dir);
@@ -76,7 +77,7 @@ test('finished event persists terminal snapshot and last_seq in one transaction;
 });
 
 test('failing onClosed reconciliation does not cause an unhandled rejection', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'pr-'));
+  const dir = await fixtureDirectory(join(tmpdir(), 'pr-'));
   const unhandled: unknown[] = [];
   const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
   process.on('unhandledRejection', onUnhandled);
@@ -126,7 +127,7 @@ test('failing onClosed reconciliation does not cause an unhandled rejection', as
 });
 
 test('attach below runner pruned floor stops runner, interrupts with lost-progress message, and reconciles receipt', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'pr-'));
+  const dir = await fixtureDirectory(join(tmpdir(), 'pr-'));
   const registry = new RunnerRegistry(dir);
   const runId = 'run-gap';
   let lock: Awaited<ReturnType<RunnerRegistry['acquire']>> | undefined;
@@ -197,7 +198,7 @@ test('attach below runner pruned floor stops runner, interrupts with lost-progre
 });
 
 test('gap persisted across host restart still reconciles receipt postimages and stays interrupted', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'pr-'));
+  const dir = await fixtureDirectory(join(tmpdir(), 'pr-'));
   const registry = new RunnerRegistry(dir);
   const runId = 'run-gap-restart';
   let lock: Awaited<ReturnType<RunnerRegistry['acquire']>> | undefined;
@@ -260,7 +261,7 @@ test('gap persisted across host restart still reconciles receipt postimages and 
 });
 
 test('accepted run whose host crashed before start is marked interrupted after orphan exit and recover', async () => {
-  const base = await realpath(await mkdtemp(join(tmpdir(), 'pr-')));
+  const base = await realpath(await fixtureDirectory(join(tmpdir(), 'pr-')));
   const repo = join(base, 'repo');
   const storeDir = join(base, 'store');
   let runtime: Runtime | undefined;
@@ -318,7 +319,7 @@ test('accepted run whose host crashed before start is marked interrupted after o
 });
 
 test('accept and createRun commit in one transaction; failure rolls back both and stops runner before start', async () => {
-  const base = await realpath(await mkdtemp(join(tmpdir(), 'pr-')));
+  const base = await realpath(await fixtureDirectory(join(tmpdir(), 'pr-')));
   const repo = join(base, 'repo');
   const storeDir = join(base, 'store');
   const prevDetached = process.env.PLAIT_DETACHED_RUNNERS;
@@ -371,7 +372,7 @@ test('accept and createRun commit in one transaction; failure rolls back both an
 });
 
 test('steer queued while runner socket is disconnected is resent on reconnect and accepted once', async () => {
-  const base = await realpath(await mkdtemp(join(tmpdir(), 'pr-')));
+  const base = await realpath(await fixtureDirectory(join(tmpdir(), 'pr-')));
   const repo = join(base, 'repo');
   const storeDir = join(base, 'store');
   const gate = join(base, 'gate');

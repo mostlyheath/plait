@@ -487,8 +487,8 @@ mod tests {
     ) {
         use std::io::{BufRead, BufReader, Write};
         use std::os::unix::{fs::PermissionsExt, net::UnixListener};
-        let directory =
-            std::env::temp_dir().join(format!("plait-providers-{name}-{}", std::process::id()));
+        let directory = plait_test_support::socket_temp_dir()
+            .join(format!("plait-providers-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&directory);
         std::fs::create_dir(&directory).unwrap();
         std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -611,7 +611,7 @@ mod tests {
         // No host: the socket path does not exist.
         let client = crate::host::Client {
             transport: crate::host::Transport::Local(
-                std::env::temp_dir().join("plait-no-such-host/host.sock"),
+                plait_test_support::socket_temp_dir().join("plait-no-such-host/host.sock"),
             ),
         };
         let request = Request::SetProviderKey {

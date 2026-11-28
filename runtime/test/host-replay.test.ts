@@ -1,7 +1,8 @@
+import { fixtureDirectory } from './support/temp.ts';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -12,7 +13,7 @@ const provider = 'plait-replay';
 const canary = 'PLAIT_LOCAL_REPLAY_CANARY_83b07c';
 
 test('production Pi runtime routes loopback replay, retains instructions, and requires effect approval', { timeout: 30000 }, async t => {
-  const base = await realpath(await mkdtemp(join(tmpdir(), 'plait-replay-')));
+  const base = await realpath(await fixtureDirectory(join(tmpdir(), 'plait-replay-')));
   const repo = join(base, 'repo'); const store = join(base, 'store');
   const home = join(base, 'home'); const agent = join(home, '.pi', 'agent');
   let host: ChildProcess | undefined;

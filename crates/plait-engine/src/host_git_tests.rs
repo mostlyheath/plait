@@ -27,7 +27,8 @@ fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<Remote<T>, Error> {
     }
 }
 fn scratch(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("plait-git-read-{name}-{}", std::process::id()));
+    let dir = plait_test_support::temp_dir()
+        .join(format!("plait-git-read-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -310,10 +311,7 @@ fn a_worktree_is_measured_with_the_hosts_own_store() {
 
 #[test]
 fn a_remounted_folder_keeps_its_identity_but_a_replaced_one_does_not() {
-    let base = std::env::temp_dir()
-        .canonicalize()
-        .unwrap()
-        .join(format!("plait-remount-{}", std::process::id()));
+    let base = plait_test_support::temp_dir().join(format!("plait-remount-{}", std::process::id()));
     let root = base.join("project");
     std::fs::create_dir_all(&root).unwrap();
     let now = super::identity(&root).unwrap();

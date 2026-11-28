@@ -6,10 +6,22 @@ use std::path::{Path, PathBuf};
 
 pub(super) struct ProjectSettings {
     pub checkout: PathBuf,
+    #[cfg(test)]
+    pub scene_checkout_label: Option<&'static str>,
     pub name: String,
     policy: PolicyState,
     agent: AgentState,
     identity: Option<plait_client::ownership::CheckoutKey>,
+}
+
+impl ProjectSettings {
+    pub(super) fn checkout_label(&self) -> String {
+        #[cfg(test)]
+        if let Some(label) = self.scene_checkout_label {
+            return label.to_owned();
+        }
+        self.checkout.to_string_lossy().into_owned()
+    }
 }
 
 impl Plait {
@@ -205,6 +217,8 @@ impl Plait {
                 });
             self.settings_project = Some(ProjectSettings {
                 checkout: checkout.clone(),
+                #[cfg(test)]
+                scene_checkout_label: None,
                 name,
                 policy: Default::default(),
                 agent: Default::default(),

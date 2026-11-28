@@ -1,7 +1,8 @@
+import { fixtureDirectory } from './support/temp.ts';
 // End to end through the pinned Agent SDK against the scripted fake Claude Code.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
@@ -24,7 +25,7 @@ type Run = {
 };
 
 async function start(t: test.TestContext, options: { scenario?: string; mode?: ClaudeModeId; resume?: string; allow?: (approval: ClaudeApproval) => boolean | Promise<boolean> } = {}): Promise<Run> {
-  const dir = await mkdtemp(join(tmpdir(), 'plait-claude-e2e-'));
+  const dir = await fixtureDirectory(join(tmpdir(), 'plait-claude-e2e-'));
   const log = join(dir, 'log');
   const asked: ClaudeApproval[] = [];
   const session = new ClaudeSession({

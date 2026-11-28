@@ -544,7 +544,8 @@ mod tests {
     #[test]
     #[ignore = "needs Rex installed; run with --ignored"]
     fn rex_scripts_compile() {
-        let scratch = std::env::temp_dir().join(format!("plait-rex-{}", std::process::id()));
+        let scratch =
+            plait_test_support::temp_dir().join(format!("plait-rex-{}", std::process::id()));
         std::fs::create_dir_all(&scratch).unwrap();
         let compiled = scratch.join("script.scpt");
         let scripts = HARD

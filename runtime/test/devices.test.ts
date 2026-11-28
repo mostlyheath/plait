@@ -1,6 +1,7 @@
+import { fixtureDirectory } from './support/temp.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Devices } from '../src/devices.ts';
@@ -9,7 +10,7 @@ import { Store } from '../src/store.ts';
 
 const code = (expected: string) => (error: unknown) => error instanceof HostError && error.code === expected;
 async function setup(t: { after: (fn: () => unknown) => void }) {
-  const root = await mkdtemp(join(tmpdir(), 'plait-devices-'));
+  const root = await fixtureDirectory(join(tmpdir(), 'plait-devices-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   let count = 0;
   const devices = new Devices(new Store(root), () => { count++; });

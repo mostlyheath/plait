@@ -1,6 +1,7 @@
+import { fixtureDirectory } from './support/temp.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtemp, rm, mkdir, readFile, writeFile, realpath } from 'node:fs/promises';
+import { rm, mkdir, readFile, writeFile, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context';
@@ -16,7 +17,7 @@ import { TurnExecutor, toolStateFor, type TurnEvent, type TurnSink } from '../sr
 test('executor runs a plain Pi turn without Runtime', async () => {
   const models = createModels(); const faux = fauxProvider({ tokensPerSecond: 1e8 });
   faux.setResponses([fauxAssistantMessage('Hello from Pi.')]); models.setProvider(faux.provider);
-  const directory = await mkdtemp(join(tmpdir(), 'plait-executor-'));
+  const directory = await fixtureDirectory(join(tmpdir(), 'plait-executor-'));
   const executor = new TurnExecutor();
   const input = { sessionFile: join(directory, 'session.sqlite'), checkout: process.cwd(), model: { provider: 'faux', modelId: 'faux-1' }, maxTurns: 10, vcs: 'folder' as const, priorOwned: [], directory, threadId: 'thread', trusted: false, header: '', mcpSettings: {} };
   const state = { authorization: { active: true } } as ToolState;
@@ -37,7 +38,7 @@ test('executor runs a plain Pi turn without Runtime', async () => {
 });
 
 test('executor includes discovered instructions with MCP disabled', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'plait-executor-resources-'));
+  const directory = await fixtureDirectory(join(tmpdir(), 'plait-executor-resources-'));
   try {
     const agentDir = join(directory, 'agent');
     await mkdir(agentDir);
@@ -57,7 +58,7 @@ test('executor includes discovered instructions with MCP disabled', async () => 
 
 
 test('executor handles write approvals through commands without Runtime', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'plait-executor-approval-'));
+  const directory = await fixtureDirectory(join(tmpdir(), 'plait-executor-approval-'));
   const executor = new TurnExecutor();
   const events: TurnEvent[] = []; const writes: string[] = [];
   let allow = true;
@@ -101,7 +102,7 @@ test('executor handles write approvals through commands without Runtime', async 
 
 test('plain turn state sends a write postimage to its sink', async t => {
   // Resolved, as the desktop sends it (on macOS /var is a link to /private/var).
-  const directory = await realpath(await mkdtemp(join(tmpdir(), 'plait-executor-')));
+  const directory = await realpath(await fixtureDirectory(join(tmpdir(), 'plait-executor-')));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const checkout = join(directory, 'plain');
   await mkdir(checkout);

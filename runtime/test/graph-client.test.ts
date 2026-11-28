@@ -1,6 +1,7 @@
+import { fixtureDirectory } from './support/temp.ts';
 import assert from 'node:assert/strict';
 import { test, type TestContext } from 'node:test';
-import { mkdtemp, rm, readdir, mkdir, realpath, rename, symlink, unlink } from 'node:fs/promises';
+import { rm, readdir, mkdir, realpath, rename, symlink, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createModels } from '@earendil-works/pi-ai/models';
@@ -20,8 +21,8 @@ const thread = (id: string) => ({
   id, checkout: '/p', title: id, harness: { id: 'pi' }, model: { provider: 'example', model_id: 'model' },
   status: 'idle', archived: false, approval_mode: 'ask', error: null, messages: [{ role: 'assistant', text: 'done' }]
 });
-async function fixture(t: TestContext, probe?: (path: string) => Promise<{ project: string; identity: string }>) {
-  const dir = await realpath(await mkdtemp(join(tmpdir(), 'graph-client-')));
+async function fixture(t: TestContext, probe?: 'fixed' | ((path: string) => Promise<{ project: string; identity: string }>)) {
+  const dir = await realpath(await fixtureDirectory(join(tmpdir(), 'graph-client-')));
   const root = join(await realpath(dir), 'project');
   await mkdir(root);
   const calls: Request[] = [];
@@ -52,7 +53,7 @@ async function fixture(t: TestContext, probe?: (path: string) => Promise<{ proje
   }, async () => identity, (_, request) => queued.has(request) ? {
     state: control.refused ? 'failed' : control.busy ? 'waiting' : 'started',
     error: control.refused ? { message: 'Project policy changed' } : null
-  } : undefined, () => identity, probe);
+  } : undefined, () => identity, probe === 'fixed' ? async project => ({ project, identity: JSON.stringify(identity) }) : probe);
   t.after(async () => { await graph.close(); await rm(dir, { recursive: true, force: true }); });
   const create = (r: Request = {}) => graph.handle(r.op === 'fork_thread' ? { op_id: randomUUID(), title: draft.title, harness: draft.harness, provider: draft.provider, model_id: draft.model_id, ...r } : { ...draft, checkout: root, op_id: randomUUID(), ...r }) as Promise<{ node_id: string }>;
   const view = () => graph.handle({ op: 'graph', project: root }) as Promise<{ graph_revision: number; nodes: { id: string; status: string; reason: string; unblocks: number }[] }>;
@@ -71,8 +72,11 @@ test('durable create intent rejects changed payloads, cycles and replay after de
   assert.deepEqual((await h.view()).nodes.map(n => n.id), [second.node_id]);
 });
 test('automatic start uses ordinary deterministic requests and waits for clean archived dependencies', async t => {
-  const h = await fixture(t);
-  t.mock.method(h.graph, 'wake', () => {}); // This test advances reconciliation explicitly.
+  // Identity is fixed in this admission test. The separate probe tests exercise slow disks.
+  const h = await fixture(t, 'fixed');
+  const schedule = h.graph.wake.bind(h.graph);
+  // Trigger one ordinary scheduled scan once the dependency is clean.
+  t.mock.method(h.graph, 'wake', () => {});
   const p = h.threads.get('parent')!;
   p.archived = true; p.status = 'interrupted';
   const { node_id } = await h.create({ depends_on: ['parent'] });
@@ -80,6 +84,9 @@ test('automatic start uses ordinary deterministic requests and waits for clean a
   assert.equal((await h.view()).nodes.find(n => n.id === node_id)?.status, 'blocked');
   assert.equal(h.calls.some(r => r.op === 'submit_checkout'), false);
   p.status = 'idle';
+  schedule(h.root);
+  // The bound only diagnoses a stuck scheduler. Submission itself releases the wait.
+  await t.waitFor(() => assert.ok(h.calls.some(r => r.op === 'submit_checkout')), { timeout: 30_000 });
   await h.refresh(); await h.refresh();
   assert.equal(h.calls.find(r => r.op === 'create_admitted_thread')?.request_id, 'create-' + node_id);
   const submit = h.calls.filter(r => r.op === 'submit_checkout');
@@ -162,7 +169,7 @@ test('fork stops at twenty pages', async t => {
 test('flag unset preserves ordinary runtime dispatch and opens no graph store', async t => {
   const previous = process.env.PLAIT_GRAPH;
   delete process.env.PLAIT_GRAPH;
-  const dir = await realpath(await mkdtemp(join(tmpdir(), 'ordinary-host-')));
+  const dir = await realpath(await fixtureDirectory(join(tmpdir(), 'ordinary-host-')));
   const host = new Runtime(dir, createModels(), new Set());
   t.after(async () => {
     await host.close(); await rm(dir, { recursive: true, force: true });
@@ -177,7 +184,7 @@ test('flag unset preserves ordinary runtime dispatch and opens no graph store', 
 test('feature-on runtime admits a draft and submits through the host handler', async t => {
   const previous = process.env.PLAIT_GRAPH;
   process.env.PLAIT_GRAPH = '1';
-  const dir = await realpath(await mkdtemp(join(tmpdir(), 'graph-integration-')));
+  const dir = await realpath(await fixtureDirectory(join(tmpdir(), 'graph-integration-')));
   const { mkdir } = await import('node:fs/promises');
   const root = join(dir, 'checkout'), store = join(dir, 'store');
   await mkdir(root); await mkdir(store);
@@ -245,7 +252,7 @@ test('500 visible drafts have stable layout and a bounded page', async t => {
 });
 
 test('reopening the graph preserves creation receipts without repeating the queued submission', async t => {
-  const dir = await realpath(await mkdtemp(join(tmpdir(), 'graph-reopen-')));
+  const dir = await realpath(await fixtureDirectory(join(tmpdir(), 'graph-reopen-')));
   const submissions: Request[] = [];
   const identity = await rootIdentity(dir);
   const receipt = () => submissions.length ? { state: "started", error: null } : undefined;
@@ -641,7 +648,7 @@ test('admission waiting for preparation leaves the graph request pipe available'
 });
 
 test('graph admissions from different projects share one local probe slot', async t => {
-  const dir = await mkdtemp(join(tmpdir(), 'graph-probes-'));
+  const dir = await realpath(await fixtureDirectory(join(tmpdir(), 'graph-probes-')));
   const host = new Runtime(dir, createModels(), new Set());
   const old = process.env.PLAIT_GRAPH;
   process.env.PLAIT_GRAPH = '1';

@@ -1,6 +1,7 @@
+import { fixtureDirectory } from './support/temp.ts';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, realpath, rename, rm, stat } from 'node:fs/promises';
+import { mkdir, readFile, realpath, rename, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -29,20 +30,30 @@ async function makeRepo(parent: string, name: string): Promise<string> {
   return realpath(repo);
 }
 
+test('a fixture listen failure rejects setup so teardown can run', async t => {
+  const fake = new FakeLinearServer();
+  const failure = new Error('fixture could not bind');
+  t.mock.method(fake.server, 'listen', () => {
+    queueMicrotask(() => fake.server.emit('error', failure));
+    return fake.server;
+  });
+  await assert.rejects(fake.start(), failure);
+});
+
 async function setupHarness(t: test.TestContext) {
-  const dir = await mkdtemp(join(tmpdir(), 'plait-linear-reads-'));
+  const dir = await fixtureDirectory(join(tmpdir(), 'plait-linear-reads-'));
   const storeDir = join(dir, 'store');
   await mkdir(storeDir, { recursive: true, mode: 0o700 });
   const fake = new FakeLinearServer();
+  let runtime: Runtime;
+  t.after(async () => {
+    try { await runtime?.close(); }
+    finally { await fake.close(); await rm(dir, { recursive: true, force: true }); }
+  });
   const endpoint = await fake.start();
   let now = 1_763_300_000_000;
-  const runtime = new Runtime(storeDir, createModels(), new Set());
+  runtime = new Runtime(storeDir, createModels(), new Set());
   runtime.linear = new LinearService(runtime.store, storeDir, { endpoint, timeoutMs: 1000, now: () => now });
-  t.after(async () => {
-    await runtime.close();
-    await fake.close();
-    await rm(dir, { recursive: true, force: true });
-  });
   const transcript: string[] = [];
   const call = async (input: unknown): Promise<any> => {
     const reply = await runtime.reply(input);
@@ -381,7 +392,7 @@ test('async guards: superseded query does not overwrite newer cache and sign-out
 });
 
 test('migration: store written by current main gains Linear tables idempotently and remains readable by code ignoring them', async t => {
-  const dir = await mkdtemp(join(tmpdir(), 'plait-linear-migration-'));
+  const dir = await fixtureDirectory(join(tmpdir(), 'plait-linear-migration-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
 
   // Create a pre-Linear host.sqlite matching current main's schema.

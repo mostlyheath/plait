@@ -1,8 +1,9 @@
+import { fixtureDirectory } from './support/temp.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';
-import { writeFile, symlink, link, mkdtemp, realpath, rm } from 'node:fs/promises';
+import { writeFile, symlink, link, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { CommandOutputs, OUTPUT_COUNT, OUTPUT_LIMIT, rangeArgs } from '../src/tool-output.ts';
 import type { TextRange } from '../src/tool-output.ts';
@@ -37,7 +38,7 @@ test('ranged reads reach every byte of a large Unicode file without relaxing pat
 });
 
 test('ranged helper errors are specific, fixed, and preserve valid boundaries', async t => {
-  const root = await realpath(await mkdtemp(join(tmpdir(), 'plait-read-range-')));
+  const root = await realpath(await fixtureDirectory(join(tmpdir(), 'plait-read-range-')));
   t.after(() => rm(root, { recursive: true, force: true }));
   await writeFile(join(root, 'unicode.txt'), 'abc🚀z');
   const read = (args: unknown) => fileAction<TextRange>(root, 'read_range', 'unicode.txt', args);

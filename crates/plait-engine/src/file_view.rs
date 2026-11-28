@@ -61,8 +61,8 @@ mod tests {
         Ok(file_view::classify(stamp, bytes, relative))
     }
     fn scratch(name: &str) -> PathBuf {
-        let dir =
-            std::env::temp_dir().join(format!("plait-file-view-{}-{name}", std::process::id()));
+        let dir = plait_test_support::temp_dir()
+            .join(format!("plait-file-view-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir

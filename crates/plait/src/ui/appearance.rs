@@ -959,8 +959,8 @@ mod tests {
 
     #[test]
     fn saved_stillwater_remains_selected_when_the_default_changes() {
-        let path =
-            std::env::temp_dir().join(format!("plait-old-theme-{}.json", std::process::id()));
+        let path = plait_test_support::temp_dir()
+            .join(format!("plait-old-theme-{}.json", std::process::id()));
         std::fs::write(&path, br#"{"dark_theme":"Stillwater"}"#).unwrap();
         let preferences = plait_client::preferences::load(&path).unwrap();
         std::fs::remove_file(path).unwrap();

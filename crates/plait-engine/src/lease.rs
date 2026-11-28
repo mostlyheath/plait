@@ -273,7 +273,10 @@ pub struct GitCheckoutPaths {
 
 /// Per-user lease directory independent of `PLAIT_HOST_STORE` and `TMPDIR`.
 pub fn default_lease_dir() -> Result<PathBuf, LeaseError> {
-    if let Some(path) = std::env::var_os("PLAIT_LEASE_DIR") {
+    let directory = std::env::var_os("PLAIT_LEASE_DIR");
+    #[cfg(test)]
+    let directory = directory.or_else(|| Some(plait_test_support::lease_dir().into_os_string()));
+    if let Some(path) = directory {
         let path = PathBuf::from(path);
         if !path.is_absolute() {
             return Err(LeaseError::unsafe_store(
@@ -281,12 +284,6 @@ pub fn default_lease_dir() -> Result<PathBuf, LeaseError> {
             ));
         }
         return Ok(path);
-    }
-    // Lock files are never removed where Plait runs, so unit tests keep theirs
-    // out of the account's lease directory.
-    if cfg!(test) {
-        let uid = unsafe { libc::geteuid() };
-        return Ok(std::env::temp_dir().join(format!("plait-test-leases-{uid}")));
     }
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
@@ -901,7 +898,7 @@ mod tests {
     impl Scratch {
         fn new(label: &str) -> Self {
             static NEXT: AtomicU64 = AtomicU64::new(0);
-            let path = std::env::temp_dir().join(format!(
+            let path = plait_test_support::temp_dir().join(format!(
                 "plait-lease-{label}-{}-{}",
                 std::process::id(),
                 NEXT.fetch_add(1, Ordering::Relaxed)

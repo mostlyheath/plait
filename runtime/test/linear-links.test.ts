@@ -1,6 +1,7 @@
+import { fixtureDirectory } from './support/temp.ts';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, mkdir, realpath, rm } from 'node:fs/promises';
+import { mkdir, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -14,7 +15,7 @@ import { FakeLinearServer } from './support/linear-server.ts';
 const execFileAsync = promisify(execFile);
 
 async function setup(t: test.TestContext) {
-  const dir = await mkdtemp(join(tmpdir(), 'plait-linear-links-'));
+  const dir = await fixtureDirectory(join(tmpdir(), 'plait-linear-links-'));
   const storeDir = join(dir, 'store');
   const repo = join(dir, 'repo');
   await mkdir(storeDir, { recursive: true, mode: 0o700 });
@@ -22,18 +23,18 @@ async function setup(t: test.TestContext) {
   await execFileAsync('git', ['init', '-q', repo]);
   const root = await realpath(repo);
   const fake = new FakeLinearServer();
+  let runtime: Runtime;
+  t.after(async () => {
+    try { await runtime?.close(); }
+    finally { await fake.close(); await rm(dir, { recursive: true, force: true }); }
+  });
   const endpoint = await fake.start();
   let now = 1_763_400_000_000;
   const faux = fauxProvider();
   const models = createModels();
   models.setProvider(faux.provider);
-  const runtime = new Runtime(storeDir, models, new Set(['faux']));
+  runtime = new Runtime(storeDir, models, new Set(['faux']));
   runtime.linear = new LinearService(runtime.store, storeDir, { endpoint, now: () => now });
-  t.after(async () => {
-    await runtime.close();
-    await fake.close();
-    await rm(dir, { recursive: true, force: true });
-  });
   const call = (input: unknown): Promise<any> => runtime.reply(input);
   let seq = 0;
   const createThread = async () => {

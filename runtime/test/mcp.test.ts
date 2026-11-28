@@ -1,11 +1,13 @@
+import { fixtureDirectory } from './support/temp.ts';
 import assert from 'node:assert/strict';
 import childProcess from 'node:child_process';
+import { once } from 'node:events';
 import net from 'node:net';
 import tls from 'node:tls';
 import http from 'node:http';
 import https from 'node:https';
 import { syncBuiltinESMExports } from 'node:module';
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -20,7 +22,7 @@ import { validate } from '../src/protocol.ts';
 import { Store } from '../src/store.ts';
 
 async function fixture(t: { after(fn: () => Promise<void>): void }) {
-  const base = await realpath(await mkdtemp(join(tmpdir(), 'plait-mcp-')));
+  const base = await realpath(await fixtureDirectory(join(tmpdir(), 'plait-mcp-')));
   t.after(() => rm(base, { recursive: true, force: true }));
   const agent = join(base, 'agent'); const repo = join(base, 'repo');
   await mkdir(agent); await mkdir(join(repo, '.pi'), { recursive: true });
@@ -335,4 +337,23 @@ test('macOS project configuration rejects a linked parent directory too', { skip
   assert.equal(found.entries.get('docs')!.project, undefined);
   assert.equal(found.servers[0].source, join(f.agent, 'mcp.json'));
   assert.match(JSON.stringify(found.problems), /could not be read/);
+});
+
+test('a sustained flood fixture exits when the client disconnects', { timeout: 15_000 }, async t => {
+  const path = fileURLToPath(new URL('./support/mcp-fixture.mjs', import.meta.url));
+  const directory = await fixtureDirectory(join(tmpdir(), 'plait-mcp-flood-'));
+  const input = join(directory, 'initialize');
+  const output = join(directory, 'messages');
+  await writeFile(input, JSON.stringify({ method: 'initialize', id: 1 }) + '\n');
+  const request = await open(input);
+  t.after(() => request.close());
+  const messages = await open(output, 'w');
+  t.after(() => messages.close());
+  // EOF immediately after initialize exercises a disconnect while the interval is live.
+  const child = childProcess.spawn(process.execPath, [path, 'flood-sustained'], { stdio: [request.fd, messages.fd, 'ignore'] });
+  const closed = once(child, 'close');
+  t.after(async () => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); await closed; });
+  // The timeout catches a surviving interval before the fixture's 30-second orphan watchdog.
+  assert.deepEqual(await closed, [0, null]);
+  assert.match(await readFile(output, 'utf8'), /notifications\/progress/);
 });

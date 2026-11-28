@@ -96,8 +96,8 @@ mod tests {
         ) {
             return;
         }
-        let directory =
-            std::env::temp_dir().join(format!("plait-tabs-storage-{}", std::process::id()));
+        let directory = plait_test_support::temp_dir()
+            .join(format!("plait-tabs-storage-{}", std::process::id()));
         let _ = fs::remove_dir_all(&directory);
         fs::create_dir_all(&directory).unwrap();
         let path = directory.join("tabs.json");

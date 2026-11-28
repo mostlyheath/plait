@@ -23,6 +23,7 @@ const { until, request } = support;
 
 // The fixture imports installed runtime code and dependencies, not checkout code.
 const fixtureRoot = await mkdtemp('/tmp/plait-installed-fixture-');
+test.after(() => rm(fixtureRoot, { recursive: true, force: true }));
 process.env.PLAIT_TEST_RUNTIME = await installedFixture(join(installed, 'runtime'), fixtureRoot);
 process.env.PLAIT_HOST_BINARY = binary;
 
@@ -158,5 +159,3 @@ test('client update and staged host upgrade preserve an active command and durab
     child.once('exit', code => code === 0 ? resolve() : reject(new Error(`Independent reinstall failed: ${code}`)));
   });
 });
-
-process.once('beforeExit', async () => { await rm(fixtureRoot, { recursive: true, force: true }); });

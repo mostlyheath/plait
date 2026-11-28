@@ -31,7 +31,7 @@ jobs:
       - name: Check the Linux host installer
         run: python3 -m unittest discover -s scripts -p 'test_install_*.py'
       - name: Check Rust and runtime without Linux command execution
-        run: bash scripts/check.sh
+        run: python3 scripts/check_test_temp.py bash scripts/check.sh
       - name: Check installed runtime layout
         if: github.event_name == 'pull_request'
-        run: bash scripts/check-installed-changes.sh HEAD^1
+        run: python3 scripts/check_test_temp.py bash scripts/check-installed-changes.sh HEAD^1

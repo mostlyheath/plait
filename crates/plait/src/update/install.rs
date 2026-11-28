@@ -182,7 +182,8 @@ pub fn apply_app_update(offer: &Offer, home: &Path) -> Result<PathBuf, Error> {
 mod tests {
     use super::*;
     fn scratch(name: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!("plait-update-{name}{}", unique("")));
+        let path =
+            plait_test_support::temp_dir().join(format!("plait-update-{name}{}", unique("")));
         fs::create_dir_all(&path).unwrap();
         path
     }

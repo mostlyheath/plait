@@ -51,7 +51,7 @@ mod tests {
 
     #[test]
     fn checkout_aliases_share_identity_but_replacements_do_not() {
-        let scratch = std::env::temp_dir().join(format!(
+        let scratch = plait_test_support::temp_dir().join(format!(
             "plait-identity-{}-{:?}",
             std::process::id(),
             std::thread::current().id()

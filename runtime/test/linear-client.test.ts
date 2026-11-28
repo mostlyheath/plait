@@ -1,5 +1,6 @@
+import { fixtureDirectory } from './support/temp.ts';
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, readFile, rm, stat, symlink } from 'node:fs/promises';
+import { chmod, readFile, rm, stat, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -9,7 +10,7 @@ import { FIELD_LIMITS, LINEAR_GRAPHQL_URL, LinearError } from '../src/linear/typ
 import { FakeLinearServer } from './support/linear-server.ts';
 
 test('LinearAuthStore writes mode 0600, repairs loose modes, refuses symlinks, and never leaks the key', async t => {
-  const dir = await mkdtemp(join(tmpdir(), 'plait-linear-auth-'));
+  const dir = await fixtureDirectory(join(tmpdir(), 'plait-linear-auth-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const authStore = new LinearAuthStore(dir);
   const secret = 'lin_api_SUPER_SECRET_NEVER_LEAK_42';
@@ -252,7 +253,7 @@ test('LinearClient listIssues never requests descriptions or comments in its que
 });
 
 test('LinearAuthStore does not write the key into any sibling file or readable backup', async t => {
-  const dir = await mkdtemp(join(tmpdir(), 'plait-linear-key-check-'));
+  const dir = await fixtureDirectory(join(tmpdir(), 'plait-linear-key-check-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const secret = 'lin_api_UNIQUE_BYTE_CHECK_987654';
   const authStore = new LinearAuthStore(dir);
@@ -369,7 +370,7 @@ test('LinearClient rejects cursors with bidi/C1 controls or >512 bytes and bound
 });
 
 test('LinearAuthStore.write masks filesystem errors without disclosing the credential path', async t => {
-  const dir = await mkdtemp(join(tmpdir(), 'plait-linear-unwritable-'));
+  const dir = await fixtureDirectory(join(tmpdir(), 'plait-linear-unwritable-'));
   t.after(async () => {
     await chmod(dir, 0o700).catch(() => {});
     await rm(dir, { recursive: true, force: true });

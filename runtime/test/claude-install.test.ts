@@ -1,7 +1,8 @@
+import { fixtureDirectory } from './support/temp.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -64,8 +65,8 @@ test('findClaude checks an explicit path', async () => {
 });
 
 test('findClaude searches the given PATH', async () => {
-  const empty = await mkdtemp(join(tmpdir(), 'plait-claude-empty-'));
-  const bin = await mkdtemp(join(tmpdir(), 'plait-claude-bin-'));
+  const empty = await fixtureDirectory(join(tmpdir(), 'plait-claude-empty-'));
+  const bin = await fixtureDirectory(join(tmpdir(), 'plait-claude-bin-'));
   try {
     const missing = await findClaude({ env: { ...fakeEnv(), PATH: `${empty}:relative/dir` } });
     assert.equal(missing.state, 'not_installed');
@@ -111,7 +112,7 @@ test('claudeAuth keeps sign-in state and provider, nothing that names the accoun
 });
 
 test('claudeCatalog lists models from initialize without sending a message', async t => {
-  const dir = await mkdtemp(join(tmpdir(), 'plait-claude-catalog-'));
+  const dir = await fixtureDirectory(join(tmpdir(), 'plait-claude-catalog-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const log = join(dir, 'log');
   const { query } = await loadSdk(DEV_SDK);

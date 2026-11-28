@@ -170,7 +170,7 @@ impl Plait {
                                 el.child(
                                     tag(
                                         "project-settings-checkout",
-                                        project.checkout.to_string_lossy().into_owned(),
+                                        project.checkout_label(),
                                         colors().subtle,
                                     )
                                     .text_size(px(11.))

@@ -1,6 +1,7 @@
+import { fixtureDirectory } from './support/temp.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtemp, mkdir, realpath, rm } from 'node:fs/promises';
+import { mkdir, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createModels } from '@earendil-works/pi-ai/models';
@@ -9,7 +10,7 @@ import { rootIdentity } from '../src/safety.ts';
 import { HostError } from '../src/protocol.ts';
 
 test('optional checkout identities reject replacements and preserve old replies', async t => {
-  const base = await realpath(await mkdtemp(join(tmpdir(), 'plait-host-identity-')));
+  const base = await realpath(await fixtureDirectory(join(tmpdir(), 'plait-host-identity-')));
   const root = join(base, 'repo'); const store = join(base, 'store');
   await mkdir(root); await mkdir(store);
   const host = new Runtime(store, createModels(), new Set());

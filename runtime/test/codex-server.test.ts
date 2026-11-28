@@ -1,13 +1,14 @@
+import { fixtureDirectory } from './support/temp.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AppServer, CodexConnectionError, CodexRpcError } from '../src/codex/server.ts';
 import { FAKE_CODEX, fakeEnv } from './support/fake-codex-env.ts';
 
 async function withLog(run: (log: string) => Promise<void>) {
-  const directory = await mkdtemp(join(tmpdir(), 'plait-codex-server-'));
+  const directory = await fixtureDirectory(join(tmpdir(), 'plait-codex-server-'));
   try { await run(join(directory, 'frames.jsonl')); } finally { await rm(directory, { recursive: true, force: true }); }
 }
 const frames = async (log: string) => (await readFile(log, 'utf8')).trim().split('\n').map(line => JSON.parse(line));

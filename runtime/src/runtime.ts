@@ -1,3 +1,5 @@
+import { sweepStaleScratch } from './command/scratch.ts';
+import { COMMAND_TIMEOUT_MS } from './command/supervisor.ts';
 import { Automations } from './automations/service.ts';
 import { Graph } from './graph/host.ts';
 import { harnessLogin } from './harness-sign-in.ts';
@@ -215,6 +217,9 @@ export class Runtime {
   }
   /** Reconcile persisted work before accepting requests. */
   async recover(): Promise<void> {
+    // A host killed mid-command leaves its scratch folder behind; commands end within
+    // COMMAND_TIMEOUT_MS, so anything older is stale. Runs in the background.
+    if (process.platform === 'darwin') void sweepStaleScratch('/private/tmp/plait-command-', 2 * COMMAND_TIMEOUT_MS).catch(() => {});
     const entries = await this.runnerRegistry.scan();
     const liveCheckouts = new Set<string>();
     const handledThreads = new Set<string>();

@@ -17,7 +17,8 @@ static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 struct Fixture(PathBuf);
 impl Fixture {
     fn new(name: &str) -> Self {
-        let path = std::env::temp_dir().join(format!("plait-ssh-{name}-{}", std::process::id()));
+        let path = plait_test_support::socket_temp_dir()
+            .join(format!("plait-ssh-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&path);
         fs::create_dir(&path).unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();

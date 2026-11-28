@@ -976,8 +976,8 @@ mod tests {
     }
 
     fn scratch(name: &str) -> PathBuf {
-        let path =
-            std::env::temp_dir().join(format!("plait-preferences-{}-{name}", std::process::id()));
+        let path = plait_test_support::temp_dir()
+            .join(format!("plait-preferences-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&path);
         path
     }

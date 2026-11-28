@@ -271,7 +271,7 @@ mod tests {
     use super::*;
     use std::os::unix::net::UnixListener;
     fn root() -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
+        let path = plait_test_support::socket_temp_dir().join(format!(
             "plait-tailnet-{}-{:?}",
             std::process::id(),
             thread::current().id()

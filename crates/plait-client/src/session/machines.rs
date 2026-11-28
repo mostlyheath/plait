@@ -498,8 +498,8 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     fn root(name: &str) -> PathBuf {
-        let root =
-            std::env::temp_dir().join(format!("plait-machines-{}-{name}", std::process::id()));
+        let root = plait_test_support::temp_dir()
+            .join(format!("plait-machines-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         root
     }

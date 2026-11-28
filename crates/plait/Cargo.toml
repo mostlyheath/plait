@@ -31,6 +31,7 @@ objc2-foundation = { version = "=0.3.2", default-features = false, features = ["
 # root view to PNG files without a window. `test-support` is a dev-dependency
 # feature, so `cargo build` and release builds do not compile it.
 [dev-dependencies]
+plait-test-support = { path = "../plait-test-support" }
 # Enables the test-host transport for scene tests only.
 plait-client = { path = "../plait-client", features = ["local-host", "ssh", "test-host"] }
 # Already pinned by plait-client; builds tool arguments in README scenes and pages test host reads.

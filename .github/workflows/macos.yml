@@ -147,7 +147,7 @@ jobs:
             macos26-${{ runner.arch }}-${{ steps.tools.outputs.cache-id }}-check-v2-
             macos26-${{ runner.arch }}-${{ steps.tools.outputs.cache-id }}-check-
       - name: Check Rust workspace
-        run: bash scripts/check.sh rust --require-command-sandbox
+        run: python3 scripts/check_test_temp.py bash scripts/check.sh rust --require-command-sandbox
       - name: Check installer planning
         run: python3 -m unittest discover -s scripts -p 'test_release_*.py'
 
@@ -179,10 +179,18 @@ jobs:
             macos26-${{ runner.arch }}-${{ steps.tools.outputs.cache-id }}-check-v2-
             macos26-${{ runner.arch }}-${{ steps.tools.outputs.cache-id }}-check-
       - name: Check runtime and real command sandbox
-        run: bash scripts/check.sh runtime --require-command-sandbox
+        run: python3 scripts/check_test_temp.py bash scripts/check.sh runtime --require-command-sandbox
+      - name: Repeat runtime timing regressions ten times
+        working-directory: runtime
+        run: |
+          for attempt in {1..10}; do
+            python3 ../scripts/check_test_temp.py node --test \
+              --test-name-pattern='Codex device code and CLI failure|automatic start uses ordinary deterministic requests|a sustained flood fixture exits' \
+              test/agent-tools.test.ts test/graph-client.test.ts test/mcp.test.ts
+          done
       - name: Check installed runtime layout on a fresh main check
         if: github.event_name == 'push'
-        run: node scripts/installed-layout-check.mjs
+        run: python3 scripts/check_test_temp.py node scripts/installed-layout-check.mjs
 
   # The required check. It keeps the name branch protection asks for and
   # passes only when both halves passed, there was nothing to test, or the
@@ -323,7 +331,7 @@ jobs:
       - name: Build and verify client and host installers
         run: bash scripts/build-macos.sh
       - name: Install and test packaged client and daemon
-        run: bash scripts/smoke-installer-macos.sh
+        run: python3 scripts/check_test_temp.py bash scripts/smoke-installer-macos.sh
       - name: Upload development package
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

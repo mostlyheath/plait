@@ -642,8 +642,8 @@ mod tests {
     use super::*;
 
     fn root(name: &str) -> PathBuf {
-        let root =
-            std::env::temp_dir().join(format!("plait-session-{}-{name}", std::process::id()));
+        let root = plait_test_support::temp_dir()
+            .join(format!("plait-session-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         root
     }

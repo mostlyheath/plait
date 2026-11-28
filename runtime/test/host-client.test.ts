@@ -1,8 +1,9 @@
+import { fixtureDirectory } from './support/temp.ts';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 import { test, type TestContext } from 'node:test';
-import { mkdtemp, chmod, open, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, open, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer, type Socket } from 'node:net';
 import { Readable } from 'node:stream';
 import { tmpdir } from 'node:os';
@@ -11,7 +12,7 @@ import './support/safety.ts';
 import { hostClient, readReply } from '../src/host-client.ts';
 
 async function location(t: TestContext) {
-  const dir = await mkdtemp(join(tmpdir(), 'host-client-'));
+  const dir = await fixtureDirectory(join(tmpdir(), 'host-client-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   return join(dir, 'host.sock');
 }

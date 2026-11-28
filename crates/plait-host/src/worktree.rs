@@ -262,8 +262,8 @@ mod tests {
     struct Store(PathBuf);
     impl Store {
         fn new(name: &str) -> Self {
-            let path =
-                std::env::temp_dir().join(format!("plait-worktree-{name}-{}", std::process::id()));
+            let path = plait_test_support::temp_dir()
+                .join(format!("plait-worktree-{name}-{}", std::process::id()));
             fs::DirBuilder::new().mode(0o700).create(&path).unwrap();
             Self(path.canonicalize().unwrap())
         }

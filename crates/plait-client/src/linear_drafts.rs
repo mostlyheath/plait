@@ -254,7 +254,7 @@ mod tests {
     #[test]
     fn the_newest_revision_is_what_reopens_whichever_write_finishes_last() {
         for newer_first in [false, true] {
-            let dir = std::env::temp_dir().join(format!(
+            let dir = plait_test_support::temp_dir().join(format!(
                 "plait-drafts-writer-{}-{newer_first}",
                 std::process::id()
             ));
